@@ -48,9 +48,18 @@ def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUI
 
 
 def override_score(db: Session, *, tenant_id, submission_id, score_value, max_score, reason) -> Score:
+    sub = db.get(Submission, submission_id)
+    if sub is None or sub.tenant_id != tenant_id:
+        raise ValueError("submission not found for tenant")
+    activity = db.scalars(
+        select(Activity).where(Activity.tenant_id == tenant_id).where(Activity.id == sub.activity_id)
+    ).first()
+    threshold = activity.pass_threshold if activity is not None else 0.0
     frac = (score_value / max_score) if max_score else 0.0
-    score = Score(tenant_id=tenant_id, submission_id=submission_id, score=score_value,
-                  max_score=max_score, fraction=frac, passed=frac >= 0.0, per_item=[],
-                  source="override", override_reason=reason)
+    score = Score(
+        tenant_id=tenant_id, submission_id=submission_id, score=score_value, max_score=max_score,
+        fraction=frac, passed=(max_score > 0 and frac >= threshold),
+        per_item=[], source="override", override_reason=reason,
+    )
     db.add(score); db.flush()
     return score
