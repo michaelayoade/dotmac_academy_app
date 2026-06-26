@@ -83,40 +83,43 @@ def test_full_flow(app_client, admin_session):
     admin_session.commit()
 
     # ── Web flow ───────────────────────────────────────────────────────────────
-    h = {"Host": "e2eacad.localhost"}
+    try:
+        h = {"Host": "e2eacad.localhost"}
 
-    # GET /login sets the csrf_token cookie; the subsequent POST must double-submit it.
-    r_login_page = app_client.get("/login", headers=h, follow_redirects=False)
-    csrf = (
-        r_login_page.cookies.get("csrf_token")
-        or app_client.cookies.get("csrf_token", "")
-    )
+        # GET /login sets the csrf_token cookie; the subsequent POST must double-submit it.
+        r_login_page = app_client.get("/login", headers=h, follow_redirects=False)
+        csrf = (
+            r_login_page.cookies.get("csrf_token")
+            or app_client.cookies.get("csrf_token", "")
+        )
 
-    r_post = app_client.post(
-        "/login",
-        headers={**h, "x-csrf-token": csrf},
-        data={"email": "admin@e2eacad.edu", "password": "password1"},
-        follow_redirects=False,
-    )
-    assert r_post.status_code == 303, (
-        f"Expected 303 from /login, got {r_post.status_code}: {r_post.text[:200]}"
-    )
+        assert csrf, "csrf_token cookie not set by GET /login"
 
-    # Authenticated requests — session cookie is stored in the TestClient jar.
-    r_dash = app_client.get("/", headers=h)
-    assert r_dash.status_code == 200, (
-        f"Dashboard returned {r_dash.status_code}: {r_dash.text[:200]}"
-    )
+        r_post = app_client.post(
+            "/login",
+            headers={**h, "x-csrf-token": csrf},
+            data={"email": "admin@e2eacad.edu", "password": "password1"},
+            follow_redirects=False,
+        )
+        assert r_post.status_code == 303, (
+            f"Expected 303 from /login, got {r_post.status_code}: {r_post.text[:200]}"
+        )
 
-    r_chap = app_client.get("/courses/foundation/chapters/3", headers=h)
-    assert r_chap.status_code == 200, (
-        f"Chapter 3 returned {r_chap.status_code}: {r_chap.text[:200]}"
-    )
+        # Authenticated requests — session cookie is stored in the TestClient jar.
+        r_dash = app_client.get("/", headers=h)
+        assert r_dash.status_code == 200, (
+            f"Dashboard returned {r_dash.status_code}: {r_dash.text[:200]}"
+        )
 
-    # ── Cleanup ────────────────────────────────────────────────────────────────
-    # Deleting the Tenant cascades (ON DELETE CASCADE) to all child rows
-    # (courses, chapters, banks, questions, activities, people, sessions, …).
-    admin_session.execute(
-        text("DELETE FROM tenants WHERE id = :id"), {"id": str(t.id)}
-    )
-    admin_session.commit()
+        r_chap = app_client.get("/courses/foundation/chapters/3", headers=h)
+        assert r_chap.status_code == 200, (
+            f"Chapter 3 returned {r_chap.status_code}: {r_chap.text[:200]}"
+        )
+    finally:
+        # ── Cleanup ────────────────────────────────────────────────────────────────
+        # Deleting the Tenant cascades (ON DELETE CASCADE) to all child rows
+        # (courses, chapters, banks, questions, activities, people, sessions, …).
+        admin_session.execute(
+            text("DELETE FROM tenants WHERE id = :id"), {"id": str(t.id)}
+        )
+        admin_session.commit()
