@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<h1 class="text-xl font-semibold">Welcome, {{ person.first_name }}</h1>
+{% if course %}<h2 class="mt-4 font-medium">{{ course.title }}</h2>
+<ul class="mt-2 space-y-1">
+{% for ch in chapters %}
+  <li><a class="text-blue-700 underline" href="/courses/{{ course.slug }}/chapters/{{ ch.number }}">{{ ch.number }}. {{ ch.title }}</a></li>
+{% endfor %}</ul>
+<p class="mt-4"><a class="underline" href="/progress">View progress</a></p>
+{% else %}<p>No course loaded yet.</p>{% endif %}
+{% endblock %}

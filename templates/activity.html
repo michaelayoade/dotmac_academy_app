@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<h1 class="text-lg font-semibold">{{ activity.title }}</h1>
+<form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML" class="space-y-4 mt-4">
+  {% for q in questions %}
+  <fieldset class="border p-3"><legend>{{ q.stem }}</legend>
+    {% for opt in q.options %}
+    <label class="block"><input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}"> {{ opt }}</label>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  <button class="bg-slate-900 text-white px-4 py-2" type="submit">Submit</button>
+</form>
+<div id="result" class="mt-6"></div>
+{% endblock %}

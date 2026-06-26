@@ -23,6 +23,7 @@ from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.api.tenants import router as tenants_router
 from app.web.auth import router as web_auth_router
+from app.web.learn import router as web_learn_router
 from app.config import settings, validate_settings
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.observability import ObservabilityMiddleware
@@ -34,7 +35,6 @@ from app.services.exceptions import (
     DomainError,
     NotFoundError,
 )
-from app.web.templating import templates
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,6 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="dotmac_academy_app", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-@app.get("/")
-def landing(request: Request):
-    return templates.TemplateResponse(request, "base.html")
 
 
 # FastAPI/Starlette runs the last added middleware first.
@@ -114,3 +109,4 @@ app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
+app.include_router(web_learn_router)

@@ -1,0 +1,12 @@
+<div class="border p-4">
+  <p class="font-semibold">{{ "Passed" if score.passed else "Not passed" }} — {{ score.score }}/{{ score.max_score }} ({{ "%.0f"|format(score.fraction*100) }}%)</p>
+  <ul class="mt-3 space-y-2">
+  {% for item in score.per_item %}
+    <li class="{{ 'text-green-700' if item.correct else 'text-red-700' }}">
+      {{ questions[item.id].stem }} — {{ "correct" if item.correct else "incorrect" }}.
+      <span class="text-slate-600">{{ questions[item.id].explanation }}</span>
+      {% if not item.correct %}<span class="text-slate-600">Expected: {{ item.expected|join(', ') }}.</span>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>

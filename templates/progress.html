@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<h1 class="text-xl font-semibold">Your progress</h1>
+<table class="mt-4 w-full border"><thead><tr><th class="text-left p-2">Score</th><th class="text-left p-2">Result</th></tr></thead>
+<tbody>{% for s in best %}<tr><td class="p-2">{{ s.score }}/{{ s.max_score }}</td><td class="p-2">{{ "Pass" if s.passed else "Fail" }}</td></tr>{% endfor %}</tbody></table>
+{% endblock %}
