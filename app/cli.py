@@ -27,6 +27,9 @@ _DEFAULT_CHAPTERS_DIR = Path(
 _DEFAULT_FIGURES_DIR = Path(
     "/home/dotmac/projects/dotmac-academy/figures/final"
 )
+_DEFAULT_BANKS_DIR = Path(
+    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/assessments/banks"
+)
 
 
 def _bootstrap(args: argparse.Namespace) -> None:
@@ -66,6 +69,90 @@ def _import_foundation(args: argparse.Namespace) -> None:
         )
         db.commit()
         print(f"foundation course '{course.slug}' ({course.id}) v{course.version} imported")
+    finally:
+        db.close()
+
+
+def _load_banks(args: argparse.Namespace) -> None:
+    from app.db import SessionLocal
+    from app.models.assessment import Activity
+    from app.models.course import Course
+    from app.models.tenant import Tenant
+    from app.services.bank_loader import lint_bank, load_bank, parse_bank
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+
+        banks_dir = Path(args.banks_dir)
+        if not banks_dir.is_dir():
+            raise SystemExit(f"Banks directory not found: {banks_dir}")
+
+        yaml_files = sorted(banks_dir.glob("*.yaml"))
+        if not yaml_files:
+            print(f"No *.yaml files found in {banks_dir}")
+            return
+
+        loaded = 0
+        for yaml_path in yaml_files:
+            doc = parse_bank(yaml_path)
+            violations = lint_bank(doc)
+            if violations:
+                print(f"SKIP {yaml_path.name}: rubric lint violations:")
+                for v in violations:
+                    print(f"  - {v}")
+                continue
+
+            # Resolve the course by slug within this tenant
+            course = (
+                db.query(Course)
+                .filter(Course.tenant_id == tenant.id, Course.slug == doc.course)
+                .first()
+            )
+            if course is None:
+                print(f"SKIP {yaml_path.name}: course '{doc.course}' not found for tenant '{args.tenant_slug}'")
+                continue
+
+            bank = load_bank(db, tenant_id=tenant.id, course_id=course.id, doc=doc)
+
+            # Upsert Activity for this chapter bank
+            pass_threshold = {
+                "chapter": 0.0,
+                "mid": 0.60,
+                "final": 0.70,
+            }.get(doc.kind, 0.0)
+            title = f"Chapter {doc.chapter} test"
+            activity = (
+                db.query(Activity)
+                .filter(
+                    Activity.tenant_id == tenant.id,
+                    Activity.course_id == course.id,
+                    Activity.bank_id == bank.id,
+                )
+                .first()
+            )
+            if activity is None:
+                activity = Activity(
+                    tenant_id=tenant.id,
+                    course_id=course.id,
+                    chapter_number=doc.chapter,
+                    type="mcq_test",
+                    bank_id=bank.id,
+                    title=title,
+                    pass_threshold=pass_threshold,
+                )
+                db.add(activity)
+            else:
+                activity.title = title
+                activity.pass_threshold = pass_threshold
+
+            db.commit()
+            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'")
+            loaded += 1
+
+        print(f"Done — {loaded}/{len(yaml_files)} bank(s) loaded.")
     finally:
         db.close()
 
@@ -118,6 +205,24 @@ def main() -> None:
         help="Directory containing produced figure PNG files (default: figures/final)",
     )
     imp.set_defaults(func=_import_foundation)
+
+    lb = sub.add_parser(
+        "load-banks",
+        help="Load YAML MCQ question banks into the database for a tenant.",
+        description=(
+            "For each *.yaml file in --banks-dir: parse the bank, lint it against the "
+            "20/50/30 rubric-mix rule (skip and print violations on failure), load it into "
+            "QuestionBank/Question tables, and create an Activity for each chapter bank."
+        ),
+    )
+    lb.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    lb.add_argument(
+        "--banks-dir",
+        type=Path,
+        default=_DEFAULT_BANKS_DIR,
+        help="Directory containing *.yaml bank files (default: Foundation assessments/banks)",
+    )
+    lb.set_defaults(func=_load_banks)
 
     args = p.parse_args()
     args.func(args)
