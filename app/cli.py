@@ -54,7 +54,7 @@ def _bootstrap(args: argparse.Namespace) -> None:
 def _import_foundation(args: argparse.Namespace) -> None:
     from app.db import SessionLocal
     from app.models.tenant import Tenant
-    from app.services.content_import import import_foundation
+    from app.services.content_import import import_foundation, sync_figures
 
     db = SessionLocal()
     try:
@@ -68,7 +68,13 @@ def _import_foundation(args: argparse.Namespace) -> None:
             figures_dir=args.figures_dir,
         )
         db.commit()
-        print(f"foundation course '{course.slug}' ({course.id}) v{course.version} imported")
+        # Copy produced figures into the served static tree so chapter <img> tags resolve.
+        static_figures = Path(__file__).resolve().parent.parent / "static" / "figures"
+        copied = sync_figures(args.figures_dir, static_figures)
+        print(
+            f"foundation course '{course.slug}' ({course.id}) v{course.version} imported; "
+            f"{copied} figure(s) synced to static/figures/"
+        )
     finally:
         db.close()
 

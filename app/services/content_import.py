@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,26 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.course import Chapter, Course
+
+
+def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
+    """Copy produced figure PNGs into the app's static/figures/ directory.
+
+    Chapter HTML references figures at ``/static/figures/<id>.png``; produced
+    figures live in the source ``figures_dir`` and must be copied into the
+    served ``static/`` tree or they 404 in the browser. Returns the number of
+    files copied. Safe to call repeatedly (overwrites).
+    """
+    figures_dir = Path(figures_dir)
+    static_figures_dir = Path(static_figures_dir)
+    if not figures_dir.is_dir():
+        return 0
+    static_figures_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for png in figures_dir.glob("*.png"):
+        shutil.copy2(png, static_figures_dir / png.name)
+        copied += 1
+    return copied
 
 # Matches the YAML frontmatter block at the top of a file.
 _FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)

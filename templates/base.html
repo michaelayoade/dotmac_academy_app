@@ -8,7 +8,14 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="bg-slate-50 text-slate-900">
-  <header class="border-b bg-white px-6 py-3 font-semibold">Dotmac Academy</header>
+  <header class="border-b bg-white px-6 py-3 font-semibold flex items-center justify-between">
+    <span>Dotmac Academy</span>
+    {% if request.cookies.get('session') %}
+    <form hx-post="/logout" hx-swap="none" class="inline">
+      <button type="submit" class="text-sm font-normal text-slate-600 underline">Log out</button>
+    </form>
+    {% endif %}
+  </header>
   <main class="mx-auto max-w-3xl px-6 py-8">{% block content %}{% endblock %}</main>
   <script>
     document.body.addEventListener('htmx:configRequest', function (evt) {

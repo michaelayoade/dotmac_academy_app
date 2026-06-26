@@ -47,13 +47,20 @@ def login(
             status_code=401,
         )
     token = web_auth.start_session(db, tenant.id, person.id)
-    db.commit()
+    # No db.commit() here — get_db commits at request end (and a mid-route commit
+    # would clear the transaction-scoped app.current_tenant GUC).
     if hx:
         resp: Response = Response(status_code=204)
         resp.headers["HX-Redirect"] = "/"
     else:
         resp = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
-    resp.set_cookie(web_auth.COOKIE, token, httponly=True, samesite="lax")
+    resp.set_cookie(
+        web_auth.COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
     return resp
 
 
@@ -61,8 +68,12 @@ def login(
 def logout(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     web_auth.revoke_session(db, tenant.id, request.cookies.get(web_auth.COOKIE))
-    db.commit()
-    resp = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    # No db.commit() here — get_db commits at request end.
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=204)
+        resp.headers["HX-Redirect"] = "/login"
+    else:
+        resp = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     resp.delete_cookie(web_auth.COOKIE)
     return resp
 

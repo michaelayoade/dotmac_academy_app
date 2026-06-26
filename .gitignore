@@ -32,3 +32,6 @@ poetry.lock
 
 # Worktrees
 .worktrees/
+
+# Figures synced from dotmac-academy at import time (derived assets)
+static/figures/
