@@ -22,6 +22,7 @@ from app.api.auth import router as auth_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.api.tenants import router as tenants_router
+from app.web.auth import router as web_auth_router
 from app.config import settings, validate_settings
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.observability import ObservabilityMiddleware
@@ -112,3 +113,4 @@ app.include_router(tenants_router)
 app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(rbac_router)
+app.include_router(web_auth_router)

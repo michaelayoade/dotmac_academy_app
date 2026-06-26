@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Dotmac Academy{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Sign in</h1>
+{% if error %}<p class="text-red-600 mb-2">{{ error }}</p>{% endif %}
+<form method="post" action="/login" class="space-y-3">
+  <input name="email" type="email" placeholder="Email" class="border p-2 w-full" required>
+  <input name="password" type="password" placeholder="Password" class="border p-2 w-full" required>
+  <button class="bg-slate-900 text-white px-4 py-2" type="submit">Sign in</button>
+</form>
+{% endblock %}
