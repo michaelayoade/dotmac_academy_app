@@ -23,6 +23,7 @@ from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.api.tenants import router as tenants_router
 from app.web.auth import router as web_auth_router
+from app.web.instructor import router as web_instructor_router
 from app.web.learn import router as web_learn_router
 from app.config import settings, validate_settings
 from app.middleware.csrf import CSRFMiddleware
@@ -109,4 +110,5 @@ app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
+app.include_router(web_instructor_router)
 app.include_router(web_learn_router)

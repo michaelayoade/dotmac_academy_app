@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Cohorts — Dotmac Academy{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold">Cohorts</h1>
+
+<ul class="mt-3 space-y-1" id="cohort-list">
+  {% for c in cohorts %}
+  <li class="border rounded p-3">
+    <span class="font-medium">{{ c.name }}</span>
+    <span class="text-slate-500">— {{ c.discipline }}</span>
+    <span class="text-xs ml-2 bg-slate-100 px-2 py-0.5 rounded">{{ c.status }}</span>
+
+    <!-- Enroll form (htmx): submits inline, no page reload -->
+    <form class="inline-flex ml-4 space-x-2"
+          hx-post="/instructor/cohorts/{{ c.id }}/enroll"
+          hx-target="#cohort-list"
+          hx-swap="outerHTML">
+      <input name="email" type="email" placeholder="student@example.com"
+             class="border rounded px-2 py-1 text-sm" required>
+      <button type="submit"
+              class="bg-slate-700 text-white text-sm px-2 py-1 rounded">Enroll</button>
+    </form>
+  </li>
+  {% else %}
+  <li class="text-slate-500 italic">No cohorts yet.</li>
+  {% endfor %}
+</ul>
+
+<h2 class="mt-6 text-lg font-semibold">Create cohort</h2>
+<!-- Create cohort form (htmx): posts and navigates to the cohorts page on success -->
+<form class="mt-2 flex space-x-2"
+      hx-post="/instructor/cohorts"
+      hx-target="body"
+      hx-push-url="true">
+  <input name="name" type="text" placeholder="Cohort name"
+         class="border rounded px-2 py-1 flex-1" required>
+  <input name="discipline" type="text" placeholder="Discipline"
+         class="border rounded px-2 py-1 flex-1" required>
+  <button type="submit"
+          class="bg-slate-900 text-white px-3 py-2 rounded">Create</button>
+</form>
+{% endblock %}
