@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -63,12 +63,16 @@ def chapter(
         .where(Course.tenant_id == tenant.id)
         .where(Course.slug == slug)
     ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
     ch = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
         .where(Chapter.course_id == course.id)
         .where(Chapter.number == n)
     ).first()
+    if ch is None:
+        raise HTTPException(status_code=404)
     act = db.scalars(
         select(Activity)
         .where(Activity.tenant_id == tenant.id)
@@ -89,7 +93,13 @@ def activity(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    act = db.get(Activity, activity_id)
+    act = db.scalars(
+        select(Activity)
+        .where(Activity.id == activity_id)
+        .where(Activity.tenant_id == tenant.id)
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)
@@ -108,7 +118,13 @@ async def submit(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    act = db.get(Activity, activity_id)
+    act = db.scalars(
+        select(Activity)
+        .where(Activity.id == activity_id)
+        .where(Activity.tenant_id == tenant.id)
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
     form = await request.form()
     qs = db.scalars(
         select(Question)

@@ -106,3 +106,48 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert "Passed" in r.text
     assert "Because A" in r.text
+
+
+def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
+    _login(app_client, admin_session, tenant_a)
+    h = {"Host": "alpha.localhost"}
+
+    # Seed Course + QuestionBank + Activity under tenant_b only.
+    c_b = Course(
+        tenant_id=tenant_b.id,
+        slug="foundation",
+        title="F",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+    )
+    admin_session.add(c_b)
+    admin_session.flush()
+    bank_b = QuestionBank(
+        tenant_id=tenant_b.id,
+        course_id=c_b.id,
+        chapter_number=1,
+        kind="chapter",
+        version=1,
+    )
+    admin_session.add(bank_b)
+    admin_session.flush()
+    act_b = Activity(
+        tenant_id=tenant_b.id,
+        course_id=c_b.id,
+        chapter_number=1,
+        type="mcq_test",
+        bank_id=bank_b.id,
+        title="B-Act",
+        pass_threshold=0.6,
+    )
+    admin_session.add(act_b)
+    admin_session.commit()
+
+    # tenant_a user must NOT be able to access tenant_b's activity.
+    r = app_client.get(f"/activities/{act_b.id}", headers=h)
+    assert r.status_code == 404
+
+    # Nonexistent chapter (no foundation course in tenant_a) → 404.
+    r2 = app_client.get("/courses/foundation/chapters/999", headers=h)
+    assert r2.status_code == 404
