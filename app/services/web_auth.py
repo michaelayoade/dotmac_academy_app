@@ -31,7 +31,8 @@ def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Per
     ).first()
     if cred is None or not verify_password(password, cred.password_hash):
         return None
-    return db.get(Person, cred.person_id)
+    return db.scalars(select(Person).where(Person.id == cred.person_id)
+                      .where(Person.tenant_id == tenant_id)).first()
 
 
 def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
@@ -49,6 +50,21 @@ def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
     return token
 
 
+def revoke_session(db: Session, tenant_id: UUID, token: str | None) -> None:
+    """Mark the AuthSession identified by token as revoked (logout)."""
+    if not token:
+        return
+    s = db.scalars(
+        select(AuthSession)
+        .where(AuthSession.tenant_id == tenant_id)
+        .where(AuthSession.token_hash == hash_token(token))
+        .where(AuthSession.revoked_at.is_(None))
+    ).first()
+    if s is not None:
+        s.revoked_at = datetime.now(UTC)
+        db.flush()
+
+
 def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person | None:
     """Resolve the session cookie to a Person, or None if missing/invalid/expired."""
     if not token:
@@ -60,7 +76,10 @@ def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person |
         .where(AuthSession.revoked_at.is_(None))
         .where(AuthSession.expires_at > datetime.now(UTC))
     ).first()
-    return db.get(Person, session.person_id) if session else None
+    if session is None:
+        return None
+    return db.scalars(select(Person).where(Person.id == session.person_id)
+                      .where(Person.tenant_id == tenant_id)).first()
 
 
 def require_web_user(

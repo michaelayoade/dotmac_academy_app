@@ -10,5 +10,11 @@
 <body class="bg-slate-50 text-slate-900">
   <header class="border-b bg-white px-6 py-3 font-semibold">Dotmac Academy</header>
   <main class="mx-auto max-w-3xl px-6 py-8">{% block content %}{% endblock %}</main>
+  <script>
+    document.body.addEventListener('htmx:configRequest', function (evt) {
+      var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      if (m) { evt.detail.headers['x-csrf-token'] = m[1]; }
+    });
+  </script>
 </body>
 </html>
