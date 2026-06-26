@@ -1,0 +1,9 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: academy_super
+      POSTGRES_DB: academy
+    ports: ["5437:5432"]
+    volumes:
+      - ./scripts/initdb-roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro

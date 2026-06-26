@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "dotmac_academy_app"
+version = "0.1.0"
+description = "Multi-tenant FastAPI starter"
+authors = ["DotMac"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.30"}
+gunicorn = "^22.0"
+sqlalchemy = "^2.0"
+psycopg = {extras = ["binary"], version = "^3.2"}
+alembic = "^1.13"
+pydantic = "^2.9"
+pydantic-settings = "^2.5"
+email-validator = "^2.2"
+jinja2 = "3.1.4"
+python-multipart = "0.0.9"
+markdown = "3.6"
+pyyaml = "6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.24"
+httpx = "^0.27"
+ruff = "^0.6"
+mypy = "^1.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "RUF"]
+ignore = [
+    "B008",  # FastAPI dependency injection uses calls in defaults.
+    "S101",  # asserts in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
