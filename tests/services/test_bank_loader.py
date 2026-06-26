@@ -22,3 +22,15 @@ def test_load_bank(admin_session, tenant_a):
     n = admin_session.query(Question).filter(Question.bank_id == bank.id).count()
     assert n == 10
     admin_session.rollback()
+
+def test_load_bank_replaces_on_reload(admin_session, tenant_a):
+    c = Course(tenant_id=tenant_a.id, slug="foundation", title="F",
+               discipline="networking", source_ref="x", version=1)
+    admin_session.add(c); admin_session.flush()
+    bank1 = load_bank(admin_session, tenant_id=tenant_a.id, course_id=c.id, doc=parse_bank(FX))
+    admin_session.flush()
+    bank2 = load_bank(admin_session, tenant_id=tenant_a.id, course_id=c.id, doc=parse_bank(FX))
+    admin_session.flush()
+    assert bank1.id == bank2.id
+    assert admin_session.query(Question).filter(Question.bank_id == bank2.id).count() == 10
+    admin_session.rollback()

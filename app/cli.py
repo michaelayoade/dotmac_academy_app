@@ -123,7 +123,7 @@ def _load_banks(args: argparse.Namespace) -> None:
                 "mid": 0.60,
                 "final": 0.70,
             }.get(doc.kind, 0.0)
-            title = f"Chapter {doc.chapter} test"
+            title = f"Chapter {doc.chapter} test" if doc.kind == "chapter" else f"{doc.kind.title()} assessment"
             activity = (
                 db.query(Activity)
                 .filter(
