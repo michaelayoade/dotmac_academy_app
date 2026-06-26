@@ -1,2 +1,3 @@
+from app.models.assessment import QuestionBank, Question, Activity, Submission, Score  # noqa: F401
 from app.models.cohort import Cohort, Enrollment  # noqa: F401
 from app.models.course import Course, Chapter  # noqa: F401
