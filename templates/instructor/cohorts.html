@@ -13,7 +13,7 @@
     <!-- Enroll form (htmx): submits inline, no page reload -->
     <form class="inline-flex ml-4 space-x-2"
           hx-post="/instructor/cohorts/{{ c.id }}/enroll"
-          hx-target="#cohort-list"
+          hx-target="body"
           hx-swap="outerHTML">
       <input name="email" type="email" placeholder="student@example.com"
              class="border rounded px-2 py-1 text-sm" required>

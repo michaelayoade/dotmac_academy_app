@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -67,6 +67,11 @@ def enroll_student(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    cohort = db.scalars(
+        select(Cohort).where(Cohort.id == cohort_id).where(Cohort.tenant_id == tenant.id)
+    ).first()
+    if cohort is None:
+        raise HTTPException(status_code=404)
     person = db.scalars(
         select(Person)
         .where(Person.tenant_id == tenant.id)

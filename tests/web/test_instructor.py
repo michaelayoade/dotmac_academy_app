@@ -50,11 +50,31 @@ def test_instructor_can_create_cohort(app_client, admin_session, tenant_a):
         data={"name": "Abuja 2026", "discipline": "networking"},
         follow_redirects=False,
     )
-    assert r.status_code in (200, 303)
+    assert r.status_code == 303
     # admin_session bypasses RLS; the Cohort committed by get_db is visible here.
     assert (
         admin_session.query(Cohort).filter(Cohort.tenant_id == tenant_a.id).count() == 1
     )
+
+
+def test_enroll_cross_tenant_404(app_client, admin_session, tenant_a, tenant_b):
+    """POSTing to enroll with a cohort owned by a different tenant returns 404."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+
+    # Create a cohort under tenant_b directly (bypasses RLS via admin_session).
+    cohort_b = Cohort(tenant_id=tenant_b.id, name="Beta Cohort", discipline="security", status="active")
+    admin_session.add(cohort_b)
+    admin_session.commit()
+    admin_session.refresh(cohort_b)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{cohort_b.id}/enroll",
+        headers={**h, "x-csrf-token": csrf},
+        data={"email": "nobody@example.com"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 404
 
 
 def test_student_forbidden(app_client, admin_session, tenant_a):
