@@ -19,6 +19,14 @@ such as the migration/superuser URL, e.g.::
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+_DEFAULT_CHAPTERS_DIR = Path(
+    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters"
+)
+_DEFAULT_FIGURES_DIR = Path(
+    "/home/dotmac/projects/dotmac-academy/figures/final"
+)
 
 
 def _bootstrap(args: argparse.Namespace) -> None:
@@ -36,6 +44,28 @@ def _bootstrap(args: argparse.Namespace) -> None:
         )
         db.commit()
         print(f"tenant {t.slug} ({t.id}) created")
+    finally:
+        db.close()
+
+
+def _import_foundation(args: argparse.Namespace) -> None:
+    from app.db import SessionLocal
+    from app.models.tenant import Tenant
+    from app.services.content_import import import_foundation
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        course = import_foundation(
+            db,
+            tenant_id=tenant.id,
+            chapters_dir=args.chapters_dir,
+            figures_dir=args.figures_dir,
+        )
+        db.commit()
+        print(f"foundation course '{course.slug}' ({course.id}) v{course.version} imported")
     finally:
         db.close()
 
@@ -63,6 +93,31 @@ def main() -> None:
     b.add_argument("--admin-email", required=True, help="Email for the initial admin user")
     b.add_argument("--admin-password", required=True, help="Password for the initial admin user")
     b.set_defaults(func=_bootstrap)
+
+    imp = sub.add_parser(
+        "import-foundation",
+        help="Import the Foundation manual markdown files as rendered HTML chapters.",
+        description=(
+            "Parse chapter-*.md files from the Foundation manual directory and upsert "
+            "them into the database as Course/Chapter records for the given tenant. "
+            "Idempotent — re-running skips unchanged chapters and only bumps Course.version "
+            "when content changed."
+        ),
+    )
+    imp.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    imp.add_argument(
+        "--chapters-dir",
+        type=Path,
+        default=_DEFAULT_CHAPTERS_DIR,
+        help="Directory containing chapter-*.md files (default: Foundation manual)",
+    )
+    imp.add_argument(
+        "--figures-dir",
+        type=Path,
+        default=_DEFAULT_FIGURES_DIR,
+        help="Directory containing produced figure PNG files (default: figures/final)",
+    )
+    imp.set_defaults(func=_import_foundation)
 
     args = p.parse_args()
     args.func(args)
