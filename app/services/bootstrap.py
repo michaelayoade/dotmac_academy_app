@@ -9,6 +9,8 @@ role). The application ``app_user`` role is RLS-restricted and cannot create ten
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.orm import Session
 
 from app.models.auth import UserCredential
@@ -24,7 +26,7 @@ ROLE_SLUGS: dict[str, str] = {
 }
 
 
-def ensure_roles(db: Session, tenant_id) -> dict[str, Role]:
+def ensure_roles(db: Session, tenant_id: UUID) -> dict[str, Role]:
     """Idempotent: return slug→Role for the three standard roles, creating any that are missing."""
     existing = {r.slug: r for r in db.query(Role).filter(Role.tenant_id == tenant_id)}
     for slug, name in ROLE_SLUGS.items():
