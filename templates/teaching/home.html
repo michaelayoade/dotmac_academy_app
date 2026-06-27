@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Teaching — Dotmac Academy{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Teaching</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Teaching home</h1>
+<p class="mt-2 text-ink-soft">Your cohorts, reports and labs at a glance.</p>
+
+<h2 class="mt-10 text-xl tracking-tight">My cohorts</h2>
+<div class="card mt-4 overflow-hidden">
+  <ul class="divide-y divide-sand-200">
+    {% for item in cohorts %}
+    <li class="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-sand-100">
+      <span class="font-medium text-ink">{{ item.cohort.name }}
+        <span class="ml-1 text-sm font-normal text-ink-soft">{{ item.cohort.discipline }}</span>
+      </span>
+      <span class="flex items-center gap-4">
+        <span class="text-sm text-ink-soft">{{ item.count }} student{{ "" if item.count == 1 else "s" }}</span>
+        <a class="group inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
+           href="/instructor/cohorts">
+          Manage
+          <span class="transition-transform group-hover:translate-x-0.5" aria-hidden="true">&rarr;</span>
+        </a>
+      </span>
+    </li>
+    {% else %}
+    <li class="p-8 text-center text-ink-soft">
+      No cohorts yet. <a class="font-semibold text-brand-700 hover:text-brand-800" href="/instructor/cohorts">Create your first cohort</a>.
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<h2 class="mt-10 text-xl tracking-tight">Quick links</h2>
+<div class="card mt-4 p-2">
+  <ul class="divide-y divide-sand-200">
+    <li>
+      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/cohorts">
+        <span class="font-medium text-ink">Cohorts</span>
+        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+    <li>
+      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/reports">
+        <span class="font-medium text-ink">Reports</span>
+        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+    <li>
+      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/labs">
+        <span class="font-medium text-ink">Lab monitor</span>
+        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+  </ul>
+</div>
+{% endblock %}
