@@ -13,26 +13,44 @@ can reuse it verbatim when ttyd ports are wired on the `.42` VM (Task 12).
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+import websockets
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
+from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
+from app.db import SessionLocal
+from app.middleware.tenant import TenantResolverMiddleware
 from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
-from app.services import lab_lifecycle
+from app.services import lab_lifecycle, web_auth
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(dependencies=[Depends(require_tenant)])
+
+# WebSocket routes cannot carry the HTTP-only `require_tenant` dependency
+# (BaseHTTPMiddleware does not run for the websocket scope, and FastAPI does not
+# inject a `Request` into ws dependencies), so the ttyd console socket lives on a
+# dependency-free router and resolves tenant/person inline — see `console_ws`.
+ws_router = APIRouter()
+
+# Reuse the app's own Host→Tenant resolver verbatim for the websocket scope.
+_tenant_resolver = TenantResolverMiddleware(app=None)  # type: ignore[arg-type]
 
 # Hop-by-hop headers must not be forwarded across a proxy (RFC 7230 §6.1).
 _HOP_BY_HOP = frozenset(
@@ -300,3 +318,122 @@ async def console(
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
     return await _proxy_http(request, target)
+
+
+def _subpath_target(target: str, instance_id: UUID, node: str, subpath: str) -> str:
+    """Build the upstream URL for a console sub-resource.
+
+    ttyd is launched with ``-b /labs/instances/{id}/console/{node}`` so its own
+    assets/token/ws live under that base prefix — sub-requests must keep it.
+    RouterOS webfig is served at the mgmt root, so its sub-resources hang off ``/``.
+    """
+    base = target.rstrip("/")
+    if target.startswith("http://127.0.0.1:"):
+        return f"{base}/labs/instances/{instance_id}/console/{node}/{subpath}"
+    return f"{base}/{subpath}"
+
+
+@router.get("/labs/instances/{instance_id}/console/{node}/{subpath:path}")
+async def console_subpath(
+    instance_id: UUID,
+    node: str,
+    subpath: str,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
+    tenant = require_tenant(request)
+    target = _authorize_console(db, tenant, person, instance_id, node)
+    return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
+
+
+async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
+    """Accept the client WS and bidirectionally pump it to the upstream ttyd WS.
+
+    Negotiates the ``tty`` subprotocol ttyd requires when the browser offered it,
+    and tears both legs down when either side closes.
+    """
+    offered = websocket.scope.get("subprotocols") or []
+    subprotocol = "tty" if "tty" in offered else None
+    await websocket.accept(subprotocol=subprotocol)
+    try:
+        upstream = await websockets.connect(upstream_url, subprotocols=["tty"])
+    except Exception as exc:  # upstream ttyd unreachable
+        logger.warning("ttyd upstream connect failed (%s): %s", upstream_url, exc)
+        await websocket.close(code=1011)
+        return
+
+    async def client_to_upstream() -> None:
+        try:
+            while True:
+                msg = await websocket.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                if msg.get("text") is not None:
+                    await upstream.send(msg["text"])
+                elif msg.get("bytes") is not None:
+                    await upstream.send(msg["bytes"])
+        except (WebSocketDisconnect, websockets.ConnectionClosed):
+            pass
+        finally:
+            await upstream.close()
+
+    async def upstream_to_client() -> None:
+        try:
+            async for data in upstream:
+                if isinstance(data, bytes):
+                    await websocket.send_bytes(data)
+                else:
+                    await websocket.send_text(data)
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception as exc:  # client already gone — nothing to close
+                logger.debug("client ws close failed: %s", exc)
+
+    await asyncio.gather(client_to_upstream(), upstream_to_client())
+
+
+@ws_router.websocket("/labs/instances/{instance_id}/console/{node}/ws")
+async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None:
+    """Auth-gated WebSocket proxy to a Linux node's ttyd terminal.
+
+    The HTTP-only tenant middleware does not run for the ws scope, so we resolve
+    the tenant from the Host header (same resolver the app uses), the person from
+    the session cookie (same logic as `require_web_user`), and run the shared
+    `_authorize_console` gate BEFORE accepting. Any auth failure closes 1008.
+    """
+    host = (websocket.headers.get("host") or "").split(":")[0].lower()
+    tenant = _tenant_resolver._resolve(host)
+    if tenant is None:
+        await websocket.close(code=1008)
+        return
+
+    db = SessionLocal()
+    try:
+        db.execute(
+            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+            {"tenant_id": str(tenant.id)},
+        )
+        person = web_auth._current_person(
+            db, tenant.id, websocket.cookies.get(web_auth.COOKIE)
+        )
+        if person is None:
+            await websocket.close(code=1008)
+            return
+        try:
+            target = _authorize_console(db, tenant, person, instance_id, node)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+        port = urlsplit(target).port
+    finally:
+        db.close()
+
+    upstream_url = (
+        f"ws://127.0.0.1:{port}/labs/instances/{instance_id}/console/{node}/ws"
+    )
+    await _proxy_ws(websocket, upstream_url)

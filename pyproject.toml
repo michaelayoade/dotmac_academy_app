@@ -22,6 +22,7 @@ python-multipart = "0.0.9"
 markdown = "3.6"
 pyyaml = "6.0.1"
 jsonpath-ng = "^1.8.0"
+websockets = "^16.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

@@ -90,6 +90,56 @@ def test_provision_sets_consoles_and_active(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_provision_starts_console_for_linux_node(admin_session, tenant_a, monkeypatch):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-ttyd", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+
+    calls = []
+
+    def _fake_start_console(cname, base_path):
+        calls.append((cname, base_path))
+        return 7321
+
+    monkeypatch.setattr(lab_lifecycle, "start_console", _fake_start_console)
+    engine = MagicMock()
+    engine.deploy.return_value = LabHandle(
+        instance_name="dal-ttyd",
+        nodes={"client": "clab-x-client", "r1": "clab-x-r1"},
+        mgmt={"client": "172.20.20.3", "r1": "172.20.20.2"},
+        kinds={"client": "linux", "r1": "vr-ros"})
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    # Linux node gets a ttyd port; RouterOS (vr-*) does not (webfig instead).
+    assert out.consoles["client"]["port"] == 7321
+    assert "port" not in out.consoles["r1"]
+    assert calls == [
+        ("clab-x-client", f"/labs/instances/{inst.id}/console/client"),
+    ]
+    admin_session.rollback()
+
+
+def test_destroy_stops_consoles(admin_session, tenant_a, monkeypatch):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-stop", seed={"o": 5}, status="active", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+    engine = MagicMock()
+    out = lab_lifecycle.destroy(admin_session, inst, engine)
+    admin_session.flush()
+    assert out.status == "reaped"
+    assert stopped == [inst.id]
+    engine.destroy.assert_called_once_with("dal-stop")
+    admin_session.rollback()
+
+
 def test_provision_records_error_on_failure(admin_session, tenant_a):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,

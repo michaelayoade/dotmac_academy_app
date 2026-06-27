@@ -11,7 +11,11 @@ Inc1 rule: these functions take ``db`` and ``flush`` only — they NEVER
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import shutil
+import socket
+import subprocess
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -26,9 +30,63 @@ from app.services.labengine.interface import LabEngine, LabHandle
 
 _ACTIVE_STATUSES = ("provisioning", "active")
 
+logger = logging.getLogger(__name__)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _free_port() -> int:
+    """Pick an ephemeral free localhost port (race-tolerant best effort)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _is_linux_kind(kind) -> bool:
+    """Linux lab nodes get a ttyd terminal; RouterOS (vr-*) use webfig instead."""
+    return not str(kind or "").startswith("vr")
+
+
+def start_console(cname: str, base_path: str) -> int | None:
+    """Launch a ttyd browser terminal for a Linux container; return its port.
+
+    ttyd serves an HTTP page + a WebSocket on ``127.0.0.1:<port>``. ``-b`` sets
+    the URL base path so ttyd's internal links (index, /token, /ws) resolve under
+    the auth-gated app proxy path; ``-W`` makes the terminal writable.
+
+    Tolerant by design: if ttyd is not installed or the launch fails we log and
+    return ``None`` so a missing console binary never blocks provisioning.
+    """
+    if shutil.which("ttyd") is None:
+        logger.warning("ttyd not installed; skipping console for %s", cname)
+        return None
+    port = _free_port()
+    argv = [
+        "ttyd", "-p", str(port), "-i", "127.0.0.1", "-b", base_path, "-W",
+        "docker", "exec", "-it", cname, "sh",
+    ]
+    try:
+        subprocess.Popen(  # noqa: S603 - fixed argv, no shell interpolation
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception as exc:  # never fail provision on a console launch error
+        logger.warning("ttyd launch failed for %s: %s", cname, exc)
+        return None
+    return port
+
+
+def stop_consoles(instance: LabInstance) -> None:
+    """Kill any ttyd processes serving this instance's console base paths."""
+    pattern = f"ttyd .* /labs/instances/{instance.id}/console/"
+    argv = ["pkill", "-f", pattern]
+    try:
+        subprocess.run(  # noqa: S603 - fixed argv, no shell interpolation
+            argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception as exc:
+        logger.warning("stop_consoles failed for %s: %s", instance.id, exc)
 
 
 def _set_topology_name(topology_text: str, name: str) -> str:
@@ -119,10 +177,17 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine,
             interpolate(template.topology, instance.seed), instance.instance_name
         )
         handle = engine.deploy(topology_text, instance.instance_name)
-        instance.consoles = {
-            node: {"kind": handle.kinds.get(node), "mgmt": handle.mgmt.get(node)}
-            for node in handle.nodes
-        }
+        consoles: dict = {}
+        for node in handle.nodes:
+            kind = handle.kinds.get(node)
+            spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
+            if _is_linux_kind(kind):
+                spec["port"] = start_console(
+                    handle.nodes[node],
+                    f"/labs/instances/{instance.id}/console/{node}",
+                )
+            consoles[node] = spec
+        instance.consoles = consoles
         instance.status = "active"
         now = _now()
         instance.started_at = now
@@ -200,6 +265,7 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine,
 
 def destroy(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstance:
     """Destroy the underlying lab and mark the instance ``reaped``."""
+    stop_consoles(instance)
     engine.destroy(instance.instance_name)
     instance.status = "reaped"
     db.flush()
