@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Admin Console — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Administration</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Admin console</h1>
+<p class="mt-2 text-ink-soft">A snapshot of your platform, with shortcuts to the things you manage.</p>
+
+<dl class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="card p-5">
+    <dt class="text-sm font-medium text-ink-soft">People</dt>
+    <dd class="mt-2 text-3xl tracking-tight tabular-nums">{{ stats.people }}</dd>
+  </div>
+  <div class="card p-5">
+    <dt class="text-sm font-medium text-ink-soft">Cohorts</dt>
+    <dd class="mt-2 text-3xl tracking-tight tabular-nums">{{ stats.cohorts }}</dd>
+  </div>
+  <div class="card p-5">
+    <dt class="text-sm font-medium text-ink-soft">Courses</dt>
+    <dd class="mt-2 text-3xl tracking-tight tabular-nums">{{ stats.courses }}</dd>
+  </div>
+  <div class="card p-5">
+    <dt class="text-sm font-medium text-ink-soft">Active labs</dt>
+    <dd class="mt-2 text-3xl tracking-tight tabular-nums">{{ stats.labs }}</dd>
+    <p class="mt-1 text-xs text-ink-soft">Labs running or provisioning</p>
+  </div>
+</dl>
+
+<h2 class="mt-10 text-xl tracking-tight">Manage</h2>
+<div class="card mt-4 p-2">
+  <ul class="divide-y divide-sand-200">
+    <li>
+      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/admin/users">
+        <span>
+          <span class="block font-medium text-ink">Users</span>
+          <span class="block text-sm text-ink-soft">People, roles and access</span>
+        </span>
+        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+    <li>
+      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/admin/settings">
+        <span>
+          <span class="block font-medium text-ink">Settings</span>
+          <span class="block text-sm text-ink-soft">Branding, email and lab limits</span>
+        </span>
+        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+  </ul>
+</div>
+{% endblock %}
