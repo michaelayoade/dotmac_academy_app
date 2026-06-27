@@ -1,0 +1,11 @@
+[Unit]
+Description=Dotmac Academy idle-lab reaper (one-shot)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs

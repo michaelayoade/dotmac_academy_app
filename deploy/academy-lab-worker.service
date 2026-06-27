@@ -1,0 +1,16 @@
+[Unit]
+Description=Dotmac Academy lab provisioning worker (cross-tenant)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli lab-worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

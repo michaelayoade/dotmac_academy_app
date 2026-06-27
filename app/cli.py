@@ -19,6 +19,7 @@ such as the migration/superuser URL, e.g.::
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 _DEFAULT_CHAPTERS_DIR = Path(
@@ -208,6 +209,33 @@ def _import_labs(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _lab_worker(args: argparse.Namespace) -> None:
+    from app.config import settings
+    from app.services import lab_jobs
+    from app.services.labengine.containerlab import ContainerlabEngine
+
+    engine = ContainerlabEngine(settings.lab_workdir)
+    print("lab-worker started; draining pending labs every 5s")
+    while True:
+        with lab_jobs.admin_session() as db:
+            n = lab_jobs.drain_once(db, engine)
+        if n:
+            print(f"provisioned {n} lab(s)")
+        time.sleep(5)
+
+
+def _reap_labs(args: argparse.Namespace) -> None:
+    from app.config import settings
+    from app.services import lab_jobs
+    from app.services.labengine.containerlab import ContainerlabEngine
+
+    engine = ContainerlabEngine(settings.lab_workdir)
+    with lab_jobs.admin_session() as db:
+        reaped = lab_jobs.reap_idle(db, engine)
+        provisioned = lab_jobs.drain_once(db, engine)
+    print(f"reaped {reaped} idle lab(s); provisioned {provisioned} pending lab(s)")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="app.cli",
@@ -300,6 +328,29 @@ def main() -> None:
         help="Directory of chapter-*.md files for $include resolution (default: Foundation chapters)",
     )
     il.set_defaults(func=_import_labs)
+
+    lw = sub.add_parser(
+        "lab-worker",
+        help="Run the cross-tenant provisioning worker loop (deploys pending labs).",
+        description=(
+            "Long-running background worker: every ~5s, opens an app_admin "
+            "(BYPASSRLS) session and deploys the oldest queued/provisioning lab "
+            "instances across all tenants, up to MAX_CONCURRENT_LABS. Intended to "
+            "run under systemd (academy-lab-worker.service, Restart=always)."
+        ),
+    )
+    lw.set_defaults(func=_lab_worker)
+
+    rl = sub.add_parser(
+        "reap-labs",
+        help="One-shot: destroy idle lab instances, then drain pending ones.",
+        description=(
+            "Reap active lab instances idle longer than LAB_IDLE_MINUTES (marking "
+            "them 'reaped'), then drain any pending instances. Intended to run on a "
+            "timer (academy-reap-labs.timer → academy-reap-labs.service oneshot)."
+        ),
+    )
+    rl.set_defaults(func=_reap_labs)
 
     args = p.parse_args()
     args.func(args)

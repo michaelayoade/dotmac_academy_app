@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Dotmac Academy idle-lab reaper every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Unit=academy-reap-labs.service
+
+[Install]
+WantedBy=timers.target
