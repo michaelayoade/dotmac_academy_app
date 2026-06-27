@@ -1,17 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Reports — Dotmac Academy{% endblock %}
 {% block content %}
-<h1 class="text-xl font-semibold">Reports</h1>
-<p class="mt-1 text-sm text-slate-600">Cohort progress matrices and student transcripts.</p>
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Instructor</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Reports</h1>
+<p class="mt-2 text-ink-soft">Cohort progress matrices and student transcripts.</p>
 
-<ul class="mt-3 divide-y border rounded">
-  {% for c in cohorts %}
-  <li class="flex items-center justify-between p-3">
-    <span>{{ c.name }} <span class="text-xs text-slate-500">({{ c.discipline }})</span></span>
-    <a class="text-sm text-blue-700 underline" href="/instructor/reports/cohort/{{ c.id }}">View matrix</a>
-  </li>
-  {% else %}
-  <li class="p-3 text-slate-500 italic">No cohorts yet.</li>
-  {% endfor %}
-</ul>
+<div class="card mt-10 overflow-hidden">
+  <ul class="divide-y divide-sand-200">
+    {% for c in cohorts %}
+    <li class="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-sand-100">
+      <span class="font-medium text-ink">{{ c.name }}
+        <span class="ml-1 text-sm font-normal text-ink-soft">{{ c.discipline }}</span>
+      </span>
+      <a class="group inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
+         href="/instructor/reports/cohort/{{ c.id }}">
+        View matrix
+        <span class="transition-transform group-hover:translate-x-0.5" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
+    {% else %}
+    <li class="p-8 text-center text-ink-soft">No cohorts yet.</li>
+    {% endfor %}
+  </ul>
+</div>
 {% endblock %}

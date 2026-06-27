@@ -1,53 +1,61 @@
 {% extends "base.html" %}
 {% block title %}{{ cohort.name }} — Progress{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between">
-  <h1 class="text-xl font-semibold">{{ cohort.name }} — Progress matrix</h1>
+<div class="flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Progress matrix</p>
+    <h1 class="mt-1.5 text-3xl tracking-tight">{{ cohort.name }}</h1>
+  </div>
   <div class="flex items-center gap-3">
-    <button class="text-sm text-blue-700 underline"
+    <button class="btn-ghost px-3.5 py-2 text-sm"
             hx-post="/instructor/reports/cohort/{{ cohort.id }}/email"
             hx-target="#email-flash" hx-swap="innerHTML">
       Email me this summary
     </button>
-    <a class="text-sm text-blue-700 underline" href="/instructor/reports/cohort/{{ cohort.id }}.csv">Download CSV</a>
+    <a class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
+       href="/instructor/reports/cohort/{{ cohort.id }}.csv">Download CSV</a>
   </div>
 </div>
-<div class="mt-1 text-right"><span id="email-flash"></span></div>
+<div class="mt-2 min-h-[1.25rem] text-right"><span id="email-flash"></span></div>
 
-<table class="mt-3 w-full border text-sm">
-  <thead class="bg-slate-100">
-    <tr>
-      <th class="text-left p-2">Student</th>
-      {% for a in activities %}
-      <th class="text-left p-2">{{ a.title }}<span class="block text-xs text-slate-500">{{ a.type }}</span></th>
-      {% endfor %}
-      <th class="text-left p-2">Completion</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in rows %}
-    <tr class="border-t">
-      <td class="p-2">
-        <a class="text-blue-700 underline" href="/instructor/reports/student/{{ row.person_id }}">{{ row.name }}</a>
-        <span class="block text-xs text-slate-500">{{ row.email }}</span>
-      </td>
-      {% for a in activities %}
-        {% set cell = row.cells[a.id] %}
-        <td class="p-2">
-          {% if cell %}
-            {{ "%.0f"|format(cell.fraction * 100) }}%
-            {% if cell.passed %}<span class="text-green-600">&check;</span>{% else %}<span class="text-red-600">&cross;</span>{% endif %}
-            <span class="block text-xs text-slate-400">{{ cell.score }}/{{ cell.max_score }}</span>
-          {% else %}
-            <span class="text-slate-400">—</span>
-          {% endif %}
+<div class="card mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-sand-300 bg-sand-200/60 text-left text-xs uppercase tracking-wider text-ink-soft">
+        <th class="p-3.5 font-semibold">Student</th>
+        {% for a in activities %}
+        <th class="p-3.5 font-semibold">{{ a.title }}<span class="mt-0.5 block text-[0.65rem] font-medium normal-case tracking-normal text-ink-soft/70">{{ a.type }}</span></th>
+        {% endfor %}
+        <th class="p-3.5 font-semibold">Completion</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-sand-200">
+      {% for row in rows %}
+      <tr class="transition-colors hover:bg-sand-100">
+        <td class="p-3.5">
+          <a class="font-medium text-brand-700 hover:text-brand-800" href="/instructor/reports/student/{{ row.person_id }}">{{ row.name }}</a>
+          <span class="mt-0.5 block text-xs text-ink-soft">{{ row.email }}</span>
         </td>
+        {% for a in activities %}
+          {% set cell = row.cells[a.id] %}
+          <td class="p-3.5">
+            {% if cell %}
+              <span class="inline-flex items-center gap-1.5 font-mono tabular-nums text-ink">
+                {{ "%.0f"|format(cell.fraction * 100) }}%
+                {% if cell.passed %}<span class="text-brand-600" aria-label="passed">&check;</span>{% else %}<span class="text-clay-600" aria-label="not passed">&cross;</span>{% endif %}
+              </span>
+              <span class="mt-0.5 block text-xs text-ink-soft/70">{{ cell.score }}/{{ cell.max_score }}</span>
+            {% else %}
+              <span class="text-ink-soft/50">—</span>
+            {% endif %}
+          </td>
+        {% endfor %}
+        <td class="p-3.5 font-mono font-medium tabular-nums text-ink">{{ "%.0f"|format(row.completion * 100) }}%</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ activities|length + 2 }}" class="p-8 text-center text-ink-soft">No enrolled students.</td></tr>
       {% endfor %}
-      <td class="p-2 font-medium">{{ "%.0f"|format(row.completion * 100) }}%</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="{{ activities|length + 2 }}" class="p-3 text-slate-500 italic">No enrolled students.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+    </tbody>
+  </table>
+</div>
 {% endblock %}

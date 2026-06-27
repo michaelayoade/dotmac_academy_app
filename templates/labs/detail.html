@@ -1,12 +1,15 @@
 {% extends "base.html" %}{% block content %}
-<h1 class="text-lg font-semibold">{{ template.title }}</h1>
-<article class="prose mt-4">{{ template.instructions_html | safe }}</article>
-<div id="lab-state" class="mt-6">
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Hands-on lab</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">{{ template.title }}</h1>
+<article class="prose mt-6">{{ template.instructions_html | safe }}</article>
+
+<div id="lab-state" class="mt-10 border-t border-sand-300 pt-8">
 {% if instance %}
   {% include "labs/_status.html" %}
 {% else %}
   <form hx-post="/labs/{{ activity.id }}/launch" hx-target="#lab-state" hx-swap="innerHTML">
-    <button class="bg-slate-900 text-white px-4 py-2" type="submit">Launch lab</button>
+    <button class="btn-primary" type="submit">Launch lab</button>
+    <p class="mt-3 text-sm text-ink-soft">Your environment spins up in its own sandbox — give it a few seconds.</p>
   </form>
 {% endif %}
 </div>

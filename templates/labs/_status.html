@@ -1,27 +1,48 @@
-<div class="border p-4">
-  <p class="font-semibold">Status: {{ instance.status }}</p>
+<div class="card p-6">
   {% if instance.status in ("queued", "provisioning") %}
-    <p class="text-slate-600 mt-1">Provisioning your lab&hellip;</p>
+    <div class="flex items-center gap-2.5">
+      <span class="h-2 w-2 animate-pulse rounded-full bg-clay-500"></span>
+      <span class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Status</span>
+      <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{{ instance.status }}</span>
+    </div>
+    <p class="mt-3 text-ink-soft">Provisioning your lab&hellip;</p>
     <div hx-get="/labs/instances/{{ instance.id }}/status"
          hx-trigger="load delay:2s"
          hx-target="#lab-state" hx-swap="innerHTML"></div>
   {% elif instance.status == "active" %}
-    <ul class="mt-2 space-y-1">
+    <div class="flex items-center gap-2.5">
+      <span class="h-2 w-2 rounded-full bg-brand-600"></span>
+      <span class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Status</span>
+      <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-brand-800">{{ instance.status }}</span>
+    </div>
+
+    <h2 class="mt-5 font-display text-lg text-ink">Consoles</h2>
+    <ul class="mt-2 space-y-1.5">
     {% for node in instance.consoles %}
-      <li><a class="underline" target="_blank"
-             href="/labs/instances/{{ instance.id }}/console/{{ node }}">Open console: {{ node }}</a></li>
+      <li>
+        <a class="group inline-flex items-center gap-2 font-medium text-brand-700 hover:text-brand-800" target="_blank"
+           href="/labs/instances/{{ instance.id }}/console/{{ node }}">
+          <span class="font-mono text-sm">{{ node }}</span>
+          <span class="text-xs text-ink-soft transition-transform group-hover:translate-x-0.5" aria-hidden="true">open &nearr;</span>
+        </a>
+      </li>
     {% endfor %}
     </ul>
-    <div class="mt-3 flex gap-2">
+
+    <div class="mt-6 flex flex-wrap gap-3 border-t border-sand-200 pt-5">
       <form hx-post="/labs/instances/{{ instance.id }}/check" hx-target="#lab-checks" hx-swap="innerHTML">
-        <button class="bg-slate-900 text-white px-4 py-2" type="submit">Check</button>
+        <button class="btn-primary" type="submit">Run checks</button>
       </form>
       <form hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML">
-        <button class="border px-4 py-2" type="submit">Reset</button>
+        <button class="btn-ghost" type="submit">Reset lab</button>
       </form>
     </div>
-    <div id="lab-checks" class="mt-4"></div>
+    <div id="lab-checks" class="mt-5"></div>
   {% elif instance.status == "error" %}
-    <p class="text-red-700 mt-1">Error: {{ instance.error }}</p>
+    <div class="flex items-center gap-2.5">
+      <span class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Status</span>
+      <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-clay-600">{{ instance.status }}</span>
+    </div>
+    <p class="mt-3 text-clay-600">{{ instance.error }}</p>
   {% endif %}
 </div>
