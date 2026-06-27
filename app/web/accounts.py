@@ -28,6 +28,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
 from app.services.accounts import create_user
+from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -35,17 +36,12 @@ router = APIRouter(prefix="/instructor", dependencies=[Depends(require_tenant)])
 
 
 def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
-    """Return the set of role slugs held by the person within the tenant."""
-    rows = db.scalars(
-        select(Role.slug)
-        .join(
-            PersonRole,
-            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
-        )
-        .where(PersonRole.tenant_id == tenant_id)
-        .where(PersonRole.person_id == person_id)
-    ).all()
-    return set(rows)
+    """Return the set of role slugs held by the person within the tenant.
+
+    Thin wrapper kept for backwards compatibility; delegates to the shared
+    `app.services.roles.role_slugs`.
+    """
+    return role_slugs(db, tenant_id, person_id)
 
 
 @router.get("/users", response_class=HTMLResponse)
