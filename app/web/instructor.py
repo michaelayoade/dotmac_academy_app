@@ -22,7 +22,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
-from app.services.assessment import override_score
+from app.services.assessment import override_score, pending_grading
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role
@@ -176,6 +176,38 @@ def results(request: Request, db: Session = Depends(get_db)):
     ).all()
     return templates.TemplateResponse(
         "instructor/results.html", {"request": request, "rows": rows}
+    )
+
+
+_CSRF_JS = (
+    "<script>document.body.addEventListener('htmx:configRequest',function(e){"
+    "var m=document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);"
+    "if(m){e.detail.headers['x-csrf-token']=m[1];}});</script>"
+)
+
+
+@router.get("/grading", response_class=HTMLResponse)
+def grading_queue(request: Request, db: Session = Depends(get_db)):
+    """Manual grading queue: submissions awaiting a score (finding #4)."""
+    tenant = require_tenant(request)
+    rows = pending_grading(db, tenant_id=tenant.id)
+    items = []
+    for sub, act, email in rows:
+        items.append(
+            f"<li class='pending-item' data-submission='{sub.id}'>"
+            f"<strong>{act.title}</strong> — {email} (attempt {sub.attempt_no})"
+            f"<form hx-post='/instructor/scores/{sub.id}/override' hx-swap='none' "
+            f"class='inline-grade'>"
+            f"<input name='score_value' type='number' step='0.1' value='0' required>"
+            f"<input name='max_score' type='number' step='0.1' value='10' required>"
+            f"<input name='reason' value='manual grade' required>"
+            f"<button>Save grade</button></form></li>"
+        )
+    body = "<ul>" + "".join(items) + "</ul>" if items else "<p>Nothing awaiting grading.</p>"
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset=utf-8><title>Grading queue</title>"
+        f"<script src='/static/htmx.min.js' defer></script></head>"
+        f"<body><h1>Grading queue</h1>{body}{_CSRF_JS}</body></html>"
     )
 
 

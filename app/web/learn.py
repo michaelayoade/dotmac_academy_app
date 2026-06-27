@@ -236,6 +236,12 @@ async def submit(
         activity=act,
         answers=answers,
     )
+    if score is None:
+        # Manual-grading activity: submission is queued for the instructor.
+        return HTMLResponse(
+            '<div class="submit-pending" role="status">Submitted — your instructor '
+            "will grade this and your result will appear once it's marked.</div>"
+        )
     # get_db handles the final db.commit(); calling it here would expire all ORM
     # objects (including `qs`) and clear the SET LOCAL tenant config, causing
     # ObjectDeletedError on the lazy-load triggered by by_id construction below.

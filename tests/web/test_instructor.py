@@ -103,6 +103,31 @@ def test_bulk_enroll_surfaces_unknown_emails(app_client, admin_session, tenant_a
     assert n == 1
 
 
+def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
+    """Finding #4: manual submissions awaiting a score appear in the queue."""
+    from app.models.assessment import Activity, Submission
+    from app.models.course import Course
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    learner = Person(tenant_id=tenant_a.id, email="learner@a.edu", first_name="Le", last_name="Ar")
+    course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking",
+                    source_ref="x", version=1)
+    admin_session.add_all([learner, course])
+    admin_session.flush()
+    act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test",
+                   title="Essay Q", pass_threshold=0.6, grading="manual")
+    admin_session.add(act)
+    admin_session.flush()
+    admin_session.add(Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id,
+                                 answers={}, attempt_no=1))  # no Score = pending
+    admin_session.commit()
+
+    r = app_client.get("/instructor/grading", headers=h)
+    assert r.status_code == 200
+    assert "Essay Q" in r.text
+    assert "learner@a.edu" in r.text
+
+
 def test_student_forbidden(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on any instructor-gated route."""
     roles = ensure_roles(admin_session, tenant_a.id)

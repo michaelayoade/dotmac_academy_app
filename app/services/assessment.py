@@ -18,7 +18,9 @@ def _questions_for(db: Session, tenant_id, bank_id) -> list[dict]:
              "explanation": q.explanation} for q in rows]
 
 
-def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict) -> Score:
+def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict) -> Score | None:
+    """Record a submission. Auto-grades and returns the Score, or returns None for
+    manual-grading activities (the submission then waits in the grading queue)."""
     qs = _questions_for(db, tenant_id, activity.bank_id) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
@@ -27,6 +29,8 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
                      answers=answers, attempt_no=int(prev) + 1)
     db.add(sub); db.flush()
+    if activity.grading == "manual":
+        return None  # awaits instructor grading (no auto Score)
     r = grade_submission(answers, qs, activity.pass_threshold)
     score = Score(tenant_id=tenant_id, submission_id=sub.id, score=r.score, max_score=r.max_score,
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
@@ -49,6 +53,26 @@ def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
         recompute_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
     except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
         logger.warning("completion recompute failed: %s", exc)
+
+
+def pending_grading(db: Session, *, tenant_id) -> list[tuple[Submission, Activity, str]]:
+    """Submissions with no Score yet — the manual grading queue.
+
+    Returns (submission, activity, person_email) ordered oldest-first.
+    """
+    rows = db.execute(
+        select(Submission, Activity, Person.email)
+        .join(Activity, (Activity.id == Submission.activity_id)
+              & (Activity.tenant_id == Submission.tenant_id))
+        .join(Person, (Person.id == Submission.person_id)
+              & (Person.tenant_id == Submission.tenant_id))
+        .outerjoin(Score, (Score.submission_id == Submission.id)
+                   & (Score.tenant_id == Submission.tenant_id))
+        .where(Submission.tenant_id == tenant_id)
+        .where(Score.id.is_(None))
+        .order_by(Submission.created_at)
+    ).all()
+    return [(s, a, email) for s, a, email in rows]
 
 
 def attempts_used(db: Session, *, tenant_id, person_id, activity_id) -> int:

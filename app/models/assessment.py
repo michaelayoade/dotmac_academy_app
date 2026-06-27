@@ -55,6 +55,8 @@ class Activity(Base, TimestampMixin):
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Assessment policy (Slice 4). Null = unlimited attempts.
     max_attempts: Mapped[int | None] = mapped_column(Integer)
+    # "auto" grades on submit; "manual" leaves submissions for instructor grading.
+    grading: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")
 
 
 class Submission(Base, TimestampMixin):
