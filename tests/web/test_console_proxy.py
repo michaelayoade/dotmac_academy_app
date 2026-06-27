@@ -62,7 +62,8 @@ def test_owner_passes_gate(app_client, admin_session, tenant_a, monkeypatch):
     h = _login(app_client, "owner@a.edu")
 
     async def _fake_proxy(request, target):
-        assert target == "http://127.0.0.1:9001/"
+        # ttyd is served under its -b base path, so the index proxies there (not root).
+        assert target == f"http://127.0.0.1:9001/labs/instances/{li.id}/console/r1/"
         return Response(content=b"console", status_code=200)
 
     monkeypatch.setattr("app.web.labs._proxy_http", _fake_proxy)
