@@ -40,10 +40,12 @@ implementation, committed incrementally on this branch.
 - ✅ **Slice 1** (#1, #2) — CourseOffering + enforcement everywhere + backfill.
 - ✅ **Slice 2** (#3, #5, part #10) — 2a offering window, 2b per-activity release/
   due, 2c completion records, 2d PDF certificates, 2e prerequisites.
-- 🟡 **Slice 3** (#6, #7) — done: 3a roster bulk-enroll/drop (service+route), 3b
-  lifecycle service (password reset + invitations). **Remaining:** forgot/reset/
-  accept-invite web pages + templates; email verification; account suspension;
-  learner-profile fields; self-service onboarding; transfer/waitlist UI.
+- ✅ **Slice 3** (#6, #7) — core done: 3a roster bulk-enroll/drop (service+route),
+  3b lifecycle service + public web pages (forgot/reset/accept-invite), 3c account
+  suspension + instructor invite/suspend routes. **Tail items (optional polish):**
+  email-verification flow (AccountToken `email_verify` kind already exists),
+  learner-profile guardian/employer fields (Person.prefs JSONB available),
+  self-service onboarding, transfer/waitlist UI.
 - ⬜ **Slice 4** (#4) — assessment policy (attempts, time limits, randomized pools,
   manual grading queue, rubrics, item analytics). Not started.
 - ⬜ **Slice 5** (#8, #9) — authoring (draft/publish + versioning + in-app editor)
