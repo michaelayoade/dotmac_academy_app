@@ -35,6 +35,24 @@ implementation, committed incrementally on this branch.
    in-app editor; analytics events, at-risk learners, cohort trends, instructor
    dashboards, scheduled reporting.
 
+## Progress log
+
+- ✅ **Slice 1** (#1, #2) — CourseOffering + enforcement everywhere + backfill.
+- ✅ **Slice 2** (#3, #5, part #10) — 2a offering window, 2b per-activity release/
+  due, 2c completion records, 2d PDF certificates, 2e prerequisites.
+- 🟡 **Slice 3** (#6, #7) — done: 3a roster bulk-enroll/drop (service+route), 3b
+  lifecycle service (password reset + invitations). **Remaining:** forgot/reset/
+  accept-invite web pages + templates; email verification; account suspension;
+  learner-profile fields; self-service onboarding; transfer/waitlist UI.
+- ⬜ **Slice 4** (#4) — assessment policy (attempts, time limits, randomized pools,
+  manual grading queue, rubrics, item analytics). Not started.
+- ⬜ **Slice 5** (#8, #9) — authoring (draft/publish + versioning + in-app editor)
+  and analytics (events, at-risk, cohort trends, dashboards). Not started.
+
+Migrations through `0014`. Test suite green except 7 pre-existing baseline
+failures (platform_admin_token config + email-CLI db url) that fail on pristine
+HEAD and are unrelated to this branch.
+
 ## Conventions (from the codebase)
 
 - Models: `Base, TimestampMixin`, `uuid_pk()`, composite `(tenant_id, id)` unique
