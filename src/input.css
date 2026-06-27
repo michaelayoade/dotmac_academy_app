@@ -1,10 +1,20 @@
+/* Self-hosted fonts — no external CDN dependency (works on blocked/low-connectivity networks). */
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:400;font-display:swap;src:url('/static/fonts/fraunces-400.woff2') format('woff2');}
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:500;font-display:swap;src:url('/static/fonts/fraunces-500.woff2') format('woff2');}
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:560;font-display:swap;src:url('/static/fonts/fraunces-560.woff2') format('woff2');}
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:600;font-display:swap;src:url('/static/fonts/fraunces-600.woff2') format('woff2');}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:400;font-display:swap;src:url('/static/fonts/manrope-400.woff2') format('woff2');}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:500;font-display:swap;src:url('/static/fonts/manrope-500.woff2') format('woff2');}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:600;font-display:swap;src:url('/static/fonts/manrope-600.woff2') format('woff2');}
+@font-face{font-family:'Manrope';font-style:normal;font-weight:700;font-display:swap;src:url('/static/fonts/manrope-700.woff2') format('woff2');}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* Dotmac Academy — warm technical-editorial base layer.
    Compiled by Tailwind v3 to static/app.css (npm run build:css).
-   Fonts (Fraunces / Manrope) are loaded via <link> in base.html.
+   Fonts (Fraunces / Manrope) are self-hosted via @font-face above (static/fonts/).
 
    Brand colors are defined in tailwind.config.js with an <alpha-value>
    placeholder so utility opacity modifiers (e.g. bg-brand-900/35) compile.

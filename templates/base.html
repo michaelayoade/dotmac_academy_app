@@ -5,13 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ branding_name | default("Dotmac Academy") }}{% endblock %}</title>
 
-  <!-- Brand type: Fraunces (display) + Manrope (UI/body) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,560;9..144,600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-  <!-- Compiled Tailwind v3 build + custom base layer (npm run build:css) -->
-  <link rel="stylesheet" href="/static/app.css">
+  <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
+  <link rel="stylesheet" href="/static/app.css?v=2">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
