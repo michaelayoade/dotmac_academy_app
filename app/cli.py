@@ -83,6 +83,37 @@ def _import_foundation(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _import_manual(args: argparse.Namespace) -> None:
+    from app.db import SessionLocal
+    from app.models.tenant import Tenant
+    from app.services.content_import import import_manual, sync_figures
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        course = import_manual(
+            db,
+            tenant_id=tenant.id,
+            slug=args.slug,
+            title=args.title,
+            discipline=args.discipline,
+            source_ref=args.source_ref or f"{args.slug}@0.1.0",
+            chapters_dir=args.chapters_dir,
+            figures_dir=args.figures_dir,
+        )
+        db.commit()
+        static_figures = Path(__file__).resolve().parent.parent / "static" / "figures"
+        copied = sync_figures(args.figures_dir, static_figures)
+        print(
+            f"course '{course.slug}' ({course.id}) v{course.version} imported; "
+            f"{copied} figure(s) synced to static/figures/"
+        )
+    finally:
+        db.close()
+
+
 def _load_banks(args: argparse.Namespace) -> None:
     from app.db import SessionLocal
     from app.models.assessment import Activity
@@ -224,9 +255,13 @@ def _email_digest(args: argparse.Namespace) -> None:
     from app.services import lab_jobs
     from app.services.email import render_cohort_html, send_email
     from app.services.reports import cohort_matrix
+    from app.services.settings_store import effective
 
     sent = 0
     with lab_jobs.admin_session() as db:
+        if not effective(db).email_digest_enabled:
+            print("email-digest: disabled via platform settings; skipping")
+            return
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
             cohorts = db.scalars(
@@ -331,6 +366,30 @@ def main() -> None:
         help="Directory containing produced figure PNG files (default: figures/final)",
     )
     imp.set_defaults(func=_import_foundation)
+
+    im = sub.add_parser(
+        "import-manual",
+        help="Import any manual's chapters as a course (generic over Foundation/Fiber/etc.).",
+        description=(
+            "Parse chapter-*.md from --chapters-dir and upsert them as a Course "
+            "(identified by --slug) plus its Chapters for the tenant. Idempotent. "
+            "Use this for any manual, e.g. fiber-engineering."
+        ),
+    )
+    im.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    im.add_argument("--slug", required=True, help="Course slug, e.g. fiber-engineering")
+    im.add_argument("--title", required=True, help="Course title, e.g. 'Fiber Engineering'")
+    im.add_argument("--discipline", default="networking", help="Discipline tag (default: networking)")
+    im.add_argument("--source-ref", default=None, help="Provenance string (default: <slug>@0.1.0)")
+    im.add_argument(
+        "--chapters-dir", type=Path, required=True,
+        help="Directory containing chapter-*.md files",
+    )
+    im.add_argument(
+        "--figures-dir", type=Path, default=_DEFAULT_FIGURES_DIR,
+        help="Directory containing produced figure PNG files",
+    )
+    im.set_defaults(func=_import_manual)
 
     lb = sub.add_parser(
         "load-banks",

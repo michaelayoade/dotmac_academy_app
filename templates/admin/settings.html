@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">Platform settings</h1>
+
+<form hx-post="/admin/settings" hx-swap="none" class="space-y-6">
+  <section class="space-y-3">
+    <h2 class="font-semibold">Branding</h2>
+    <label class="block">
+      <span class="text-sm text-slate-600">Branding name</span>
+      <input type="text" name="branding_name" value="{{ cfg.branding_name }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+  </section>
+
+  <section class="space-y-3">
+    <h2 class="font-semibold">SMTP / email</h2>
+    <label class="block">
+      <span class="text-sm text-slate-600">SMTP host</span>
+      <input type="text" name="smtp_host" value="{{ cfg.smtp_host }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="block">
+      <span class="text-sm text-slate-600">SMTP port</span>
+      <input type="number" name="smtp_port" value="{{ cfg.smtp_port }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="block">
+      <span class="text-sm text-slate-600">SMTP user</span>
+      <input type="text" name="smtp_user" value="{{ cfg.smtp_user }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="block">
+      <span class="text-sm text-slate-600">SMTP password</span>
+      <input type="password" name="smtp_password" value=""
+             placeholder="leave blank to keep unchanged"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="block">
+      <span class="text-sm text-slate-600">From address</span>
+      <input type="text" name="smtp_from" value="{{ cfg.smtp_from }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="smtp_starttls" {% if cfg.smtp_starttls %}checked{% endif %}>
+      <span class="text-sm text-slate-600">Use STARTTLS</span>
+    </label>
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="email_auto_on_pass" {% if cfg.email_auto_on_pass %}checked{% endif %}>
+      <span class="text-sm text-slate-600">Email students on first pass</span>
+    </label>
+    <label class="flex items-center gap-2">
+      <input type="checkbox" name="email_digest_enabled" {% if cfg.email_digest_enabled %}checked{% endif %}>
+      <span class="text-sm text-slate-600">Weekly instructor digest enabled</span>
+    </label>
+  </section>
+
+  <section class="space-y-3">
+    <h2 class="font-semibold">Lab limits</h2>
+    <label class="block">
+      <span class="text-sm text-slate-600">Max concurrent labs</span>
+      <input type="number" name="max_concurrent_labs" value="{{ cfg.max_concurrent_labs }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+    <label class="block">
+      <span class="text-sm text-slate-600">Lab idle minutes</span>
+      <input type="number" name="lab_idle_minutes" value="{{ cfg.lab_idle_minutes }}"
+             class="mt-1 w-full rounded border px-2 py-1">
+    </label>
+  </section>
+
+  <button type="submit" class="rounded bg-slate-900 px-4 py-2 text-white">Save settings</button>
+</form>
+
+<form hx-post="/admin/settings/test-email" hx-target="#test-email-result" hx-swap="innerHTML"
+      class="mt-6">
+  <button type="submit" class="rounded border px-4 py-2">Send test email</button>
+  <span id="test-email-result" class="ml-3"></span>
+</form>
+{% endblock %}

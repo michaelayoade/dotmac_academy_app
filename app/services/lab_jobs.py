@@ -99,7 +99,9 @@ def reap_idle(db: Session, engine: LabEngine) -> int:
     cutoff and calls :func:`app.services.lab_lifecycle.destroy` (which marks the
     row ``reaped``), committing per instance. Returns the number reaped.
     """
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.lab_idle_minutes)
+    from app.services.settings_store import effective
+
+    cutoff = datetime.now(UTC) - timedelta(minutes=effective(db).lab_idle_minutes)
     idle = db.scalars(
         select(LabInstance)
         .where(LabInstance.status == "active")

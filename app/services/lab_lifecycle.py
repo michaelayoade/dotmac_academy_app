@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabTemplate
 from app.services.checks.engine import run_checks
@@ -154,7 +153,9 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity,
     )
     n = int(prev or 0) + 1
     seed = generate_seed(template.seed_spec, attempt_id=_attempt_seed_id(person_id, activity.id, n))
-    at_capacity = active_count(db, tenant_id) >= settings.max_concurrent_labs
+    from app.services.settings_store import effective
+
+    at_capacity = active_count(db, tenant_id) >= effective(db).max_concurrent_labs
     inst = LabInstance(
         tenant_id=tenant_id,
         activity_id=activity.id,

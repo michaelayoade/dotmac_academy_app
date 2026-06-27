@@ -30,14 +30,29 @@ from app.models.assessment import Score, Submission
 logger = logging.getLogger(__name__)
 
 
-def send_email(to: str, subject: str, html_body: str, text_body: str | None = None) -> bool:
+def send_email(
+    to: str,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+    db: Session | None = None,
+) -> bool:
     """Send an HTML email (with optional plain-text alternative).
 
-    Returns ``True`` only if the message was handed to the SMTP server. Returns
-    ``False`` (and logs) when SMTP is unconfigured or on ANY exception — it never
-    raises, so callers can treat email as best-effort.
+    SMTP config is read from the platform settings store (DB-over-env) when a
+    ``db`` session is supplied; otherwise the env/config defaults in
+    :data:`app.config.settings` are used. Returns ``True`` only if the message
+    was handed to the SMTP server. Returns ``False`` (and logs) when SMTP is
+    unconfigured or on ANY exception — it never raises, so callers can treat
+    email as best-effort.
     """
-    if not settings.smtp_host:
+    if db is not None:
+        from app.services.settings_store import effective
+
+        cfg = effective(db)
+    else:
+        cfg = settings
+    if not cfg.smtp_host:
         logger.info("SMTP not configured (SMTP_HOST empty); skipping email to %s: %s", to, subject)
         return False
     if not to:
@@ -45,17 +60,17 @@ def send_email(to: str, subject: str, html_body: str, text_body: str | None = No
         return False
     try:
         msg = EmailMessage()
-        msg["From"] = settings.smtp_from
+        msg["From"] = cfg.smtp_from
         msg["To"] = to
         msg["Subject"] = subject
         msg.set_content(text_body or "This message requires an HTML-capable email client.")
         msg.add_alternative(html_body, subtype="html")
 
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
-            if settings.smtp_starttls:
+        with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as smtp:
+            if cfg.smtp_starttls:
                 smtp.starttls()
-            if settings.smtp_user:
-                smtp.login(settings.smtp_user, settings.smtp_password)
+            if cfg.smtp_user:
+                smtp.login(cfg.smtp_user, cfg.smtp_password)
             smtp.send_message(msg)
         logger.info("sent email to %s: %s", to, subject)
         return True
@@ -76,6 +91,11 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
         if not getattr(score, "passed", False):
             return False
         if person is None or not getattr(person, "email", None):
+            return False
+        # Respect the platform "email on first pass" toggle (DB-over-env).
+        from app.services.settings_store import effective
+
+        if not effective(db).email_auto_on_pass:
             return False
 
         prior_passes = db.scalar(
