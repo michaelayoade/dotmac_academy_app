@@ -1,16 +1,35 @@
 {% extends "base.html" %}{% block content %}
-<h1 class="text-xl font-semibold">Welcome, {{ person.first_name }}</h1>
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Your portal</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Welcome, {{ person.first_name }}</h1>
+<p class="mt-2 text-ink-soft">Pick up where you left off, or start a new chapter below.</p>
+
 {% if courses %}
+<div class="mt-10 space-y-6">
 {% for c in courses %}
-<section class="mt-6">
-  <h2 class="font-medium">{{ c.course.title }}</h2>
-  <ul class="mt-2 space-y-1">
+<section class="card p-6">
+  <h2 class="text-xl">{{ c.course.title }}</h2>
+  <ul class="mt-4 divide-y divide-sand-200">
   {% for ch in c.chapters %}
-    <li><a class="text-blue-700 underline" href="/courses/{{ c.course.slug }}/chapters/{{ ch.number }}">{{ ch.number }}. {{ ch.title }}</a></li>
+    <li>
+      <a class="group flex items-baseline gap-3 py-2.5 transition-colors hover:text-brand-700"
+         href="/courses/{{ c.course.slug }}/chapters/{{ ch.number }}">
+        <span class="font-mono text-xs text-ink-soft tabular-nums">{{ "%02d"|format(ch.number) }}</span>
+        <span class="font-medium text-ink group-hover:text-brand-700">{{ ch.title }}</span>
+        <span class="ml-auto text-ink-soft opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true">&rarr;</span>
+      </a>
+    </li>
   {% endfor %}
   </ul>
 </section>
 {% endfor %}
-<p class="mt-6"><a class="underline" href="/progress">View progress</a></p>
-{% else %}<p>No courses loaded yet.</p>{% endif %}
+</div>
+
+<p class="mt-8">
+  <a class="btn-ghost" href="/progress">View your progress</a>
+</p>
+{% else %}
+<div class="card mt-10 p-8 text-center">
+  <p class="text-ink-soft">No courses loaded yet. Check back soon — your instructor is setting things up.</p>
+</div>
+{% endif %}
 {% endblock %}

@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dotmac Academy — warm technical-editorial base layer.
+   Compiled by Tailwind v3 to static/app.css (npm run build:css).
+   Fonts (Fraunces / Manrope) are loaded via <link> in base.html.
+
+   Brand colors are defined in tailwind.config.js with an <alpha-value>
+   placeholder so utility opacity modifiers (e.g. bg-brand-900/35) compile.
+   That placeholder makes theme() unsafe in raw CSS properties below, so the
+   handful of base-layer rules use literal oklch values (kept in sync). */
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    @apply bg-sand-100 text-ink font-sans;
+    font-feature-settings: "ss01", "cv01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display text-ink;
+    font-optical-sizing: auto;
+    letter-spacing: -0.012em;
+  }
+  h1 { font-weight: 560; letter-spacing: -0.02em; }
+  h2 { font-weight: 540; }
+
+  a { @apply text-brand-700; }
+
+  /* Refined, brand-tinted focus ring (keyboard users only). */
+  :focus-visible {
+    outline: 2px solid oklch(0.52 0.12 161);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  *:focus:not(:focus-visible) { outline: none; }
+
+  /* Form base — sand fields, emerald focus. */
+  input, select, textarea {
+    @apply bg-sand-50 text-ink;
+    font-family: inherit;
+    border: 1px solid oklch(0.905 0.019 117);
+    border-radius: 0.6rem;
+  }
+  input::placeholder, textarea::placeholder { color: oklch(0.46 0.022 162); opacity: 0.7; }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: oklch(0.60 0.13 160);
+    box-shadow: 0 0 0 3px color-mix(in oklch, oklch(0.60 0.13 160) 22%, transparent);
+  }
+
+  ::selection { background: color-mix(in oklch, oklch(0.60 0.13 160) 28%, transparent); }
+}
+
+@layer components {
+  /* Buttons — the portal's primary action face. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5
+           font-sans text-sm font-semibold transition-colors duration-150;
+  }
+  .btn-primary { @apply btn bg-brand-700 text-sand-50 shadow-card hover:bg-brand-800; }
+  .btn-ghost   { @apply btn border border-sand-300 bg-sand-50 text-ink hover:border-brand-400 hover:text-brand-700; }
+
+  /* Surface card. */
+  .card { @apply rounded-2xl border border-sand-300 bg-sand-50 shadow-card; }
+
+  /* Long-form chapter content (chapter.html uses .prose). */
+  .prose { @apply text-ink; line-height: 1.72; max-width: 68ch; }
+  .prose > * + * { margin-top: 1.05em; }
+  .prose h1, .prose h2, .prose h3 { margin-top: 1.6em; margin-bottom: 0.4em; line-height: 1.2; }
+  .prose h2 { font-size: 1.6rem; }
+  .prose h3 { font-size: 1.25rem; }
+  .prose p, .prose li { font-size: 1.02rem; }
+  .prose ul { list-style: disc; padding-left: 1.4em; }
+  .prose ol { list-style: decimal; padding-left: 1.4em; }
+  .prose a { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  .prose code { @apply font-mono bg-sand-200; font-size: 0.88em; padding: 0.12em 0.36em; border-radius: 0.35rem; }
+  .prose pre {
+    @apply bg-brand-900 text-sand-100 font-mono;
+    padding: 1rem 1.15rem; border-radius: 0.75rem; overflow-x: auto; font-size: 0.86rem; line-height: 1.55;
+  }
+  .prose pre code { background: transparent; padding: 0; color: inherit; }
+  .prose img { border-radius: 0.75rem; border: 1px solid oklch(0.905 0.019 117); }
+  .prose table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  .prose th, .prose td { border: 1px solid oklch(0.905 0.019 117); padding: 0.5rem 0.7rem; text-align: left; }
+  .prose blockquote {
+    border-left: 3px solid oklch(0.70 0.12 159);
+    padding-left: 1rem; color: oklch(0.46 0.022 162); font-style: italic;
+  }
+}

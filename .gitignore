@@ -27,6 +27,9 @@ poetry.lock
 .vscode/
 *.swp
 
+# Node / Tailwind build (the compiled static/app.css IS committed)
+node_modules/
+
 # OS
 .DS_Store
 

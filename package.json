@@ -1,0 +1,19 @@
+{
+  "name": "dotmac_academy_app",
+  "version": "1.0.0",
+  "description": "Multi-tenant FastAPI starter. Tenant isolation enforced at three layers:",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -i src/input.css -o static/app.css --minify"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "tailwindcss": "^3.4.19"
+  }
+}
