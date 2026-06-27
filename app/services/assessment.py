@@ -31,6 +31,7 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     score = Score(tenant_id=tenant_id, submission_id=sub.id, score=r.score, max_score=r.max_score,
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
     db.add(score); db.flush()
+    _recompute_completion(db, tenant_id, person_id, activity.course_id)
     # Auto-on-pass notification — best effort, must never break grading.
     try:
         from app.services.email import notify_score_if_first_pass
@@ -39,6 +40,15 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
+
+
+def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
+    """Update the learner's course completion after a score write (best effort)."""
+    try:
+        from app.services.completion import recompute_completion
+        recompute_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+        logger.warning("completion recompute failed: %s", exc)
 
 
 def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUID, Score]:
@@ -73,4 +83,6 @@ def override_score(db: Session, *, tenant_id, submission_id, score_value, max_sc
         per_item=[], source="override", override_reason=reason,
     )
     db.add(score); db.flush()
+    if activity is not None:
+        _recompute_completion(db, tenant_id, sub.person_id, activity.course_id)
     return score
