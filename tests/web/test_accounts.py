@@ -1,4 +1,4 @@
-"""Tests for the account-creation web flow (/instructor/users)."""
+"""Tests for the account-creation web flow (/admin/users)."""
 
 from __future__ import annotations
 
@@ -41,13 +41,13 @@ def _login(app_client, email, password="password1"):
 def test_student_forbidden_on_users_page(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "stud@a.edu", "student")
     h, _ = _login(app_client, "stud@a.edu")
-    assert app_client.get("/instructor/users", headers=h).status_code == 403
+    assert app_client.get("/admin/users", headers=h).status_code == 403
 
 
 def test_instructor_can_list_users(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "inst@a.edu", "instructor")
     h, _ = _login(app_client, "inst@a.edu")
-    r = app_client.get("/instructor/users", headers=h)
+    r = app_client.get("/admin/users", headers=h)
     assert r.status_code == 200
     assert "inst@a.edu" in r.text
 
@@ -57,7 +57,7 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     h, csrf = _login(app_client, "inst2@a.edu")
 
     r = app_client.post(
-        "/instructor/users",
+        "/admin/users",
         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
         data={
             "first_name": "New",
@@ -69,7 +69,7 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
         follow_redirects=False,
     )
     assert r.status_code == 200
-    assert r.headers.get("HX-Redirect") == "/instructor/users"
+    assert r.headers.get("HX-Redirect") == "/admin/users"
 
     person = admin_session.query(Person).filter(
         Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu"
@@ -92,7 +92,7 @@ def test_instructor_cannot_create_admin(app_client, admin_session, tenant_a):
     h, csrf = _login(app_client, "inst3@a.edu")
 
     r = app_client.post(
-        "/instructor/users",
+        "/admin/users",
         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
         data={
             "first_name": "Bad",
@@ -114,7 +114,7 @@ def test_admin_can_create_admin(app_client, admin_session, tenant_a):
     h, csrf = _login(app_client, "admin@a.edu")
 
     r = app_client.post(
-        "/instructor/users",
+        "/admin/users",
         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
         data={
             "first_name": "Extra",
@@ -142,7 +142,7 @@ def test_created_student_can_login_and_reach_learner_page(app_client, admin_sess
     _seed_user(admin_session, tenant_a, "inst4@a.edu", "instructor")
     h, csrf = _login(app_client, "inst4@a.edu")
     app_client.post(
-        "/instructor/users",
+        "/admin/users",
         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
         data={
             "first_name": "Login",

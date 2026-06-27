@@ -1,13 +1,14 @@
 # app/web/accounts.py
 """Account-creation portal routes — create login-capable accounts.
 
-Lives under the /instructor prefix but is a SEPARATE router from
-app/web/instructor.py: those routes are gated by require_web_role("instructor")
-(exact match), which would lock out an admin who does not also hold the
-instructor role. These routes instead accept instructor OR admin.
+User management lives in the Admin area (/admin/users) but this is a SEPARATE
+router from app/web/settings.py: it is gated inline (instructor OR admin), NOT
+by require_web_role("admin"), so an instructor can still view the list and
+provision student accounts. Creating an instructor/admin account remains
+admin-only (privilege-escalation guard below).
 
 Gating rules:
-  * GET/POST /instructor/users — reachable by instructor OR admin (else 403).
+  * GET/POST /admin/users — reachable by instructor OR admin (else 403).
   * POST creating a "student" — any of the above.
   * POST creating an "instructor" or "admin" — requires the actor to be admin.
 
@@ -32,7 +33,7 @@ from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
-router = APIRouter(prefix="/instructor", dependencies=[Depends(require_tenant)])
+router = APIRouter(prefix="/admin/users", dependencies=[Depends(require_tenant)])
 
 
 def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
@@ -44,7 +45,7 @@ def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
     return role_slugs(db, tenant_id, person_id)
 
 
-@router.get("/users", response_class=HTMLResponse)
+@router.get("", response_class=HTMLResponse)
 def users_list(
     request: Request,
     person: Person = Depends(require_web_user),
@@ -71,12 +72,12 @@ def users_list(
         .order_by(Person.email)
     ).all()
     return templates.TemplateResponse(
-        "instructor/users.html",
+        "admin/users.html",
         {"request": request, "users": rows, "is_admin": is_admin},
     )
 
 
-@router.post("/users")
+@router.post("")
 def users_create(
     request: Request,
     first_name: str = Form(...),
@@ -115,6 +116,6 @@ def users_create(
     hx = request.headers.get("HX-Request")
     if hx:
         resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/users"
+        resp.headers["HX-Redirect"] = "/admin/users"
         return resp
-    return RedirectResponse("/instructor/users", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse("/admin/users", status_code=status.HTTP_303_SEE_OTHER)

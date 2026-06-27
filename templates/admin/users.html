@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Users — Dotmac Academy{% endblock %}
+{% block title %}Users — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Instructor</p>
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Admin</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">Users</h1>
 <p class="mt-2 text-ink-soft">Everyone with portal access, and a form to provision new accounts.</p>
 
@@ -23,7 +23,7 @@
   <p class="mt-1.5 text-sm text-ink-soft">The new user can sign in immediately with the password you set.</p>
   <!-- htmx form so the global CSRF injector (base.html) applies the x-csrf-token header. -->
   <form class="mt-5 grid max-w-xl grid-cols-2 gap-4"
-        hx-post="/instructor/users"
+        hx-post="/admin/users"
         hx-target="body"
         hx-push-url="true">
     <div>
