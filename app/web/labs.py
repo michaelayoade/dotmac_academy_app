@@ -317,7 +317,10 @@ async def console(
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
-    return await _proxy_http(request, target)
+    # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
+    # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
+    # land on the correct index for each.
+    return await _proxy_http(request, _subpath_target(target, instance_id, node, ""))
 
 
 def _subpath_target(target: str, instance_id: UUID, node: str, subpath: str) -> str:
