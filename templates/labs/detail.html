@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block content %}
+<h1 class="text-lg font-semibold">{{ template.title }}</h1>
+<article class="prose mt-4">{{ template.instructions_html | safe }}</article>
+<div id="lab-state" class="mt-6">
+{% if instance %}
+  {% include "labs/_status.html" %}
+{% else %}
+  <form hx-post="/labs/{{ activity.id }}/launch" hx-target="#lab-state" hx-swap="innerHTML">
+    <button class="bg-slate-900 text-white px-4 py-2" type="submit">Launch lab</button>
+  </form>
+{% endif %}
+</div>
+{% endblock %}

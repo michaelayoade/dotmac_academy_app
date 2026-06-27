@@ -30,6 +30,22 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def handle_for(instance: LabInstance) -> LabHandle:
+    """Reconstruct a :class:`LabHandle` from a live instance's recorded consoles.
+
+    ``provision`` persists ``consoles[node] = {"kind", "mgmt"}``; container names
+    follow containerlab's ``clab-<instance>-<node>`` convention, so we can rebuild
+    the handle without re-inspecting the engine (used by the grade/check path).
+    """
+    consoles = instance.consoles or {}
+    return LabHandle(
+        instance_name=instance.instance_name,
+        nodes={node: f"clab-{instance.instance_name}-{node}" for node in consoles},
+        mgmt={node: c.get("mgmt") for node, c in consoles.items()},
+        kinds={node: c.get("kind") for node, c in consoles.items()},
+    )
+
+
 def active_count(db: Session, tenant_id) -> int:
     """Count instances currently consuming capacity (provisioning|active)."""
     return int(

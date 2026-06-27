@@ -1,0 +1,27 @@
+<div class="border p-4">
+  <p class="font-semibold">Status: {{ instance.status }}</p>
+  {% if instance.status in ("queued", "provisioning") %}
+    <p class="text-slate-600 mt-1">Provisioning your lab&hellip;</p>
+    <div hx-get="/labs/instances/{{ instance.id }}/status"
+         hx-trigger="load delay:2s"
+         hx-target="#lab-state" hx-swap="innerHTML"></div>
+  {% elif instance.status == "active" %}
+    <ul class="mt-2 space-y-1">
+    {% for node in instance.consoles %}
+      <li><a class="underline" target="_blank"
+             href="/labs/instances/{{ instance.id }}/console/{{ node }}">Open console: {{ node }}</a></li>
+    {% endfor %}
+    </ul>
+    <div class="mt-3 flex gap-2">
+      <form hx-post="/labs/instances/{{ instance.id }}/check" hx-target="#lab-checks" hx-swap="innerHTML">
+        <button class="bg-slate-900 text-white px-4 py-2" type="submit">Check</button>
+      </form>
+      <form hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML">
+        <button class="border px-4 py-2" type="submit">Reset</button>
+      </form>
+    </div>
+    <div id="lab-checks" class="mt-4"></div>
+  {% elif instance.status == "error" %}
+    <p class="text-red-700 mt-1">Error: {{ instance.error }}</p>
+  {% endif %}
+</div>

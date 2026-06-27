@@ -17,15 +17,20 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import select
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.lab import LabInstance
+from app.config import settings
+from app.models.assessment import Activity
+from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
+from app.services import lab_lifecycle
+from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.web_auth import require_web_user
+from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
@@ -127,6 +132,159 @@ async def _proxy_http(request: Request, target: str) -> Response:
         status_code=upstream.status_code,
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Student lab portal (Task 9): launch / status / check / reset.
+# All routes are tenant-filtered + ownership-checked; mutations are htmx forms
+# that rely on the global CSRF injector. NO mid-handler commit (get_db owns it).
+# ---------------------------------------------------------------------------
+
+
+def _lab_activity(db: Session, tenant: Tenant, activity_id: UUID) -> Activity:
+    """Load a tenant-scoped lab Activity or 404."""
+    act = db.scalars(
+        select(Activity)
+        .where(Activity.id == activity_id)
+        .where(Activity.tenant_id == tenant.id)
+        .where(Activity.type == "lab")
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
+    return act
+
+
+def _lab_template(db: Session, tenant: Tenant, activity_id: UUID) -> LabTemplate:
+    """Load the LabTemplate for a tenant-scoped activity or 404."""
+    tpl = db.scalars(
+        select(LabTemplate)
+        .where(LabTemplate.activity_id == activity_id)
+        .where(LabTemplate.tenant_id == tenant.id)
+    ).first()
+    if tpl is None:
+        raise HTTPException(status_code=404)
+    return tpl
+
+
+def _current_instance(
+    db: Session, tenant: Tenant, person: Person, activity_id: UUID
+) -> LabInstance | None:
+    """Latest non-reaped instance for this person+activity, if any."""
+    return db.scalars(
+        select(LabInstance)
+        .where(LabInstance.tenant_id == tenant.id)
+        .where(LabInstance.activity_id == activity_id)
+        .where(LabInstance.person_id == person.id)
+        .where(LabInstance.status != "reaped")
+        .order_by(desc(LabInstance.created_at))
+    ).first()
+
+
+def _owned_instance(
+    db: Session, tenant: Tenant, person: Person, instance_id: UUID
+) -> LabInstance:
+    """Load a tenant-scoped instance and assert ownership (404/403)."""
+    inst = db.scalars(
+        select(LabInstance)
+        .where(LabInstance.id == instance_id)
+        .where(LabInstance.tenant_id == tenant.id)
+    ).first()
+    if inst is None:
+        raise HTTPException(status_code=404)
+    if inst.person_id != person.id:
+        raise HTTPException(status_code=403)
+    return inst
+
+
+def _engine() -> ContainerlabEngine:
+    return ContainerlabEngine(settings.lab_workdir)
+
+
+@router.get("/labs/{activity_id}", response_class=HTMLResponse)
+def lab_detail(
+    activity_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Lab page: instructions + Launch (if none/reaped) or status/console/Check."""
+    tenant = require_tenant(request)
+    act = _lab_activity(db, tenant, activity_id)
+    tpl = _lab_template(db, tenant, activity_id)
+    instance = _current_instance(db, tenant, person, activity_id)
+    return templates.TemplateResponse(
+        "labs/detail.html",
+        {"request": request, "activity": act, "template": tpl, "instance": instance},
+    )
+
+
+@router.post("/labs/{activity_id}/launch", response_class=HTMLResponse)
+def lab_launch(
+    activity_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Request a new lab instance (queued/provisioning) → status partial."""
+    tenant = require_tenant(request)
+    act = _lab_activity(db, tenant, activity_id)
+    tpl = _lab_template(db, tenant, activity_id)
+    instance = lab_lifecycle.request_lab(
+        db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl
+    )
+    return templates.TemplateResponse(
+        "labs/_status.html", {"request": request, "instance": instance}
+    )
+
+
+@router.get("/labs/instances/{instance_id}/status", response_class=HTMLResponse)
+def lab_status(
+    instance_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """htmx polling target — current instance status + console links when active."""
+    tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    return templates.TemplateResponse(
+        "labs/_status.html", {"request": request, "instance": instance}
+    )
+
+
+@router.post("/labs/instances/{instance_id}/check", response_class=HTMLResponse)
+def lab_check(
+    instance_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Grade the live instance against the template checks → results partial."""
+    tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    tpl = _lab_template(db, tenant, instance.activity_id)
+    handle = lab_lifecycle.handle_for(instance)
+    score = lab_lifecycle.grade(db, instance, _engine(), tpl, handle)
+    return templates.TemplateResponse(
+        "labs/_checks.html", {"request": request, "score": score}
+    )
+
+
+@router.post("/labs/instances/{instance_id}/reset", response_class=HTMLResponse)
+def lab_reset(
+    instance_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Tear down + redeploy the instance topology → status partial."""
+    tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    tpl = _lab_template(db, tenant, instance.activity_id)
+    lab_lifecycle.reset(db, instance, _engine(), tpl)
+    return templates.TemplateResponse(
+        "labs/_status.html", {"request": request, "instance": instance}
     )
 
 
