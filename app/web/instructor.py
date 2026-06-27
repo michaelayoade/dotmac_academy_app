@@ -24,6 +24,7 @@ from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
+from app.services.dashboards import cohort_overview
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role
@@ -209,6 +210,27 @@ def grading_queue(request: Request, db: Session = Depends(get_db)):
         f"<!doctype html><html><head><meta charset=utf-8><title>Grading queue</title>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
         f"<body><h1>Grading queue</h1>{body}{_CSRF_JS}</body></html>"
+    )
+
+
+@router.get("/dashboard/cohort/{cohort_id}", response_class=HTMLResponse)
+def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(get_db)):
+    """Cohort progress + at-risk learners (finding #9)."""
+    tenant = require_tenant(request)
+    ov = cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    rows = "".join(
+        f"<tr class='{'at-risk' if r['at_risk'] else ''}'>"
+        f"<td>{r['name']}</td><td>{r['email']}</td>"
+        f"<td>{round(100 * r['completion_pct'])}%</td>"
+        f"<td>{'⚠ at risk' if r['at_risk'] else 'ok'}</td></tr>"
+        for r in ov["rows"]
+    )
+    table = (f"<table><thead><tr><th>Name</th><th>Email</th><th>Completion</th>"
+             f"<th>Status</th></tr></thead><tbody>{rows}</tbody></table>"
+             if ov["rows"] else "<p>No learners enrolled.</p>")
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset=utf-8><title>Cohort dashboard</title></head>"
+        f"<body><h1>{ov['cohort'].name} — progress</h1>{table}</body></html>"
     )
 
 
