@@ -33,6 +33,7 @@ from app.services.exceptions import (
     DomainError,
     NotFoundError,
 )
+from app.web.accounts import router as web_accounts_router
 from app.web.auth import router as web_auth_router
 from app.web.instructor import router as web_instructor_router
 from app.web.lab_admin import router as web_lab_admin_router
@@ -114,6 +115,7 @@ app.include_router(persons_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
 app.include_router(web_instructor_router)
+app.include_router(web_accounts_router)
 app.include_router(web_lab_admin_router)
 app.include_router(web_labs_router)
 app.include_router(web_labs_ws_router)
