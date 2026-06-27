@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = 60
     trust_inbound_request_id: bool = False
 
+    # Lab orchestration (Increment 2).
+    max_concurrent_labs: int = 20
+    lab_workdir: str = "/home/dotmac/labs"
+    lab_idle_minutes: int = 60
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"prod", "production"}
