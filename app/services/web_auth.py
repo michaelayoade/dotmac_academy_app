@@ -104,7 +104,14 @@ def require_web_user(
 
 
 def require_web_role(role_slug: str):
-    """Return a dependency that ensures the current person holds role_slug."""
+    """Return a dependency that ensures the current person holds role_slug.
+
+    ``admin`` is a superset role: a person holding ``admin`` satisfies ANY role
+    requirement (so an admin can reach instructor-gated areas like Cohorts and
+    the Lab monitor without also holding the instructor role). This matches the
+    Teaching area being shown to admins by the nav (``areas_for_roles``).
+    """
+    accepted = {role_slug, "admin"}
 
     def _dep(
         request: Request,
@@ -120,7 +127,7 @@ def require_web_role(role_slug: str):
             )
             .where(PersonRole.tenant_id == tenant.id)
             .where(PersonRole.person_id == person.id)
-            .where(Role.slug == role_slug)
+            .where(Role.slug.in_(accepted))
         ).first()
         if has is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
