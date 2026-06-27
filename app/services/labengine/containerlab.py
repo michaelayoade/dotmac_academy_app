@@ -31,7 +31,14 @@ class ContainerlabEngine(LabEngine):
             raise RuntimeError(f"deploy failed: {r.stderr}")
         nodes, mgmt, kinds = {}, {}, {}
         prefix = f"clab-{instance_name}-"  # containerlab names: clab-<labname>-<node>
-        for item in json.loads(r.stdout):
+        data = json.loads(r.stdout)
+        # `containerlab deploy --format json` → {"<labname>": [ {node...} ]}.
+        # Be tolerant of a bare list too (older format / unit-test fixtures).
+        if isinstance(data, dict):
+            items = data.get(instance_name) or next(iter(data.values()), [])
+        else:
+            items = data
+        for item in items:
             cname = item["name"]
             # strip the known prefix so dashed node names (e.g. client-a) survive
             logical = cname[len(prefix):] if cname.startswith(prefix) else cname.split("-")[-1]
