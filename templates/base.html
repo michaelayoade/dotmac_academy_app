@@ -11,48 +11,33 @@
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
 
-  <header class="sticky top-0 z-30 border-b border-sand-300/80 bg-sand-50/85 backdrop-blur supports-[backdrop-filter]:bg-sand-50/70">
-    <div class="mx-auto flex max-w-5xl items-center justify-between gap-6 px-6 py-3.5">
-      <a href="/" class="group flex items-center gap-2.5" aria-label="{{ branding_name | default('Dotmac Academy') }} home">
-        <!-- Abstract emerald fiber/node emblem -->
-        <svg viewBox="0 0 32 32" class="h-8 w-8 shrink-0" fill="none" aria-hidden="true">
-          <g class="stroke-brand-600" stroke-width="1.7" stroke-linecap="round">
-            <path d="M16 16 L6 6.5"/>
-            <path d="M16 16 L26 9"/>
-            <path d="M16 16 L24.5 25"/>
-            <path d="M16 16 L7.5 25.5"/>
-          </g>
-          <circle cx="6" cy="6.5" r="2.3" class="fill-brand-500"/>
-          <circle cx="26" cy="9" r="2.3" class="fill-clay-500"/>
-          <circle cx="24.5" cy="25" r="2.3" class="fill-brand-500"/>
-          <circle cx="7.5" cy="25.5" r="2.3" class="fill-brand-500"/>
-          <circle cx="16" cy="16" r="4.4" class="fill-brand-700"/>
-          <circle cx="16" cy="16" r="1.7" class="fill-sand-50"/>
-        </svg>
-        <span class="font-display text-lg font-[560] tracking-tight text-ink">
-          {{ branding_name | default("Dotmac Academy") }}
-        </span>
-      </a>
+{% if current_person %}
+  {% include "shell/_topbar.html" %}
 
-      <nav class="flex items-center gap-1 text-sm font-medium">
-        {% if request.cookies.get('session') %}
-        <a href="/" class="rounded-lg px-3 py-1.5 text-ink-soft transition-colors hover:bg-sand-200 hover:text-brand-700">Dashboard</a>
-        <a href="/progress" class="rounded-lg px-3 py-1.5 text-ink-soft transition-colors hover:bg-sand-200 hover:text-brand-700">Progress</a>
-        <form hx-post="/logout" hx-swap="none" class="ml-1 inline">
-          <button type="submit" class="rounded-lg border border-sand-300 px-3 py-1.5 text-ink-soft transition-colors hover:border-brand-400 hover:text-brand-700">Log out</button>
-        </form>
-        {% endif %}
-      </nav>
-    </div>
-  </header>
+  <div class="mx-auto flex max-w-6xl flex-col md:flex-row">
+    {% include "shell/_sidebar.html" %}
 
+    <main class="min-w-0 flex-1 px-4 py-8 sm:px-6 sm:py-10">
+      <div class="mx-auto max-w-3xl">
+{% else %}
+  {# Unauthenticated fallback — base is not normally hit unauthenticated (login is
+     standalone), but render a bare <main> so nothing breaks if it ever is. #}
   <main class="mx-auto max-w-3xl px-6 py-10 sm:py-12">
-    {% block content %}{% endblock %}
-  </main>
+{% endif %}
 
-  <footer class="mx-auto max-w-3xl px-6 pb-10 pt-4">
+        {% block content %}{% endblock %}
+
+{% if current_person %}
+      </div>
+    </main>
+  </div>
+
+  <footer class="mx-auto max-w-6xl px-4 pb-10 pt-2 sm:px-6">
     <p class="text-xs text-ink-soft/80">{{ branding_name | default("Dotmac Academy") }} — learn the network, hands on.</p>
   </footer>
+{% else %}
+  </main>
+{% endif %}
 
   <script>
     document.body.addEventListener('htmx:configRequest', function (evt) {

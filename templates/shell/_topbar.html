@@ -1,0 +1,38 @@
+{# Top bar — brand, role-aware area tabs, user menu. #}
+<header class="sticky top-0 z-30 border-b border-sand-300/80 bg-sand-50/85 backdrop-blur supports-[backdrop-filter]:bg-sand-50/70">
+  <div class="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
+    <a href="{{ nav_areas[0].home if nav_areas else '/' }}" class="group flex items-center gap-2.5" aria-label="{{ branding_name | default('Dotmac Academy') }} home">
+      <!-- Abstract emerald fiber/node emblem -->
+      <svg viewBox="0 0 32 32" class="h-8 w-8 shrink-0" fill="none" aria-hidden="true">
+        <g class="stroke-brand-600" stroke-width="1.7" stroke-linecap="round">
+          <path d="M16 16 L6 6.5"/>
+          <path d="M16 16 L26 9"/>
+          <path d="M16 16 L24.5 25"/>
+          <path d="M16 16 L7.5 25.5"/>
+        </g>
+        <circle cx="6" cy="6.5" r="2.3" class="fill-brand-500"/>
+        <circle cx="26" cy="9" r="2.3" class="fill-clay-500"/>
+        <circle cx="24.5" cy="25" r="2.3" class="fill-brand-500"/>
+        <circle cx="7.5" cy="25.5" r="2.3" class="fill-brand-500"/>
+        <circle cx="16" cy="16" r="4.4" class="fill-brand-700"/>
+        <circle cx="16" cy="16" r="1.7" class="fill-sand-50"/>
+      </svg>
+      <span class="hidden font-display text-lg font-[560] tracking-tight text-ink sm:inline">
+        {{ branding_name | default("Dotmac Academy") }}
+      </span>
+    </a>
+
+    {# Role-aware area tabs. #}
+    <nav class="ml-2 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Areas">
+      {% for area in nav_areas %}
+      <a href="{{ area.home }}" class="shell-tab{% if area.key == current_area %} shell-tab-active{% endif %}">
+        {{ area.label }}
+      </a>
+      {% endfor %}
+    </nav>
+
+    <div class="ml-auto shrink-0">
+      {% include "shell/_usermenu.html" %}
+    </div>
+  </div>
+</header>

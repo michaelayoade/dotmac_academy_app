@@ -78,6 +78,32 @@
   /* Surface card. */
   .card { @apply rounded-2xl border border-sand-300 bg-sand-50 shadow-card; }
 
+  /* App shell — role-aware area tabs + contextual sidebar + user menu. */
+  .shell-tab {
+    @apply whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft
+           transition-colors hover:bg-sand-200 hover:text-brand-700;
+  }
+  .shell-tab-active {
+    @apply bg-brand-700 text-sand-50 hover:bg-brand-800 hover:text-sand-50;
+  }
+
+  .shell-navlink {
+    @apply flex items-center whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium
+           text-ink-soft transition-colors hover:bg-sand-200 hover:text-brand-700;
+  }
+  .shell-navlink-active {
+    @apply bg-brand-50 font-semibold text-brand-800;
+  }
+
+  /* User menu disclosure (details/summary) — strip the native marker. */
+  .shell-usermenu > summary {
+    cursor: pointer;
+    list-style: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .shell-usermenu > summary::-webkit-details-marker { display: none; }
+  .shell-usermenu > summary::marker { content: ""; }
+
   /* Native <details> disclosure (dashboard course sections) — no JS, keyboard-accessible. */
   .disclosure > summary {
     cursor: pointer;
