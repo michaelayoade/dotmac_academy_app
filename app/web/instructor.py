@@ -19,10 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.cohort import Cohort, Enrollment
+from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
 from app.services.assessment import override_score
+from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
 
@@ -59,36 +60,52 @@ def create_cohort(
     return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _split_emails(*fields: str) -> list[str]:
+    """Split one or more textarea/CSV email fields into a flat list."""
+    out: list[str] = []
+    for f in fields:
+        for chunk in (f or "").replace(",", "\n").replace(";", "\n").split():
+            out.append(chunk)
+    return out
+
+
 @router.post("/cohorts/{cohort_id}/enroll")
 def enroll_student(
     cohort_id: UUID,
     request: Request,
-    email: str = Form(...),
+    emails: str = Form(""),
+    email: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    """Bulk-enroll people by email; reports unknown emails instead of silently
+    dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``."""
     tenant = require_tenant(request)
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.id == cohort_id).where(Cohort.tenant_id == tenant.id)
-    ).first()
-    if cohort is None:
-        raise HTTPException(status_code=404)
-    person = db.scalars(
-        select(Person)
-        .where(Person.tenant_id == tenant.id)
-        .where(Person.email == email)
-    ).first()
-    if person is not None:
-        db.add(
-            Enrollment(
-                tenant_id=tenant.id,
-                cohort_id=cohort_id,
-                person_id=person.id,
-                role_in_cohort="student",
-                status="active",
-            )
-        )
-    hx = request.headers.get("HX-Request")
-    if hx:
+    # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
+    result = bulk_enroll(
+        db, tenant_id=tenant.id, cohort_id=cohort_id,
+        emails=_split_emails(emails, email),
+    )
+    enrolled = len(result["enrolled"]) + len(result["reactivated"])
+    summary = f"Enrolled {enrolled}."
+    if result["not_found"]:
+        summary += " Unknown (not enrolled): " + ", ".join(result["not_found"]) + "."
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(f'<div class="enroll-summary" role="status">{summary}</div>')
+    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/cohorts/{cohort_id}/roster/{person_id}/state")
+def change_roster_state(
+    cohort_id: UUID,
+    person_id: UUID,
+    request: Request,
+    state: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Drop / waitlist / reactivate a roster member (finding #6)."""
+    tenant = require_tenant(request)
+    set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+    if request.headers.get("HX-Request"):
         resp: Response = Response(status_code=200)
         resp.headers["HX-Redirect"] = "/instructor/cohorts"
         return resp

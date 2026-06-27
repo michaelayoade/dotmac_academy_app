@@ -77,6 +77,32 @@ def test_enroll_cross_tenant_404(app_client, admin_session, tenant_a, tenant_b):
     assert r.status_code == 404
 
 
+def test_bulk_enroll_surfaces_unknown_emails(app_client, admin_session, tenant_a):
+    """Finding #6: enrolling reports unknown emails instead of silently no-oping."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    # A real student + a cohort.
+    stu = Person(tenant_id=tenant_a.id, email="real@a.edu", first_name="Re", last_name="Al")
+    admin_session.add(stu)
+    coh = Cohort(tenant_id=tenant_a.id, name="Roster", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.commit()
+    admin_session.refresh(coh)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/enroll",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"emails": "real@a.edu, ghost@a.edu"},
+    )
+    assert r.status_code == 200
+    assert "Enrolled 1" in r.text
+    assert "ghost@a.edu" in r.text  # unknown email surfaced
+    from app.models.cohort import Enrollment
+    n = admin_session.query(Enrollment).filter(
+        Enrollment.cohort_id == coh.id, Enrollment.status == "active").count()
+    assert n == 1
+
+
 def test_student_forbidden(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on any instructor-gated route."""
     roles = ensure_roles(admin_session, tenant_a.id)
