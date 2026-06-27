@@ -46,8 +46,12 @@ implementation, committed incrementally on this branch.
   email-verification flow (AccountToken `email_verify` kind already exists),
   learner-profile guardian/employer fields (Person.prefs JSONB available),
   self-service onboarding, transfer/waitlist UI.
-- ⬜ **Slice 4** (#4) — assessment policy (attempts, time limits, randomized pools,
-  manual grading queue, rubrics, item analytics). Not started.
+- 🟡 **Slice 4** (#4) — done: 4a attempt limits (`activities.max_attempts`), 4b
+  manual grading queue (`activities.grading` + `pending_grading` + instructor
+  `/grading`), 4c item analytics (`analytics.item_analysis` + instructor
+  `/items/{id}`). **Remaining:** time limits (needs an attempt-session record),
+  randomized question pools (per-attempt selection), rubric criteria, feedback-
+  release rules.
 - ⬜ **Slice 5** (#8, #9) — authoring (draft/publish + versioning + in-app editor)
   and analytics (events, at-risk, cohort trends, dashboards). Not started.
 
