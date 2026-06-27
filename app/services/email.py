@@ -79,6 +79,18 @@ def send_email(
         return False
 
 
+def recipient_allows(person, kind: str) -> bool:
+    """Whether ``person`` opts in to a notification of the given ``kind``.
+
+    Reads the ``person.prefs`` JSONB dict. A missing key means opted IN — every
+    notification is on by default, and a user must explicitly toggle it off on
+    their Account → Notifications page. ``kind`` is e.g. ``"email_results"`` or
+    ``"email_digest"``. Tolerant of a None person/prefs.
+    """
+    prefs = getattr(person, "prefs", None) or {}
+    return bool(prefs.get(kind, True))
+
+
 def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
     """Email the student a congratulations IFF this is their FIRST passing score.
 
@@ -91,6 +103,9 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
         if not getattr(score, "passed", False):
             return False
         if person is None or not getattr(person, "email", None):
+            return False
+        # Respect the recipient's own opt-out (Account → Notifications).
+        if not recipient_allows(person, "email_results"):
             return False
         # Respect the platform "email on first pass" toggle (DB-over-env).
         from app.services.settings_store import effective

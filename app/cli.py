@@ -253,7 +253,7 @@ def _email_digest(args: argparse.Namespace) -> None:
     from app.models.person import Person
     from app.models.tenant import Tenant
     from app.services import lab_jobs
-    from app.services.email import render_cohort_html, send_email
+    from app.services.email import recipient_allows, render_cohort_html, send_email
     from app.services.reports import cohort_matrix
     from app.services.settings_store import effective
 
@@ -282,6 +282,8 @@ def _email_digest(args: argparse.Namespace) -> None:
                     .where(Enrollment.status == "active")
                 ).all()
                 for instructor in instructors:
+                    if not recipient_allows(instructor, "email_digest"):
+                        continue
                     if send_email(
                         instructor.email,
                         f"Weekly progress digest — {cohort.name}",

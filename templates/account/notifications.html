@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Notification settings — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Account</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Notification settings</h1>
+<p class="mt-2 text-ink-soft">Choose which emails you'd like to receive. These are on by default.</p>
+
+<form hx-post="/account/notifications" hx-target="#notifications-flash" hx-swap="innerHTML" class="mt-10 space-y-6">
+  <section class="card divide-y divide-sand-200">
+    <label for="email_results" class="flex cursor-pointer items-start gap-3 p-5">
+      <input id="email_results" type="checkbox" name="email_results" value="1"
+             {% if prefs.get("email_results", True) %}checked{% endif %}
+             class="mt-0.5 h-4 w-4 shrink-0 rounded">
+      <span>
+        <span class="block font-semibold text-ink">Result emails</span>
+        <span class="mt-0.5 block text-sm text-ink-soft">Get an email the first time you pass an activity or exam.</span>
+      </span>
+    </label>
+    <label for="email_digest" class="flex cursor-pointer items-start gap-3 p-5">
+      <input id="email_digest" type="checkbox" name="email_digest" value="1"
+             {% if prefs.get("email_digest", True) %}checked{% endif %}
+             class="mt-0.5 h-4 w-4 shrink-0 rounded">
+      <span>
+        <span class="block font-semibold text-ink">Weekly digest</span>
+        <span class="mt-0.5 block text-sm text-ink-soft">For instructors — a weekly progress summary for each cohort you teach.</span>
+      </span>
+    </label>
+  </section>
+
+  <div class="flex items-center gap-3">
+    <button type="submit" class="btn-primary">Save preferences</button>
+    <span id="notifications-flash"></span>
+  </div>
+</form>
+
+<p class="mt-6">
+  <a class="btn-ghost" href="/account">Back to profile</a>
+</p>
+{% endblock %}

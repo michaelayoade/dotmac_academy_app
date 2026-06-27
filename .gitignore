@@ -38,3 +38,6 @@ node_modules/
 
 # Figures synced from dotmac-academy at import time (derived assets)
 static/figures/
+
+# User-uploaded avatars (runtime data, not source)
+static/avatars/

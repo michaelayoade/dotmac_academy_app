@@ -5,7 +5,31 @@
 <h1 class="mt-1.5 text-3xl tracking-tight">Your profile</h1>
 <p class="mt-2 text-ink-soft">Update your name. Your email address is managed by your administrator.</p>
 
-<form hx-post="/account" hx-target="#account-flash" hx-swap="innerHTML" class="mt-10 space-y-6">
+<section class="card mt-10 p-6">
+  <h2 class="text-xl">Profile photo</h2>
+  <div class="mt-4 flex flex-wrap items-center gap-5">
+    {% if person.avatar_path %}
+    <img src="{{ person.avatar_path }}" alt="Your profile photo"
+         class="h-20 w-20 shrink-0 rounded-full object-cover ring-1 ring-sand-300">
+    {% else %}
+    <span aria-hidden="true"
+          class="grid h-20 w-20 shrink-0 place-items-center rounded-full bg-brand-100 text-2xl font-bold uppercase tracking-wide text-brand-800 ring-1 ring-brand-200">
+      {{ (person.first_name[:1] ~ person.last_name[:1]) | trim or person.email[:1] }}
+    </span>
+    {% endif %}
+    <form hx-post="/account/avatar" hx-encoding="multipart/form-data"
+          hx-target="#avatar-flash" hx-swap="innerHTML"
+          class="flex flex-wrap items-center gap-3">
+      <input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp" required
+             class="block max-w-full text-sm text-ink-soft file:mr-3 file:cursor-pointer file:rounded-lg file:border file:border-sand-300 file:bg-sand-50 file:px-3.5 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:border-brand-400 hover:file:text-brand-700">
+      <button type="submit" class="btn-primary">Upload</button>
+    </form>
+  </div>
+  <p class="mt-3 text-xs text-ink-soft">PNG, JPEG, GIF or WebP, up to 1 MB.</p>
+  <p id="avatar-flash" class="mt-2"></p>
+</section>
+
+<form hx-post="/account" hx-target="#account-flash" hx-swap="innerHTML" class="mt-6 space-y-6">
   <section class="card p-6">
     <div class="grid gap-4 sm:grid-cols-2">
       <div>
@@ -60,7 +84,8 @@
   </div>
 </section>
 
-<p class="mt-6">
+<div class="mt-6 flex flex-wrap gap-3">
   <a class="btn-ghost" href="/account/password">Change password</a>
-</p>
+  <a class="btn-ghost" href="/account/notifications">Notification settings</a>
+</div>
 {% endblock %}

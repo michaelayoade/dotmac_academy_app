@@ -11,7 +11,9 @@ RLS ``app.current_tenant`` GUC).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +28,24 @@ from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
+
+# Avatar uploads land under the static mount so they serve straight off disk.
+AVATAR_ROOT = Path("static/avatars")
+# Accepted image types → file extension. Anything else is rejected.
+_AVATAR_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
+MAX_AVATAR_BYTES = 1024 * 1024  # 1 MB
+
+
+def _flash(request: Request, ok: bool, message: str) -> HTMLResponse:
+    return templates.TemplateResponse(
+        "account/_flash.html",
+        {"request": request, "ok": ok, "message": message},
+    )
 
 
 def _cohort_names(db: Session, tenant_id, person_id) -> list[str]:
@@ -110,20 +130,93 @@ def password_change(
         .where(UserCredential.person_id == person.id)
     ).first()
 
-    def _flash(ok: bool, message: str):
-        return templates.TemplateResponse(
-            "account/_flash.html",
-            {"request": request, "ok": ok, "message": message},
-        )
-
     if cred is None or not verify_password(current_password, cred.password_hash):
-        return _flash(False, "Current password is incorrect.")
+        return _flash(request, False, "Current password is incorrect.")
     if new_password != confirm_password:
-        return _flash(False, "New passwords do not match.")
+        return _flash(request, False, "New passwords do not match.")
     if len(new_password) < 8:
-        return _flash(False, "New password must be at least 8 characters.")
+        return _flash(request, False, "New password must be at least 8 characters.")
 
     cred.password_hash = hash_password(new_password)
     db.flush()
     # No db.commit() here — get_db commits after the response is returned.
-    return _flash(True, "Password updated.")
+    return _flash(request, True, "Password updated.")
+
+
+@router.post("/account/avatar", response_class=HTMLResponse)
+def avatar_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Accept a small image and store it as the person's avatar.
+
+    Saved to ``static/avatars/<tenant_id>/<person_id>.<ext>`` (served off the
+    static mount). On success we set ``HX-Refresh`` so the topbar avatar and
+    profile preview both pick up the new image. CSRF is enforced by the
+    middleware via the htmx ``x-csrf-token`` header (the upload form posts with
+    ``hx-encoding="multipart/form-data"``).
+    """
+    tenant = require_tenant(request)
+    ext = _AVATAR_EXT.get((file.content_type or "").lower())
+    if ext is None:
+        return _flash(request, False, "Please upload a PNG, JPEG, GIF or WebP image.")
+
+    data = file.file.read(MAX_AVATAR_BYTES + 1)
+    if not data:
+        return _flash(request, False, "The uploaded file was empty.")
+    if len(data) > MAX_AVATAR_BYTES:
+        return _flash(request, False, "Image too large — please keep it under 1 MB.")
+
+    dest_dir = AVATAR_ROOT / str(tenant.id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Drop any prior avatar (possibly a different extension) so nothing is stale.
+    for old in dest_dir.glob(f"{person.id}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    (dest_dir / f"{person.id}.{ext}").write_bytes(data)
+
+    person.avatar_path = f"/static/avatars/{tenant.id}/{person.id}.{ext}"
+    db.flush()
+    # No db.commit() here — get_db commits after the response is returned.
+    resp = _flash(request, True, "Photo updated.")
+    resp.headers["HX-Refresh"] = "true"
+    return resp
+
+
+@router.get("/account/notifications", response_class=HTMLResponse)
+def notifications_form(
+    request: Request,
+    person: Person = Depends(require_web_user),
+):
+    return templates.TemplateResponse(
+        "account/notifications.html",
+        {"request": request, "person": person, "prefs": person.prefs or {}},
+    )
+
+
+@router.post("/account/notifications", response_class=HTMLResponse)
+def notifications_save(
+    request: Request,
+    email_results: str | None = Form(None),
+    email_digest: str | None = Form(None),
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Persist the per-user email opt-in toggles into ``Person.prefs``.
+
+    Unchecked checkboxes are absent from the form body, so ``None`` => opted out.
+    We reassign a NEW dict (not mutate in place) so SQLAlchemy detects the JSONB
+    change and writes it back.
+    """
+    person.prefs = {
+        **(person.prefs or {}),
+        "email_results": email_results is not None,
+        "email_digest": email_digest is not None,
+    }
+    db.flush()
+    # No db.commit() here — get_db commits after the response is returned.
+    return _flash(request, True, "Notification preferences saved.")
