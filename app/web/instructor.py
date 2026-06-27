@@ -22,6 +22,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
+from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
@@ -208,6 +209,30 @@ def grading_queue(request: Request, db: Session = Depends(get_db)):
         f"<!doctype html><html><head><meta charset=utf-8><title>Grading queue</title>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
         f"<body><h1>Grading queue</h1>{body}{_CSRF_JS}</body></html>"
+    )
+
+
+@router.get("/items/{activity_id}", response_class=HTMLResponse)
+def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(get_db)):
+    """Per-question difficulty (p-value) for an activity (finding #4/#9)."""
+    tenant = require_tenant(request)
+    act = db.scalars(
+        select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
+    items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
+    rows = "".join(
+        f"<tr><td>{i['id']}</td><td>{i['responses']}</td><td>{i['correct']}</td>"
+        f"<td>{i['p_value']:.2f}</td></tr>"
+        for i in items
+    )
+    table = (f"<table><thead><tr><th>Question</th><th>Responses</th><th>Correct</th>"
+             f"<th>p-value</th></tr></thead><tbody>{rows}</tbody></table>"
+             if items else "<p>No responses yet.</p>")
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset=utf-8><title>Item analysis</title></head>"
+        f"<body><h1>Item analysis — {act.title}</h1>{table}</body></html>"
     )
 
 

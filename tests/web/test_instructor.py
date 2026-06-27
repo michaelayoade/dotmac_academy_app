@@ -128,6 +128,36 @@ def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
     assert "learner@a.edu" in r.text
 
 
+def test_item_analytics_page(app_client, admin_session, tenant_a):
+    """Finding #4/#9: per-question difficulty page renders p-values."""
+    from app.models.assessment import Activity, Score, Submission
+    from app.models.course import Course
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    learner = Person(tenant_id=tenant_a.id, email="il@a.edu", first_name="Il", last_name="A")
+    course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking",
+                    source_ref="x", version=1)
+    admin_session.add_all([learner, course])
+    admin_session.flush()
+    act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test",
+                   title="Analytics Quiz", pass_threshold=0.6)
+    admin_session.add(act)
+    admin_session.flush()
+    sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id,
+                     answers={}, attempt_no=1)
+    admin_session.add(sub)
+    admin_session.flush()
+    admin_session.add(Score(tenant_id=tenant_a.id, submission_id=sub.id, score=10, max_score=10,
+                            fraction=1.0, passed=True, source="auto",
+                            per_item=[{"id": "q1", "correct": True}]))
+    admin_session.commit()
+
+    r = app_client.get(f"/instructor/items/{act.id}", headers=h)
+    assert r.status_code == 200
+    assert "Analytics Quiz" in r.text
+    assert "q1" in r.text
+
+
 def test_student_forbidden(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on any instructor-gated route."""
     roles = ensure_roles(admin_session, tenant_a.id)
