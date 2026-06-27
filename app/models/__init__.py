@@ -6,4 +6,5 @@ from app.models.completion import CourseCompletion  # noqa: F401
 from app.models.certificate import Certificate  # noqa: F401
 from app.models.pacing import OfferingActivity  # noqa: F401
 from app.models.prerequisite import CoursePrerequisite  # noqa: F401
+from app.models.account_token import AccountToken  # noqa: F401
 from app.models.lab import LabTemplate, LabInstance  # noqa: F401
