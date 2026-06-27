@@ -4,6 +4,10 @@ import subprocess
 
 from .interface import ExecResult, LabEngine, LabHandle
 
+# containerlab needs root (netns/bridges); the app/worker run unprivileged, so
+# invoke it via passwordless sudo. docker exec / ssh stay unprivileged.
+_CLAB = ("sudo", "-n", "containerlab")
+
 
 class ContainerlabEngine(LabEngine):
     def __init__(self, workdir: str):
@@ -19,16 +23,18 @@ class ContainerlabEngine(LabEngine):
         with open(path, "w") as f:
             f.write(topology_text)
         r = subprocess.run(
-            ["containerlab", "deploy", "-t", path, "--format", "json"],
+            [*_CLAB, "deploy", "-t", path, "--format", "json"],
             capture_output=True,
             text=True,
         )
         if r.returncode != 0:
             raise RuntimeError(f"deploy failed: {r.stderr}")
         nodes, mgmt, kinds = {}, {}, {}
+        prefix = f"clab-{instance_name}-"  # containerlab names: clab-<labname>-<node>
         for item in json.loads(r.stdout):
             cname = item["name"]
-            logical = cname.split("-")[-1]  # clab-<instance>-<node>
+            # strip the known prefix so dashed node names (e.g. client-a) survive
+            logical = cname[len(prefix):] if cname.startswith(prefix) else cname.split("-")[-1]
             nodes[logical] = cname
             mgmt[logical] = (item.get("ipv4_address") or "").split("/")[0]
             kinds[logical] = item.get("kind", "linux")
@@ -61,7 +67,7 @@ class ContainerlabEngine(LabEngine):
     def destroy(self, instance_name: str) -> None:
         path = self._topo_path(instance_name)
         subprocess.run(
-            ["containerlab", "destroy", "-t", path, "--cleanup"],
+            [*_CLAB, "destroy", "-t", path, "--cleanup"],
             capture_output=True,
             text=True,
         )
@@ -82,7 +88,7 @@ class ContainerlabEngine(LabEngine):
     def status(self, instance_name: str) -> str:
         path = self._topo_path(instance_name)
         r = subprocess.run(
-            ["containerlab", "inspect", "-t", path, "--format", "json"],
+            [*_CLAB, "inspect", "-t", path, "--format", "json"],
             capture_output=True,
             text=True,
         )
