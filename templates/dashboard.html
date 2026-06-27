@@ -4,11 +4,15 @@
 <p class="mt-2 text-ink-soft">Pick up where you left off, or start a new chapter below.</p>
 
 {% if courses %}
-<div class="mt-10 space-y-6">
+<div class="mt-10 space-y-4">
 {% for c in courses %}
-<section class="card p-6">
-  <h2 class="text-xl">{{ c.course.title }}</h2>
-  <ul class="mt-4 divide-y divide-sand-200">
+<details class="disclosure card overflow-hidden"{% if loop.first %} open{% endif %}>
+  <summary class="flex items-center gap-3 px-6 py-5">
+    <svg class="disclosure-chevron h-4 w-4 shrink-0 text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+    <h2 class="text-xl">{{ c.course.title }}</h2>
+    <span class="ml-auto inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{{ c.chapters | length }} chapter{{ '' if c.chapters | length == 1 else 's' }}</span>
+  </summary>
+  <ul class="divide-y divide-sand-200 border-t border-sand-200 px-6 pb-5 pt-1">
   {% for ch in c.chapters %}
     <li>
       <a class="group flex items-baseline gap-3 py-2.5 transition-colors hover:text-brand-700"
@@ -20,7 +24,7 @@
     </li>
   {% endfor %}
   </ul>
-</section>
+</details>
 {% endfor %}
 </div>
 

@@ -78,6 +78,17 @@
   /* Surface card. */
   .card { @apply rounded-2xl border border-sand-300 bg-sand-50 shadow-card; }
 
+  /* Native <details> disclosure (dashboard course sections) — no JS, keyboard-accessible. */
+  .disclosure > summary {
+    cursor: pointer;
+    list-style: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .disclosure > summary::-webkit-details-marker { display: none; }
+  .disclosure > summary::marker { content: ""; }
+  .disclosure-chevron { transition: transform 0.2s ease; }
+  .disclosure[open] > summary .disclosure-chevron { transform: rotate(90deg); }
+
   /* Long-form chapter content (chapter.html uses .prose). */
   .prose { @apply text-ink; line-height: 1.72; max-width: 68ch; }
   .prose > * + * { margin-top: 1.05em; }
