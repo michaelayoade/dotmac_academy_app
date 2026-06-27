@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 120
     rate_limit_window_seconds: int = 60
     trust_inbound_request_id: bool = False
+    # Optional platform-admin token gate for platform-level admin endpoints.
+    platform_admin_token: str = ""  # noqa: S105 - empty by default; set in prod if used.
 
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20
