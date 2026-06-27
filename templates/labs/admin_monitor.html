@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Lab Monitor — Dotmac Academy{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold">Active Labs</h1>
+
+<table class="mt-3 w-full border text-sm">
+  <thead class="bg-slate-100">
+    <tr>
+      <th class="text-left p-2">Person</th>
+      <th class="text-left p-2">Activity</th>
+      <th class="text-left p-2">Instance</th>
+      <th class="text-left p-2">Status</th>
+      <th class="text-left p-2">Last active</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for id, status, instance_name, activity_id, last_active_at, email in rows %}
+    <tr class="border-t">
+      <td class="p-2">{{ email }}</td>
+      <td class="p-2">{{ activity_id }}</td>
+      <td class="p-2 font-mono text-xs">{{ instance_name }}</td>
+      <td class="p-2">{{ status }}</td>
+      <td class="p-2">{{ last_active_at or "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="p-3 text-slate-500 italic">No active labs.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

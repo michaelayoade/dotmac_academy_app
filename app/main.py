@@ -24,6 +24,7 @@ from app.api.rbac import router as rbac_router
 from app.api.tenants import router as tenants_router
 from app.web.auth import router as web_auth_router
 from app.web.instructor import router as web_instructor_router
+from app.web.lab_admin import router as web_lab_admin_router
 from app.web.labs import router as web_labs_router
 from app.web.learn import router as web_learn_router
 from app.config import settings, validate_settings
@@ -112,5 +113,6 @@ app.include_router(persons_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
 app.include_router(web_instructor_router)
+app.include_router(web_lab_admin_router)
 app.include_router(web_labs_router)
 app.include_router(web_learn_router)
