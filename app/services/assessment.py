@@ -51,6 +51,16 @@ def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
         logger.warning("completion recompute failed: %s", exc)
 
 
+def attempts_used(db: Session, *, tenant_id, person_id, activity_id) -> int:
+    """Number of submissions this person has made for the activity."""
+    return int(db.scalar(
+        select(func.count()).select_from(Submission)
+        .where(Submission.tenant_id == tenant_id)
+        .where(Submission.activity_id == activity_id)
+        .where(Submission.person_id == person_id)
+    ) or 0)
+
+
 def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUID, Score]:
     rows = db.execute(
         select(Activity.id, Score)

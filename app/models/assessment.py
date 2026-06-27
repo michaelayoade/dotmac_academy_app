@@ -53,6 +53,8 @@ class Activity(Base, TimestampMixin):
     bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Assessment policy (Slice 4). Null = unlimited attempts.
+    max_attempts: Mapped[int | None] = mapped_column(Integer)
 
 
 class Submission(Base, TimestampMixin):

@@ -13,7 +13,7 @@ from app.models.assessment import Activity, Question, Score, Submission
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.person import Person
-from app.services.assessment import best_scores_for, submit_activity
+from app.services.assessment import attempts_used, best_scores_for, submit_activity
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
 from app.services.pacing import require_activity_readable, require_activity_submittable
@@ -218,6 +218,10 @@ async def submit(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     require_activity_submittable(db, tenant_id=tenant.id, person_id=person.id,
                                  course_id=act.course_id, activity_id=act.id)
+    if act.max_attempts is not None and attempts_used(
+        db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
+    ) >= act.max_attempts:
+        raise HTTPException(status_code=403, detail="No attempts remaining")
     form = await request.form()
     qs = db.scalars(
         select(Question)
