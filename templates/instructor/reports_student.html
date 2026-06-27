@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ person.first_name }} {{ person.last_name }} — Transcript{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold">{{ person.first_name }} {{ person.last_name }} — Transcript</h1>
+<p class="mt-1 text-sm text-slate-600">{{ person.email }}</p>
+
+<table class="mt-3 w-full border text-sm">
+  <thead class="bg-slate-100">
+    <tr>
+      <th class="text-left p-2">Activity</th>
+      <th class="text-left p-2">Type</th>
+      <th class="text-left p-2">Score</th>
+      <th class="text-left p-2">Result</th>
+      <th class="text-left p-2">Source</th>
+      <th class="text-left p-2">Graded</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="border-t">
+      <td class="p-2">{{ row.activity.title }}</td>
+      <td class="p-2">{{ row.activity.type }}</td>
+      <td class="p-2">{{ "%.0f"|format(row.fraction * 100) }}% <span class="text-xs text-slate-400">({{ row.score.score }}/{{ row.score.max_score }})</span></td>
+      <td class="p-2">{% if row.passed %}<span class="text-green-600">Pass</span>{% else %}<span class="text-red-600">Fail</span>{% endif %}</td>
+      <td class="p-2">{{ row.source }}</td>
+      <td class="p-2">{{ row.graded_at.strftime("%Y-%m-%d") if row.graded_at else "" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="p-3 text-slate-500 italic">No graded activities yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

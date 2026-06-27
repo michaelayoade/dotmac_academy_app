@@ -40,6 +40,7 @@ from app.web.lab_admin import router as web_lab_admin_router
 from app.web.labs import router as web_labs_router
 from app.web.labs import ws_router as web_labs_ws_router
 from app.web.learn import router as web_learn_router
+from app.web.reports import router as web_reports_router
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +121,4 @@ app.include_router(web_lab_admin_router)
 app.include_router(web_labs_router)
 app.include_router(web_labs_ws_router)
 app.include_router(web_learn_router)
+app.include_router(web_reports_router)

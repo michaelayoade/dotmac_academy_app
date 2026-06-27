@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Reports — Dotmac Academy{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold">Reports</h1>
+<p class="mt-1 text-sm text-slate-600">Cohort progress matrices and student transcripts.</p>
+
+<ul class="mt-3 divide-y border rounded">
+  {% for c in cohorts %}
+  <li class="flex items-center justify-between p-3">
+    <span>{{ c.name }} <span class="text-xs text-slate-500">({{ c.discipline }})</span></span>
+    <a class="text-sm text-blue-700 underline" href="/instructor/reports/cohort/{{ c.id }}">View matrix</a>
+  </li>
+  {% else %}
+  <li class="p-3 text-slate-500 italic">No cohorts yet.</li>
+  {% endfor %}
+</ul>
+{% endblock %}
