@@ -52,8 +52,11 @@ implementation, committed incrementally on this branch.
   `/items/{id}`). **Remaining:** time limits (needs an attempt-session record),
   randomized question pools (per-attempt selection), rubric criteria, feedback-
   release rules.
-- ⬜ **Slice 5** (#8, #9) — authoring (draft/publish + versioning + in-app editor)
-  and analytics (events, at-risk, cohort trends, dashboards). Not started.
+- 🟡 **Slice 5** (#8, #9) — done: 5a cohort dashboard + at-risk learners
+  (`dashboards.cohort_overview` + instructor `/dashboard/cohort/{id}`).
+  **Remaining:** #8 authoring (draft/publish states + content versioning + in-app
+  markdown editor) — a large sub-slice of its own; #9 engagement-event tracking,
+  cohort trends over time, scheduled reporting.
 
 Migrations through `0014`. Test suite green except 7 pre-existing baseline
 failures (platform_admin_token config + email-CLI db url) that fail on pristine
