@@ -154,16 +154,23 @@ def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
 
 
 def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
-    """The dashboard lists every course for the tenant, not just Foundation."""
+    """The Learn home lists every course the student is enrolled in (by discipline)."""
+    from app.models.cohort import Cohort, Enrollment
+
     p, h = _login(app_client, admin_session, tenant_a)
     for slug, title in (("foundation", "Foundation"), ("fiber-engineering", "Fiber Engineering")):
         c = Course(tenant_id=tenant_a.id, slug=slug, title=title,
-                   discipline="x", source_ref="x", version=1)
+                   discipline="networking", source_ref="x", version=1)
         admin_session.add(c)
         admin_session.flush()
         admin_session.add(Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1,
                                   title=f"{title} ch1", part="I", body_html="<p>x</p>",
                                   source_hash="h", order_index=1))
+    coh = Cohort(tenant_id=tenant_a.id, name="Abuja", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id,
+                                 role_in_cohort="student", status="active"))
     admin_session.commit()
     try:
         r = app_client.get("/", headers=h)

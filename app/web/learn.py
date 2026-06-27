@@ -5,12 +5,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.course import Course, Chapter
-from app.models.assessment import Activity, Question
+from app.models.assessment import Activity, Question, Score, Submission
+from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
 from app.services.web_auth import require_web_user
 from app.services.assessment import submit_activity, best_scores_for
@@ -29,25 +30,125 @@ def _courses(db: Session, tid: UUID) -> list[Course]:
     )
 
 
+def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
+    """Courses the person can study, resolved Enrollment -> Cohort -> discipline.
+
+    There is no direct cohort->course link; cohorts and courses share a
+    ``discipline`` string, so an active enrollment grants access to every course
+    in that discipline.
+    """
+    disciplines = db.scalars(
+        select(Cohort.discipline)
+        .join(
+            Enrollment,
+            (Enrollment.cohort_id == Cohort.id)
+            & (Enrollment.tenant_id == Cohort.tenant_id),
+        )
+        .where(Cohort.tenant_id == tid)
+        .where(Enrollment.person_id == person_id)
+    ).all()
+    if not disciplines:
+        return []
+    return list(
+        db.scalars(
+            select(Course)
+            .where(Course.tenant_id == tid)
+            .where(Course.discipline.in_(set(disciplines)))
+            .order_by(Course.title)
+        ).all()
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
-def dashboard(
+def home(
     request: Request,
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
+    """Student Learn Home — my courses (completion %), continue, recent results."""
     tenant = require_tenant(request)
-    courses = []
-    for course in _courses(db, tenant.id):
+    enrolled = _enrolled_courses(db, tenant.id, person.id)
+
+    # My courses: completion % = passed activities / total activities.
+    my_courses: list[dict] = []
+    best_by_course: dict = {}
+    for course in enrolled:
+        total = (
+            db.scalar(
+                select(func.count())
+                .select_from(Activity)
+                .where(Activity.tenant_id == tenant.id)
+                .where(Activity.course_id == course.id)
+            )
+            or 0
+        )
+        best = best_scores_for(
+            db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
+        )
+        best_by_course[course.id] = best
+        passed = sum(1 for s in best.values() if s.passed)
+        pct = round(100 * passed / total) if total else 0
+        my_courses.append(
+            {"course": course, "total": total, "passed": passed, "pct": pct}
+        )
+
+    # Continue: first incomplete chapter of the first enrolled course.
+    continue_to = None
+    for course in enrolled:
+        passed_acts = {
+            aid for aid, s in best_by_course.get(course.id, {}).items() if s.passed
+        }
         chapters = db.scalars(
             select(Chapter)
             .where(Chapter.tenant_id == tenant.id)
             .where(Chapter.course_id == course.id)
-            .order_by(Chapter.order_index)
+            .order_by(Chapter.number)
         ).all()
-        courses.append({"course": course, "chapters": chapters})
+        for ch in chapters:
+            act = db.scalars(
+                select(Activity)
+                .where(Activity.tenant_id == tenant.id)
+                .where(Activity.course_id == course.id)
+                .where(Activity.chapter_number == ch.number)
+            ).first()
+            if act is None or act.id not in passed_acts:
+                continue_to = {"course": course, "chapter": ch}
+                break
+        if continue_to is not None:
+            break
+
+    # Recent results: the person's latest few scores (title + pass/fail + %).
+    recent_rows = db.execute(
+        select(Score, Activity.title)
+        .join(
+            Submission,
+            (Submission.id == Score.submission_id)
+            & (Submission.tenant_id == Score.tenant_id),
+        )
+        .join(
+            Activity,
+            (Activity.id == Submission.activity_id)
+            & (Activity.tenant_id == Submission.tenant_id),
+        )
+        .where(Score.tenant_id == tenant.id)
+        .where(Submission.person_id == person.id)
+        .order_by(Score.created_at.desc())
+        .limit(6)
+    ).all()
+    recent = [
+        {"title": title, "passed": s.passed, "pct": round(100 * s.fraction)}
+        for s, title in recent_rows
+    ]
+
     return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "person": person, "courses": courses},
+        "learn/home.html",
+        {
+            "request": request,
+            "person": person,
+            "my_courses": my_courses,
+            "continue_to": continue_to,
+            "recent": recent,
+        },
     )
 
 
