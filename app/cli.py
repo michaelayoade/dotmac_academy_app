@@ -30,6 +30,9 @@ _DEFAULT_FIGURES_DIR = Path(
 _DEFAULT_BANKS_DIR = Path(
     "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/assessments/banks"
 )
+_DEFAULT_LABS_DIR = Path(
+    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/labs"
+)
 
 
 def _bootstrap(args: argparse.Namespace) -> None:
@@ -163,6 +166,48 @@ def _load_banks(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _import_labs(args: argparse.Namespace) -> None:
+    from app.db import SessionLocal
+    from app.models.course import Course
+    from app.models.tenant import Tenant
+    from app.services.lab_content import import_labs
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+
+        course = (
+            db.query(Course)
+            .filter(Course.tenant_id == tenant.id, Course.slug == "foundation")
+            .first()
+        )
+        if course is None:
+            raise SystemExit(
+                f"Foundation course not found for tenant '{args.tenant_slug}'. "
+                "Run import-foundation first."
+            )
+
+        labs_dir = Path(args.labs_dir)
+        if not labs_dir.is_dir():
+            raise SystemExit(f"Labs directory not found: {labs_dir}")
+
+        templates = import_labs(
+            db,
+            tenant_id=tenant.id,
+            course_id=course.id,
+            labs_dir=labs_dir,
+            chapters_dir=args.chapters_dir,
+        )
+        db.commit()
+        for t in templates:
+            print(f"lab '{t.slug}' -> activity {t.activity_id} v{t.version}")
+        print(f"Done — {len(templates)} lab(s) imported for tenant '{args.tenant_slug}'.")
+    finally:
+        db.close()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="app.cli",
@@ -229,6 +274,32 @@ def main() -> None:
         help="Directory containing *.yaml bank files (default: Foundation assessments/banks)",
     )
     lb.set_defaults(func=_load_banks)
+
+    il = sub.add_parser(
+        "import-labs",
+        help="Load labs-as-code (lab.yaml dirs) as Activity(type='lab')+LabTemplate.",
+        description=(
+            "For each <labs-dir>/*/lab.yaml: parse the lab definition (topology + "
+            "instructions + checks + seed_spec + limits), render instructions to HTML "
+            "(resolving $include directives against --chapters-dir), and upsert a paired "
+            "Activity(type='lab') and LabTemplate keyed by (course, slug). Idempotent — "
+            "unchanged labs are skipped and version only bumps when content changes."
+        ),
+    )
+    il.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    il.add_argument(
+        "--labs-dir",
+        type=Path,
+        default=_DEFAULT_LABS_DIR,
+        help="Directory containing <slug>/lab.yaml lab dirs (default: Foundation labs)",
+    )
+    il.add_argument(
+        "--chapters-dir",
+        type=Path,
+        default=_DEFAULT_CHAPTERS_DIR,
+        help="Directory of chapter-*.md files for $include resolution (default: Foundation chapters)",
+    )
+    il.set_defaults(func=_import_labs)
 
     args = p.parse_args()
     args.func(args)
