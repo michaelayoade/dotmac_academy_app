@@ -16,7 +16,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.cohort import Enrollment
+from app.models.completion import CourseCompletion
 from app.models.offering import CourseOffering
+from app.models.prerequisite import CoursePrerequisite
 
 
 def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> set[UUID]:
@@ -77,12 +79,37 @@ def open_course_ids(
     return set(rows)
 
 
+def unmet_prerequisites(
+    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
+) -> list[UUID]:
+    """Prerequisite course ids the person has not yet completed."""
+    required = db.scalars(
+        select(CoursePrerequisite.requires_course_id)
+        .where(CoursePrerequisite.tenant_id == tenant_id)
+        .where(CoursePrerequisite.course_id == course_id)
+    ).all()
+    if not required:
+        return []
+    completed = set(db.scalars(
+        select(CourseCompletion.course_id)
+        .where(CourseCompletion.tenant_id == tenant_id)
+        .where(CourseCompletion.person_id == person_id)
+        .where(CourseCompletion.status == "completed")
+        .where(CourseCompletion.course_id.in_(set(required)))
+    ).all())
+    return [cid for cid in required if cid not in completed]
+
+
 def require_course_open(
     db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID,
     now: datetime | None = None,
 ) -> None:
-    """Raise 403 if the person is not entitled OR the offering window isn't open."""
+    """Raise 403 if not entitled, the offering window isn't open, or a
+    prerequisite course is not yet completed."""
     if course_id not in open_course_ids(
         db, tenant_id=tenant_id, person_id=person_id, now=now
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    if unmet_prerequisites(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Prerequisite course not completed")
