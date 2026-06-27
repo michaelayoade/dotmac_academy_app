@@ -6,6 +6,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.security import hash_password
 
@@ -48,6 +49,8 @@ def test_learn_home_shows_course_completion_and_results(app_client, admin_sessio
     admin_session.flush()
     admin_session.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=p.id,
                                  role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=course.id,
+                                     status="active"))
     admin_session.flush()
 
     # One passing score on a1 → 1 of 2 activities passed → 50% completion.

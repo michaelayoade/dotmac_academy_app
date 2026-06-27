@@ -9,51 +9,31 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.course import Course, Chapter
 from app.models.assessment import Activity, Question, Score, Submission
-from app.models.cohort import Cohort, Enrollment
+from app.models.course import Chapter, Course
 from app.models.person import Person
+from app.services.assessment import best_scores_for, submit_activity
+from app.services.entitlements import accessible_course_ids, require_course_access
 from app.services.web_auth import require_web_user
-from app.services.assessment import submit_activity, best_scores_for
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
-def _courses(db: Session, tid: UUID) -> list[Course]:
-    return list(
-        db.scalars(
-            select(Course)
-            .where(Course.tenant_id == tid)
-            .order_by(Course.title)
-        ).all()
-    )
-
-
 def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
-    """Courses the person can study, resolved Enrollment -> Cohort -> discipline.
+    """Courses the person can study, resolved Enrollment -> CourseOffering -> Course.
 
-    There is no direct cohort->course link; cohorts and courses share a
-    ``discipline`` string, so an active enrollment grants access to every course
-    in that discipline.
+    Access requires an explicit CourseOffering linking the person's cohort to the
+    course; sharing a ``discipline`` string no longer grants access.
     """
-    disciplines = db.scalars(
-        select(Cohort.discipline)
-        .join(
-            Enrollment,
-            (Enrollment.cohort_id == Cohort.id)
-            & (Enrollment.tenant_id == Cohort.tenant_id),
-        )
-        .where(Cohort.tenant_id == tid)
-        .where(Enrollment.person_id == person_id)
-    ).all()
-    if not disciplines:
+    course_ids = accessible_course_ids(db, tenant_id=tid, person_id=person_id)
+    if not course_ids:
         return []
     return list(
         db.scalars(
             select(Course)
             .where(Course.tenant_id == tid)
-            .where(Course.discipline.in_(set(disciplines)))
+            .where(Course.id.in_(course_ids))
             .order_by(Course.title)
         ).all()
     )
@@ -168,6 +148,7 @@ def chapter(
     ).first()
     if course is None:
         raise HTTPException(status_code=404)
+    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     ch = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
@@ -203,6 +184,7 @@ def activity(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
+    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)
@@ -228,6 +210,7 @@ async def submit(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
+    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     form = await request.form()
     qs = db.scalars(
         select(Question)
@@ -260,7 +243,7 @@ def progress(
 ):
     tenant = require_tenant(request)
     best: dict = {}
-    for course in _courses(db, tenant.id):
+    for course in _enrolled_courses(db, tenant.id, person.id):
         best.update(
             best_scores_for(
                 db, tenant_id=tenant.id, person_id=person.id, course_id=course.id

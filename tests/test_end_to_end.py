@@ -71,6 +71,8 @@ def test_full_flow(app_client, admin_session):
 
     # Grant the admin person the student role so they can use the learner portal.
     from app.models.person import Person
+    from app.models.cohort import Cohort, Enrollment
+    from app.models.offering import CourseOffering
 
     person = admin_session.query(Person).filter(Person.tenant_id == t.id).first()
     admin_session.add(
@@ -80,6 +82,14 @@ def test_full_flow(app_client, admin_session):
             role_id=roles["student"].id,
         )
     )
+    # Entitle the learner: cohort + enrollment + an offering for the course.
+    coh = Cohort(tenant_id=t.id, name="E2E Cohort", discipline=course.discipline, status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=t.id, cohort_id=coh.id, person_id=person.id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=t.id, cohort_id=coh.id, course_id=course.id,
+                                     status="active"))
     admin_session.commit()
 
     # ── Web flow ───────────────────────────────────────────────────────────────
