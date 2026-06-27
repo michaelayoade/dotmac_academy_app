@@ -115,40 +115,49 @@ def parse_chapter_file(path: Path, figures_dir: Path) -> ChapterDoc:
     )
 
 
-def import_foundation(
+def import_manual(
     db: Session,
     *,
     tenant_id,
+    slug: str,
+    title: str,
+    discipline: str,
+    source_ref: str,
     chapters_dir: Path,
     figures_dir: Path,
 ) -> Course:
-    """Upsert the Foundation course and its chapters from a directory of markdown files.
+    """Upsert a course and its chapters from a directory of markdown files.
 
-    Idempotent: chapters whose ``source_hash`` has not changed are skipped.
-    ``Course.version`` is bumped only when at least one chapter changed or was added.
+    Generic over any manual. Idempotent: chapters whose ``source_hash`` has not
+    changed are skipped. ``Course.version`` is bumped only when at least one
+    chapter changed or was added.
 
     Args:
         db: SQLAlchemy session (must have INSERT/UPDATE rights on courses/chapters).
         tenant_id: UUID of the tenant to import into.
+        slug: URL-safe course identifier (e.g. ``"foundation"``, ``"fiber-engineering"``).
+        title: Human-readable course title.
+        discipline: Course discipline tag (e.g. ``"networking"``, ``"fiber"``).
+        source_ref: Provenance recorded on the course (e.g. ``"fiber-engineering@0.1.0"``).
         chapters_dir: Directory containing ``chapter-*.md`` files.
         figures_dir: Directory containing produced figure PNG files.
 
     Returns:
-        The upserted :class:`Course` for the Foundation manual.
+        The upserted :class:`Course`.
     """
     course = db.scalars(
         select(Course)
         .where(Course.tenant_id == tenant_id)
-        .where(Course.slug == "foundation")
+        .where(Course.slug == slug)
     ).first()
 
     if course is None:
         course = Course(
             tenant_id=tenant_id,
-            slug="foundation",
-            title="Foundation",
-            discipline="networking",
-            source_ref="foundation@0.1.0",
+            slug=slug,
+            title=title,
+            discipline=discipline,
+            source_ref=source_ref,
             version=1,
         )
         db.add(course)
@@ -193,3 +202,27 @@ def import_foundation(
 
     db.flush()
     return course
+
+
+def import_foundation(
+    db: Session,
+    *,
+    tenant_id,
+    chapters_dir: Path,
+    figures_dir: Path,
+) -> Course:
+    """Backward-compatible wrapper: import the Foundation manual.
+
+    Thin convenience over :func:`import_manual` with the Foundation course
+    identity. Kept so existing callers/tests stay unchanged.
+    """
+    return import_manual(
+        db,
+        tenant_id=tenant_id,
+        slug="foundation",
+        title="Foundation",
+        discipline="networking",
+        source_ref="foundation@0.1.0",
+        chapters_dir=chapters_dir,
+        figures_dir=figures_dir,
+    )

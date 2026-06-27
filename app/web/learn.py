@@ -19,12 +19,14 @@ from app.web.templating import templates
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
-def _foundation(db: Session, tid: UUID) -> Course | None:
-    return db.scalars(
-        select(Course)
-        .where(Course.tenant_id == tid)
-        .where(Course.slug == "foundation")
-    ).first()
+def _courses(db: Session, tid: UUID) -> list[Course]:
+    return list(
+        db.scalars(
+            select(Course)
+            .where(Course.tenant_id == tid)
+            .order_by(Course.title)
+        ).all()
+    )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -34,18 +36,18 @@ def dashboard(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    course = _foundation(db, tenant.id)
-    chapters = []
-    if course:
+    courses = []
+    for course in _courses(db, tenant.id):
         chapters = db.scalars(
             select(Chapter)
             .where(Chapter.tenant_id == tenant.id)
             .where(Chapter.course_id == course.id)
             .order_by(Chapter.order_index)
         ).all()
+        courses.append({"course": course, "chapters": chapters})
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "person": person, "course": course, "chapters": chapters},
+        {"request": request, "person": person, "courses": courses},
     )
 
 
@@ -156,12 +158,13 @@ def progress(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    course = _foundation(db, tenant.id)
-    best = (
-        best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
-        if course
-        else {}
-    )
+    best: dict = {}
+    for course in _courses(db, tenant.id):
+        best.update(
+            best_scores_for(
+                db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
+            )
+        )
     return templates.TemplateResponse(
         "progress.html", {"request": request, "best": list(best.values())}
     )

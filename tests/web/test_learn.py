@@ -151,3 +151,27 @@ def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
     # Nonexistent chapter (no foundation course in tenant_a) → 404.
     r2 = app_client.get("/courses/foundation/chapters/999", headers=h)
     assert r2.status_code == 404
+
+
+def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
+    """The dashboard lists every course for the tenant, not just Foundation."""
+    p, h = _login(app_client, admin_session, tenant_a)
+    for slug, title in (("foundation", "Foundation"), ("fiber-engineering", "Fiber Engineering")):
+        c = Course(tenant_id=tenant_a.id, slug=slug, title=title,
+                   discipline="x", source_ref="x", version=1)
+        admin_session.add(c)
+        admin_session.flush()
+        admin_session.add(Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1,
+                                  title=f"{title} ch1", part="I", body_html="<p>x</p>",
+                                  source_hash="h", order_index=1))
+    admin_session.commit()
+    try:
+        r = app_client.get("/", headers=h)
+        assert r.status_code == 200
+        assert "Foundation" in r.text and "Fiber Engineering" in r.text
+        assert "/courses/fiber-engineering/chapters/1" in r.text
+    finally:
+        # Clean up committed rows (chapters cascade from courses) so this test
+        # leaves no residue in the shared test DB.
+        admin_session.query(Course).filter(Course.tenant_id == tenant_a.id).delete()
+        admin_session.commit()
