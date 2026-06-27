@@ -121,6 +121,34 @@ def invite_user(db: Session, *, tenant_id: UUID, email: str, first_name: str,
     return person, token
 
 
+def set_account_status(db: Session, *, tenant_id: UUID, person_id: UUID,
+                       status: str) -> Person:
+    """Suspend or reactivate an account (status in {active, suspended})."""
+    if status not in {"active", "suspended"}:
+        raise BadRequestError(f"invalid account status: {status}")
+    person = db.scalars(
+        select(Person).where(Person.tenant_id == tenant_id).where(Person.id == person_id)
+    ).first()
+    if person is None:
+        raise BadRequestError("person not found")
+    person.status = status
+    if status == "suspended":
+        # Revoke all live sessions so the suspension takes effect immediately.
+        from app.models.auth import AuthSession
+        for s in db.scalars(
+            select(AuthSession).where(AuthSession.tenant_id == tenant_id)
+            .where(AuthSession.person_id == person_id)
+            .where(AuthSession.revoked_at.is_(None))
+        ).all():
+            s.revoked_at = now_utc()
+    db.flush()
+    return person
+
+
+def now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
 def accept_invite(db: Session, *, tenant_id: UUID, raw: str, password: str,
                   now: datetime | None = None) -> Person:
     """Consume an invite token and create the account's first credential."""

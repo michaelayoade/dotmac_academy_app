@@ -42,6 +42,7 @@ from app.web.lab_admin import router as web_lab_admin_router
 from app.web.labs import router as web_labs_router
 from app.web.labs import ws_router as web_labs_ws_router
 from app.web.learn import router as web_learn_router
+from app.web.lifecycle import router as web_lifecycle_router
 from app.web.reports import router as web_reports_router
 from app.web.settings import router as web_settings_router
 from app.web.teaching import router as web_teaching_router
@@ -119,6 +120,7 @@ app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
+app.include_router(web_lifecycle_router)
 app.include_router(web_instructor_router)
 app.include_router(web_accounts_router)
 app.include_router(web_lab_admin_router)

@@ -23,6 +23,7 @@ from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
 from app.services.assessment import override_score
+from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
@@ -105,6 +106,45 @@ def change_roster_state(
     """Drop / waitlist / reactivate a roster member (finding #6)."""
     tenant = require_tenant(request)
     set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = "/instructor/cohorts"
+        return resp
+    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/cohorts/{cohort_id}/invite")
+def invite_to_cohort(
+    cohort_id: UUID,
+    request: Request,
+    email: str = Form(...),
+    first_name: str = Form("New"),
+    last_name: str = Form("Learner"),
+    db: Session = Depends(get_db),
+):
+    """Invite a new person (no account yet) and enroll them — closes the #6 gap
+    where unknown emails were silently dropped. Returns the activation link."""
+    tenant = require_tenant(request)
+    person, token = invite_user(db, tenant_id=tenant.id, email=email,
+                                first_name=first_name, last_name=last_name, role="student")
+    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email])
+    link = f"/accept-invite?token={token}"
+    return HTMLResponse(
+        f'<div class="invite-summary" role="status">Invited {person.email}. '
+        f'Activation link: <a href="{link}">{link}</a></div>'
+    )
+
+
+@router.post("/people/{person_id}/status")
+def change_account_status(
+    person_id: UUID,
+    request: Request,
+    status_value: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Suspend or reactivate a learner account (finding #7)."""
+    tenant = require_tenant(request)
+    set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
     if request.headers.get("HX-Request"):
         resp: Response = Response(status_code=200)
         resp.headers["HX-Redirect"] = "/instructor/cohorts"

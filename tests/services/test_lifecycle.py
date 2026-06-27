@@ -14,8 +14,10 @@ from app.services.lifecycle import (
     invite_user,
     request_password_reset,
     reset_password,
+    set_account_status,
 )
 from app.services.security import hash_password, verify_password
+from app.services.web_auth import authenticate
 
 
 def _account(db, tid, email="u@a.edu", pw="origpass1"):
@@ -82,6 +84,20 @@ def test_invite_then_accept_creates_credential(admin_session, tenant_a):
     # Invite token is single-use.
     with pytest.raises(BadRequestError):
         accept_invite(admin_session, tenant_id=tid, raw=token, password="welcome12")
+    admin_session.rollback()
+
+
+def test_suspended_account_cannot_authenticate(admin_session, tenant_a):
+    tid = tenant_a.id
+    p = _account(admin_session, tid, email="susp@a.edu", pw="origpass1")
+    # Active → authenticates.
+    assert authenticate(admin_session, tid, "susp@a.edu", "origpass1") is not None
+    # Suspend → blocked even with correct password.
+    set_account_status(admin_session, tenant_id=tid, person_id=p.id, status="suspended")
+    assert authenticate(admin_session, tid, "susp@a.edu", "origpass1") is None
+    # Reactivate → allowed again.
+    set_account_status(admin_session, tenant_id=tid, person_id=p.id, status="active")
+    assert authenticate(admin_session, tid, "susp@a.edu", "origpass1") is not None
     admin_session.rollback()
 
 
