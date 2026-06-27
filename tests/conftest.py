@@ -51,28 +51,40 @@ def admin_session(admin_engine) -> Generator[Session, None, None]:
         db.close()
 
 
-@pytest.fixture
-def tenant_a(admin_session: Session):
+def _make_tenant(admin_session: Session, slug: str, name: str):
     from app.models.tenant import Tenant
-    t = Tenant(slug="alpha", name="Alpha Test Tenant")
+    # Self-heal: clear any aborted-transaction state and any leftover tenant with
+    # this slug (from an interrupted run, or a prior test that left the session
+    # aborted — psycopg silently ignores the teardown DELETE in that case, so the
+    # row survives and the next test collides on the unique slug).
+    admin_session.rollback()
+    admin_session.execute(text("DELETE FROM tenants WHERE slug = :s"), {"s": slug})
+    admin_session.commit()
+    t = Tenant(slug=slug, name=name)
     admin_session.add(t)
     admin_session.commit()
     admin_session.refresh(t)
-    yield t
+    return t
+
+
+def _drop_tenant(admin_session: Session, t) -> None:
+    admin_session.rollback()  # clear any aborted tx the test left behind
     admin_session.execute(text("DELETE FROM tenants WHERE id = :id"), {"id": str(t.id)})
     admin_session.commit()
+
+
+@pytest.fixture
+def tenant_a(admin_session: Session):
+    t = _make_tenant(admin_session, "alpha", "Alpha Test Tenant")
+    yield t
+    _drop_tenant(admin_session, t)
 
 
 @pytest.fixture
 def tenant_b(admin_session: Session):
-    from app.models.tenant import Tenant
-    t = Tenant(slug="beta", name="Beta Test Tenant")
-    admin_session.add(t)
-    admin_session.commit()
-    admin_session.refresh(t)
+    t = _make_tenant(admin_session, "beta", "Beta Test Tenant")
     yield t
-    admin_session.execute(text("DELETE FROM tenants WHERE id = :id"), {"id": str(t.id)})
-    admin_session.commit()
+    _drop_tenant(admin_session, t)
 
 
 @pytest.fixture
