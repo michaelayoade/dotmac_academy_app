@@ -1,7 +1,9 @@
 # tests/services/test_assessment_service.py
 import pytest
 from app.models.course import Course
+from app.models.person import Person
 from app.models.assessment import QuestionBank, Question, Activity, Submission
+from app.services import email as email_mod
 from app.services.assessment import submit_activity, best_scores_for, override_score
 from uuid import uuid4
 
@@ -26,6 +28,28 @@ def test_submit_and_best(admin_session, tenant_a):
     assert s1.passed is False and s2.passed is True
     best = best_scores_for(admin_session, tenant_id=tenant_a.id, person_id=person_id, course_id=c.id)
     assert best[act.id].fraction == 1.0
+    admin_session.rollback()
+
+
+def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a, monkeypatch):
+    """First passing submit emails the student exactly once; a later pass does not."""
+    calls = []
+    monkeypatch.setattr(email_mod, "send_email",
+                        lambda to, subject, html, text_body=None: calls.append(to) or True)
+    c, act = _seed(admin_session, tenant_a.id)
+    p = Person(tenant_id=tenant_a.id, email="pass@stu.edu", first_name="Pa", last_name="Ss")
+    admin_session.add(p)
+    admin_session.flush()
+
+    # Fail first → no email.
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["B"]})
+    assert calls == []
+    # First pass → one email.
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
+    assert calls == ["pass@stu.edu"]
+    # Second pass → still just one.
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
+    assert calls == ["pass@stu.edu"]
     admin_session.rollback()
 
 

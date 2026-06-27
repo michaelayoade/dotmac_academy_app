@@ -251,6 +251,21 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine,
     db.add(score)
     instance.last_active_at = _now()
     db.flush()
+    # Auto-on-pass notification — best effort, must never break grading.
+    try:
+        from app.models.person import Person
+        from app.services.email import notify_score_if_first_pass
+
+        act = db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == instance.tenant_id)
+            .where(Activity.id == instance.activity_id)
+        ).first()
+        person = db.get(Person, instance.person_id)
+        if act is not None:
+            notify_score_if_first_pass(db, score=score, activity=act, person=person)
+    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+        logger.warning("auto-on-pass notification failed: %s", exc)
     return score
 
 

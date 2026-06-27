@@ -26,6 +26,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
+from app.services.email import render_cohort_html, render_transcript_html, send_email
 from app.services.reports import cohort_matrix, student_transcript
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -110,6 +111,51 @@ def reports_cohort(
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
         "instructor/reports_cohort.html", {"request": request, **matrix}
+    )
+
+
+@router.post("/reports/student/{person_id}/email", response_class=HTMLResponse)
+def reports_student_email(
+    person_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Email the student their transcript; return an htmx flash partial."""
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    transcript = student_transcript(db, tenant_id=tenant.id, person_id=person_id)
+    student = transcript["person"]
+    sent = send_email(
+        student.email,
+        f"Your Dotmac Academy transcript — {student.first_name} {student.last_name}".strip(),
+        render_transcript_html(transcript),
+    )
+    return templates.TemplateResponse(
+        "instructor/_email_result.html",
+        {"request": request, "sent": sent, "to": student.email},
+    )
+
+
+@router.post("/reports/cohort/{cohort_id}/email", response_class=HTMLResponse)
+def reports_cohort_email(
+    cohort_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Email the requesting instructor the cohort summary; return a flash partial."""
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    sent = send_email(
+        person.email,
+        f"Cohort progress — {matrix['cohort'].name}",
+        render_cohort_html(matrix),
+    )
+    return templates.TemplateResponse(
+        "instructor/_email_result.html",
+        {"request": request, "sent": sent, "to": person.email},
     )
 
 

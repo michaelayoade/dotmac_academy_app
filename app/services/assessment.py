@@ -1,10 +1,14 @@
 # app/services/assessment.py
 from __future__ import annotations
+import logging
 from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.models.assessment import Activity, Question, Submission, Score
+from app.models.person import Person
 from app.services.grading import grade_submission
+
+logger = logging.getLogger(__name__)
 
 
 def _questions_for(db: Session, tenant_id, bank_id) -> list[dict]:
@@ -27,6 +31,13 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     score = Score(tenant_id=tenant_id, submission_id=sub.id, score=r.score, max_score=r.max_score,
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
     db.add(score); db.flush()
+    # Auto-on-pass notification — best effort, must never break grading.
+    try:
+        from app.services.email import notify_score_if_first_pass
+        person = db.get(Person, person_id)
+        notify_score_if_first_pass(db, score=score, activity=activity, person=person)
+    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+        logger.warning("auto-on-pass notification failed: %s", exc)
     return score
 
 

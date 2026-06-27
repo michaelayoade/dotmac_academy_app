@@ -209,6 +209,53 @@ def _import_labs(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _email_digest(args: argparse.Namespace) -> None:
+    """Cross-tenant weekly digest: email each cohort's instructor(s) a summary.
+
+    Uses a BYPASSRLS admin session (like the lab jobs) so it can sweep every
+    tenant. Email failures are non-fatal (send_email returns False), so one bad
+    address never aborts the run.
+    """
+    from sqlalchemy import select
+
+    from app.models.cohort import Cohort, Enrollment
+    from app.models.person import Person
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs
+    from app.services.email import render_cohort_html, send_email
+    from app.services.reports import cohort_matrix
+
+    sent = 0
+    with lab_jobs.admin_session() as db:
+        tenants = db.scalars(select(Tenant)).all()
+        for tenant in tenants:
+            cohorts = db.scalars(
+                select(Cohort).where(Cohort.tenant_id == tenant.id)
+            ).all()
+            for cohort in cohorts:
+                matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort.id)
+                instructors = db.scalars(
+                    select(Person)
+                    .join(
+                        Enrollment,
+                        (Enrollment.person_id == Person.id)
+                        & (Enrollment.tenant_id == Person.tenant_id),
+                    )
+                    .where(Enrollment.tenant_id == tenant.id)
+                    .where(Enrollment.cohort_id == cohort.id)
+                    .where(Enrollment.role_in_cohort == "instructor")
+                    .where(Enrollment.status == "active")
+                ).all()
+                for instructor in instructors:
+                    if send_email(
+                        instructor.email,
+                        f"Weekly progress digest — {cohort.name}",
+                        render_cohort_html(matrix),
+                    ):
+                        sent += 1
+    print(f"email-digest: sent {sent} message(s)")
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     from app.config import settings
     from app.services import lab_jobs
@@ -351,6 +398,19 @@ def main() -> None:
         ),
     )
     rl.set_defaults(func=_reap_labs)
+
+    ed = sub.add_parser(
+        "email-digest",
+        help="One-shot: email each cohort's instructor(s) a progress digest.",
+        description=(
+            "Cross-tenant: open an app_admin (BYPASSRLS) session, build the "
+            "cohort progress matrix for every cohort in every tenant, and email "
+            "each cohort's enrolled instructor(s) a summary. Email failures are "
+            "non-fatal. Intended to run on a timer "
+            "(academy-email-digest.timer -> academy-email-digest.service oneshot)."
+        ),
+    )
+    ed.set_defaults(func=_email_digest)
 
     args = p.parse_args()
     args.func(args)

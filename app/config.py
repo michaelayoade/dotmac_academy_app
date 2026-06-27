@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     lab_workdir: str = "/home/dotmac/labs"
     lab_idle_minutes: int = 60
 
+    # Email / SMTP (inert by default — empty smtp_host disables sending).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Dotmac Academy <academy@localhost>"
+    smtp_starttls: bool = True
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"prod", "production"}

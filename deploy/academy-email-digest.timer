@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Dotmac Academy progress digest weekly
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+Unit=academy-email-digest.service
+
+[Install]
+WantedBy=timers.target
