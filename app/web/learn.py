@@ -3,16 +3,18 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Question, Score, Submission
+from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.services.assessment import best_scores_for, submit_activity
+from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -251,4 +253,43 @@ def progress(
         )
     return templates.TemplateResponse(
         "progress.html", {"request": request, "best": list(best.values())}
+    )
+
+
+@router.get("/certificates/{course_id}")
+def certificate(
+    course_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download the learner's PDF certificate for a completed course (403 if not)."""
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    completion = db.scalars(
+        select(CourseCompletion)
+        .where(CourseCompletion.tenant_id == tenant.id)
+        .where(CourseCompletion.person_id == person.id)
+        .where(CourseCompletion.course_id == course_id)
+    ).first()
+    if completion is None or completion.status != "completed":
+        raise HTTPException(status_code=403)
+    cert = issue_certificate(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
+    )
+    pdf = render_certificate_pdf(
+        recipient_name=f"{person.first_name} {person.last_name}".strip(),
+        course_title=course.title,
+        serial=cert.serial,
+        issued_at=cert.issued_at,
+    )
+    filename = f"certificate-{course.slug}-{cert.serial}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
