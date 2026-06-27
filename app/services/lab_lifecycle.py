@@ -11,6 +11,7 @@ Inc1 rule: these functions take ``db`` and ``flush`` only — they NEVER
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -28,6 +29,15 @@ _ACTIVE_STATUSES = ("provisioning", "active")
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _set_topology_name(topology_text: str, name: str) -> str:
+    """Force the containerlab topology ``name:`` to the unique per-trainee
+    instance name, so concurrent deployments never collide and the container
+    names (``clab-<name>-<node>``) match ``handle_for``."""
+    if re.search(r"(?m)^\s*name:\s*.*$", topology_text):
+        return re.sub(r"(?m)^\s*name:\s*.*$", f"name: {name}", topology_text, count=1)
+    return f"name: {name}\n{topology_text}"
 
 
 def handle_for(instance: LabInstance) -> LabHandle:
@@ -105,7 +115,9 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine,
               template: LabTemplate) -> LabInstance:
     """Deploy the topology for ``instance`` and record consoles / activate it."""
     try:
-        topology_text = interpolate(template.topology, instance.seed)
+        topology_text = _set_topology_name(
+            interpolate(template.topology, instance.seed), instance.instance_name
+        )
         handle = engine.deploy(topology_text, instance.instance_name)
         instance.consoles = {
             node: {"kind": handle.kinds.get(node), "mgmt": handle.mgmt.get(node)}
