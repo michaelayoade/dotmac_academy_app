@@ -51,9 +51,17 @@ def test_student_forbidden_on_console(app_client, admin_session, tenant_a):
     assert app_client.get("/admin", headers=h).status_code == 403
 
 
-def test_admin_settings_still_works(app_client, admin_session, tenant_a):
-    """Regression: GET /admin must not shadow /admin/settings."""
+def test_admin_settings_still_works(app_client, admin_session, tenant_a, monkeypatch):
+    """Regression: GET /admin must not shadow /admin/settings.
+
+    /admin/settings is gated by the platform-admin token, so configure the
+    secret and supply it (the gate itself is exercised by test_settings.py).
+    """
+    from app.config import settings
+
+    token = "test-platform-admin-token"
+    monkeypatch.setattr(settings, "platform_admin_token", token)
     _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
     h = _login(app_client, "admin@a.edu")
-    r = app_client.get("/admin/settings", headers=h)
+    r = app_client.get("/admin/settings", headers={**h, "x-platform-admin-token": token})
     assert r.status_code == 200

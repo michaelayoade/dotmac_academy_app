@@ -64,7 +64,11 @@ def test_student_shell_shows_learn_only(app_client, admin_session, tenant_a):
     assert "Admin" not in body
 
 
-def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a):
+def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a, monkeypatch):
+    from app.config import settings
+
+    token = "test-platform-admin-token"
+    monkeypatch.setattr(settings, "platform_admin_token", token)
     p, h = _login(app_client, admin_session, tenant_a, email="admin@a.edu", role="admin")
 
     # On /progress the current area is Learn, but the TABS show every area.
@@ -75,8 +79,9 @@ def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a):
     assert "Teaching" in body
     assert "Admin" in body
 
-    # On an admin page the SIDEBAR carries the admin items.
-    r2 = app_client.get("/admin/settings", headers=h)
+    # On an admin page the SIDEBAR carries the admin items. /admin/settings is
+    # platform-token gated, so supply the configured secret.
+    r2 = app_client.get("/admin/settings", headers={**h, "x-platform-admin-token": token})
     assert r2.status_code == 200
     body2 = _collapse(r2.text)
     assert "Settings" in body2
