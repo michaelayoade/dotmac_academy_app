@@ -35,7 +35,7 @@ from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_lifecycle, web_auth
-from app.services.entitlements import require_course_access
+from app.services.entitlements import require_course_open
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -230,7 +230,7 @@ def lab_detail(
     """Lab page: instructions + Launch (if none/reaped) or status/console/Check."""
     tenant = require_tenant(request)
     act = _lab_activity(db, tenant, activity_id)
-    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
     instance = _current_instance(db, tenant, person, activity_id)
     return templates.TemplateResponse(
@@ -249,7 +249,7 @@ def lab_launch(
     """Request a new lab instance (queued/provisioning) → status partial."""
     tenant = require_tenant(request)
     act = _lab_activity(db, tenant, activity_id)
-    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
     instance = lab_lifecycle.request_lab(
         db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl

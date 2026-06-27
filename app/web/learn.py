@@ -13,7 +13,7 @@ from app.models.assessment import Activity, Question, Score, Submission
 from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.services.assessment import best_scores_for, submit_activity
-from app.services.entitlements import accessible_course_ids, require_course_access
+from app.services.entitlements import accessible_course_ids, require_course_open
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -148,7 +148,7 @@ def chapter(
     ).first()
     if course is None:
         raise HTTPException(status_code=404)
-    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     ch = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
@@ -184,7 +184,7 @@ def activity(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
-    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)
@@ -210,7 +210,7 @@ async def submit(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
-    require_course_access(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     form = await request.form()
     qs = db.scalars(
         select(Question)
