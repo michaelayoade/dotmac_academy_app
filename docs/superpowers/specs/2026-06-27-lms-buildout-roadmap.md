@@ -53,10 +53,10 @@ implementation, committed incrementally on this branch.
   randomized question pools (per-attempt selection), rubric criteria, feedback-
   release rules.
 - 🟡 **Slice 5** (#8, #9) — done: 5a cohort dashboard + at-risk learners
-  (`dashboards.cohort_overview` + instructor `/dashboard/cohort/{id}`).
-  **Remaining:** #8 authoring (draft/publish states + content versioning + in-app
-  markdown editor) — a large sub-slice of its own; #9 engagement-event tracking,
-  cohort trends over time, scheduled reporting.
+  (`dashboards.cohort_overview` + instructor `/dashboard/cohort/{id}`); 5b course
+  draft/publish (`courses.status`, hidden-from-learners enforcement + instructor
+  publish route). **Remaining:** #8 content versioning + in-app markdown editor;
+  #9 engagement-event tracking, cohort trends over time, scheduled reporting.
 
 Migrations through `0014`. Test suite green except 7 pre-existing baseline
 failures (platform_admin_token config + email-CLI db url) that fail on pristine
