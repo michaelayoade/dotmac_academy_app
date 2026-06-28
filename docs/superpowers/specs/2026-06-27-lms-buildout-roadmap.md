@@ -52,11 +52,11 @@ implementation, committed incrementally on this branch.
   `/items/{id}`). **Remaining:** time limits (needs an attempt-session record),
   randomized question pools (per-attempt selection), rubric criteria, feedback-
   release rules.
-- 🟡 **Slice 5** (#8, #9) — done: 5a cohort dashboard + at-risk learners
-  (`dashboards.cohort_overview` + instructor `/dashboard/cohort/{id}`); 5b course
-  draft/publish (`courses.status`, hidden-from-learners enforcement + instructor
-  publish route). **Remaining:** #8 content versioning + in-app markdown editor;
-  #9 engagement-event tracking, cohort trends over time, scheduled reporting.
+- 🟡 **Slice 5** (#8, #9) — done: 5a cohort dashboard + at-risk learners; 5b course
+  draft/publish; 5c in-app markdown authoring (`authoring.create_course` /
+  `upsert_chapter`, `chapters.body_md`, version bump on save) — **#8 authoring loop
+  complete** (draft/publish + in-app editor + versioning). **Remaining:** #9
+  engagement-event tracking, cohort trends over time, scheduled reporting.
 
 Migrations through `0014`. Test suite green except 7 pre-existing baseline
 failures (platform_admin_token config + email-CLI db url) that fail on pristine
