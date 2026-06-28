@@ -21,7 +21,11 @@ def _grade_numeric(chosen: list[str], raw_correct: Any, opts: Any) -> tuple[bool
         target = float(target_raw)
     except (ValueError, TypeError, IndexError):
         return False, [raw_correct]
-    tolerance = float(opts.get("tolerance", 0)) if isinstance(opts, dict) else 0.0
+    try:
+        tolerance = float(opts.get("tolerance", 0)) if isinstance(opts, dict) else 0.0
+    except (TypeError, ValueError):
+        # Malformed author-supplied tolerance must not 500 the learner's submit.
+        tolerance = 0.0
     return abs(val - target) <= tolerance, [target]
 
 

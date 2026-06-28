@@ -6,6 +6,7 @@ in the same session before get_db commits.
 """
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -16,6 +17,8 @@ from app.models.cohort import Enrollment
 from app.services.audit import write_audit_event
 from app.services.authoring import render_markdown
 from app.services.notifications import notify_many
+
+logger = logging.getLogger(__name__)
 
 
 def create(
@@ -61,15 +64,22 @@ def create(
         )
 
     if audience_ids:
-        notify_many(
-            db,
-            tenant_id=tenant_id,
-            person_ids=audience_ids,
-            kind="announcement",
-            title=title,
-            body="",
-            link="/announcements",
-        )
+        # Best-effort fan-out: a notification insert failure must NOT roll back the
+        # announcement. SAVEPOINT isolates it so a poisoned sub-tx can't break the
+        # outer get_db commit.
+        try:
+            with db.begin_nested():
+                notify_many(
+                    db,
+                    tenant_id=tenant_id,
+                    person_ids=audience_ids,
+                    kind="announcement",
+                    title=title,
+                    body="",
+                    link="/announcements",
+                )
+        except Exception as exc:
+            logger.warning("announcement notify fan-out failed: %s", exc)
 
     write_audit_event(
         db,

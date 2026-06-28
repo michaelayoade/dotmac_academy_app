@@ -371,7 +371,18 @@ def announcements_create(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    cid: UUID | None = UUID(cohort_id) if cohort_id else None
+    cid: UUID | None = None
+    if cohort_id:
+        try:
+            cid = UUID(cohort_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid cohort") from None
+        # Reject a cohort that isn't this tenant's (avoids a cross-tenant FK 500).
+        owns = db.scalar(
+            select(Cohort.id).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cid)
+        )
+        if owns is None:
+            raise HTTPException(status_code=400, detail="Unknown cohort")
     ann_svc.create(
         db,
         tenant_id=tenant.id,
