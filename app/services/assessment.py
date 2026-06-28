@@ -14,17 +14,25 @@ from app.services.grading import grade_submission
 logger = logging.getLogger(__name__)
 
 
-def _questions_for(db: Session, tenant_id, bank_id) -> list[dict]:
+def _questions_for(db: Session, tenant_id, bank_id, only_ext_ids=None) -> list[dict]:
     rows = db.scalars(select(Question).where(Question.tenant_id == tenant_id)
                       .where(Question.bank_id == bank_id)).all()
+    if only_ext_ids is not None:
+        keep = set(only_ext_ids)
+        rows = [q for q in rows if q.ext_id in keep]
     return [{"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight,
              "explanation": q.explanation, "options": q.options} for q in rows]
 
 
-def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict) -> Score | None:
+def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict,
+                    only_ext_ids: list | None = None) -> Score | None:
     """Record a submission. Auto-grades and returns the Score, or returns None for
-    manual-grading activities (the submission then waits in the grading queue)."""
-    qs = _questions_for(db, tenant_id, activity.bank_id) if activity.bank_id else []
+    manual-grading activities (the submission then waits in the grading queue).
+
+    ``only_ext_ids`` (a randomized attempt's question subset) restricts grading to
+    exactly those questions; None grades the whole bank.
+    """
+    qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
                      .where(Submission.activity_id == activity.id)

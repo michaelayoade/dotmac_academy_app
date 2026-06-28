@@ -70,7 +70,10 @@ class Activity(Base, TimestampMixin):
     max_attempts: Mapped[int | None] = mapped_column(Integer)
     # "auto" grades on submit; "manual" leaves submissions for instructor grading.
     grading: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")
+    # Weighted gradebook (lms-gaps F9): per-activity weight in the course grade.
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    # Random pool: show this many randomly-drawn questions from the bank (null = all).
+    question_count: Mapped[int | None] = mapped_column(Integer)
 
 
 class Submission(Base, TimestampMixin):

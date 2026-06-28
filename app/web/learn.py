@@ -15,6 +15,7 @@ from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services.assessment import attempts_used, best_scores_for, submit_activity
+from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
 from app.services.pacing import require_activity_readable, require_activity_submittable
@@ -199,6 +200,14 @@ def activity(
         .where(Question.tenant_id == tenant.id)
         .where(Question.bank_id == act.bank_id)
     ).all()
+    if act.question_count is not None:
+        # Random pool: fix a subset+order for this attempt and render only those.
+        attempt = open_or_create_attempt(
+            db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id,
+            all_ext_ids=[q.ext_id for q in qs], count=act.question_count,
+        )
+        order = {eid: i for i, eid in enumerate(attempt.question_ext_ids)}
+        qs = sorted((q for q in qs if q.ext_id in order), key=lambda q: order[q.ext_id])
     return templates.TemplateResponse(
         "activity.html", {"request": request, "activity": act, "questions": qs}
     )
@@ -227,11 +236,20 @@ async def submit(
     ) >= act.max_attempts:
         raise HTTPException(status_code=403, detail="No attempts remaining")
     form = await request.form()
+    # Random pool: grade exactly the subset this attempt was shown.
+    only_ext_ids: list | None = None
+    if act.question_count is not None:
+        attempt = close_open_attempt(db, tenant_id=tenant.id, person_id=person.id,
+                                     activity_id=act.id)
+        only_ext_ids = list(attempt.question_ext_ids) if attempt is not None else []
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)
         .where(Question.bank_id == act.bank_id)
     ).all()
+    if only_ext_ids is not None:
+        keep = set(only_ext_ids)
+        qs = [q for q in qs if q.ext_id in keep]
     answers = {q.ext_id: form.getlist(q.ext_id) for q in qs}
     score = submit_activity(
         db,
@@ -239,6 +257,7 @@ async def submit(
         person_id=person.id,
         activity=act,
         answers=answers,
+        only_ext_ids=only_ext_ids,
     )
     if score is None:
         # Manual-grading activity: submission is queued for the instructor.

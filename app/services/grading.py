@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass
@@ -10,41 +9,60 @@ class GradeResult:
     score: float; max_score: float; fraction: float; passed: bool; per_item: list[dict]
 
 
-def _grade_numeric(chosen: list[str], raw_correct: Any, opts: Any) -> tuple[bool, list]:
-    raw = chosen[0] if chosen else ""
-    try:
-        val = float(raw)
-    except (ValueError, TypeError):
-        return False, [raw_correct]
-    try:
-        target_raw = raw_correct[0] if isinstance(raw_correct, list) else raw_correct
-        target = float(target_raw)
-    except (ValueError, TypeError, IndexError):
-        return False, [raw_correct]
-    try:
-        tolerance = float(opts.get("tolerance", 0)) if isinstance(opts, dict) else 0.0
-    except (TypeError, ValueError):
-        # Malformed author-supplied tolerance must not 500 the learner's submit.
-        tolerance = 0.0
-    return abs(val - target) <= tolerance, [target]
-
-
-def _grade_short_text(chosen: list[str], accepted: list, opts: Any) -> bool:
-    raw = chosen[0].strip() if chosen and chosen[0] else ""
-    if not raw:
+def _grade_numeric(chosen: list, correct: list, opts) -> bool:
+    if not chosen:
         return False
-    use_regex = isinstance(opts, dict) and bool(opts.get("regex", False))
-    for pattern in accepted:
-        if use_regex:
+    try:
+        got = float(chosen[0])
+    except (ValueError, TypeError):
+        return False
+    if isinstance(opts, dict) and "tolerance" in opts:           # gaps: tolerance mode
+        try:
+            tol = float(opts.get("tolerance", 0))
+        except (ValueError, TypeError):
+            tol = 0.0
+        try:
+            target = float(correct[0])
+        except (ValueError, TypeError, IndexError):
+            return False
+        return abs(got - target) <= tol
+    try:                                                          # buildout: exact-or-range
+        bounds = [float(x) for x in correct]
+    except (ValueError, TypeError):
+        return False
+    if not bounds:
+        return False
+    if len(bounds) == 1:
+        return got == bounds[0]
+    lo, hi = min(bounds[0], bounds[1]), max(bounds[0], bounds[1])
+    return lo <= got <= hi
+
+
+def _norm_text(s) -> str:
+    return re.sub(r"\s+", " ", str(s).strip().lower())
+
+
+def _grade_short_text(chosen: list, correct: list, opts) -> bool:
+    if not chosen or not str(chosen[0]).strip():
+        return False
+    if isinstance(opts, dict) and opts.get("regex"):             # gaps: regex mode
+        for pattern in correct:
             try:
-                if re.fullmatch(str(pattern), raw, re.IGNORECASE):
+                if re.fullmatch(str(pattern), str(chosen[0]).strip(), re.IGNORECASE):
                     return True
             except re.error:
                 pass
-        else:
-            if raw.lower() == str(pattern).strip().lower():
-                return True
-    return False
+        return False
+    target = _norm_text(chosen[0])                               # buildout: normalized
+    return target in {_norm_text(e) for e in correct}
+
+
+def _is_correct(qtype: str, chosen: list, expected: list, opts=None) -> bool:
+    if qtype == "numeric":
+        return _grade_numeric(chosen, expected, opts)
+    if qtype == "short_text":
+        return _grade_short_text(chosen, expected, opts)
+    return set(chosen) == set(expected)
 
 
 def grade_submission(answers: dict[str, list], questions: list[dict], pass_threshold: float) -> GradeResult:
@@ -53,19 +71,10 @@ def grade_submission(answers: dict[str, list], questions: list[dict], pass_thres
         w = float(q.get("weight", 1)); max_score += w
         chosen = list(answers.get(q["ext_id"], []))
         raw_correct = q.get("correct", [])
-        qtype = q.get("type", "single")
-        opts = q.get("options", [])
-
-        if qtype == "numeric":
-            ok, expected = _grade_numeric(chosen, raw_correct, opts)
-        elif qtype == "short_text":
-            accepted: list = raw_correct if isinstance(raw_correct, list) else [raw_correct]
-            ok = _grade_short_text(chosen, accepted, opts)
-            expected = accepted
-        else:
-            expected = list(raw_correct)
-            ok = set(chosen) == set(expected)
-
+        # Authors may store `correct` as a scalar (e.g. numeric 42) or a list; normalize.
+        expected = list(raw_correct) if isinstance(raw_correct, list) else [raw_correct]
+        opts = q.get("options") or {}
+        ok = _is_correct(q.get("type", "single"), chosen, expected, opts)
         if ok:
             score += w
         per_item.append({"id": q["ext_id"], "correct": ok, "chosen": chosen,
