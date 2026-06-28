@@ -204,21 +204,9 @@ def author_course_page(course_id: UUID, request: Request, db: Session = Depends(
         select(Chapter).where(Chapter.tenant_id == tenant.id)
         .where(Chapter.course_id == course_id).order_by(Chapter.number)
     ).all()
-    rows = "".join(
-        f"<li>Ch{c.number}: {_e(c.title)}</li>" for c in chapters
-    ) or "<li>No chapters yet.</li>"
-    form = (
-        f"<form hx-post='/instructor/courses/{course_id}/chapters' hx-swap='none'>"
-        f"<input name='number' type='number' min='1' required placeholder='Chapter #'>"
-        f"<input name='title' required placeholder='Title'>"
-        f"<textarea name='body_md' required placeholder='Markdown content'></textarea>"
-        f"<button>Save chapter</button></form>"
-    )
-    return HTMLResponse(
-        f"<!doctype html><html><head><meta charset=utf-8><title>Author {_e(course.title)}</title>"
-        f"<script src='/static/htmx.min.js' defer></script></head>"
-        f"<body><h1>Author: {_e(course.title)} ({_e(course.status)}, v{course.version})</h1>"
-        f"<ul>{rows}</ul>{form}{_CSRF_JS}</body></html>"
+    return templates.TemplateResponse(
+        "instructor/authoring.html",
+        {"request": request, "course": course, "chapters": chapters},
     )
 
 
@@ -295,35 +283,17 @@ def results(request: Request, db: Session = Depends(get_db)):
     )
 
 
-_CSRF_JS = (
-    "<script>document.body.addEventListener('htmx:configRequest',function(e){"
-    "var m=document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);"
-    "if(m){e.detail.headers['x-csrf-token']=m[1];}});</script>"
-)
-
-
 @router.get("/grading", response_class=HTMLResponse)
 def grading_queue(request: Request, db: Session = Depends(get_db)):
     """Manual grading queue: submissions awaiting a score (finding #4)."""
     tenant = require_tenant(request)
-    rows = pending_grading(db, tenant_id=tenant.id)
-    items = []
-    for sub, act, email in rows:
-        items.append(
-            f"<li class='pending-item' data-submission='{sub.id}'>"
-            f"<strong>{_e(act.title)}</strong> — {_e(email)} (attempt {sub.attempt_no})"
-            f"<form hx-post='/instructor/scores/{sub.id}/override' hx-swap='none' "
-            f"class='inline-grade'>"
-            f"<input name='score_value' type='number' step='0.1' value='0' required>"
-            f"<input name='max_score' type='number' step='0.1' value='10' required>"
-            f"<input name='reason' value='manual grade' required>"
-            f"<button>Save grade</button></form></li>"
-        )
-    body = "<ul>" + "".join(items) + "</ul>" if items else "<p>Nothing awaiting grading.</p>"
-    return HTMLResponse(
-        f"<!doctype html><html><head><meta charset=utf-8><title>Grading queue</title>"
-        f"<script src='/static/htmx.min.js' defer></script></head>"
-        f"<body><h1>Grading queue</h1>{body}{_CSRF_JS}</body></html>"
+    rows = [
+        {"submission_id": sub.id, "activity_title": act.title, "email": email,
+         "attempt_no": sub.attempt_no}
+        for sub, act, email in pending_grading(db, tenant_id=tenant.id)
+    ]
+    return templates.TemplateResponse(
+        "instructor/grading.html", {"request": request, "rows": rows}
     )
 
 
@@ -332,22 +302,10 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
     """Cohort progress + at-risk learners (finding #9)."""
     tenant = require_tenant(request)
     ov = cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
-    rows = "".join(
-        f"<tr class='{'at-risk' if r['at_risk'] else ''}'>"
-        f"<td>{_e(r['name'])}</td><td>{_e(r['email'])}</td>"
-        f"<td>{round(100 * r['completion_pct'])}%</td>"
-        f"<td>{'⚠ at risk' if r['at_risk'] else 'ok'}</td></tr>"
-        for r in ov["rows"]
+    return templates.TemplateResponse(
+        "instructor/dashboard_cohort.html",
+        {"request": request, "cohort": ov["cohort"], "rows": ov["rows"]},
     )
-    table = (f"<table><thead><tr><th>Name</th><th>Email</th><th>Completion</th>"
-             f"<th>Status</th></tr></thead><tbody>{rows}</tbody></table>"
-             if ov["rows"] else "<p>No learners enrolled.</p>")
-    return HTMLResponse(
-        f"<!doctype html><html><head><meta charset=utf-8><title>Cohort dashboard</title></head>"
-        f"<body><h1>{_e(ov['cohort'].name)} — progress</h1>{table}</body></html>"
-    )
-
-
 @router.get("/items/{activity_id}", response_class=HTMLResponse)
 def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(get_db)):
     """Per-question difficulty (p-value) for an activity (finding #4/#9)."""
@@ -358,17 +316,9 @@ def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(ge
     if act is None:
         raise HTTPException(status_code=404)
     items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
-    rows = "".join(
-        f"<tr><td>{_e(i['id'])}</td><td>{i['responses']}</td><td>{i['correct']}</td>"
-        f"<td>{i['p_value']:.2f}</td></tr>"
-        for i in items
-    )
-    table = (f"<table><thead><tr><th>Question</th><th>Responses</th><th>Correct</th>"
-             f"<th>p-value</th></tr></thead><tbody>{rows}</tbody></table>"
-             if items else "<p>No responses yet.</p>")
-    return HTMLResponse(
-        f"<!doctype html><html><head><meta charset=utf-8><title>Item analysis</title></head>"
-        f"<body><h1>Item analysis — {_e(act.title)}</h1>{table}</body></html>"
+    return templates.TemplateResponse(
+        "instructor/item_analytics.html",
+        {"request": request, "activity": act, "items": items},
     )
 
 
