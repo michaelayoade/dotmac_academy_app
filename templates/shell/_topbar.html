@@ -31,7 +31,20 @@
       {% endfor %}
     </nav>
 
-    <div class="ml-auto shrink-0">
+    <form method="get" action="/search" class="ml-auto flex items-center gap-1 shrink-0">
+      <input
+        type="search"
+        name="q"
+        placeholder="Search…"
+        class="w-36 sm:w-48 rounded-md border border-sand-300 bg-white px-3 py-1.5 text-sm text-ink placeholder-ink-soft focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+      >
+      <button type="submit" class="rounded-md border border-sand-300 bg-white px-2.5 py-1.5 text-sm text-ink-soft hover:text-ink focus:outline-none focus:ring-2 focus:ring-brand-200" aria-label="Search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+          <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
+        </svg>
+      </button>
+    </form>
+    <div class="shrink-0">
       {% include "shell/_usermenu.html" %}
     </div>
   </div>
