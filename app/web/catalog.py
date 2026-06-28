@@ -1,8 +1,9 @@
 # app/web/catalog.py
-"""Course catalog web router — /courses and /courses/{slug}."""
+"""Course catalog web router — /courses, /courses/{slug}, and /calendar."""
 
 from __future__ import annotations
 
+from itertools import groupby
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.course import Course
 from app.models.person import Person
+from app.services.agenda import upcoming_for_person
 from app.services.catalog import (
     all_courses,
     course_completion,
@@ -115,5 +117,28 @@ def course_landing(
             "structure": structure,
             "pct": pct,
             "is_staff": staff,
+        },
+    )
+
+
+@router.get("/calendar", response_class=HTMLResponse)
+def calendar(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Learner agenda — upcoming offering windows and activity deadlines."""
+    tenant = require_tenant(request)
+    items = upcoming_for_person(db, tenant_id=tenant.id, person_id=person.id)
+    grouped = [
+        {"day": day, "events": list(day_items)}
+        for day, day_items in groupby(items, key=lambda x: x["when"].date())
+    ]
+    return templates.TemplateResponse(
+        "learn/calendar.html",
+        {
+            "request": request,
+            "person": person,
+            "grouped": grouped,
         },
     )
