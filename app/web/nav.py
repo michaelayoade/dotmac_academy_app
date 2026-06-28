@@ -19,6 +19,7 @@ AREAS: list[dict] = [
         "required": None,
         "sidebar": [
             {"label": "Home", "path": "/"},
+            {"label": "Courses", "path": "/courses"},
             {"label": "Progress", "path": "/progress"},
         ],
     },
