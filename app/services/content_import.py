@@ -12,12 +12,12 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-import markdown as md
 import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.course import Chapter, Course
+from app.services.authoring import render_markdown
 
 
 def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
@@ -104,7 +104,7 @@ def parse_chapter_file(path: Path, figures_dir: Path) -> ChapterDoc:
     # HTML blocks (markdown won't re-process them).
     body_md = _FIG.sub(_figure_sub(figures_dir), body_md)
 
-    body_html = md.markdown(body_md, extensions=["tables", "fenced_code"])
+    body_html = render_markdown(body_md)
 
     return ChapterDoc(
         number=int(meta.get("chapter", 0)),
