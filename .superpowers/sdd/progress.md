@@ -13,4 +13,4 @@ Build order (per-feature implementer + review):
 - [x] F7 rich embeds — complete (ee76f78, review clean; 42+10 tests, ruff+mypy clean; ADDED whitelist sanitizer where none existed — courseware tags verified intact; follow-up: consider nh3 later)
 - [x] F8 question types — complete (5eb6a03, review clean; 24+50 tests, ruff+mypy clean; options surfaced to grader in prod)
 - [x] F9 weighted gradebook — complete (305129e, review pending; 20 tests, ruff+mypy clean; mig 0022)
-- [ ] integration (suite + ruff/mypy + nav cross-check)
+- [x] integration — 398 passed, ruff+mypy clean, css rebuilt (v=4)
