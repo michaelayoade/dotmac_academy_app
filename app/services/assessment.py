@@ -18,7 +18,7 @@ def _questions_for(db: Session, tenant_id, bank_id) -> list[dict]:
     rows = db.scalars(select(Question).where(Question.tenant_id == tenant_id)
                       .where(Question.bank_id == bank_id)).all()
     return [{"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight,
-             "explanation": q.explanation} for q in rows]
+             "explanation": q.explanation, "options": q.options} for q in rows]
 
 
 def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict) -> Score | None:

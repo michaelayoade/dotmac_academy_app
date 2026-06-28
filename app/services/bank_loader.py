@@ -74,7 +74,17 @@ def lint_bank(doc: BankDoc) -> list[str]:
             out.append(f"{q.get('id')}: invalid rubric_category {cat!r}")
             continue
         counts[cat] += 1
-        if q.get("type") != "truefalse":
+        qtype = q.get("type")
+        if qtype == "numeric":
+            try:
+                float(q.get("correct", ""))
+            except (ValueError, TypeError):
+                out.append(f"{q.get('id')}: numeric correct must be a parseable number")
+        elif qtype == "short_text":
+            accepted = q.get("correct", [])
+            if not isinstance(accepted, list) or len(accepted) == 0:
+                out.append(f"{q.get('id')}: short_text correct must be a non-empty list")
+        elif qtype != "truefalse":
             opts = set(q.get("options", []))
             for c in q.get("correct", []):
                 if c not in opts:

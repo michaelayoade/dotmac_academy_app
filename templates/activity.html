@@ -6,12 +6,18 @@
   <fieldset class="card p-5">
     <legend class="px-1 font-display text-lg text-ink">{{ q.stem }}</legend>
     <div class="mt-3 space-y-2">
+    {% if q.type == 'numeric' %}
+    <input type="number" step="any" name="{{ q.ext_id }}" class="input w-full" placeholder="Enter a number">
+    {% elif q.type == 'short_text' %}
+    <input type="text" name="{{ q.ext_id }}" class="input w-full" placeholder="Your answer">
+    {% else %}
     {% for opt in q.options %}
     <label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-sand-200">
       <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}" class="h-4 w-4 accent-[oklch(0.44_0.10_161)]">
       <span class="text-ink">{{ opt }}</span>
     </label>
     {% endfor %}
+    {% endif %}
     </div>
   </fieldset>
   {% endfor %}
