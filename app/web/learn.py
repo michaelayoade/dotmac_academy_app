@@ -13,6 +13,7 @@ from app.models.assessment import Activity, Question, Score, Submission
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.person import Person
+from app.services import announcements as ann_svc
 from app.services.assessment import attempts_used, best_scores_for, submit_activity
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
@@ -123,6 +124,8 @@ def home(
         for s, title in recent_rows
     ]
 
+    latest_announcements = ann_svc.for_person(db, tenant_id=tenant.id, person_id=person.id, limit=3)
+
     return templates.TemplateResponse(
         "learn/home.html",
         {
@@ -131,6 +134,7 @@ def home(
             "my_courses": my_courses,
             "continue_to": continue_to,
             "recent": recent,
+            "announcements": latest_announcements,
         },
     )
 

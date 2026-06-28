@@ -71,4 +71,18 @@
   {% endif %}
 </div>
 {% endif %}
+
+{% if announcements %}
+<h2 class="mt-10 text-xl">Announcements</h2>
+<div class="mt-4 space-y-3">
+{% for ann in announcements %}
+  <a href="/announcements" class="card block p-5 transition-colors hover:border-brand-300">
+    <div class="flex items-baseline gap-3">
+      <span class="min-w-0 flex-1 font-medium text-ink">{{ ann.title }}</span>
+      <span class="text-xs text-ink-soft">{{ ann.created_at.strftime('%b %d') }}</span>
+    </div>
+  </a>
+{% endfor %}
+</div>
+{% endif %}
 {% endblock %}

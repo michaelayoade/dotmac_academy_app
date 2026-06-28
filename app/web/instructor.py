@@ -24,13 +24,14 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort
 from app.models.course import Chapter, Course
 from app.models.person import Person
+from app.services import announcements as ann_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, upsert_chapter
 from app.services.dashboards import cohort_overview
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
-from app.services.web_auth import require_web_role
+from app.services.web_auth import require_web_role, require_web_user
 from app.web.templating import templates
 
 router = APIRouter(
@@ -346,3 +347,58 @@ def override(
         resp.headers["HX-Redirect"] = "/instructor/results"
         return resp
     return RedirectResponse("/instructor/results", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/announcements", response_class=HTMLResponse)
+def announcements_list(request: Request, db: Session = Depends(get_db)):
+    tenant = require_tenant(request)
+    anns = ann_svc.list_for_tenant(db, tenant_id=tenant.id)
+    cohorts = list(db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all())
+    cohort_map = {c.id: c.name for c in cohorts}
+    return templates.TemplateResponse(
+        "instructor/announcements.html",
+        {"request": request, "announcements": anns, "cohorts": cohorts, "cohort_map": cohort_map},
+    )
+
+
+@router.post("/announcements")
+def announcements_create(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    title: str = Form(...),
+    body_md: str = Form(...),
+    cohort_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    cid: UUID | None = UUID(cohort_id) if cohort_id else None
+    ann_svc.create(
+        db,
+        tenant_id=tenant.id,
+        author_person_id=person.id,
+        title=title,
+        body_md=body_md,
+        cohort_id=cid,
+    )
+    hx = request.headers.get("HX-Request")
+    if hx:
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = "/instructor/announcements"
+        return resp
+    return RedirectResponse("/instructor/announcements", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/announcements/{announcement_id}/delete")
+def announcement_delete(
+    announcement_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    ann_svc.delete(db, tenant_id=tenant.id, announcement_id=announcement_id)
+    hx = request.headers.get("HX-Request")
+    if hx:
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = "/instructor/announcements"
+        return resp
+    return RedirectResponse("/instructor/announcements", status_code=status.HTTP_303_SEE_OTHER)

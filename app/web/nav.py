@@ -21,6 +21,7 @@ AREAS: list[dict] = [
             {"label": "Home", "path": "/"},
             {"label": "Courses", "path": "/courses"},
             {"label": "Calendar", "path": "/calendar"},
+            {"label": "Announcements", "path": "/announcements"},
             {"label": "Progress", "path": "/progress"},
         ],
     },
@@ -32,6 +33,7 @@ AREAS: list[dict] = [
         "sidebar": [
             {"label": "Home", "path": "/instructor"},
             {"label": "Cohorts", "path": "/instructor/cohorts"},
+            {"label": "Announcements", "path": "/instructor/announcements"},
             {"label": "Reports", "path": "/instructor/reports"},
             {"label": "Lab monitor", "path": "/instructor/labs"},
         ],

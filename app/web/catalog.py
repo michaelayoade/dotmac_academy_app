@@ -12,8 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
+from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.person import Person
+from app.services import announcements as ann_svc
 from app.services.agenda import upcoming_for_person
 from app.services.catalog import (
     all_courses,
@@ -118,6 +120,30 @@ def course_landing(
             "pct": pct,
             "is_staff": staff,
         },
+    )
+
+
+@router.get("/announcements", response_class=HTMLResponse)
+def announcements(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Learner announcements list — tenant-wide and cohort-targeted."""
+    tenant = require_tenant(request)
+    items = ann_svc.for_person(db, tenant_id=tenant.id, person_id=person.id)
+    cohort_ids = {a.cohort_id for a in items if a.cohort_id is not None}
+    cohort_map: dict = {}
+    if cohort_ids:
+        cohorts = db.scalars(
+            select(Cohort)
+            .where(Cohort.tenant_id == tenant.id)
+            .where(Cohort.id.in_(cohort_ids))
+        ).all()
+        cohort_map = {c.id: c.name for c in cohorts}
+    return templates.TemplateResponse(
+        "learn/announcements.html",
+        {"request": request, "person": person, "announcements": items, "cohort_map": cohort_map},
     )
 
 
