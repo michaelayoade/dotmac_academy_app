@@ -35,6 +35,7 @@ AREAS: list[dict] = [
             {"label": "Cohorts", "path": "/instructor/cohorts"},
             {"label": "Announcements", "path": "/instructor/announcements"},
             {"label": "Reports", "path": "/instructor/reports"},
+            {"label": "Gradebook", "path": "/instructor/gradebook"},
             {"label": "Lab monitor", "path": "/instructor/labs"},
         ],
     },

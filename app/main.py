@@ -39,6 +39,7 @@ from app.web.admin_home import router as web_admin_router
 from app.web.audit import router as web_audit_router
 from app.web.auth import router as web_auth_router
 from app.web.catalog import router as web_catalog_router
+from app.web.gradebook import router as web_gradebook_router
 from app.web.instructor import router as web_instructor_router
 from app.web.lab_admin import router as web_lab_admin_router
 from app.web.labs import router as web_labs_router
@@ -134,6 +135,7 @@ app.include_router(web_catalog_router)
 app.include_router(web_search_router)
 app.include_router(web_learn_router)
 app.include_router(web_reports_router)
+app.include_router(web_gradebook_router)
 app.include_router(web_settings_router)
 app.include_router(web_teaching_router)
 app.include_router(web_audit_router)
