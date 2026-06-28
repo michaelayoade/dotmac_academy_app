@@ -23,6 +23,9 @@ class Course(Base, TimestampMixin):
     discipline: Mapped[str] = mapped_column(String(40), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(120), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Authoring lifecycle (Slice 5/#8). Draft courses are hidden from learners
+    # even when offered+entitled; instructors publish them when ready.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="published")
 
 class Chapter(Base, TimestampMixin):
     __tablename__ = "chapters"

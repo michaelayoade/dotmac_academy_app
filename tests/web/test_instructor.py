@@ -158,6 +158,26 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
     assert "q1" in r.text
 
 
+def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
+    """Finding #8: instructor can publish/unpublish a course."""
+    from app.models.course import Course
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    course = Course(tenant_id=tenant_a.id, slug="pub", title="Pub", discipline="networking",
+                    source_ref="x", version=1, status="draft")
+    admin_session.add(course)
+    admin_session.commit()
+    admin_session.refresh(course)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(f"/instructor/courses/{course.id}/status",
+                        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+                        data={"status_value": "published"})
+    assert r.status_code == 200
+    admin_session.expire(course)
+    assert admin_session.get(Course, course.id).status == "published"
+
+
 def test_student_forbidden(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on any instructor-gated route."""
     roles = ensure_roles(admin_session, tenant_a.id)

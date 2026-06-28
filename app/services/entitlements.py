@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
+from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.prerequisite import CoursePrerequisite
 
@@ -30,8 +31,14 @@ def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> s
             (Enrollment.cohort_id == CourseOffering.cohort_id)
             & (Enrollment.tenant_id == CourseOffering.tenant_id),
         )
+        .join(
+            Course,
+            (Course.id == CourseOffering.course_id)
+            & (Course.tenant_id == CourseOffering.tenant_id),
+        )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(CourseOffering.status == "active")
+        .where(Course.status == "published")
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
     ).all()
@@ -69,8 +76,14 @@ def open_course_ids(
             (Enrollment.cohort_id == CourseOffering.cohort_id)
             & (Enrollment.tenant_id == CourseOffering.tenant_id),
         )
+        .join(
+            Course,
+            (Course.id == CourseOffering.course_id)
+            & (Course.tenant_id == CourseOffering.tenant_id),
+        )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(CourseOffering.status == "active")
+        .where(Course.status == "published")
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
         .where(or_(CourseOffering.starts_at.is_(None), CourseOffering.starts_at <= now))

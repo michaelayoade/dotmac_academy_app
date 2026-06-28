@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort
+from app.models.course import Course
 from app.models.person import Person
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
@@ -147,6 +148,30 @@ def change_account_status(
     """Suspend or reactivate a learner account (finding #7)."""
     tenant = require_tenant(request)
     set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = "/instructor/cohorts"
+        return resp
+    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/courses/{course_id}/status")
+def set_course_status(
+    course_id: UUID,
+    request: Request,
+    status_value: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Publish or unpublish a course (finding #8). Draft courses are hidden from learners."""
+    tenant = require_tenant(request)
+    if status_value not in ("draft", "published"):
+        raise HTTPException(status_code=400, detail="invalid status")
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    course.status = status_value
     if request.headers.get("HX-Request"):
         resp: Response = Response(status_code=200)
         resp.headers["HX-Redirect"] = "/instructor/cohorts"

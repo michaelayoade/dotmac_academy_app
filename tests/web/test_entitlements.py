@@ -37,10 +37,10 @@ def _login(app_client, admin_session, tenant, email="stu@a.edu"):
     return p
 
 
-def _seed_course(admin_session, tenant, slug, *, discipline="networking"):
+def _seed_course(admin_session, tenant, slug, *, discipline="networking", status="published"):
     """Course + chapter 1 + bank + one question + an mcq activity. Returns (course, activity)."""
     c = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
-               discipline=discipline, source_ref="x", version=1)
+               discipline=discipline, source_ref="x", version=1, status=status)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(Chapter(tenant_id=tenant.id, course_id=c.id, number=1, title="One",
@@ -191,6 +191,25 @@ def test_open_window_allows_activity(app_client, admin_session, tenant_a):
            ends_at=datetime.now(UTC) + timedelta(days=1))
     admin_session.commit()
     try:
+        assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
+    finally:
+        _cleanup(admin_session, tenant_a)
+
+
+def test_draft_course_hidden_from_learner(app_client, admin_session, tenant_a):
+    """Slice 5/#8: a draft course, even offered+entitled, is not accessible."""
+    p = _login(app_client, admin_session, tenant_a)
+    course, act = _seed_course(admin_session, tenant_a, "draft-course", status="draft")
+    coh = _enroll(admin_session, tenant_a, p)
+    _offer(admin_session, tenant_a, coh, course)
+    admin_session.commit()
+    try:
+        assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 403
+        assert app_client.get("/courses/draft-course/chapters/1", headers=H).status_code == 403
+        assert "Draft-Course" not in app_client.get("/", headers=H).text
+        # Publishing makes it accessible.
+        course.status = "published"
+        admin_session.commit()
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
     finally:
         _cleanup(admin_session, tenant_a)
