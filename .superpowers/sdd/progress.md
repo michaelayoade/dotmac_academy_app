@@ -11,6 +11,6 @@ Build order (per-feature implementer + review):
 - [x] F5 notifications center — complete (ccc1c9c, review clean; 12 tests, ruff+mypy clean; hooks best-effort; mig 0020)
 - [x] F6 announcements — complete (79d5ded, review clean; 24 tests, ruff+mypy clean; mig 0021)
 - [x] F7 rich embeds — complete (ee76f78, review clean; 42+10 tests, ruff+mypy clean; ADDED whitelist sanitizer where none existed — courseware tags verified intact; follow-up: consider nh3 later)
-- [ ] F8 question types
+- [x] F8 question types — complete (5eb6a03, review clean; 24+50 tests, ruff+mypy clean; options surfaced to grader in prod)
 - [ ] F9 weighted gradebook
 - [ ] integration (suite + ruff/mypy + nav cross-check)
