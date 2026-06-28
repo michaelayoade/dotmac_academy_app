@@ -9,7 +9,7 @@ Build order (per-feature implementer + review):
 - [x] F3 search — complete (00b78aa, review clean; 13 tests, ruff+mypy clean; minor: search input bg-white off-palette → final pass)
 - [x] F4 audit viewer — complete (2803cbd, review clean; 13 tests, ruff+mypy clean)
 - [x] F5 notifications center — complete (ccc1c9c, review clean; 12 tests, ruff+mypy clean; hooks best-effort; mig 0020)
-- [ ] F6 announcements
+- [x] F6 announcements — complete (79d5ded, review clean; 24 tests, ruff+mypy clean; mig 0021)
 - [ ] F7 rich embeds
 - [ ] F8 question types
 - [ ] F9 weighted gradebook
