@@ -68,7 +68,10 @@ def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a, monkey
     from app.config import settings
 
     token = "test-platform-admin-token"
-    monkeypatch.setattr(settings, "platform_admin_token", token)
+    # platform_admin_token only exists once the platform-auth work lands; guard so
+    # this test is correct whether or not /admin/settings is token-gated.
+    if hasattr(settings, "platform_admin_token"):
+        monkeypatch.setattr(settings, "platform_admin_token", token)
     p, h = _login(app_client, admin_session, tenant_a, email="admin@a.edu", role="admin")
 
     # On /progress the current area is Learn, but the TABS show every area.
