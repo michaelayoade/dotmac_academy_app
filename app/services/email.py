@@ -142,6 +142,18 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
             f"Congratulations — you passed {activity.title} with a score of {pct}.\n\n"
             f"Keep up the great work!\n\n— Dotmac Academy\n"
         )
+        try:
+            from app.services.notifications import notify as _notify
+            _notify(
+                db,
+                tenant_id=score.tenant_id,
+                person_id=person.id,
+                kind="result",
+                title=f"You passed {activity.title}",
+                body=f"Score: {pct}",
+            )
+        except Exception as _exc:
+            logger.warning("in-app notify (result) failed: %s", _exc)
         return send_email(person.email, subject, html, text_body=text)
     except Exception as exc:  # non-fatal: grading must still succeed
         logger.warning("notify_score_if_first_pass failed: %s", exc)

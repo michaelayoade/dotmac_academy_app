@@ -8,6 +8,7 @@ rendered on demand with fpdf2 — no system dependencies.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -18,6 +19,8 @@ from sqlalchemy.orm import Session
 from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.services.exceptions import ConflictError
+
+logger = logging.getLogger(__name__)
 
 
 def _serial() -> str:
@@ -54,6 +57,18 @@ def issue_certificate(
                        serial=_serial(), issued_at=now or datetime.now(UTC))
     db.add(cert)
     db.flush()
+    try:
+        from app.services.notifications import notify as _notify
+        _notify(
+            db,
+            tenant_id=tenant_id,
+            person_id=person_id,
+            kind="certificate",
+            title="Your certificate is ready",
+            body="Congratulations on completing the course!",
+        )
+    except Exception as exc:
+        logger.warning("in-app notify (certificate) failed: %s", exc)
     return cert
 
 
