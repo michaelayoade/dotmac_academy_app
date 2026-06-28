@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-from app.models.assessment import Activity, QuestionBank, Question, Submission
+from app.models.assessment import Activity, Question, QuestionBank, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course

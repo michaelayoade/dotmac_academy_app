@@ -1,8 +1,9 @@
 """TDD tests for the Foundation content import service."""
 
 from pathlib import Path
-from app.services.content_import import parse_chapter_file, import_foundation, import_manual
-from app.models.course import Course, Chapter
+
+from app.models.course import Chapter, Course
+from app.services.content_import import import_foundation, import_manual, parse_chapter_file
 
 FX = Path(__file__).resolve().parent.parent / "fixtures" / "manual"
 

@@ -144,7 +144,7 @@ def _csrf(app_client, path, h):
 def test_unentitled_student_forbidden_on_lab(app_client, admin_session, tenant_a, monkeypatch):
     """Slice 1: no offering for the lab's course → 403 on detail and launch, no instance."""
     monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
-    p = _make_person(admin_session, tenant_a, "nolab@a.edu")
+    _make_person(admin_session, tenant_a, "nolab@a.edu")
     _, act, _ = _seed_lab(admin_session, tenant_a)  # no enrollment/offering
     h = _login(app_client, "nolab@a.edu")
     assert app_client.get(f"/labs/{act.id}", headers=h).status_code == 403

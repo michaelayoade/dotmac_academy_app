@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.services.security import hash_password
-from app.services.bootstrap import ensure_roles
-from app.models.person import Person
+from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
+from app.models.person import Person
 from app.models.rbac import PersonRole
-from app.models.assessment import Activity, Submission, Score
+from app.services.bootstrap import ensure_roles
+from app.services.security import hash_password
 
 
 def _login_instructor(app_client, admin_session, tenant):

@@ -87,9 +87,12 @@ def reset_password(db: Session, *, tenant_id: UUID, raw: str, new_password: str,
     ).first()
     if cred is None:
         raise BadRequestError("no credential for this account")
+    person = db.get(Person, tok.person_id)
+    if person is None:
+        raise BadRequestError("account no longer exists")
     cred.password_hash = hash_password(new_password)
     db.flush()
-    return db.get(Person, tok.person_id)
+    return person
 
 
 # ── Invitations ───────────────────────────────────────────────────────────────
@@ -157,6 +160,8 @@ def accept_invite(db: Session, *, tenant_id: UUID, raw: str, password: str,
         raise BadRequestError("password must be at least 8 characters")
     tok = _consume_token(db, tenant_id=tenant_id, kind="invite", raw=raw, now=now)
     person = db.get(Person, tok.person_id)
+    if person is None:
+        raise BadRequestError("account no longer exists")
     existing = db.scalars(
         select(UserCredential).where(UserCredential.tenant_id == tenant_id)
         .where(UserCredential.person_id == tok.person_id)

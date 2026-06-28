@@ -3,9 +3,11 @@
 Slice 2b.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0012_offering_activities"; down_revision = "0011_certificates"
 branch_labels = None; depends_on = None

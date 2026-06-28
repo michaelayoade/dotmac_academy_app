@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     migration_database_url: str = ""
     platform_root_domain: str = "localhost"
     trusted_hosts: str = ""
-    jwt_secret: str = "dev-insecure-change-me"  # noqa: S105 - rejected in production.
-    session_hash_secret: str = "dev-insecure-change-me"  # noqa: S105 - rejected in prod.
+    jwt_secret: str = "dev-insecure-change-me"
+    session_hash_secret: str = "dev-insecure-change-me"
     jwt_ttl_seconds: int = 3600
     csrf_enabled: bool = True
     rate_limit_enabled: bool = True
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = 60
     trust_inbound_request_id: bool = False
     # Optional platform-admin token gate for platform-level admin endpoints.
-    platform_admin_token: str = ""  # noqa: S105 - empty by default; set in prod if used.
+    platform_admin_token: str = ""
 
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20

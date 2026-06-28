@@ -4,7 +4,9 @@ Slice 2a. Null on either edge = open-ended; null window = always open, so
 existing offerings remain available.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0009_offering_window"; down_revision = "0008_course_offerings"

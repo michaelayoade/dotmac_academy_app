@@ -67,7 +67,7 @@ def start_console(cname: str, base_path: str) -> int | None:
         "docker", "exec", "-it", cname, "sh",
     ]
     try:
-        subprocess.Popen(  # noqa: S603 - fixed argv, no shell interpolation
+        subprocess.Popen(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
     except Exception as exc:  # never fail provision on a console launch error
@@ -81,7 +81,7 @@ def stop_consoles(instance: LabInstance) -> None:
     pattern = f"ttyd .* /labs/instances/{instance.id}/console/"
     argv = ["pkill", "-f", pattern]
     try:
-        subprocess.run(  # noqa: S603 - fixed argv, no shell interpolation
+        subprocess.run(
             argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
     except Exception as exc:
@@ -234,7 +234,7 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine,
         activity_id=instance.activity_id,
         person_id=instance.person_id,
         answers={"seed": instance.seed, "instance": str(instance.id)},
-        attempt_no=int(prev) + 1,
+        attempt_no=int(prev or 0) + 1,
     )
     db.add(sub)
     db.flush()
@@ -265,7 +265,7 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine,
         person = db.get(Person, instance.person_id)
         if act is not None:
             notify_score_if_first_pass(db, score=score, activity=act, person=person)
-    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+    except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
 

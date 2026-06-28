@@ -24,7 +24,6 @@ from email.message import EmailMessage
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.assessment import Score, Submission
 
 logger = logging.getLogger(__name__)
@@ -46,12 +45,10 @@ def send_email(
     unconfigured or on ANY exception — it never raises, so callers can treat
     email as best-effort.
     """
-    if db is not None:
-        from app.services.settings_store import effective
+    from app.services.settings_store import effective
 
-        cfg = effective(db)
-    else:
-        cfg = settings
+    # effective(None) returns env/config defaults, so this covers both paths.
+    cfg = effective(db)
     if not cfg.smtp_host:
         logger.info("SMTP not configured (SMTP_HOST empty); skipping email to %s: %s", to, subject)
         return False

@@ -1,10 +1,13 @@
 # app/services/assessment.py
 from __future__ import annotations
+
 import logging
 from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.models.assessment import Activity, Question, Submission, Score
+
+from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
 from app.services.grading import grade_submission
 
@@ -27,7 +30,7 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
                      .where(Submission.activity_id == activity.id)
                      .where(Submission.person_id == person_id))
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
-                     answers=answers, attempt_no=int(prev) + 1)
+                     answers=answers, attempt_no=int(prev or 0) + 1)
     db.add(sub); db.flush()
     if activity.grading == "manual":
         return None  # awaits instructor grading (no auto Score)
@@ -41,7 +44,7 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
         from app.services.email import notify_score_if_first_pass
         person = db.get(Person, person_id)
         notify_score_if_first_pass(db, score=score, activity=activity, person=person)
-    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+    except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
 
@@ -51,7 +54,7 @@ def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
     try:
         from app.services.completion import recompute_completion
         recompute_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+    except Exception as exc:
         logger.warning("completion recompute failed: %s", exc)
 
 

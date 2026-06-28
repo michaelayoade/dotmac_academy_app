@@ -1,7 +1,8 @@
 from pathlib import Path
-from app.services.bank_loader import parse_bank, lint_bank, load_bank
-from app.models.course import Course
+
 from app.models.assessment import Question
+from app.models.course import Course
+from app.services.bank_loader import lint_bank, load_bank, parse_bank
 
 FX = Path(__file__).resolve().parent.parent / "fixtures" / "banks" / "foundation-ch3.yaml"
 

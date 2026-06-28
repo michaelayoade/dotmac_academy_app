@@ -3,7 +3,9 @@
 Slice 4b.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0017_activity_grading"; down_revision = "0016_activity_max_attempts"

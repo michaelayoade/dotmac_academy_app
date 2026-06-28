@@ -3,9 +3,11 @@
 Slice 2e. A course may require other courses to be completed first.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0013_course_prerequisites"; down_revision = "0012_offering_activities"
 branch_labels = None; depends_on = None

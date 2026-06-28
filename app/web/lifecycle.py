@@ -8,6 +8,8 @@ htmx + CSRF-cookie pattern as the login form. The service layer
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -15,6 +17,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.services import lifecycle
 from app.services.exceptions import BadRequestError, ConflictError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
@@ -60,9 +64,9 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
             from app.services.email import send_email
             link = f"/reset?token={raw}"
             send_email(to=email.strip().lower(), subject="Reset your password",
-                       html=f"<p>Reset your password: <a href='{link}'>{link}</a></p>")
-        except Exception:  # noqa: BLE001 - delivery failures must stay silent here
-            pass
+                       html_body=f"<p>Reset your password: <a href='{link}'>{link}</a></p>")
+        except Exception as exc:
+            logger.debug("password-reset email send failed: %s", exc)
     # Identical response whether or not the email exists (anti-enumeration).
     return HTMLResponse("If that email has an account, a reset link is on its way.")
 

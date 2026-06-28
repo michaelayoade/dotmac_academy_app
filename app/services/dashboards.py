@@ -60,12 +60,14 @@ def cohort_overview(
     rows = []
     for p in students:
         if course_ids:
-            pcts = dict(db.execute(
-                select(CourseCompletion.course_id, CourseCompletion.pct)
-                .where(CourseCompletion.tenant_id == tenant_id)
-                .where(CourseCompletion.person_id == p.id)
-                .where(CourseCompletion.course_id.in_(course_ids))
-            ).all())
+            pcts: dict[UUID, float] = {
+                cid: pct for cid, pct in db.execute(
+                    select(CourseCompletion.course_id, CourseCompletion.pct)
+                    .where(CourseCompletion.tenant_id == tenant_id)
+                    .where(CourseCompletion.person_id == p.id)
+                    .where(CourseCompletion.course_id.in_(course_ids))
+                ).all()
+            }
             completion_pct = sum(pcts.get(cid, 0.0) for cid in course_ids) / len(course_ids)
         else:
             completion_pct = 0.0

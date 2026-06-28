@@ -19,9 +19,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
+from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort
 from app.models.person import Person
-from app.models.assessment import Activity, Score, Submission
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.dashboards import cohort_overview

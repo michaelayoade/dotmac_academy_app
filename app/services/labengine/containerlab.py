@@ -35,7 +35,7 @@ class ContainerlabEngine(LabEngine):
         # `containerlab deploy --format json` → {"<labname>": [ {node...} ]}.
         # Be tolerant of a bare list too (older format / unit-test fixtures).
         if isinstance(data, dict):
-            items = data.get(instance_name) or next(iter(data.values()), [])
+            items: list = data.get(instance_name) or next(iter(data.values()), [])
         else:
             items = data
         for item in items:

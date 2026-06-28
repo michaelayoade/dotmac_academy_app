@@ -4,9 +4,11 @@ Slice 2c. Per-learner, per-course completion state (pct + status + completed_at)
 recomputed whenever a score is written.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0010_course_completions"; down_revision = "0009_offering_window"
 branch_labels = None; depends_on = None

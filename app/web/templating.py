@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from pathlib import Path
+
 from fastapi.templating import Jinja2Templates
 
 from app.web.context import nav_context

@@ -5,9 +5,11 @@ entitlement source. The backfill preserves existing access by linking every
 cohort to each course sharing its discipline.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0008_course_offerings"; down_revision = "0007_person_profile"
 branch_labels = None; depends_on = None

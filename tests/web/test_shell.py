@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import re
 
-from app.models.person import Person
 from app.models.auth import UserCredential
+from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password

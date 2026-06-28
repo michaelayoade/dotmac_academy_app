@@ -3,7 +3,9 @@
 Slice 4a. Null = unlimited.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0016_activity_max_attempts"; down_revision = "0015_person_status"

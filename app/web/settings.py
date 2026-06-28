@@ -104,7 +104,7 @@ def settings_test_email(
     db: Session = Depends(get_db),
 ):
     """Send a test email to the current admin's own address; render a flash."""
-    to = getattr(person, "email", None)
+    to = person.email
     cfg = effective(db)
     if not cfg.smtp_host:
         return templates.TemplateResponse(

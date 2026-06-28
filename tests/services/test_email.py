@@ -44,7 +44,11 @@ def _score(db, tid, act, p, *, frac, passed):
 
 def test_send_email_inert_when_unconfigured(monkeypatch):
     """No smtp_host => returns False, never raises, never touches the network."""
-    monkeypatch.setattr(email_mod.settings, "smtp_host", "", raising=False)
+    # send_email resolves SMTP config via settings_store.effective(), which reads
+    # the canonical app.config.settings singleton.
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "smtp_host", "", raising=False)
     assert send_email("x@y.z", "Subject", "<p>hi</p>") is False
 
 

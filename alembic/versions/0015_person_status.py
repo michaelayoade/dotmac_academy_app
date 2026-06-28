@@ -3,7 +3,9 @@
 Slice 3c. Existing rows default to 'active'.
 """
 from __future__ import annotations
+
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0015_person_status"; down_revision = "0014_account_tokens"

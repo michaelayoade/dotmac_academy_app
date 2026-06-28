@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from app.services.security import hash_password
-from app.models.person import Person
+from app.models.assessment import Activity, Question, QuestionBank
 from app.models.auth import UserCredential
-from app.models.course import Course, Chapter
-from app.models.assessment import QuestionBank, Question, Activity
 from app.models.cohort import Cohort, Enrollment
+from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
+from app.models.person import Person
+from app.services.security import hash_password
 
 
 def _login(app_client, admin_session, tenant):
@@ -101,7 +101,7 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     admin_session.commit()
 
     # GET chapter page — response sets the csrf_token cookie in the TestClient jar.
-    r_ch = app_client.get(f"/courses/foundation/chapters/3", headers=h)
+    r_ch = app_client.get("/courses/foundation/chapters/3", headers=h)
     assert r_ch.status_code == 200
 
     # Extract csrf token — TestClient (httpx-based) stores cookies from responses.

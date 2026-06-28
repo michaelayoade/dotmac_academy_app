@@ -364,7 +364,7 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
     subprotocol = "tty" if "tty" in offered else None
     await websocket.accept(subprotocol=subprotocol)
     try:
-        upstream = await websockets.connect(upstream_url, subprotocols=["tty"])
+        upstream = await websockets.connect(upstream_url, subprotocols=["tty"])  # type: ignore[list-item]
     except Exception as exc:  # upstream ttyd unreachable
         logger.warning("ttyd upstream connect failed (%s): %s", upstream_url, exc)
         await websocket.close(code=1011)
