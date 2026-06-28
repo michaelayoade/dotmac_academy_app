@@ -44,6 +44,7 @@ AREAS: list[dict] = [
         "sidebar": [
             {"label": "Console", "path": "/admin"},
             {"label": "Users", "path": "/admin/users"},
+            {"label": "Audit", "path": "/admin/audit"},
             {"label": "Settings", "path": "/admin/settings"},
         ],
     },
