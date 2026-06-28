@@ -158,6 +158,37 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
     assert "q1" in r.text
 
 
+def test_authoring_create_course_and_chapter(app_client, admin_session, tenant_a):
+    """Finding #8: instructor creates a draft course and authors a chapter in markdown."""
+    from app.models.course import Chapter, Course
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    csrf = app_client.cookies.get("csrf_token", "")
+    # Create a draft course.
+    r = app_client.post("/instructor/courses",
+                        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+                        data={"slug": "authored", "title": "Authored", "discipline": "networking"})
+    assert r.status_code == 200
+    course = admin_session.scalars(
+        __import__("sqlalchemy").select(Course)
+        .where(Course.tenant_id == tenant_a.id).where(Course.slug == "authored")
+    ).first()
+    assert course is not None and course.status == "draft"
+
+    # Author a chapter in markdown.
+    r2 = app_client.post(f"/instructor/courses/{course.id}/chapters",
+                         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+                         data={"number": "1", "title": "Intro", "body_md": "# Welcome"})
+    assert r2.status_code == 200
+    ch = admin_session.scalars(
+        __import__("sqlalchemy").select(Chapter)
+        .where(Chapter.course_id == course.id).where(Chapter.number == 1)
+    ).first()
+    assert ch is not None
+    assert "<h1>Welcome</h1>" in ch.body_html
+    assert ch.body_md == "# Welcome"
+
+
 def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
     """Finding #8: instructor can publish/unpublish a course."""
     from app.models.course import Course

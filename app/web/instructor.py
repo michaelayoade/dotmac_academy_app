@@ -21,10 +21,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort
-from app.models.course import Course
+from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
+from app.services.authoring import create_course, upsert_chapter
 from app.services.dashboards import cohort_overview
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roster import bulk_enroll, set_roster_state
@@ -153,6 +154,78 @@ def change_account_status(
         resp.headers["HX-Redirect"] = "/instructor/cohorts"
         return resp
     return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/courses")
+def author_create_course(
+    request: Request,
+    slug: str = Form(...),
+    title: str = Form(...),
+    discipline: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Create a new draft course in-app (finding #8)."""
+    tenant = require_tenant(request)
+    course = create_course(db, tenant_id=tenant.id, slug=slug, title=title, discipline=discipline)
+    target = f"/instructor/courses/{course.id}/edit"
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = target
+        return resp
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/courses/{course_id}/edit", response_class=HTMLResponse)
+def author_course_page(course_id: UUID, request: Request, db: Session = Depends(get_db)):
+    """Markdown authoring page: existing chapters + an add/edit form (finding #8)."""
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    chapters = db.scalars(
+        select(Chapter).where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course_id).order_by(Chapter.number)
+    ).all()
+    rows = "".join(
+        f"<li>Ch{c.number}: {c.title}</li>" for c in chapters
+    ) or "<li>No chapters yet.</li>"
+    form = (
+        f"<form hx-post='/instructor/courses/{course_id}/chapters' hx-swap='none'>"
+        f"<input name='number' type='number' min='1' required placeholder='Chapter #'>"
+        f"<input name='title' required placeholder='Title'>"
+        f"<textarea name='body_md' required placeholder='Markdown content'></textarea>"
+        f"<button>Save chapter</button></form>"
+    )
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset=utf-8><title>Author {course.title}</title>"
+        f"<script src='/static/htmx.min.js' defer></script></head>"
+        f"<body><h1>Author: {course.title} ({course.status}, v{course.version})</h1>"
+        f"<ul>{rows}</ul>{form}{_CSRF_JS}</body></html>"
+    )
+
+
+@router.post("/courses/{course_id}/chapters")
+def author_upsert_chapter(
+    course_id: UUID,
+    request: Request,
+    number: int = Form(...),
+    title: str = Form(...),
+    body_md: str = Form(...),
+    part: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Create or update a chapter from markdown (finding #8)."""
+    tenant = require_tenant(request)
+    upsert_chapter(db, tenant_id=tenant.id, course_id=course_id, number=number,
+                   title=title, body_md=body_md, part=part)
+    target = f"/instructor/courses/{course_id}/edit"
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = target
+        return resp
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/courses/{course_id}/status")

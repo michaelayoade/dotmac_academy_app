@@ -5,6 +5,7 @@ Slice 5a / finding #8. Existing courses default to 'published'.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0018_course_status"; down_revision = "0017_activity_grading"

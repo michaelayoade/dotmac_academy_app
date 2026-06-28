@@ -42,5 +42,8 @@ class Chapter(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     part: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Editable markdown source for in-app authoring (Slice 5/#8); body_html is the
+    # rendered output. Empty for filesystem-imported chapters.
+    body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
