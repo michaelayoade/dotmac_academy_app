@@ -41,7 +41,9 @@ def upgrade():
         *_ts(),
         sa.UniqueConstraint("tenant_id", "id", name="uq_course_completions_tenant_id_id"),
         sa.UniqueConstraint("tenant_id", "person_id", "course_id",
-                            name="uq_course_completions_person_course"))
+                            name="uq_course_completions_person_course"),
+        sa.ForeignKeyConstraint(["tenant_id", "course_id"], ["courses.tenant_id", "courses.id"],
+                                ondelete="CASCADE", name="fk_course_completions_tenant_course"))
     for c in ("tenant_id", "person_id", "course_id"):
         op.create_index(f"ix_course_completions_{c}", "course_completions", [c])
     _rls("course_completions")

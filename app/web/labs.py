@@ -88,6 +88,26 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
     return f"http://127.0.0.1:{port}/" if port else None
 
 
+def _require_instance_entitlement(
+    db: Session, tenant: Tenant, person: Person, instance: LabInstance
+) -> None:
+    """Re-check the owner is STILL entitled to the lab's course.
+
+    Ownership alone is not enough: a learner who launched a lab while entitled may
+    since have been dropped/suspended, had the offering window close, or the course
+    unpublished. Without this, a now-non-entitled owner could keep grading/resetting
+    the lab and holding a live console until the instance is reaped.
+    """
+    act = db.scalars(
+        select(Activity)
+        .where(Activity.id == instance.activity_id)
+        .where(Activity.tenant_id == tenant.id)
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
+
+
 def _authorize_console(
     db: Session,
     tenant: Tenant,
@@ -113,6 +133,7 @@ def _authorize_console(
         raise HTTPException(status_code=404)
     if instance.person_id != person.id:
         raise HTTPException(status_code=403)
+    _require_instance_entitlement(db, tenant, person, instance)
     target = _console_target(instance, node)
     if target is None:
         raise HTTPException(status_code=404)
@@ -203,7 +224,8 @@ def _current_instance(
 def _owned_instance(
     db: Session, tenant: Tenant, person: Person, instance_id: UUID
 ) -> LabInstance:
-    """Load a tenant-scoped instance and assert ownership (404/403)."""
+    """Load a tenant-scoped instance, assert ownership (404/403) AND current
+    entitlement to the lab's course (so revocation propagates to live instances)."""
     inst = db.scalars(
         select(LabInstance)
         .where(LabInstance.id == instance_id)
@@ -213,6 +235,7 @@ def _owned_instance(
         raise HTTPException(status_code=404)
     if inst.person_id != person.id:
         raise HTTPException(status_code=403)
+    _require_instance_entitlement(db, tenant, person, inst)
     return inst
 
 

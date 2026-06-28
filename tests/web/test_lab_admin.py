@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.person import Person
@@ -64,11 +62,16 @@ def test_instructor_override_creates_override_score(app_client, admin_session, t
     """An instructor override on a seeded lab Submission creates a Score(source='override')."""
     h = _login_instructor(app_client, admin_session, tenant_a)
 
-    # Seed a lab activity + a student submission to override.
+    # Seed a real course + lab activity + a student submission to override.
+    from app.models.course import Course
+
     student = Person(tenant_id=tenant_a.id, email="learner@a.edu", first_name="L", last_name="N")
-    admin_session.add(student)
+    course = Course(tenant_id=tenant_a.id, slug="lab", title="Lab", discipline="networking",
+                    source_ref="x", version=1)
+    admin_session.add_all([student, course])
+    admin_session.flush()
     activity = Activity(
-        tenant_id=tenant_a.id, course_id=uuid4(), type="lab", title="VLAN Lab",
+        tenant_id=tenant_a.id, course_id=course.id, type="lab", title="VLAN Lab",
         pass_threshold=0.7,
     )
     admin_session.add(activity)

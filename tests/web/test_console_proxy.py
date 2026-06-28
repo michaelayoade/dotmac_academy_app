@@ -11,10 +11,33 @@ from __future__ import annotations
 import pytest
 from fastapi import Response
 
+from app.models.assessment import Activity
 from app.models.auth import UserCredential
+from app.models.cohort import Cohort, Enrollment
+from app.models.course import Course
 from app.models.lab import LabInstance
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.security import hash_password
+
+
+def _entitled_activity(admin_session, tenant, person_id):
+    """Create a lab activity the person is entitled to (course+cohort+offering)."""
+    c = Course(tenant_id=tenant.id, slug="lab-course", title="Lab", discipline="networking",
+               source_ref="x", version=1)
+    admin_session.add(c)
+    admin_session.flush()
+    act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",
+                   title="Lab", pass_threshold=0.5)
+    coh = Cohort(tenant_id=tenant.id, name="C", discipline="networking", status="active")
+    admin_session.add_all([act, coh])
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person_id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=c.id,
+                                     status="active"))
+    admin_session.flush()
+    return act.id
 
 
 def _make_person(admin_session, tenant, email: str) -> Person:
@@ -42,7 +65,7 @@ def _login(app_client, email: str) -> dict[str, str]:
 def _seed_instance(admin_session, tenant, person_id) -> LabInstance:
     li = LabInstance(
         tenant_id=tenant.id,
-        activity_id=person_id,  # any UUID; not FK-constrained
+        activity_id=_entitled_activity(admin_session, tenant, person_id),
         person_id=person_id,
         instance_name="dal-x",
         seed={"o": 5},

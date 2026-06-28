@@ -141,6 +141,30 @@ def _csrf(app_client, path, h):
     return r, app_client.cookies.get("csrf_token") or r.cookies.get("csrf_token", "")
 
 
+def test_dropped_owner_loses_live_instance_access(app_client, admin_session, tenant_a, monkeypatch):
+    """Revocation propagates to live instances: a dropped owner is 403 on status/check."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "drop@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    coh = _entitle(admin_session, tenant_a, p, course)
+    h = _login(app_client, "drop@a.edu")
+    # Launch while entitled.
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    app_client.post(f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf})
+    inst = admin_session.query(LabInstance).filter(
+        LabInstance.activity_id == act.id, LabInstance.person_id == p.id).one()
+
+    # Instructor drops the learner; the live instance must now be off-limits.
+    enr = admin_session.query(Enrollment).filter(
+        Enrollment.cohort_id == coh.id, Enrollment.person_id == p.id).one()
+    enr.status = "dropped"
+    admin_session.commit()
+
+    assert app_client.get(f"/labs/instances/{inst.id}/status", headers=h).status_code == 403
+    r = app_client.post(f"/labs/instances/{inst.id}/check", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 403
+
+
 def test_unentitled_student_forbidden_on_lab(app_client, admin_session, tenant_a, monkeypatch):
     """Slice 1: no offering for the lab's course → 403 on detail and launch, no instance."""
     monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)

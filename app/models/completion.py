@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,11 @@ class CourseCompletion(Base, TimestampMixin):
         UniqueConstraint("tenant_id", "id", name="uq_course_completions_tenant_id_id"),
         UniqueConstraint("tenant_id", "person_id", "course_id",
                          name="uq_course_completions_person_course"),
+        # course_id is FK-constrained (referential integrity + cascade on course
+        # delete). person_id is intentionally FK-less, matching the existing
+        # submissions/scores ledger convention.
+        ForeignKeyConstraint(["tenant_id", "course_id"], ["courses.tenant_id", "courses.id"],
+                             ondelete="CASCADE", name="fk_course_completions_tenant_course"),
     )
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True),

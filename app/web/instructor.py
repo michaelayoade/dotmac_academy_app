@@ -11,6 +11,7 @@ after the response is built. A mid-handler commit would clear that GUC and break
 
 from __future__ import annotations
 
+from html import escape
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -36,6 +37,16 @@ router = APIRouter(
     prefix="/instructor",
     dependencies=[Depends(require_tenant), Depends(require_web_role("instructor"))],
 )
+
+
+def _e(value: object) -> str:
+    """HTML-escape a value for safe interpolation into hand-built HTML responses.
+
+    These instructor pages render learner-controlled data (names, emails, titles),
+    so every interpolation must be escaped to prevent stored XSS across the
+    student->instructor boundary.
+    """
+    return escape(str(value))
 
 
 @router.get("/cohorts", response_class=HTMLResponse)
@@ -93,7 +104,7 @@ def enroll_student(
     enrolled = len(result["enrolled"]) + len(result["reactivated"])
     summary = f"Enrolled {enrolled}."
     if result["not_found"]:
-        summary += " Unknown (not enrolled): " + ", ".join(result["not_found"]) + "."
+        summary += " Unknown (not enrolled): " + ", ".join(_e(e) for e in result["not_found"]) + "."
     if request.headers.get("HX-Request"):
         return HTMLResponse(f'<div class="enroll-summary" role="status">{summary}</div>')
     return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
@@ -133,20 +144,25 @@ def invite_to_cohort(
                                 first_name=first_name, last_name=last_name, role="student")
     bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email])
     link = f"/accept-invite?token={token}"
+    link_e = _e(link)
     return HTMLResponse(
-        f'<div class="invite-summary" role="status">Invited {person.email}. '
-        f'Activation link: <a href="{link}">{link}</a></div>'
+        f'<div class="invite-summary" role="status">Invited {_e(person.email)}. '
+        f'Activation link: <a href="{link_e}">{link_e}</a></div>'
     )
 
 
-@router.post("/people/{person_id}/status")
+@router.post("/people/{person_id}/status", dependencies=[Depends(require_web_role("admin"))])
 def change_account_status(
     person_id: UUID,
     request: Request,
     status_value: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Suspend or reactivate a learner account (finding #7)."""
+    """Suspend or reactivate an account (finding #7).
+
+    Admin-only: account suspension is privileged, so a plain instructor cannot
+    suspend admins or peer instructors (the whole route requires the admin role).
+    """
     tenant = require_tenant(request)
     set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
     if request.headers.get("HX-Request"):
@@ -189,7 +205,7 @@ def author_course_page(course_id: UUID, request: Request, db: Session = Depends(
         .where(Chapter.course_id == course_id).order_by(Chapter.number)
     ).all()
     rows = "".join(
-        f"<li>Ch{c.number}: {c.title}</li>" for c in chapters
+        f"<li>Ch{c.number}: {_e(c.title)}</li>" for c in chapters
     ) or "<li>No chapters yet.</li>"
     form = (
         f"<form hx-post='/instructor/courses/{course_id}/chapters' hx-swap='none'>"
@@ -199,9 +215,9 @@ def author_course_page(course_id: UUID, request: Request, db: Session = Depends(
         f"<button>Save chapter</button></form>"
     )
     return HTMLResponse(
-        f"<!doctype html><html><head><meta charset=utf-8><title>Author {course.title}</title>"
+        f"<!doctype html><html><head><meta charset=utf-8><title>Author {_e(course.title)}</title>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
-        f"<body><h1>Author: {course.title} ({course.status}, v{course.version})</h1>"
+        f"<body><h1>Author: {_e(course.title)} ({_e(course.status)}, v{course.version})</h1>"
         f"<ul>{rows}</ul>{form}{_CSRF_JS}</body></html>"
     )
 
@@ -295,7 +311,7 @@ def grading_queue(request: Request, db: Session = Depends(get_db)):
     for sub, act, email in rows:
         items.append(
             f"<li class='pending-item' data-submission='{sub.id}'>"
-            f"<strong>{act.title}</strong> — {email} (attempt {sub.attempt_no})"
+            f"<strong>{_e(act.title)}</strong> — {_e(email)} (attempt {sub.attempt_no})"
             f"<form hx-post='/instructor/scores/{sub.id}/override' hx-swap='none' "
             f"class='inline-grade'>"
             f"<input name='score_value' type='number' step='0.1' value='0' required>"
@@ -318,7 +334,7 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
     ov = cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
     rows = "".join(
         f"<tr class='{'at-risk' if r['at_risk'] else ''}'>"
-        f"<td>{r['name']}</td><td>{r['email']}</td>"
+        f"<td>{_e(r['name'])}</td><td>{_e(r['email'])}</td>"
         f"<td>{round(100 * r['completion_pct'])}%</td>"
         f"<td>{'⚠ at risk' if r['at_risk'] else 'ok'}</td></tr>"
         for r in ov["rows"]
@@ -328,7 +344,7 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
              if ov["rows"] else "<p>No learners enrolled.</p>")
     return HTMLResponse(
         f"<!doctype html><html><head><meta charset=utf-8><title>Cohort dashboard</title></head>"
-        f"<body><h1>{ov['cohort'].name} — progress</h1>{table}</body></html>"
+        f"<body><h1>{_e(ov['cohort'].name)} — progress</h1>{table}</body></html>"
     )
 
 
@@ -343,7 +359,7 @@ def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=404)
     items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
     rows = "".join(
-        f"<tr><td>{i['id']}</td><td>{i['responses']}</td><td>{i['correct']}</td>"
+        f"<tr><td>{_e(i['id'])}</td><td>{i['responses']}</td><td>{i['correct']}</td>"
         f"<td>{i['p_value']:.2f}</td></tr>"
         for i in items
     )
@@ -352,7 +368,7 @@ def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(ge
              if items else "<p>No responses yet.</p>")
     return HTMLResponse(
         f"<!doctype html><html><head><meta charset=utf-8><title>Item analysis</title></head>"
-        f"<body><h1>Item analysis — {act.title}</h1>{table}</body></html>"
+        f"<body><h1>Item analysis — {_e(act.title)}</h1>{table}</body></html>"
     )
 
 

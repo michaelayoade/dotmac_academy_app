@@ -9,6 +9,7 @@ htmx + CSRF-cookie pattern as the login form. The service layer
 from __future__ import annotations
 
 import logging
+from html import escape
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
@@ -75,7 +76,7 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
 def reset_form(request: Request, token: str = ""):
     return _page("Choose a new password",
         f"<form hx-post='/reset' hx-target='#msg' hx-swap='innerHTML' class='space-y-4'>"
-        f"<input type='hidden' name='token' value='{token}'>"
+        f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
         f"<input name='password' type='password' required minlength='8' "
         f"placeholder='New password (min 8 chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Set password</button></form>"
@@ -89,7 +90,7 @@ def reset_submit(request: Request, token: str = Form(...), password: str = Form(
     try:
         lifecycle.reset_password(db, tenant_id=tenant.id, raw=token, new_password=password)
     except BadRequestError as exc:
-        return HTMLResponse(f"<span class='text-clay-600'>{exc}</span>", status_code=400)
+        return HTMLResponse(f"<span class='text-clay-600'>{escape(str(exc))}</span>", status_code=400)
     return HTMLResponse("Password updated. <a href='/login'>Sign in</a>.")
 
 
@@ -99,7 +100,7 @@ def reset_submit(request: Request, token: str = Form(...), password: str = Form(
 def accept_form(request: Request, token: str = ""):
     return _page("Set up your account",
         f"<form hx-post='/accept-invite' hx-target='#msg' hx-swap='innerHTML' class='space-y-4'>"
-        f"<input type='hidden' name='token' value='{token}'>"
+        f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
         f"<input name='password' type='password' required minlength='8' "
         f"placeholder='Choose a password (min 8 chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Activate account</button></form>"
@@ -113,5 +114,5 @@ def accept_submit(request: Request, token: str = Form(...), password: str = Form
     try:
         lifecycle.accept_invite(db, tenant_id=tenant.id, raw=token, password=password)
     except (BadRequestError, ConflictError) as exc:
-        return HTMLResponse(f"<span class='text-clay-600'>{exc}</span>", status_code=400)
+        return HTMLResponse(f"<span class='text-clay-600'>{escape(str(exc))}</span>", status_code=400)
     return HTMLResponse("Account activated. <a href='/login'>Sign in</a>.")

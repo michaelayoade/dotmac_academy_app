@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.assessment import Score, Submission
+from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.offering import CourseOffering
@@ -72,13 +72,21 @@ def cohort_overview(
         else:
             completion_pct = 0.0
 
-        last_activity_at = db.scalar(
-            select(func.max(Score.created_at))
-            .join(Submission, (Submission.id == Score.submission_id)
-                  & (Submission.tenant_id == Score.tenant_id))
-            .where(Score.tenant_id == tenant_id)
-            .where(Submission.person_id == p.id)
-        )
+        # Last activity scoped to THIS cohort's offered courses (not tenant-wide),
+        # so activity in an unrelated course doesn't mask an at-risk learner.
+        if course_ids:
+            last_activity_at = db.scalar(
+                select(func.max(Score.created_at))
+                .join(Submission, (Submission.id == Score.submission_id)
+                      & (Submission.tenant_id == Score.tenant_id))
+                .join(Activity, (Activity.id == Submission.activity_id)
+                      & (Activity.tenant_id == Submission.tenant_id))
+                .where(Score.tenant_id == tenant_id)
+                .where(Submission.person_id == p.id)
+                .where(Activity.course_id.in_(course_ids))
+            )
+        else:
+            last_activity_at = None
         inactive = last_activity_at is None or last_activity_at < stale_before
         at_risk = completion_pct < at_risk_pct and inactive
         rows.append({
