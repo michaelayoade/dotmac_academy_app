@@ -6,7 +6,7 @@ Base: feat/lms-buildout @ ad5ec4e | Test DB: academy_gaps :5437
 Build order (per-feature implementer + review):
 - [x] F1 catalog + landing — complete (1d39fac, review clean; 34 tests, ruff+mypy clean)
 - [x] F2 calendar/agenda — complete (58086bb, review clean; 21 tests, ruff+mypy clean)
-- [ ] F3 search
+- [x] F3 search — complete (00b78aa, review clean; 13 tests, ruff+mypy clean; minor: search input bg-white off-palette → final pass)
 - [ ] F4 audit viewer
 - [ ] F5 notifications center
 - [ ] F6 announcements
