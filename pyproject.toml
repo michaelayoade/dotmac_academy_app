@@ -56,6 +56,7 @@ ignore = [
 "app/services/lab_lifecycle.py" = ["S603", "S607"]
 "app/services/lab_jobs.py" = ["S603"]
 "app/services/lab_seed.py" = ["S311"]
+"app/services/attempts.py" = ["S311"]  # question-pool shuffle is not security-sensitive
 
 [tool.mypy]
 python_version = "3.12"

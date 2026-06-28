@@ -70,6 +70,8 @@ class Activity(Base, TimestampMixin):
     max_attempts: Mapped[int | None] = mapped_column(Integer)
     # "auto" grades on submit; "manual" leaves submissions for instructor grading.
     grading: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")
+    # Random pool: show this many randomly-drawn questions from the bank (null = all).
+    question_count: Mapped[int | None] = mapped_column(Integer)
 
 
 class Submission(Base, TimestampMixin):
