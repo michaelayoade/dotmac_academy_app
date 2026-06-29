@@ -20,7 +20,12 @@ from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_platform_db, require_tenant
+from app.api.deps import (
+    get_db,
+    get_platform_db,
+    require_platform_admin_token,
+    require_tenant,
+)
 from app.models.person import Person
 from app.services.email import send_email
 from app.services.settings_store import effective, set_many
@@ -29,7 +34,11 @@ from app.web.templating import templates
 
 router = APIRouter(
     prefix="/admin",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("admin"))],
+    dependencies=[
+        Depends(require_tenant),
+        Depends(require_web_role("admin")),
+        Depends(require_platform_admin_token),
+    ],
 )
 
 _BOOL_FIELDS = ("smtp_starttls", "email_auto_on_pass", "email_digest_enabled")

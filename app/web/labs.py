@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -31,11 +33,13 @@ from app.config import settings
 from app.db import SessionLocal
 from app.middleware.tenant import TenantResolverMiddleware
 from app.models.assessment import Activity
+from app.models.course import Course
 from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_lifecycle, web_auth
 from app.services.labengine.containerlab import ContainerlabEngine
+from app.services.proxy_headers import proxy_request_headers, proxy_response_headers
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -51,23 +55,6 @@ ws_router = APIRouter()
 
 # Reuse the app's own Host→Tenant resolver verbatim for the websocket scope.
 _tenant_resolver = TenantResolverMiddleware(app=None)  # type: ignore[arg-type]
-
-# Hop-by-hop headers must not be forwarded across a proxy (RFC 7230 §6.1).
-_HOP_BY_HOP = frozenset(
-    {
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "host",
-        "content-length",
-    }
-)
-
 
 def _console_target(instance: LabInstance, node: str) -> str | None:
     """Resolve the upstream console URL for `node`, or None if unavailable.
@@ -120,9 +107,7 @@ def _authorize_console(
 
 async def _proxy_http(request: Request, target: str) -> Response:
     """Reverse-proxy an HTTP request to `target`, streaming the response back."""
-    fwd_headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
-    }
+    fwd_headers = proxy_request_headers(request.headers)
     body = await request.body()
     client = httpx.AsyncClient(timeout=30.0)
     upstream_req = client.build_request(
@@ -133,9 +118,7 @@ async def _proxy_http(request: Request, target: str) -> Response:
         params=request.query_params,
     )
     upstream = await client.send(upstream_req, stream=True)
-    resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
-    }
+    resp_headers = proxy_response_headers(upstream.headers)
 
     async def _body_iter():
         try:
@@ -151,8 +134,6 @@ async def _proxy_http(request: Request, target: str) -> Response:
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
     )
-
-
 # ---------------------------------------------------------------------------
 # Student lab portal (Task 9): launch / status / check / reset.
 # All routes are tenant-filtered + ownership-checked; mutations are htmx forms
@@ -183,6 +164,33 @@ def _lab_template(db: Session, tenant: Tenant, activity_id: UUID) -> LabTemplate
     if tpl is None:
         raise HTTPException(status_code=404)
     return tpl
+
+
+def _course_for_activity(db: Session, tenant: Tenant, activity: Activity) -> Course:
+    course = db.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant.id)
+        .where(Course.id == activity.course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    return course
+
+
+def _ensure_course_open_for_activity(
+    db: Session, tenant: Tenant, activity: Activity
+) -> Course:
+    course = _course_for_activity(db, tenant, activity)
+    if course.status == "finished":
+        raise HTTPException(status_code=403, detail="This course is finished")
+    return course
+
+
+def _ensure_course_open_for_instance(
+    db: Session, tenant: Tenant, instance: LabInstance
+) -> Course:
+    activity = _lab_activity(db, tenant, instance.activity_id)
+    return _ensure_course_open_for_activity(db, tenant, activity)
 
 
 def _current_instance(
@@ -219,6 +227,50 @@ def _engine() -> ContainerlabEngine:
     return ContainerlabEngine(settings.lab_workdir)
 
 
+def _activate_dev_local_lab(instance: LabInstance) -> None:
+    """Activate the local smoke-test lab without containerlab.
+
+    This is intentionally opt-in via ``LabTemplate.engine == "dev_local"``. It
+    lets the academy dev database exercise the lab UI/check flow on machines
+    that do not have containerlab installed, while leaving production templates
+    on the normal worker-driven containerlab path.
+    """
+    cname = f"clab-{instance.instance_name}-client"
+    exists = subprocess.run(  # noqa: S603,S607 - dev-only fixed argv
+        ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^{cname}$"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if cname not in exists.stdout.splitlines():
+        created = subprocess.run(  # noqa: S603,S607 - dev-only fixed argv
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                cname,
+                "postgres:16",
+                "sh",
+                "-c",
+                "mkdir -p /opt/dotmac-lab && echo ready > /opt/dotmac-lab/answer.txt && sleep infinity",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if created.returncode != 0:
+            instance.status = "error"
+            instance.error = created.stderr.strip() or "dev-local lab container failed to start"
+            return
+    instance.status = "active"
+    instance.consoles = {"client": {"kind": "linux", "mgmt": "127.0.0.1", "port": 18021}}
+    now = datetime.now(UTC)
+    instance.started_at = instance.started_at or now
+    instance.last_active_at = now
+    instance.error = None
+
+
 @router.get("/labs/{activity_id}", response_class=HTMLResponse)
 def lab_detail(
     activity_id: UUID,
@@ -230,10 +282,18 @@ def lab_detail(
     tenant = require_tenant(request)
     act = _lab_activity(db, tenant, activity_id)
     tpl = _lab_template(db, tenant, activity_id)
+    course = _course_for_activity(db, tenant, act)
     instance = _current_instance(db, tenant, person, activity_id)
     return templates.TemplateResponse(
         "labs/detail.html",
-        {"request": request, "activity": act, "template": tpl, "instance": instance},
+        {
+            "request": request,
+            "activity": act,
+            "template": tpl,
+            "instance": instance,
+            "course": course,
+            "course_finished": course.status == "finished",
+        },
     )
 
 
@@ -247,10 +307,13 @@ def lab_launch(
     """Request a new lab instance (queued/provisioning) → status partial."""
     tenant = require_tenant(request)
     act = _lab_activity(db, tenant, activity_id)
+    _ensure_course_open_for_activity(db, tenant, act)
     tpl = _lab_template(db, tenant, activity_id)
     instance = lab_lifecycle.request_lab(
         db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl
     )
+    if settings.environment == "dev" and tpl.engine == "dev_local":
+        _activate_dev_local_lab(instance)
     return templates.TemplateResponse(
         "labs/_status.html", {"request": request, "instance": instance}
     )
@@ -266,8 +329,15 @@ def lab_status(
     """htmx polling target — current instance status + console links when active."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
+    activity = _lab_activity(db, tenant, instance.activity_id)
+    course = _course_for_activity(db, tenant, activity)
     return templates.TemplateResponse(
-        "labs/_status.html", {"request": request, "instance": instance}
+        "labs/_status.html",
+        {
+            "request": request,
+            "instance": instance,
+            "course_finished": course.status == "finished",
+        },
     )
 
 
@@ -281,6 +351,7 @@ def lab_check(
     """Grade the live instance against the template checks → results partial."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
+    _ensure_course_open_for_instance(db, tenant, instance)
     tpl = _lab_template(db, tenant, instance.activity_id)
     handle = lab_lifecycle.handle_for(instance)
     score = lab_lifecycle.grade(db, instance, _engine(), tpl, handle)
@@ -299,8 +370,12 @@ def lab_reset(
     """Tear down + redeploy the instance topology → status partial."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
+    _ensure_course_open_for_instance(db, tenant, instance)
     tpl = _lab_template(db, tenant, instance.activity_id)
-    lab_lifecycle.reset(db, instance, _engine(), tpl)
+    if settings.environment == "dev" and tpl.engine == "dev_local":
+        _activate_dev_local_lab(instance)
+    else:
+        lab_lifecycle.reset(db, instance, _engine(), tpl)
     return templates.TemplateResponse(
         "labs/_status.html", {"request": request, "instance": instance}
     )
@@ -316,6 +391,8 @@ async def console(
 ) -> Response:
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    _ensure_course_open_for_instance(db, tenant, instance)
     target = _authorize_console(db, tenant, person, instance_id, node)
     # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
     # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
@@ -347,6 +424,8 @@ async def console_subpath(
 ) -> Response:
     """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
     tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    _ensure_course_open_for_instance(db, tenant, instance)
     target = _authorize_console(db, tenant, person, instance_id, node)
     return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
 
@@ -428,6 +507,8 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
             await websocket.close(code=1008)
             return
         try:
+            instance = _owned_instance(db, tenant, person, instance_id)
+            _ensure_course_open_for_instance(db, tenant, instance)
             target = _authorize_console(db, tenant, person, instance_id, node)
         except HTTPException:
             await websocket.close(code=1008)

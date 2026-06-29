@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ course.title }} — Dotmac Academy{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Teaching</p>
+<div class="mt-1.5 flex flex-wrap items-center justify-between gap-4">
+  <h1 class="text-3xl tracking-tight">Edit course</h1>
+  <a class="btn-ghost px-3.5 py-2 text-sm" href="/instructor/courses">Back to courses</a>
+</div>
+
+<section class="card mt-8 p-6">
+  <form class="grid gap-4 md:grid-cols-2"
+        hx-post="/instructor/courses/{{ course.id }}"
+        hx-target="body"
+        hx-swap="outerHTML">
+    <div>
+      <label for="course-title" class="mb-1.5 block text-sm font-semibold text-ink">Title</label>
+      <input id="course-title" name="title" type="text" value="{{ course.title }}" class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
+    </div>
+    <div>
+      <label for="course-slug" class="mb-1.5 block text-sm font-semibold text-ink">Slug</label>
+      <input id="course-slug" name="slug" type="text" value="{{ course.slug }}" class="w-full px-3.5 py-2.5 font-mono text-[0.95rem]" required>
+    </div>
+    <div>
+      <label for="course-discipline" class="mb-1.5 block text-sm font-semibold text-ink">Discipline</label>
+      <input id="course-discipline" name="discipline" type="text" value="{{ course.discipline }}" class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
+    </div>
+    <div>
+      <label for="course-status" class="mb-1.5 block text-sm font-semibold text-ink">Status</label>
+      <select id="course-status" name="status" class="w-full px-3.5 py-2.5 text-[0.95rem]">
+        {% for status in statuses %}
+        <option value="{{ status }}" {{ "selected" if status == course.status else "" }}>{{ status|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="course-source" class="mb-1.5 block text-sm font-semibold text-ink">Source ref</label>
+      <input id="course-source" name="source_ref" type="text" value="{{ course.source_ref }}" class="w-full px-3.5 py-2.5 text-[0.95rem]">
+    </div>
+    <div class="md:col-span-2">
+      <label for="course-description" class="mb-1.5 block text-sm font-semibold text-ink">Description</label>
+      <textarea id="course-description" name="description" rows="4" class="w-full px-3.5 py-2.5 text-[0.95rem]">{{ course.description }}</textarea>
+    </div>
+    <div class="flex flex-wrap gap-3 md:col-span-2">
+      <button class="btn-primary" type="submit">Save changes</button>
+    </div>
+  </form>
+</section>
+
+{% if course.status != "finished" %}
+<section class="mt-8 border-t border-sand-300 pt-6">
+  <form hx-post="/instructor/courses/{{ course.id }}/finish" hx-target="body" hx-swap="outerHTML">
+    <button class="btn-danger" type="submit">Mark course finished</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

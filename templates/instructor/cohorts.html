@@ -6,12 +6,43 @@
 <p class="mt-2 text-ink-soft">Group your students by discipline and enroll them into a track.</p>
 
 <div class="mt-10 space-y-4" id="cohort-list">
-  {% for c in cohorts %}
+  {% for row in cohort_rows %}
+  {% set c = row.cohort %}
   <section class="card p-5">
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <h2 class="text-xl">{{ c.name }}</h2>
       <span class="text-sm text-ink-soft">{{ c.discipline }}</span>
       <span class="ml-auto inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{{ c.status }}</span>
+    </div>
+
+    <div class="mt-4 grid gap-4 border-t border-sand-200 pt-4 md:grid-cols-2">
+      <div>
+        <h3 class="text-sm font-semibold text-ink">Courses</h3>
+        {% if row.courses %}
+        <ul class="mt-2 space-y-1.5 text-sm text-ink-soft">
+          {% for course in row.courses %}
+          <li>{{ course.title }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="mt-2 text-sm text-ink-soft">No courses match this cohort discipline.</p>
+        {% endif %}
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-ink">Enrolled students</h3>
+        {% if row.students %}
+        <ul class="mt-2 divide-y divide-sand-200 rounded-md border border-sand-200">
+          {% for student in row.students %}
+          <li class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+            <span class="font-medium text-ink">{{ student.first_name }} {{ student.last_name }}</span>
+            <span class="text-ink-soft">{{ student.email }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="mt-2 text-sm text-ink-soft">No students enrolled yet.</p>
+        {% endif %}
+      </div>
     </div>
 
     <!-- Enroll form (htmx): submits inline, no page reload -->

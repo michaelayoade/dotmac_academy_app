@@ -54,9 +54,25 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
             select(Course)
             .where(Course.tenant_id == tid)
             .where(Course.discipline.in_(set(disciplines)))
+            .where(Course.status.in_(("active", "finished")))
             .order_by(Course.title)
         ).all()
     )
+
+
+def _course_for_activity(db: Session, tenant_id: UUID, activity: Activity) -> Course:
+    course = db.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant_id)
+        .where(Course.id == activity.course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    return course
+
+
+def _course_is_finished(course: Course) -> bool:
+    return course.status == "finished"
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -68,11 +84,13 @@ def home(
     """Student Learn Home — my courses (completion %), continue, recent results."""
     tenant = require_tenant(request)
     enrolled = _enrolled_courses(db, tenant.id, person.id)
+    active_courses = [course for course in enrolled if course.status == "active"]
+    finished_enrolled = [course for course in enrolled if course.status == "finished"]
 
     # My courses: completion % = passed activities / total activities.
     my_courses: list[dict] = []
     best_by_course: dict = {}
-    for course in enrolled:
+    for course in active_courses:
         total = (
             db.scalar(
                 select(func.count())
@@ -92,9 +110,29 @@ def home(
             {"course": course, "total": total, "passed": passed, "pct": pct}
         )
 
+    finished_courses: list[dict] = []
+    for course in finished_enrolled:
+        total = (
+            db.scalar(
+                select(func.count())
+                .select_from(Activity)
+                .where(Activity.tenant_id == tenant.id)
+                .where(Activity.course_id == course.id)
+            )
+            or 0
+        )
+        best = best_scores_for(
+            db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
+        )
+        passed = sum(1 for s in best.values() if s.passed)
+        pct = round(100 * passed / total) if total else 0
+        finished_courses.append(
+            {"course": course, "total": total, "passed": passed, "pct": pct}
+        )
+
     # Continue: first incomplete chapter of the first enrolled course.
     continue_to = None
-    for course in enrolled:
+    for course in active_courses:
         passed_acts = {
             aid for aid, s in best_by_course.get(course.id, {}).items() if s.passed
         }
@@ -146,6 +184,7 @@ def home(
             "request": request,
             "person": person,
             "my_courses": my_courses,
+            "finished_courses": finished_courses,
             "continue_to": continue_to,
             "recent": recent,
         },
@@ -203,6 +242,7 @@ def chapter(
             "course": course,
             "chapter": ch,
             "activity": act,
+            "course_finished": _course_is_finished(course),
             "previous_chapter": previous_chapter,
             "next_chapter": next_chapter,
         },
@@ -224,13 +264,32 @@ def activity(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
+    course = _course_for_activity(db, tenant.id, act)
+    if _course_is_finished(course):
+        return templates.TemplateResponse(
+            "activity.html",
+            {
+                "request": request,
+                "activity": act,
+                "course": course,
+                "questions": [],
+                "course_finished": True,
+            },
+        )
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)
         .where(Question.bank_id == act.bank_id)
     ).all()
     return templates.TemplateResponse(
-        "activity.html", {"request": request, "activity": act, "questions": qs}
+        "activity.html",
+        {
+            "request": request,
+            "activity": act,
+            "course": course,
+            "questions": qs,
+            "course_finished": False,
+        },
     )
 
 
@@ -249,6 +308,9 @@ async def submit(
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
+    course = _course_for_activity(db, tenant.id, act)
+    if _course_is_finished(course):
+        raise HTTPException(status_code=403, detail="This course is finished")
     form = await request.form()
     qs = db.scalars(
         select(Question)

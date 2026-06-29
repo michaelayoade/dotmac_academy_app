@@ -19,13 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_platform_db, require_platform
+from app.api.deps import get_platform_db, require_platform_admin
 from app.models.tenant import Tenant
 
 router = APIRouter(
     prefix="/platform/tenants",
     tags=["platform"],
-    dependencies=[Depends(require_platform)],
+    dependencies=[Depends(require_platform_admin)],
 )
 
 

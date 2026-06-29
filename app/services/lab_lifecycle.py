@@ -18,7 +18,7 @@ import socket
 import subprocess
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Score, Submission
@@ -126,6 +126,17 @@ def active_count(db: Session, tenant_id) -> int:
     )
 
 
+def _tenant_launch_lock(db: Session, tenant_id) -> None:
+    """Serialize lab launches within a tenant when running on PostgreSQL."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"lab-launch:{tenant_id}"},
+    )
+
+
 def instance_name(tenant_id, person_id, activity_id, n) -> str:
     """Stable, human-traceable instance name: ``dal-<t8>-<p8>-<a8>-<n>``."""
     return f"dal-{str(tenant_id)[:8]}-{str(person_id)[:8]}-{str(activity_id)[:8]}-{n}"
@@ -144,6 +155,7 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity,
     Queued if at/over ``MAX_CONCURRENT_LABS``, else marked ``provisioning`` for
     the worker to pick up. Seed is generated deterministically per attempt.
     """
+    _tenant_launch_lock(db, tenant_id)
     prev = db.scalar(
         select(func.count())
         .select_from(LabInstance)
@@ -265,7 +277,7 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine,
         person = db.get(Person, instance.person_id)
         if act is not None:
             notify_score_if_first_pass(db, score=score, activity=act, person=person)
-    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+    except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
 

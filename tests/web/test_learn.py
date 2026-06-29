@@ -108,6 +108,90 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     assert "Because A" in r.text
 
 
+def test_finished_course_locks_test_but_keeps_chapter_readable(
+    app_client, admin_session, tenant_a
+):
+    _login(app_client, admin_session, tenant_a)
+    h = {"Host": "alpha.localhost"}
+
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="foundation",
+        title="Foundation",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="finished",
+    )
+    admin_session.add(course)
+    admin_session.flush()
+    admin_session.add(
+        Chapter(
+            tenant_id=tenant_a.id,
+            course_id=course.id,
+            number=1,
+            title="One",
+            part="I",
+            body_html="<p>review content</p>",
+            source_hash="h",
+            order_index=1,
+        )
+    )
+    bank = QuestionBank(
+        tenant_id=tenant_a.id,
+        course_id=course.id,
+        chapter_number=1,
+        kind="chapter",
+        version=1,
+    )
+    admin_session.add(bank)
+    admin_session.flush()
+    admin_session.add(
+        Question(
+            tenant_id=tenant_a.id,
+            bank_id=bank.id,
+            ext_id="q1",
+            stem="Pick A",
+            type="single",
+            options=["A", "B"],
+            correct=["A"],
+            rubric_category="recall",
+            explanation="Because A",
+            weight=1,
+        )
+    )
+    act = Activity(
+        tenant_id=tenant_a.id,
+        course_id=course.id,
+        chapter_number=1,
+        type="mcq_test",
+        bank_id=bank.id,
+        title="Ch1",
+        pass_threshold=0.6,
+    )
+    admin_session.add(act)
+    admin_session.commit()
+
+    r_ch = app_client.get("/courses/foundation/chapters/1", headers=h)
+    assert r_ch.status_code == 200
+    assert "review content" in r_ch.text
+    assert "Course finished" in r_ch.text
+    assert "Take test" not in r_ch.text
+
+    r_activity = app_client.get(f"/activities/{act.id}", headers=h)
+    assert r_activity.status_code == 200
+    assert "This test is closed" in r_activity.text
+    assert "Submit answers" not in r_activity.text
+
+    csrf = app_client.cookies.get("csrf_token") or r_ch.cookies.get("csrf_token", "")
+    r_submit = app_client.post(
+        f"/activities/{act.id}/submit",
+        headers={**h, "x-csrf-token": csrf},
+        data={"q1": "A"},
+    )
+    assert r_submit.status_code == 403
+
+
 def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
     _login(app_client, admin_session, tenant_a)
     h = {"Host": "alpha.localhost"}

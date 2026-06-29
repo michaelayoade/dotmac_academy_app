@@ -52,9 +52,11 @@ In dev, browsers resolve `*.localhost` automatically:
 # Provision two tenants (as platform admin)
 curl -X POST http://localhost:8001/platform/tenants \
     -H "Content-Type: application/json" \
+    -H "X-Platform-Admin-Token: dev-platform-admin-token" \
     -d '{"slug":"acme","name":"ACME"}'
 curl -X POST http://localhost:8001/platform/tenants \
     -H "Content-Type: application/json" \
+    -H "X-Platform-Admin-Token: dev-platform-admin-token" \
     -d '{"slug":"widgets","name":"Widgets Inc"}'
 
 # Same Person endpoint, different tenants

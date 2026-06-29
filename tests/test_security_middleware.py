@@ -7,9 +7,15 @@ from http import cookies
 from typing import Any
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
+
+from app.config import settings, validate_settings
 from app.middleware.csrf import CSRF_COOKIE, CSRFMiddleware
 from app.middleware.observability import ObservabilityMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.services.platform_auth import require_platform_admin_token
+from app.services.tenant_paths import is_platform_path
 
 
 def test_csrf_sets_cookie_on_safe_request_and_blocks_cookie_post_without_header():
@@ -90,6 +96,36 @@ def test_observability_can_trust_inbound_request_id():
     )
     assert response["status"] == 200
     assert (b"x-request-id", b"req-123") in response["headers"]
+
+
+def test_platform_paths_only_allowed_on_root_host():
+    assert is_platform_path("/platform/tenants", "localhost", "localhost") is True
+    assert is_platform_path("/platform/tenants", "unknown.localhost", "localhost") is False
+    assert is_platform_path("/health", "unknown.localhost", "localhost") is True
+
+
+def test_platform_admin_token_required(monkeypatch):
+    monkeypatch.setattr(settings, "platform_admin_token", "secret-token")
+
+    require_platform_admin_token(None, "secret-token")
+    require_platform_admin_token("Bearer secret-token", None)
+
+    with pytest.raises(HTTPException) as exc:
+        require_platform_admin_token(None, "wrong")
+    assert exc.value.status_code == 401
+
+
+def test_platform_admin_token_required_in_production(monkeypatch):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "database_url", "postgresql://app")
+    monkeypatch.setattr(settings, "platform_database_url", "postgresql://platform")
+    monkeypatch.setattr(settings, "trusted_hosts", "academy.example.com")
+    monkeypatch.setattr(settings, "platform_root_domain", "academy.example.com")
+    monkeypatch.setattr(settings, "jwt_secret", "jwt-secret")
+    monkeypatch.setattr(settings, "session_hash_secret", "hash-secret")
+    monkeypatch.setattr(settings, "platform_admin_token", "")
+
+    assert "PLATFORM_ADMIN_TOKEN must be set in production" in validate_settings(settings)
 
 
 async def _ok_app(scope, receive, send) -> None:

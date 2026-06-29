@@ -78,3 +78,60 @@ def test_learn_home_empty_state_when_not_enrolled(app_client, admin_session, ten
     r = app_client.get("/", headers=h)
     assert r.status_code == 200
     assert "not enrolled in a course yet" in r.text
+
+
+def test_learn_home_separates_finished_courses(app_client, admin_session, tenant_a):
+    p, h = _login(app_client, admin_session, tenant_a, email="finished@a.edu")
+    active = Course(
+        tenant_id=tenant_a.id,
+        slug="active-net",
+        title="Active Networking",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="active",
+    )
+    finished = Course(
+        tenant_id=tenant_a.id,
+        slug="finished-net",
+        title="Finished Networking",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="finished",
+    )
+    hidden = Course(
+        tenant_id=tenant_a.id,
+        slug="draft-net",
+        title="Draft Networking",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="draft",
+    )
+    cohort = Cohort(
+        tenant_id=tenant_a.id,
+        name="Networking",
+        discipline="networking",
+        status="active",
+    )
+    admin_session.add_all([active, finished, hidden, cohort])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id,
+            cohort_id=cohort.id,
+            person_id=p.id,
+            role_in_cohort="student",
+            status="active",
+        )
+    )
+    admin_session.commit()
+
+    r = app_client.get("/", headers=h)
+
+    assert r.status_code == 200
+    assert "Active Networking" in r.text
+    assert "Finished courses" in r.text
+    assert "Finished Networking" in r.text
+    assert "Draft Networking" not in r.text

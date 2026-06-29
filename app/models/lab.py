@@ -1,9 +1,13 @@
 from __future__ import annotations
+
 from datetime import datetime
 from uuid import UUID
+
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base, TimestampMixin, uuid_pk
 
 
@@ -37,7 +41,12 @@ class LabTemplate(Base, TimestampMixin):
 
 class LabInstance(Base, TimestampMixin):
     __tablename__ = "lab_instances"
-    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),
+        UniqueConstraint(
+            "tenant_id", "instance_name", name="uq_lab_instances_tenant_instance_name"
+        ),
+    )
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
     activity_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)

@@ -23,7 +23,15 @@
     <span></span>
     {% endif %}
 
-    {% if activity %}
+    {% if activity and course_finished %}
+    <div class="card sm:mx-auto max-w-md p-4 text-center">
+      <p class="text-sm font-semibold text-ink">Course finished</p>
+      <p class="mt-1 text-sm text-ink-soft">You can review this content, but tests and labs are closed. Continue to the next chapter or return to your courses.</p>
+      {% if not next_chapter %}
+      <a class="btn-primary mt-3" href="/">Go to my courses</a>
+      {% endif %}
+    </div>
+    {% elif activity %}
     {% if activity.type == "lab" %}
     <a class="btn-primary sm:mx-auto" href="/labs/{{ activity.id }}">Open lab</a>
     {% else %}

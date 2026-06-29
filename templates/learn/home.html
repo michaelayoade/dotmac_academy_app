@@ -2,7 +2,7 @@
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Your portal</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">Welcome, {{ person.first_name }}</h1>
 
-{% if my_courses %}
+{% if my_courses or finished_courses %}
 <p class="mt-2 text-ink-soft">Pick up where you left off, or keep working through your courses.</p>
 
 {% if continue_to %}
@@ -17,6 +17,7 @@
 </div>
 {% endif %}
 
+{% if my_courses %}
 <h2 class="mt-10 text-xl">My courses</h2>
 <div class="mt-4 space-y-4">
 {% for c in my_courses %}
@@ -33,6 +34,27 @@
   </a>
 {% endfor %}
 </div>
+{% endif %}
+
+{% if finished_courses %}
+<h2 class="mt-10 text-xl">Finished courses</h2>
+<div class="mt-4 space-y-4">
+{% for c in finished_courses %}
+  <a href="/courses/{{ c.course.slug }}/chapters/1"
+     class="card block p-6 transition-colors hover:border-brand-300">
+    <div class="flex flex-wrap items-baseline gap-3">
+      <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
+      <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">Finished</span>
+      <span class="ml-auto font-mono text-sm tabular-nums text-ink-soft">{{ c.pct }}%</span>
+    </div>
+    <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-sand-200">
+      <div class="h-full rounded-full bg-brand-500" style="width: {{ c.pct }}%"></div>
+    </div>
+    <p class="mt-2 text-xs text-ink-soft">{{ c.passed }} of {{ c.total }} activit{{ 'y' if c.total == 1 else 'ies' }} passed</p>
+  </a>
+{% endfor %}
+</div>
+{% endif %}
 
 <h2 class="mt-10 text-xl">Recent results</h2>
 {% if recent %}

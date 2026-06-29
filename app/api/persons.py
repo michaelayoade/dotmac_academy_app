@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_db, require_role, require_tenant, require_user_auth
 from app.models.person import Person
 from app.models.tenant import Tenant
 
@@ -49,6 +49,7 @@ def create_person(
     payload: PersonCreate,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
+    _: Person = Depends(require_role("admin")),
 ) -> Person:
     person = Person(
         tenant_id=tenant.id,  # never from payload — always from request state
@@ -67,14 +68,21 @@ def create_person(
 
 
 @router.get("", response_model=list[PersonRead])
-def list_people(db: Session = Depends(get_db)) -> list[Person]:
+def list_people(
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_user_auth),
+) -> list[Person]:
     # No explicit tenant filter — RLS does it. If RLS were misconfigured this would
     # leak; the cross-tenant test catches that.
     return list(db.scalars(select(Person).order_by(Person.created_at.desc())).all())
 
 
 @router.get("/{person_id}", response_model=PersonRead)
-def get_person(person_id: UUID, db: Session = Depends(get_db)) -> Person:
+def get_person(
+    person_id: UUID,
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_user_auth),
+) -> Person:
     person = db.get(Person, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -82,7 +90,11 @@ def get_person(person_id: UUID, db: Session = Depends(get_db)) -> Person:
 
 
 @router.delete("/{person_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-def delete_person(person_id: UUID, db: Session = Depends(get_db)) -> None:
+def delete_person(
+    person_id: UUID,
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_role("admin")),
+) -> None:
     person = db.get(Person, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")

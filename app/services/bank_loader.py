@@ -25,6 +25,7 @@ from app.models.assessment import Question, QuestionBank
 
 _TARGET = {"recall": 0.20, "application": 0.50, "analysis": 0.30}
 _TOL = 0.10
+_OPTION_TYPES = {"single", "multi"}
 
 
 @dataclass
@@ -57,7 +58,7 @@ def lint_bank(doc: BankDoc) -> list[str]:
     Rules:
     - Bank must not be empty.
     - Each question must have a valid rubric_category (recall/application/analysis).
-    - For non-truefalse questions, every entry in `correct` must appear in `options`.
+    - For single/multi questions, every entry in `correct` must appear in `options`.
     - The overall rubric mix must be 20% recall / 50% application / 30% analysis
       within ±10 percentage points.
     """
@@ -74,7 +75,7 @@ def lint_bank(doc: BankDoc) -> list[str]:
             out.append(f"{q.get('id')}: invalid rubric_category {cat!r}")
             continue
         counts[cat] += 1
-        if q.get("type") != "truefalse":
+        if q.get("type") in _OPTION_TYPES:
             opts = set(q.get("options", []))
             for c in q.get("correct", []):
                 if c not in opts:

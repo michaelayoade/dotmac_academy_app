@@ -9,11 +9,13 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db, get_platform_db
 from app.models.auth import AuthSession
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
 from app.models.tenant import Tenant
+from app.services.platform_auth import require_platform_admin_token
 from app.services.security import decode_access_token, hash_token
 
 
@@ -28,14 +30,30 @@ def require_tenant(request: Request) -> Tenant:
 def require_platform(request: Request) -> None:
     """For routes that operate platform-wide (no tenant context).
 
-    Real implementations should additionally check a `platform_admin` role on the
-    actor — stubbed here.
+    Platform routes are only valid on PLATFORM_ROOT_DOMAIN. Authentication is
+    layered separately by require_platform_admin().
     """
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    root = settings.platform_root_domain.lower().lstrip(".")
+    if host != root:
+        raise HTTPException(status_code=404, detail="Platform route not found")
     if getattr(request.state, "tenant", None) is not None:
         raise HTTPException(
             status_code=404,
             detail="Platform routes are not available on tenant subdomains",
         )
+
+
+def require_platform_admin(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_platform_admin_token: str | None = Header(
+        default=None, alias="X-Platform-Admin-Token"
+    ),
+) -> None:
+    """Require platform host plus the configured platform-admin shared secret."""
+    require_platform(request)
+    require_platform_admin_token(authorization, x_platform_admin_token)
 
 
 def require_user_auth(
@@ -121,6 +139,8 @@ __all__ = [
     "get_db",
     "get_platform_db",
     "require_platform",
+    "require_platform_admin",
+    "require_platform_admin_token",
     "require_role",
     "require_tenant",
     "require_user_auth",

@@ -149,6 +149,24 @@ def test_launch_creates_instance_and_returns_status(
     assert rows[0].status in ("queued", "provisioning")
 
 
+def test_finished_course_locks_lab_actions(app_client, admin_session, tenant_a):
+    _make_person(admin_session, tenant_a, "locked@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    course.status = "finished"
+    admin_session.commit()
+    h = _login(app_client, "locked@a.edu")
+
+    r_detail, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    assert r_detail.status_code == 200
+    assert "This lab is closed" in r_detail.text
+    assert "Launch lab" not in r_detail.text
+
+    r_launch = app_client.post(
+        f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf}
+    )
+    assert r_launch.status_code == 403
+
+
 def test_check_grades_and_writes_score(app_client, admin_session, tenant_a, monkeypatch):
     monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "owner2@a.edu")

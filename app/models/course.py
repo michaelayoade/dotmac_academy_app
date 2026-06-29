@@ -1,6 +1,7 @@
 from __future__ import annotations
+from datetime import datetime
 from uuid import UUID
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin, uuid_pk
@@ -19,6 +20,9 @@ class Course(Base, TimestampMixin):
     discipline: Mapped[str] = mapped_column(String(40), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(120), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 class Chapter(Base, TimestampMixin):
     __tablename__ = "chapters"
