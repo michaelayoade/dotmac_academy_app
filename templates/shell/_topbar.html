@@ -23,7 +23,7 @@
     </a>
 
     {# Role-aware area tabs. #}
-    <nav class="ml-2 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Areas">
+    <nav class="shell-scrollnav ml-2 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Areas">
       {% for area in nav_areas %}
       <a href="{{ area.home }}" class="shell-tab{% if area.key == current_area %} shell-tab-active{% endif %}">
         {{ area.label }}

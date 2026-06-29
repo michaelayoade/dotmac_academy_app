@@ -74,6 +74,7 @@
   }
   .btn-primary { @apply btn bg-brand-700 text-sand-50 shadow-card hover:bg-brand-800; }
   .btn-ghost   { @apply btn border border-sand-300 bg-sand-50 text-ink hover:border-brand-400 hover:text-brand-700; }
+  .btn-danger  { @apply btn border border-clay-500/30 bg-clay-500/10 text-clay-600 hover:border-clay-500/60 hover:bg-clay-500/15; }
 
   /* Surface card. */
   .card { @apply rounded-2xl border border-sand-300 bg-sand-50 shadow-card; }
@@ -93,6 +94,16 @@
   }
   .shell-navlink-active {
     @apply bg-brand-50 font-semibold text-brand-800;
+  }
+  .shell-scrollnav {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.72 0.022 125) transparent;
+  }
+  @media (max-width: 767px) {
+    .shell-scrollnav {
+      -webkit-mask-image: linear-gradient(to right, transparent, black 1rem, black calc(100% - 1rem), transparent);
+      mask-image: linear-gradient(to right, transparent, black 1rem, black calc(100% - 1rem), transparent);
+    }
   }
 
   /* User menu disclosure (details/summary) — strip the native marker. */

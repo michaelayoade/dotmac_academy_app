@@ -16,7 +16,7 @@ on POST means "keep the existing value".
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -91,9 +91,10 @@ def settings_save(
     # get_platform_db commits after the response is returned.
 
     if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/admin/settings"
-        return resp
+        return templates.TemplateResponse(
+            "account/_flash.html",
+            {"request": request, "ok": True, "message": "Settings saved"},
+        )
     return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 

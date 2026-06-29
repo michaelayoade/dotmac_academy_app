@@ -33,8 +33,9 @@
       <form hx-post="/labs/instances/{{ instance.id }}/check" hx-target="#lab-checks" hx-swap="innerHTML">
         <button class="btn-primary" type="submit">Run checks</button>
       </form>
-      <form hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML">
-        <button class="btn-ghost" type="submit">Reset lab</button>
+      <form hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML"
+            hx-confirm="Reset this lab? Unsaved configuration inside the lab may be lost.">
+        <button class="btn-danger" type="submit">Reset lab</button>
       </form>
     </div>
     <div id="lab-checks" class="mt-5"></div>

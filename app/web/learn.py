@@ -9,12 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.course import Course, Chapter
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.cohort import Cohort, Enrollment
+from app.models.course import Chapter, Course
 from app.models.person import Person
+from app.services.assessment import best_scores_for, submit_activity
 from app.services.web_auth import require_web_user
-from app.services.assessment import submit_activity, best_scores_for
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -182,9 +182,30 @@ def chapter(
         .where(Activity.course_id == course.id)
         .where(Activity.chapter_number == n)
     ).first()
+    previous_chapter = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number < n)
+        .order_by(Chapter.number.desc())
+    ).first()
+    next_chapter = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number > n)
+        .order_by(Chapter.number)
+    ).first()
     return templates.TemplateResponse(
         "chapter.html",
-        {"request": request, "course": course, "chapter": ch, "activity": act},
+        {
+            "request": request,
+            "course": course,
+            "chapter": ch,
+            "activity": act,
+            "previous_chapter": previous_chapter,
+            "next_chapter": next_chapter,
+        },
     )
 
 
@@ -259,13 +280,36 @@ def progress(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    best: dict = {}
+    rows: list[dict] = []
     for course in _courses(db, tenant.id):
-        best.update(
-            best_scores_for(
-                db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
-            )
+        activities = {
+            activity.id: activity
+            for activity in db.scalars(
+                select(Activity)
+                .where(Activity.tenant_id == tenant.id)
+                .where(Activity.course_id == course.id)
+            ).all()
+        }
+        best = best_scores_for(
+            db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
         )
+        for activity_id, score in best.items():
+            activity = activities.get(activity_id)
+            if activity is None:
+                continue
+            rows.append(
+                {
+                    "course": course,
+                    "activity": activity,
+                    "score": score,
+                    "href": (
+                        f"/labs/{activity.id}"
+                        if activity.type == "lab"
+                        else f"/activities/{activity.id}"
+                    ),
+                }
+            )
+    rows.sort(key=lambda row: row["score"].created_at, reverse=True)
     return templates.TemplateResponse(
-        "progress.html", {"request": request, "best": list(best.values())}
+        "progress.html", {"request": request, "rows": rows}
     )

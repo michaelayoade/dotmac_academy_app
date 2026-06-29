@@ -5,7 +5,7 @@
 <h1 class="mt-1.5 text-3xl tracking-tight">Platform settings</h1>
 <p class="mt-2 text-ink-soft">Branding, outbound email, and lab capacity. These override environment defaults.</p>
 
-<form hx-post="/admin/settings" hx-swap="none" class="mt-10 space-y-6">
+<form hx-post="/admin/settings" hx-target="#settings-flash" hx-swap="innerHTML" class="mt-10 space-y-6">
   <section class="card p-6">
     <h2 class="text-xl">Branding</h2>
     <p class="mt-1.5 text-sm text-ink-soft">The name shown across the portal header and emails.</p>
@@ -84,7 +84,10 @@
     </div>
   </section>
 
-  <button type="submit" class="btn-primary">Save settings</button>
+  <div class="flex flex-wrap items-center gap-3">
+    <button type="submit" class="btn-primary">Save settings</button>
+    <span id="settings-flash" role="status" aria-live="polite"></span>
+  </div>
 </form>
 
 <div class="mt-6 flex items-center gap-3 border-t border-sand-300 pt-6">

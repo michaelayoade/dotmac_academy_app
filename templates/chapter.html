@@ -1,4 +1,42 @@
 {% extends "base.html" %}{% block content %}
+<div class="mb-8 border-b border-sand-300 pb-5">
+  <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ course.title }}</p>
+  <div class="mt-2 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <p class="font-mono text-sm tabular-nums text-ink-soft">Chapter {{ chapter.number }}</p>
+      <h1 class="mt-1 text-3xl tracking-tight">{{ chapter.title }}</h1>
+    </div>
+    <a class="btn-ghost px-3.5 py-2 text-sm" href="/">Course home</a>
+  </div>
+</div>
+
 <article class="prose">{{ chapter.body_html | safe }}</article>
-{% if activity %}<div class="mt-10 border-t border-sand-300 pt-6"><a class="btn-primary" href="/activities/{{ activity.id }}">Take the chapter test &rarr;</a></div>{% endif %}
+
+<nav class="mt-10 border-t border-sand-300 pt-6" aria-label="Chapter navigation">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    {% if previous_chapter %}
+    <a class="btn-ghost justify-start sm:max-w-[45%]" href="/courses/{{ course.slug }}/chapters/{{ previous_chapter.number }}">
+      <span aria-hidden="true">&larr;</span>
+      <span class="truncate">Chapter {{ previous_chapter.number }}</span>
+    </a>
+    {% else %}
+    <span></span>
+    {% endif %}
+
+    {% if activity %}
+    {% if activity.type == "lab" %}
+    <a class="btn-primary sm:mx-auto" href="/labs/{{ activity.id }}">Open lab</a>
+    {% else %}
+    <a class="btn-primary sm:mx-auto" href="/activities/{{ activity.id }}">Take test</a>
+    {% endif %}
+    {% endif %}
+
+    {% if next_chapter %}
+    <a class="btn-ghost justify-start sm:max-w-[45%]" href="/courses/{{ course.slug }}/chapters/{{ next_chapter.number }}">
+      <span class="truncate">Chapter {{ next_chapter.number }}</span>
+      <span aria-hidden="true">&rarr;</span>
+    </a>
+    {% endif %}
+  </div>
+</nav>
 {% endblock %}

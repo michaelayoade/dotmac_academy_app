@@ -22,7 +22,7 @@
   <h2 class="text-xl">Create account</h2>
   <p class="mt-1.5 text-sm text-ink-soft">The new user can sign in immediately with the password you set.</p>
   <!-- htmx form so the global CSRF injector (base.html) applies the x-csrf-token header. -->
-  <form class="mt-5 grid max-w-xl grid-cols-2 gap-4"
+  <form class="mt-5 grid max-w-xl gap-4 sm:grid-cols-2"
         hx-post="/admin/users"
         hx-target="body"
         hx-push-url="true">
@@ -36,17 +36,17 @@
       <input id="last_name" name="last_name" type="text" placeholder="Last name"
              class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
     </div>
-    <div class="col-span-2">
+    <div class="sm:col-span-2">
       <label for="user-email" class="mb-1.5 block text-sm font-semibold text-ink">Email</label>
       <input id="user-email" name="email" type="email" placeholder="user@example.com"
              class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
     </div>
-    <div class="col-span-2">
+    <div class="sm:col-span-2">
       <label for="user-password" class="mb-1.5 block text-sm font-semibold text-ink">Password</label>
       <input id="user-password" name="password" type="password" placeholder="Set an initial password"
              class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
     </div>
-    <div class="col-span-2">
+    <div class="sm:col-span-2">
       <label for="user-role" class="mb-1.5 block text-sm font-semibold text-ink">Role</label>
       <select id="user-role" name="role" class="w-full px-3.5 py-2.5 text-[0.95rem]">
         <option value="student">Student</option>
@@ -56,7 +56,7 @@
         {% endif %}
       </select>
     </div>
-    <div class="col-span-2">
+    <div class="sm:col-span-2">
       <button type="submit" class="btn-primary">Create account</button>
     </div>
   </form>
