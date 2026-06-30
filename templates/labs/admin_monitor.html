@@ -34,7 +34,10 @@
         <td class="p-3.5 font-mono tabular-nums text-ink-soft">{{ last_active_at or "—" }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="p-8 text-center text-ink-soft">No active labs.</td></tr>
+      <tr><td colspan="5" class="p-10 text-center text-ink-soft">
+        <img src="/static/img/empty-labs.webp" alt="" class="mx-auto mb-3 h-24 w-24" loading="lazy">
+        No active labs.
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

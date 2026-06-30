@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ branding_name | default("Dotmac Academy") }}{% endblock %}</title>
 
+  <meta property="og:title" content="{{ branding_name | default('Dotmac Academy') }}">
+  <meta property="og:description" content="Field-grade training for the engineers keeping the network running — courses, assessments, and hands-on labs.">
+  <meta property="og:image" content="/static/img/og-card.webp">
+  <meta property="og:type" content="website">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
   <link rel="stylesheet" href="/static/app.css?v=5">
