@@ -139,3 +139,53 @@
     padding-left: 1rem; color: oklch(0.46 0.022 162); font-style: italic;
   }
 }
+
+/* Reading experience (chapter.js enhancements) — kept OUTSIDE @layer because
+   these classes are added at runtime by JS and would be purged otherwise. */
+
+/* heading anchor links */
+.prose h2, .prose h3 { scroll-margin-top: 5rem; }
+.heading-anchor {
+  margin-left: 0.4rem; color: oklch(0.70 0.12 159); opacity: 0;
+  text-decoration: none; font-weight: 400; transition: opacity .15s;
+}
+.prose h2:hover .heading-anchor, .prose h3:hover .heading-anchor { opacity: 0.7; }
+
+/* in-page table of contents + scroll-spy */
+#chapter-toc ul { list-style: none; margin: 0; padding: 0; }
+#chapter-toc li.toc-sub { padding-left: 0.85rem; }
+#chapter-toc a {
+  display: block; padding: 0.2rem 0.6rem; border-left: 2px solid transparent;
+  color: oklch(0.46 0.022 162); font-size: 0.85rem; line-height: 1.35;
+  text-decoration: none; transition: color .12s, border-color .12s;
+}
+#chapter-toc a:hover { color: oklch(0.44 0.10 161); }
+#chapter-toc a.active {
+  color: oklch(0.44 0.10 161); border-left-color: oklch(0.52 0.12 161); font-weight: 600;
+}
+
+/* scroll-progress bar */
+#reading-progress {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0;
+  background: oklch(0.52 0.12 161); z-index: 50; transition: width .1s linear;
+}
+
+/* figure lightbox */
+.prose img.zoomable { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; display: none; place-items: center;
+  background: oklch(0.20 0.02 160 / 0.82); z-index: 60; padding: 2rem; cursor: zoom-out;
+}
+.lightbox.open { display: grid; }
+.lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 0.5rem; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+
+/* code copy button */
+.code-copy {
+  position: absolute; top: 0.5rem; right: 0.5rem;
+  padding: 0.15rem 0.6rem; border-radius: 0.4rem; cursor: pointer;
+  font-size: 0.72rem; font-weight: 600; font-family: inherit;
+  color: oklch(0.94 0.04 156); background: oklch(0.985 0.006 95 / 0.14);
+  border: 1px solid oklch(0.985 0.006 95 / 0.22); opacity: 0; transition: opacity .15s;
+}
+.prose pre:hover .code-copy { opacity: 1; }
+.code-copy:hover { background: oklch(0.985 0.006 95 / 0.24); }

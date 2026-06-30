@@ -1,4 +1,47 @@
-{% extends "base.html" %}{% block content %}
-<article class="prose">{{ chapter.body_html | safe }}</article>
-{% if activity %}<div class="mt-10 border-t border-sand-300 pt-6"><a class="btn-primary" href="/activities/{{ activity.id }}">Take the chapter test &rarr;</a></div>{% endif %}
+{% extends "base.html" %}
+{% block title %}{{ chapter.title }} — {{ course.title }}{% endblock %}
+{% block content %}
+<div id="reading-progress"></div>
+
+<div class="mb-6 border-b border-sand-300 pb-5">
+  <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ course.title }}</p>
+  <div class="mt-2 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <p class="font-mono text-sm tabular-nums text-ink-soft">Chapter {{ chapter.number }}{% if total_chapters %} of {{ total_chapters }}{% endif %} &middot; ~{{ reading_minutes }} min read</p>
+      <h1 class="mt-1 text-3xl tracking-tight">{{ chapter.title }}</h1>
+    </div>
+    <div class="flex items-center gap-3">
+      {% include "_mark_complete.html" %}
+      <a class="btn-ghost px-3.5 py-2 text-sm" href="/courses/{{ course.slug }}">Course home</a>
+    </div>
+  </div>
+  {% if total_chapters %}
+  <div class="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-sand-300" aria-hidden="true">
+    <div class="h-full rounded-full bg-brand-500" style="width: {{ (100 * chapter.number / total_chapters)|round(0, 'floor') }}%"></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
+  <aside class="hidden lg:order-1 lg:block">
+    <nav id="chapter-toc" class="sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto">
+      <p class="mb-2 px-0.5 text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">On this page</p>
+    </nav>
+  </aside>
+  <article class="prose min-w-0 lg:order-2">{{ chapter.body_html | safe }}</article>
+</div>
+
+<nav class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-sand-300 pt-6" aria-label="Chapter navigation">
+  {% if previous_chapter %}
+  <a class="btn-ghost" href="/courses/{{ course.slug }}/chapters/{{ previous_chapter.number }}"><span aria-hidden="true">&larr;</span> Chapter {{ previous_chapter.number }}</a>
+  {% else %}<span></span>{% endif %}
+  {% if activity %}
+  <a class="btn-primary" href="/activities/{{ activity.id }}">Take the chapter test &rarr;</a>
+  {% endif %}
+  {% if next_chapter %}
+  <a class="btn-ghost" href="/courses/{{ course.slug }}/chapters/{{ next_chapter.number }}">Chapter {{ next_chapter.number }} <span aria-hidden="true">&rarr;</span></a>
+  {% endif %}
+</nav>
+
+<script src="/static/chapter.js" defer></script>
 {% endblock %}

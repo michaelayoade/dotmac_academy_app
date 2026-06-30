@@ -1,6 +1,7 @@
 # app/web/learn.py
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -12,6 +13,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
+from app.models.reading import ChapterRead
 from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services.assessment import attempts_used, best_scores_for, submit_activity
@@ -171,9 +173,74 @@ def chapter(
         .where(Activity.course_id == course.id)
         .where(Activity.chapter_number == n)
     ).first()
+    total_chapters = int(db.scalar(
+        select(func.count()).select_from(Chapter)
+        .where(Chapter.tenant_id == tenant.id).where(Chapter.course_id == course.id)
+    ) or 0)
+    prev_ch = db.scalars(
+        select(Chapter).where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id).where(Chapter.number < n)
+        .order_by(Chapter.number.desc())
+    ).first()
+    next_ch = db.scalars(
+        select(Chapter).where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id).where(Chapter.number > n)
+        .order_by(Chapter.number)
+    ).first()
+    words = len(re.sub(r"<[^>]+>", " ", ch.body_html or "").split())
+    reading_minutes = max(1, round(words / 200))
+    completed = db.scalar(
+        select(func.count()).select_from(ChapterRead)
+        .where(ChapterRead.tenant_id == tenant.id)
+        .where(ChapterRead.person_id == person.id)
+        .where(ChapterRead.chapter_id == ch.id)
+    ) or 0
     return templates.TemplateResponse(
         "chapter.html",
-        {"request": request, "course": course, "chapter": ch, "activity": act},
+        {
+            "request": request, "course": course, "chapter": ch, "activity": act,
+            "total_chapters": total_chapters, "previous_chapter": prev_ch,
+            "next_chapter": next_ch, "reading_minutes": reading_minutes,
+            "completed": bool(completed),
+        },
+    )
+
+
+@router.post("/courses/{slug}/chapters/{n}/complete", response_class=HTMLResponse)
+def chapter_complete(
+    slug: str,
+    n: int,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Toggle a chapter's read-completion for the current learner (htmx)."""
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    ch = db.scalars(
+        select(Chapter).where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id).where(Chapter.number == n)
+    ).first()
+    if ch is None:
+        raise HTTPException(status_code=404)
+    existing = db.scalars(
+        select(ChapterRead).where(ChapterRead.tenant_id == tenant.id)
+        .where(ChapterRead.person_id == person.id).where(ChapterRead.chapter_id == ch.id)
+    ).first()
+    if existing is None:
+        db.add(ChapterRead(tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id))
+        done = True
+    else:
+        db.delete(existing)
+        done = False
+    db.flush()
+    return templates.TemplateResponse(
+        "_mark_complete.html",
+        {"request": request, "course": course, "chapter": ch, "completed": done},
     )
 
 
