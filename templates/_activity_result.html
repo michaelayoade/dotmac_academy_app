@@ -27,4 +27,11 @@
     </li>
   {% endfor %}
   </ul>
+  <div class="flex flex-wrap gap-3 border-t border-sand-200 bg-sand-200/30 px-5 py-4">
+    <a class="btn-primary" href="/activities/{{ activity.id }}">Retake test</a>
+    {% if course and activity.chapter_number %}
+    <a class="btn-ghost" href="/courses/{{ course.slug }}/chapters/{{ activity.chapter_number }}">Back to chapter</a>
+    {% endif %}
+    <a class="btn-ghost" href="/">My courses</a>
+  </div>
 </div>

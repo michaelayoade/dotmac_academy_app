@@ -244,6 +244,15 @@ def chapter(
         .where(Chapter.number > n)
         .order_by(Chapter.number)
     ).first()
+    total_chapters = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id == course.id)
+        )
+        or 0
+    )
     return templates.TemplateResponse(
         "chapter.html",
         {
@@ -254,6 +263,7 @@ def chapter(
             "course_finished": _course_is_finished(course),
             "previous_chapter": previous_chapter,
             "next_chapter": next_chapter,
+            "total_chapters": total_chapters,
         },
     )
 
@@ -340,7 +350,13 @@ async def submit(
     by_id = {q.ext_id: q for q in qs}
     return templates.TemplateResponse(
         "_activity_result.html",
-        {"request": request, "score": score, "questions": by_id, "activity": act},
+        {
+            "request": request,
+            "score": score,
+            "questions": by_id,
+            "activity": act,
+            "course": course,
+        },
     )
 
 

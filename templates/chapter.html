@@ -3,11 +3,16 @@
   <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ course.title }}</p>
   <div class="mt-2 flex flex-wrap items-end justify-between gap-4">
     <div>
-      <p class="font-mono text-sm tabular-nums text-ink-soft">Chapter {{ chapter.number }}</p>
+      <p class="font-mono text-sm tabular-nums text-ink-soft">Chapter {{ chapter.number }}{% if total_chapters %} of {{ total_chapters }}{% endif %}</p>
       <h1 class="mt-1 text-3xl tracking-tight">{{ chapter.title }}</h1>
     </div>
     <a class="btn-ghost px-3.5 py-2 text-sm" href="/">Course home</a>
   </div>
+  {% if total_chapters %}
+  <div class="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-sand-300" aria-hidden="true">
+    <div class="h-full rounded-full bg-brand-500" style="width: {{ (100 * chapter.number / total_chapters)|round(0, 'floor') }}%"></div>
+  </div>
+  {% endif %}
 </div>
 
 <article class="prose">{{ chapter.body_html | safe }}</article>
