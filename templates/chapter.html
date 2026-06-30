@@ -6,7 +6,7 @@
       <p class="font-mono text-sm tabular-nums text-ink-soft">Chapter {{ chapter.number }}{% if total_chapters %} of {{ total_chapters }}{% endif %}</p>
       <h1 class="mt-1 text-3xl tracking-tight">{{ chapter.title }}</h1>
     </div>
-    <a class="btn-ghost px-3.5 py-2 text-sm" href="/">Course home</a>
+    <a class="btn-ghost px-3.5 py-2 text-sm" href="/courses/{{ course.slug }}">Course home</a>
   </div>
   {% if total_chapters %}
   <div class="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-sand-300" aria-hidden="true">

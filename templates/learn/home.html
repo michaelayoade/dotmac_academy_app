@@ -21,7 +21,7 @@
 <h2 class="mt-10 text-xl">My courses</h2>
 <div class="mt-4 space-y-4">
 {% for c in my_courses %}
-  <a href="/courses/{{ c.course.slug }}/chapters/1"
+  <a href="/courses/{{ c.course.slug }}"
      class="card block p-6 transition-colors hover:border-brand-300">
     <div class="flex items-baseline gap-3">
       <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
@@ -40,7 +40,7 @@
 <h2 class="mt-10 text-xl">Finished courses</h2>
 <div class="mt-4 space-y-4">
 {% for c in finished_courses %}
-  <a href="/courses/{{ c.course.slug }}/chapters/1"
+  <a href="/courses/{{ c.course.slug }}"
      class="card block p-6 transition-colors hover:border-brand-300">
     <div class="flex flex-wrap items-baseline gap-3">
       <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>

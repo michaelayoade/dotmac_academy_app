@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ course.title }} — Dotmac Academy{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Course</p>
+<div class="mt-1.5 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <h1 class="text-3xl tracking-tight">{{ course.title }}</h1>
+    <p class="mt-1 text-sm capitalize text-ink-soft">{{ course.discipline }}{% if course_finished %} &middot; finished{% endif %}</p>
+  </div>
+  <a class="btn-ghost px-3.5 py-2 text-sm" href="/">My courses</a>
+</div>
+
+<div class="card mt-6 p-5">
+  <div class="flex items-center justify-between gap-3">
+    <p class="text-sm font-semibold text-ink">{{ passed }} of {{ total }} activities passed</p>
+    <span class="font-mono text-sm tabular-nums text-ink-soft">{{ pct }}%</span>
+  </div>
+  <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-sand-300" aria-hidden="true">
+    <div class="h-full rounded-full bg-brand-500" style="width: {{ pct }}%"></div>
+  </div>
+  {% if not course_finished and rows %}
+  <a class="btn-primary mt-5" href="/courses/{{ course.slug }}/chapters/{{ continue_n }}">
+    {% if pct > 0 %}Continue{% else %}Start course{% endif %} <span aria-hidden="true">&rarr;</span>
+  </a>
+  {% endif %}
+</div>
+
+<h2 class="mt-10 text-xl">Syllabus</h2>
+{% if rows %}
+<ol class="mt-4 space-y-2">
+{% for r in rows %}
+  <li class="card flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+    <span class="w-7 shrink-0 font-mono text-sm tabular-nums text-ink-soft">{{ "%02d"|format(r.chapter.number) }}</span>
+    <a class="min-w-0 flex-1 font-medium text-ink hover:text-brand-700"
+       href="/courses/{{ course.slug }}/chapters/{{ r.chapter.number }}">{{ r.chapter.title }}</a>
+    {% if r.activities %}
+    <div class="flex flex-wrap items-center gap-2">
+    {% for x in r.activities %}
+      <a href="{% if x.activity.type == 'lab' %}/labs/{{ x.activity.id }}{% else %}/activities/{{ x.activity.id }}{% endif %}"
+         class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold
+                {% if x.status.state in ('pass', 'done') %}bg-brand-100 text-brand-800
+                {% elif x.status.state == 'fail' %}bg-clay-500/15 text-clay-600
+                {% else %}bg-sand-200 text-ink-soft{% endif %}">
+        <span>{% if x.activity.type == 'lab' %}Lab{% else %}Test{% endif %}</span>
+        <span class="opacity-60" aria-hidden="true">&middot;</span>
+        <span>{{ x.status.label }}</span>
+      </a>
+    {% endfor %}
+    </div>
+    {% endif %}
+  </li>
+{% endfor %}
+</ol>
+{% else %}
+<p class="mt-4 text-ink-soft">This course has no chapters yet.</p>
+{% endif %}
+
+{% if extra %}
+<h2 class="mt-10 text-xl">Course assessments</h2>
+<ol class="mt-4 space-y-2">
+{% for x in extra %}
+  <li class="card flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+    <a class="min-w-0 flex-1 font-medium text-ink hover:text-brand-700"
+       href="{% if x.activity.type == 'lab' %}/labs/{{ x.activity.id }}{% else %}/activities/{{ x.activity.id }}{% endif %}">{{ x.activity.title }}</a>
+    <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold
+                 {% if x.status.state in ('pass', 'done') %}bg-brand-100 text-brand-800
+                 {% elif x.status.state == 'fail' %}bg-clay-500/15 text-clay-600
+                 {% else %}bg-sand-200 text-ink-soft{% endif %}">
+      <span>{% if x.activity.type == 'lab' %}Lab{% else %}Test{% endif %}</span>
+      <span class="opacity-60" aria-hidden="true">&middot;</span>
+      <span>{{ x.status.label }}</span>
+    </span>
+  </li>
+{% endfor %}
+</ol>
+{% endif %}
+{% endblock %}

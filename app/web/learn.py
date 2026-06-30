@@ -200,6 +200,101 @@ def home(
     )
 
 
+@router.get("/courses/{slug}", response_class=HTMLResponse)
+def course_outline(
+    slug: str,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Course syllabus: every chapter with its test/lab and the learner's status."""
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+
+    chapters = list(
+        db.scalars(
+            select(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id == course.id)
+            .order_by(Chapter.number)
+        ).all()
+    )
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant.id)
+            .where(Activity.course_id == course.id)
+        ).all()
+    )
+    best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+
+    acts_by_chapter: dict[int, list] = {}
+    for a in activities:
+        acts_by_chapter.setdefault(a.chapter_number or 0, []).append(a)
+
+    def _status(a: Activity) -> dict:
+        s = best.get(a.id)
+        graded = (a.pass_threshold or 0) > 0
+        if s is None:
+            return {"state": "todo", "label": "Not started"}
+        if not graded:
+            return {"state": "done", "label": "Done"}
+        return {
+            "state": "pass" if s.passed else "fail",
+            "label": "Pass" if s.passed else "Fail",
+        }
+
+    rows = []
+    for ch in chapters:
+        # Tests before labs within a chapter.
+        ch_acts = sorted(
+            acts_by_chapter.get(ch.number, []),
+            key=lambda a: 0 if a.type == "mcq_test" else 1,
+        )
+        rows.append(
+            {"chapter": ch, "activities": [{"activity": a, "status": _status(a)} for a in ch_acts]}
+        )
+
+    # Course-level activities (mid/final assessments) aren't tied to a chapter
+    # number, so surface them in their own section instead of dropping them.
+    chapter_numbers = {ch.number for ch in chapters}
+    extra = [
+        {"activity": a, "status": _status(a)}
+        for a in sorted(activities, key=lambda a: 0 if a.type == "mcq_test" else 1)
+        if (a.chapter_number or 0) not in chapter_numbers
+    ]
+
+    total = len(activities)
+    passed = sum(1 for s in best.values() if s.passed)
+    pct = round(100 * passed / total) if total else 0
+
+    # "Continue" = first chapter with an unattempted activity (else chapter 1).
+    continue_n = chapters[0].number if chapters else 1
+    for r in rows:
+        if r["activities"] and not all(best.get(x["activity"].id) for x in r["activities"]):
+            continue_n = r["chapter"].number
+            break
+
+    return templates.TemplateResponse(
+        "learn/course.html",
+        {
+            "request": request,
+            "course": course,
+            "rows": rows,
+            "total": total,
+            "passed": passed,
+            "pct": pct,
+            "continue_n": continue_n,
+            "extra": extra,
+            "course_finished": _course_is_finished(course),
+        },
+    )
+
+
 @router.get("/courses/{slug}/chapters/{n}", response_class=HTMLResponse)
 def chapter(
     slug: str,
