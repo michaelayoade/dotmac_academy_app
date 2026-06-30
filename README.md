@@ -105,4 +105,7 @@ Settings are loaded from the environment and from a local `.env` file.
 
 ## License
 
-TBD.
+Copyright © Dotmac. All rights reserved.
+
+This source is published for reference and transparency only. No license is
+granted to use, copy, modify, or distribute it. It is **not** open source.
