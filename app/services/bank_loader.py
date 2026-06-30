@@ -92,7 +92,10 @@ def lint_bank(doc: BankDoc) -> list[str]:
 
     for cat, target in _TARGET.items():
         frac = counts[cat] / n
-        if abs(frac - target) > _TOL:
+        # +1e-9 epsilon: a mix exactly at the tolerance edge (e.g. analysis 40%
+        # vs target 30% ±10%) must pass — bare float subtraction yields
+        # 0.4-0.3==0.10000000000000003 and would wrongly reject a compliant bank.
+        if abs(frac - target) > _TOL + 1e-9:
             out.append(
                 f"rubric mix off: {cat} {frac:.0%} (target {target:.0%} ±{_TOL:.0%})"
             )
