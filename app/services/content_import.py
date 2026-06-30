@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,9 +36,32 @@ def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
     static_figures_dir.mkdir(parents=True, exist_ok=True)
     copied = 0
     for png in figures_dir.glob("*.png"):
-        shutil.copy2(png, static_figures_dir / png.name)
+        dest = static_figures_dir / png.name
+        shutil.copy2(png, dest)
+        _make_webp(dest)
         copied += 1
     return copied
+
+
+def _make_webp(png_path: Path) -> None:
+    """Best-effort WebP sibling ``<name>.png.webp`` next to the PNG.
+
+    nginx serves the WebP to webp-capable clients (Accept: image/webp) and falls
+    back to the PNG otherwise — a ~85% smaller payload for figure-heavy chapters,
+    which matters for low-bandwidth field users. Never fail an import if the
+    converter is absent or hiccups; a missing WebP just means the PNG is served.
+    """
+    if shutil.which("cwebp") is None:
+        return
+    try:
+        subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["cwebp", "-quiet", "-q", "85", str(png_path), "-o", f"{png_path}.webp"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:  # converter problems must never break content import
+        pass
 
 # Matches the YAML frontmatter block at the top of a file.
 _FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
