@@ -20,11 +20,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
+from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.lab import LabTemplate
 from app.models.person import Person
-from app.models.assessment import Activity, Score, Submission
 from app.services.assessment import override_score
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
@@ -170,7 +170,9 @@ def _find_cohort_by_name(db: Session, *, tenant_id: UUID, name: str) -> Cohort |
 @router.get("/cohorts", response_class=HTMLResponse)
 def cohorts_list(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
-    cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
+    cohorts = db.scalars(
+        select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)
+    ).all()
     cohort_rows = []
     for cohort in cohorts:
         students = db.scalars(
@@ -187,7 +189,21 @@ def cohorts_list(request: Request, db: Session = Depends(get_db)):
             .order_by(Person.last_name, Person.first_name, Person.email)
         ).all()
         courses = _matching_courses(db, tenant_id=tenant.id, discipline=cohort.discipline)
-        cohort_rows.append({"cohort": cohort, "courses": courses, "students": students})
+        cohort_rows.append(
+            {
+                "cohort": cohort,
+                "course_rows": [
+                    {
+                        "course": course,
+                        # Course access is cohort/discipline based, so every matching
+                        # course has the cohort's active student enrollment list.
+                        "students": students,
+                    }
+                    for course in courses
+                ],
+                "students": students,
+            }
+        )
     return templates.TemplateResponse(
         "instructor/cohorts.html", {"request": request, "cohort_rows": cohort_rows}
     )

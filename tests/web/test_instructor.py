@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from app.services.security import hash_password
-from app.services.bootstrap import ensure_roles
-from app.models.person import Person
 from app.models.auth import UserCredential
-from app.models.rbac import PersonRole
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.person import Person
+from app.models.rbac import PersonRole
+from app.services.bootstrap import ensure_roles
+from app.services.security import hash_password
 
 
 def _login_user(app_client, admin_session, tenant, *, email, role_slug):
@@ -46,6 +46,17 @@ def _login_instructor(app_client, admin_session, tenant):
         tenant,
         email="i@a.edu",
         role_slug="instructor",
+    )
+
+
+def _login_admin(app_client, admin_session, tenant):
+    """Seed an admin person, log in via TestClient, return Host header dict."""
+    return _login_user(
+        app_client,
+        admin_session,
+        tenant,
+        email="admin@a.edu",
+        role_slug="admin",
     )
 
 
@@ -171,10 +182,61 @@ def test_cohorts_page_lists_matching_courses_and_enrolled_students(
         discipline="Fiber",
         source_ref="test",
     )
+    second_course = Course(
+        tenant_id=tenant_a.id,
+        slug="fiber-ops",
+        title="Fiber Operations",
+        discipline="Fiber",
+        source_ref="test",
+    )
     student = Person(
         tenant_id=tenant_a.id,
         email="student@a.edu",
         first_name="Ada",
+        last_name="Student",
+    )
+    admin_session.add_all([cohort, course, second_course, student])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id,
+            cohort_id=cohort.id,
+            person_id=student.id,
+            role_in_cohort="student",
+            status="active",
+        )
+    )
+    admin_session.commit()
+
+    r = app_client.get("/instructor/cohorts", headers=h)
+
+    assert r.status_code == 200
+    assert "Courses and enrolled students" in r.text
+    assert "Fiber Foundations" in r.text
+    assert "Fiber Operations" in r.text
+    assert "Ada Student" in r.text
+    assert r.text.count("student@a.edu") == 2
+
+
+def test_admin_can_view_cohorts_page_student_lists(app_client, admin_session, tenant_a):
+    h = _login_admin(app_client, admin_session, tenant_a)
+    cohort = Cohort(
+        tenant_id=tenant_a.id,
+        name="Admin Visible Fiber",
+        discipline="Fiber",
+        status="active",
+    )
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="admin-fiber",
+        title="Admin Fiber",
+        discipline="Fiber",
+        source_ref="test",
+    )
+    student = Person(
+        tenant_id=tenant_a.id,
+        email="admin-visible-student@a.edu",
+        first_name="Visible",
         last_name="Student",
     )
     admin_session.add_all([cohort, course, student])
@@ -193,9 +255,9 @@ def test_cohorts_page_lists_matching_courses_and_enrolled_students(
     r = app_client.get("/instructor/cohorts", headers=h)
 
     assert r.status_code == 200
-    assert "Fiber Foundations" in r.text
-    assert "Ada Student" in r.text
-    assert "student@a.edu" in r.text
+    assert "Admin Fiber" in r.text
+    assert "Visible Student" in r.text
+    assert "admin-visible-student@a.edu" in r.text
 
 
 def test_create_cohort_auto_enrolls_existing_students_for_matching_course(
@@ -327,7 +389,12 @@ def test_enroll_cross_tenant_404(app_client, admin_session, tenant_a, tenant_b):
     h = _login_instructor(app_client, admin_session, tenant_a)
 
     # Create a cohort under tenant_b directly (bypasses RLS via admin_session).
-    cohort_b = Cohort(tenant_id=tenant_b.id, name="Beta Cohort", discipline="security", status="active")
+    cohort_b = Cohort(
+        tenant_id=tenant_b.id,
+        name="Beta Cohort",
+        discipline="security",
+        status="active",
+    )
     admin_session.add(cohort_b)
     admin_session.commit()
     admin_session.refresh(cohort_b)
