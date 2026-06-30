@@ -11,7 +11,7 @@
   <meta property="og:type" content="website">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
-  <link rel="stylesheet" href="/static/app.css?v=5">
+  <link rel="stylesheet" href="/static/app.css?v=6">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
@@ -20,7 +20,7 @@
   {% include "shell/_topbar.html" %}
 
   <div class="mx-auto flex max-w-6xl flex-col md:flex-row">
-    {% include "shell/_sidebar.html" %}
+    {% block shell_sidebar %}{% include "shell/_sidebar.html" %}{% endblock %}
 
     <main class="min-w-0 flex-1 px-4 py-8 sm:px-6 sm:py-10">
       <div class="mx-auto max-w-3xl">

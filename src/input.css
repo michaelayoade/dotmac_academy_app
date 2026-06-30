@@ -115,6 +115,45 @@
   .disclosure-chevron { transition: transform 0.2s ease; }
   .disclosure[open] > summary .disclosure-chevron { transform: rotate(90deg); }
 
+  /* Course-work reading layout. */
+  .coursework-wide {
+    width: min(calc(100vw - 2rem), 64rem);
+    margin-left: calc(50% - min(calc(100vw - 2rem), 64rem) / 2);
+  }
+  .coursework-shell { @apply grid gap-6 lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start; }
+  .coursework-sidebar { @apply grid gap-4 lg:sticky lg:top-[5.5rem] lg:max-h-[calc(100vh-6.5rem)] lg:overflow-hidden; }
+  .coursework-menu { @apply rounded-2xl border border-sand-300 bg-sand-50 p-2 shadow-card; }
+  .coursework-panel { @apply rounded-2xl border border-sand-300 bg-sand-50 p-4 shadow-card; }
+  .coursework-scroll { @apply lg:max-h-[calc(100vh-23rem)] lg:overflow-y-auto; }
+  .coursework-main { @apply min-w-0 space-y-5; }
+  .coursework-hero { @apply relative min-h-56 overflow-hidden rounded-2xl bg-brand-800 shadow-lift; }
+  .coursework-hero::after { content: ""; @apply absolute inset-0 bg-gradient-to-r from-brand-900/95 via-brand-900/70 to-brand-700/35; }
+  .coursework-hero-img { @apply absolute inset-0 h-full w-full object-cover opacity-35; }
+  .coursework-hero-content { @apply relative z-10 flex min-h-56 flex-col justify-center px-6 py-8 sm:px-8; }
+  .coursework-status { @apply flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between; }
+  .coursework-article { @apply rounded-2xl border border-sand-300 bg-sand-50 px-5 py-6 shadow-card sm:px-8 sm:py-8; max-width: none; }
+  .coursework-actions { @apply flex flex-wrap items-center justify-between gap-3 border-t border-sand-300 pt-6; }
+  .coursework-chapter-group { @apply min-w-0; }
+  .coursework-chapter-link { @apply flex items-start gap-2 rounded-lg border-l-2 border-transparent px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-sand-200 hover:text-brand-700; }
+  .coursework-chapter-link-active { @apply border-brand-600 bg-brand-50 text-brand-800; }
+  .coursework-subtopics { @apply ml-3 mt-1 grid gap-0.5 border-l border-sand-300 pl-3; }
+  .coursework-subtopic-link { @apply flex items-start gap-2 rounded-md px-2 py-1 text-xs font-medium leading-5 text-ink-soft transition-colors hover:bg-sand-200 hover:text-brand-700; }
+  .coursework-subtopic-title { @apply min-w-0 flex-1 whitespace-nowrap; }
+  .coursework-subtopic-check { @apply hidden shrink-0 text-brand-700; }
+  .coursework-subtopic-link-current { @apply text-ink; }
+  .coursework-subtopic-active { @apply bg-sand-200 text-brand-800 ring-1 ring-brand-200; }
+  .coursework-subtopic-locked { @apply cursor-not-allowed opacity-55 hover:bg-transparent hover:text-ink-soft; }
+  .coursework-subtopic-complete { @apply bg-brand-50 text-brand-800; }
+  .coursework-subtopic-complete .coursework-subtopic-check { @apply inline; }
+  .subtopic-complete-card { @apply not-prose my-4 flex flex-col gap-3 rounded-xl border border-sand-300 bg-sand-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between; }
+  .subtopic-step-actions { @apply flex flex-wrap items-center justify-end gap-2 rounded-xl border border-sand-300 bg-sand-100 px-3 py-2; }
+  .subtopic-complete-label { @apply text-sm font-medium text-ink-soft; }
+  .subtopic-complete-actions { @apply flex flex-wrap items-center gap-2; }
+  .subtopic-complete-button { @apply inline-flex items-center justify-center rounded-xl bg-brand-700 px-4 py-2 text-sm font-semibold text-sand-50 transition-colors hover:bg-brand-800; }
+  .subtopic-complete-button-done { @apply bg-brand-50 text-brand-800 hover:bg-brand-100; }
+  .subtopic-next-button { @apply inline-flex items-center justify-center rounded-xl border border-sand-300 bg-sand-50 px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-brand-400 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-sand-300 disabled:hover:text-ink; }
+  .action-disabled { @apply pointer-events-none cursor-not-allowed opacity-45; }
+
   /* Long-form chapter content (chapter.html uses .prose). */
   .prose { @apply text-ink; line-height: 1.72; max-width: 68ch; }
   .prose > * + * { margin-top: 1.05em; }

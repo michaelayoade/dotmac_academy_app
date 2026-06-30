@@ -1,8 +1,7 @@
-/* Dotmac Academy — chapter reading experience.
+/* Dotmac Academy — focused chapter reading experience.
    Progressive enhancement for /courses/<slug>/chapters/<n>:
-   in-page Table of Contents + scroll-spy, heading anchor links, figure
-   lightbox, code copy-buttons, and a top scroll-progress bar.
-   No dependencies; safe no-op if the expected nodes are absent. */
+   subtopic step flow, completion, sidebar state, figure lightbox, code copy,
+   and a section progress bar. No dependencies. */
 (function () {
   "use strict";
   var article = document.querySelector("article.prose");
@@ -13,8 +12,159 @@
       .replace(/[^\w\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 64) || "section";
   }
 
-  /* --- heading ids + anchor links + ToC ------------------------------- */
+  var storagePrefix = "dotmac:subtopic:";
+  var courseSlug = article.dataset.courseSlug || "course";
+  var chapterNumber = article.dataset.chapterNumber || "chapter";
+  var groupedIntroSlugs = { "why-this-matters": true, "catch-up-sidebar": true };
+  var subtopicLinks = [].slice.call(document.querySelectorAll("[data-subtopic-key]")).filter(function (link) {
+    return !groupedIntroSlugs[link.dataset.subtopicSlug];
+  });
   var headings = [].slice.call(article.querySelectorAll("h2, h3"));
+  var sections = [];
+  var activeSlug = null;
+  var stepActions = document.getElementById("subtopic-step-actions");
+  var stepStatus = document.getElementById("subtopic-step-status");
+  var completeButton = document.getElementById("subtopic-complete-button");
+  var nextButton = document.getElementById("subtopic-next-button");
+  var chapterTestLink = document.getElementById("chapter-test-link");
+  var sidebarContinueLink = document.getElementById("sidebar-continue-link");
+  var activityTaken = article.dataset.activityTaken === "true";
+  var hasActivity = article.dataset.hasActivity === "true";
+
+  function subtopicKey(slug) { return courseSlug + ":" + chapterNumber + ":" + slug; }
+  function storageKey(key) { return storagePrefix + key; }
+  function isComplete(key) {
+    try { return window.localStorage.getItem(storageKey(key)) === "1"; }
+    catch (e) { return false; }
+  }
+  function setComplete(key) {
+    try { window.localStorage.setItem(storageKey(key), "1"); }
+    catch (e) { /* storage can be disabled; navigation should still work */ }
+  }
+  function targetHref(link) { return link ? (link.dataset.subtopicHref || link.getAttribute("href")) : null; }
+  function nextSubtopicHref(key) {
+    var idx = subtopicLinks.findIndex(function (link) { return link.dataset.subtopicKey === key; });
+    return idx >= 0 && subtopicLinks[idx + 1] ? targetHref(subtopicLinks[idx + 1]) : null;
+  }
+  function unlockSubtopicLink(link) {
+    if (!link) return;
+    link.classList.add("coursework-subtopic-complete");
+    link.classList.remove("coursework-subtopic-locked", "action-disabled");
+    link.setAttribute("href", targetHref(link));
+    link.setAttribute("aria-disabled", "false");
+    link.removeAttribute("tabindex");
+  }
+  function paintSubtopicState(key) {
+    subtopicLinks.forEach(function (link) {
+      if (link.dataset.subtopicKey === key) unlockSubtopicLink(link);
+    });
+  }
+  function currentSubtopicLinks() {
+    var prefix = courseSlug + ":" + chapterNumber + ":";
+    return subtopicLinks.filter(function (link) {
+      return (link.dataset.subtopicKey || "").indexOf(prefix) === 0;
+    });
+  }
+  function allCurrentSubtopicsComplete() {
+    var currentLinks = currentSubtopicLinks();
+    return currentLinks.length === 0 || currentLinks.every(function (link) {
+      return isComplete(link.dataset.subtopicKey);
+    });
+  }
+  function setLinkDisabled(link, disabled) {
+    if (!link) return;
+    link.classList.toggle("action-disabled", disabled);
+    link.setAttribute("aria-disabled", disabled ? "true" : "false");
+    if (disabled) link.setAttribute("tabindex", "-1");
+    else link.removeAttribute("tabindex");
+  }
+  function updateSidebarContinue(chapterComplete) {
+    if (!sidebarContinueLink) return;
+    var testHref = chapterTestLink ? chapterTestLink.getAttribute("href") : null;
+    var nextHref = sidebarContinueLink.dataset.nextChapterHref || null;
+    if (!chapterComplete) {
+      sidebarContinueLink.setAttribute("href", "#");
+      sidebarContinueLink.innerHTML = 'Complete subtopics <span aria-hidden="true">&rarr;</span>';
+      setLinkDisabled(sidebarContinueLink, true);
+      return;
+    }
+    if (hasActivity && !activityTaken && testHref) {
+      sidebarContinueLink.setAttribute("href", testHref);
+      sidebarContinueLink.innerHTML = 'Take test <span aria-hidden="true">&rarr;</span>';
+      setLinkDisabled(sidebarContinueLink, false);
+      return;
+    }
+    if (nextHref) {
+      sidebarContinueLink.setAttribute("href", nextHref);
+      sidebarContinueLink.innerHTML = 'Next chapter <span aria-hidden="true">&rarr;</span>';
+      setLinkDisabled(sidebarContinueLink, false);
+      return;
+    }
+    sidebarContinueLink.setAttribute("href", "#");
+    sidebarContinueLink.innerHTML = 'Chapter complete <span aria-hidden="true">✓</span>';
+    setLinkDisabled(sidebarContinueLink, true);
+  }
+  function updateChapterGates() {
+    var chapterComplete = allCurrentSubtopicsComplete();
+    setLinkDisabled(chapterTestLink, !chapterComplete);
+    updateSidebarContinue(chapterComplete);
+  }
+  function paintAllSubtopics() {
+    subtopicLinks.forEach(function (link) {
+      if (isComplete(link.dataset.subtopicKey)) unlockSubtopicLink(link);
+    });
+    updateChapterGates();
+  }
+  function setActiveSidebar(slug) {
+    subtopicLinks.forEach(function (link) {
+      link.classList.toggle(
+        "coursework-subtopic-active",
+        link.dataset.subtopicKey === subtopicKey(slug)
+      );
+    });
+  }
+  function updateProgress() {
+    var bar = document.getElementById("reading-progress");
+    if (!bar || !sections.length) return;
+    var idx = sections.findIndex(function (entry) { return entry.slug === activeSlug; });
+    var pct = idx >= 0 ? ((idx + 1) / sections.length) * 100 : 0;
+    bar.style.width = pct.toFixed(1) + "%";
+  }
+  function updateStepActions() {
+    if (!stepActions || !completeButton || !nextButton || !activeSlug) return;
+    var key = subtopicKey(activeSlug);
+    var done = isComplete(key);
+    stepActions.hidden = false;
+    if (stepStatus) stepStatus.textContent = done ? "Subtopic completed" : "Ready to continue?";
+    completeButton.textContent = done ? "Completed" : "Mark as complete";
+    completeButton.classList.toggle("subtopic-complete-button-done", done);
+    nextButton.textContent = nextSubtopicHref(key) ? "Next" : "Finish chapter";
+    nextButton.disabled = !done;
+    nextButton.setAttribute("aria-disabled", done ? "false" : "true");
+  }
+  function showSection(slug, opts) {
+    if (!sections.length) return false;
+    var entry = sections.find(function (section) { return section.slug === slug; }) || sections[0];
+    sections.forEach(function (section) { section.el.hidden = section.slug !== entry.slug; });
+    activeSlug = entry.slug;
+    setActiveSidebar(entry.slug);
+    updateProgress();
+    updateStepActions();
+    if (!opts || opts.updateHash !== false) history.replaceState(null, "", "#" + entry.slug);
+    if (!opts || opts.scroll !== false) article.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }
+  function goToNextSubtopic(key) {
+    var href = nextSubtopicHref(key);
+    if (!href) return;
+    if (href.charAt(0) === "#") {
+      showSection(href.slice(1));
+    } else {
+      window.location.href = href;
+    }
+  }
+
+  /* --- heading ids + focused subtopic sections ------------------------ */
   var used = {};
   headings.forEach(function (h) {
     if (!h.id) {
@@ -28,33 +178,73 @@
     a.textContent = "#"; h.appendChild(a);
   });
 
-  var tocNav = document.getElementById("chapter-toc");
-  if (tocNav && headings.length > 2) {
-    var ul = document.createElement("ul");
-    headings.forEach(function (h) {
-      var li = document.createElement("li");
-      li.className = h.tagName === "H3" ? "toc-sub" : "toc-top";
-      var link = document.createElement("a");
-      link.href = "#" + h.id; link.textContent = h.textContent.replace(/#$/, "").trim();
-      link.dataset.target = h.id;
-      li.appendChild(link); ul.appendChild(li);
-    });
-    tocNav.appendChild(ul);
+  var stepSlugs = {};
+  currentSubtopicLinks().forEach(function (link) {
+    stepSlugs[link.dataset.subtopicSlug] = true;
+  });
+  var stepHeadings = headings.filter(function (h) { return stepSlugs[h.id]; });
+  if (!stepHeadings.length) stepHeadings = headings;
 
-    /* scroll-spy: highlight the section currently in view */
-    var links = {};
-    [].forEach.call(tocNav.querySelectorAll("a"), function (l) { links[l.dataset.target] = l; });
-    var spy = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) {
-          for (var k in links) links[k].classList.remove("active");
-          if (links[e.target.id]) links[e.target.id].classList.add("active");
-        }
-      });
-    }, { rootMargin: "-10% 0px -75% 0px", threshold: 0 });
-    headings.forEach(function (h) { spy.observe(h); });
-  } else if (tocNav) {
-    tocNav.style.display = "none";
+  stepHeadings.forEach(function (h) {
+    var section = document.createElement("section");
+    section.className = "coursework-section";
+    section.id = "section-" + h.id;
+    section.dataset.subtopicSlug = h.id;
+    article.insertBefore(section, h);
+    section.appendChild(h);
+    while (section.nextSibling) {
+      var next = section.nextSibling;
+      if (next.matches && next.matches("h2, h3") && stepSlugs[next.id]) break;
+      section.appendChild(next);
+    }
+
+    sections.push({ slug: h.id, title: h.textContent.replace(/#$/, "").trim(), tagName: h.tagName, el: section });
+  });
+
+  paintAllSubtopics();
+
+  if (completeButton) {
+    completeButton.addEventListener("click", function () {
+      if (!activeSlug) return;
+      var key = subtopicKey(activeSlug);
+      setComplete(key);
+      paintSubtopicState(key);
+      updateStepActions();
+      updateChapterGates();
+    });
+  }
+  if (nextButton) {
+    nextButton.addEventListener("click", function () {
+      if (!activeSlug) return;
+      var key = subtopicKey(activeSlug);
+      if (!isComplete(key)) return;
+      goToNextSubtopic(key);
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var disabledAction = e.target.closest ? e.target.closest("a.action-disabled") : null;
+    if (disabledAction) {
+      e.preventDefault();
+      return;
+    }
+    var link = e.target.closest ? e.target.closest("a[data-subtopic-key]") : null;
+    if (!link) return;
+    if (!isComplete(link.dataset.subtopicKey)) {
+      e.preventDefault();
+      return;
+    }
+    var href = targetHref(link);
+    if (!href || href.charAt(0) !== "#") return;
+    var slug = href.slice(1);
+    if (!slug || !sections.some(function (section) { return section.slug === slug; })) return;
+    e.preventDefault();
+    showSection(slug);
+  });
+
+  if (sections.length) {
+    var initialSlug = window.location.hash ? window.location.hash.slice(1) : sections[0].slug;
+    showSection(initialSlug, { scroll: false, updateHash: Boolean(window.location.hash) });
   }
 
   /* --- figure lightbox ------------------------------------------------- */
@@ -86,17 +276,4 @@
     pre.style.position = "relative";
     pre.appendChild(btn);
   });
-
-  /* --- scroll-progress bar -------------------------------------------- */
-  var bar = document.getElementById("reading-progress");
-  if (bar) {
-    var tick = function () {
-      var top = article.offsetTop;
-      var h = article.offsetHeight - window.innerHeight + 120;
-      var p = h > 0 ? Math.min(100, Math.max(0, ((window.scrollY - top) / h) * 100)) : 100;
-      bar.style.width = p.toFixed(1) + "%";
-    };
-    window.addEventListener("scroll", tick, { passive: true });
-    window.addEventListener("resize", tick); tick();
-  }
 })();

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -25,6 +26,64 @@ from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
+
+
+class _HeadingExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.headings: list[dict[str, str]] = []
+        self._current_tag: str | None = None
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"h2", "h3"}:
+            self._current_tag = tag
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._current_tag:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._current_tag:
+            title = " ".join("".join(self._parts).split())
+            if title:
+                self.headings.append({"level": tag, "title": title})
+            self._current_tag = None
+            self._parts = []
+
+
+def _slugify_heading(value: str) -> str:
+    return (
+        re.sub(r"-+", "-", re.sub(r"\s+", "-", re.sub(r"[^\w\s-]", "", (value or "").lower().strip())))[:64]
+        or "section"
+    )
+
+
+_GROUPED_INTRO_HEADINGS = {"why-this-matters", "catch-up-sidebar"}
+
+
+def _grouped_heading_key(value: str) -> str:
+    return _slugify_heading(value).casefold()
+
+
+def _chapter_subtopics(body_html: str) -> list[dict[str, str]]:
+    parser = _HeadingExtractor()
+    parser.feed(body_html or "")
+    used: set[str] = set()
+    subtopics: list[dict[str, str]] = []
+    for heading in parser.headings:
+        if _grouped_heading_key(heading["title"]) in _GROUPED_INTRO_HEADINGS:
+            continue
+        base = _slugify_heading(heading["title"])
+        slug = base
+        counter = 2
+        while slug in used:
+            slug = f"{base}-{counter}"
+            counter += 1
+        used.add(slug)
+        subtopics.append({**heading, "slug": slug})
+    return subtopics
 
 
 def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
@@ -177,6 +236,30 @@ def chapter(
         select(func.count()).select_from(Chapter)
         .where(Chapter.tenant_id == tenant.id).where(Chapter.course_id == course.id)
     ) or 0)
+    chapters = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .order_by(Chapter.number)
+    ).all()
+    chapter_modules = [
+        {"chapter": course_chapter, "subtopics": _chapter_subtopics(course_chapter.body_html)}
+        for course_chapter in chapters
+    ]
+    chapter_ids = [chapter.id for chapter in chapters]
+    completed_chapter_ids = (
+        {
+            row[0]
+            for row in db.execute(
+                select(ChapterRead.chapter_id)
+                .where(ChapterRead.tenant_id == tenant.id)
+                .where(ChapterRead.person_id == person.id)
+                .where(ChapterRead.chapter_id.in_(chapter_ids))
+            ).all()
+        }
+        if chapter_ids
+        else set()
+    )
     prev_ch = db.scalars(
         select(Chapter).where(Chapter.tenant_id == tenant.id)
         .where(Chapter.course_id == course.id).where(Chapter.number < n)
@@ -195,13 +278,21 @@ def chapter(
         .where(ChapterRead.person_id == person.id)
         .where(ChapterRead.chapter_id == ch.id)
     ) or 0
+    activity_taken = False
+    if act is not None:
+        activity_taken = attempts_used(
+            db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
+        ) > 0
     return templates.TemplateResponse(
         "chapter.html",
         {
             "request": request, "course": course, "chapter": ch, "activity": act,
             "total_chapters": total_chapters, "previous_chapter": prev_ch,
             "next_chapter": next_ch, "reading_minutes": reading_minutes,
-            "completed": bool(completed),
+            "completed": bool(completed), "activity_taken": activity_taken,
+            "chapters": chapters, "chapter_modules": chapter_modules,
+            "completed_chapter_ids": completed_chapter_ids,
+            "completed_chapters": len(completed_chapter_ids),
         },
     )
 
