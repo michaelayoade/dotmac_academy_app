@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     get_db,
     get_platform_db,
-    require_platform_admin_token,
     require_tenant,
 )
 from app.models.person import Person
@@ -37,7 +36,6 @@ router = APIRouter(
     dependencies=[
         Depends(require_tenant),
         Depends(require_web_role("admin")),
-        Depends(require_platform_admin_token),
     ],
 )
 

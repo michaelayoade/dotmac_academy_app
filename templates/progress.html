@@ -24,10 +24,14 @@
         <td class="p-3.5 font-mono tabular-nums text-ink-soft">{{ row.activity.chapter_number or "—" }}</td>
         <td class="p-3.5 font-mono tabular-nums text-ink">{{ row.score.score }}/{{ row.score.max_score }} <span class="text-ink-soft">({{ "%.0f"|format(row.score.fraction * 100) }}%)</span></td>
         <td class="p-3.5">
-          {% if row.score.passed %}
-          <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Pass</span>
+          {% if row.activity.pass_threshold and row.activity.pass_threshold > 0 %}
+            {% if row.score.passed %}
+            <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Pass</span>
+            {% else %}
+            <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Fail</span>
+            {% endif %}
           {% else %}
-          <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Fail</span>
+          <span class="inline-flex items-center rounded-full bg-sand-300 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Done</span>
           {% endif %}
         </td>
         <td class="p-3.5 font-mono text-xs tabular-nums text-ink-soft">{{ row.score.created_at.strftime("%Y-%m-%d") if row.score.created_at else "—" }}</td>

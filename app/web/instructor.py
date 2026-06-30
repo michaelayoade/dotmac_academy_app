@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
+from app.models.course import Chapter, Course
+from app.models.lab import LabTemplate
 from app.models.person import Person
 from app.models.assessment import Activity, Score, Submission
 from app.services.assessment import override_score
@@ -258,9 +259,31 @@ def course_edit(
 ):
     tenant = require_tenant(request)
     course = _course_or_404(db, tenant_id=tenant.id, course_id=course_id)
+
+    def _count(model) -> int:
+        return int(
+            db.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.tenant_id == tenant.id)
+                .where(model.course_id == course.id)
+            )
+            or 0
+        )
+
+    counts = {
+        "chapters": _count(Chapter),
+        "labs": _count(LabTemplate),
+        "assessments": _count(Activity),
+    }
     return templates.TemplateResponse(
         "instructor/course_edit.html",
-        {"request": request, "course": course, "statuses": COURSE_STATUSES},
+        {
+            "request": request,
+            "course": course,
+            "statuses": COURSE_STATUSES,
+            "counts": counts,
+        },
     )
 
 

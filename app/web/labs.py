@@ -381,6 +381,30 @@ def lab_reset(
     )
 
 
+@router.get("/labs/instances/{instance_id}/console-view/{node}", response_class=HTMLResponse)
+def console_view(
+    instance_id: UUID,
+    node: str,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Framed console: a thin toolbar (node label + back-to-lab) around the ttyd
+    terminal, which loads in an iframe from the raw proxy route below."""
+    tenant = require_tenant(request)
+    instance = _owned_instance(db, tenant, person, instance_id)
+    _ensure_course_open_for_instance(db, tenant, instance)
+    return templates.TemplateResponse(
+        "labs/console.html",
+        {
+            "request": request,
+            "instance": instance,
+            "node": node,
+            "activity_id": instance.activity_id,
+        },
+    )
+
+
 @router.get("/labs/instances/{instance_id}/console/{node}")
 async def console(
     instance_id: UUID,

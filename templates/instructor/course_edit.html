@@ -7,6 +7,23 @@
   <a class="btn-ghost px-3.5 py-2 text-sm" href="/instructor/courses">Back to courses</a>
 </div>
 
+{% if counts %}
+<div class="mt-6 grid grid-cols-3 gap-3 sm:max-w-md">
+  <div class="card px-4 py-3">
+    <p class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Chapters</p>
+    <p class="mt-0.5 font-display text-2xl text-ink">{{ counts.chapters }}</p>
+  </div>
+  <div class="card px-4 py-3">
+    <p class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Labs</p>
+    <p class="mt-0.5 font-display text-2xl text-ink">{{ counts.labs }}</p>
+  </div>
+  <div class="card px-4 py-3">
+    <p class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Assessments</p>
+    <p class="mt-0.5 font-display text-2xl text-ink">{{ counts.assessments }}</p>
+  </div>
+</div>
+{% endif %}
+
 <section class="card mt-8 p-6">
   <form class="grid gap-4 md:grid-cols-2"
         hx-post="/instructor/courses/{{ course.id }}"

@@ -156,8 +156,12 @@ def home(
             break
 
     # Recent results: the person's latest few scores (title + pass/fail + %).
+    # ``graded`` is False for formative self-checks (pass_threshold == 0, i.e.
+    # chapter tests) so the UI shows a neutral "Done" instead of a misleading
+    # "Pass" on a low score. Mid/final assessments and labs (threshold > 0) keep
+    # Pass/Fail.
     recent_rows = db.execute(
-        select(Score, Activity.title)
+        select(Score, Activity.title, Activity.pass_threshold)
         .join(
             Submission,
             (Submission.id == Score.submission_id)
@@ -174,8 +178,13 @@ def home(
         .limit(6)
     ).all()
     recent = [
-        {"title": title, "passed": s.passed, "pct": round(100 * s.fraction)}
-        for s, title in recent_rows
+        {
+            "title": title,
+            "passed": s.passed,
+            "pct": round(100 * s.fraction),
+            "graded": (threshold or 0) > 0,
+        }
+        for s, title, threshold in recent_rows
     ]
 
     return templates.TemplateResponse(
@@ -331,7 +340,7 @@ async def submit(
     by_id = {q.ext_id: q for q in qs}
     return templates.TemplateResponse(
         "_activity_result.html",
-        {"request": request, "score": score, "questions": by_id},
+        {"request": request, "score": score, "questions": by_id, "activity": act},
     )
 
 

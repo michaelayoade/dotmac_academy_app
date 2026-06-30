@@ -13,7 +13,9 @@
   </p>
 </div>
 {% else %}
-<form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML" class="mt-8 space-y-5">
+<form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML"
+      hx-on::after-request="if(event.detail.successful){document.getElementById('result').scrollIntoView({behavior:'smooth',block:'start'})}"
+      class="mt-8 space-y-5">
   {% for q in questions %}
   <fieldset class="card p-5">
     <legend class="px-1 font-display text-lg text-ink">{{ q.stem }}</legend>
