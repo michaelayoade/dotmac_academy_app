@@ -1,4 +1,7 @@
 {% extends "base.html" %}{% block content %}
+<img src="/static/img/cover-{{ course.slug }}.webp" alt=""
+     class="mb-6 h-44 w-full rounded-2xl object-cover" loading="lazy"
+     onerror="this.style.display='none'">
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">
   <a href="/courses" class="hover:text-brand-800">Courses</a> &rsaquo;
 </p>

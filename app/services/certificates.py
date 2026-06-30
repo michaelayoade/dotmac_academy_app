@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fpdf import FPDF
@@ -19,6 +20,9 @@ from sqlalchemy.orm import Session
 from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.services.exceptions import ConflictError
+
+# Ornamental certificate frame (generated). app/services/ -> repo root.
+_FRAME = Path(__file__).resolve().parents[2] / "static" / "img" / "cert-frame.png"
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +84,14 @@ def render_certificate_pdf(
     pdf.set_auto_page_break(auto=False)
     pdf.add_page()
 
-    pdf.set_draw_color(40, 70, 120)
-    pdf.set_line_width(2)
-    pdf.rect(10, 10, 277, 190)
+    if _FRAME.exists():
+        pdf.image(str(_FRAME), 0, 0, 297, 210)
+    else:
+        pdf.set_draw_color(47, 122, 82)
+        pdf.set_line_width(2)
+        pdf.rect(10, 10, 277, 190)
 
-    pdf.set_text_color(40, 70, 120)
+    pdf.set_text_color(47, 122, 82)
     pdf.set_font("Helvetica", "B", 36)
     pdf.set_y(45)
     pdf.cell(0, 20, "Certificate of Completion", align="C")
