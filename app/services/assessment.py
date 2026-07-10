@@ -1,44 +1,112 @@
 # app/services/assessment.py
 from __future__ import annotations
+
 import logging
 from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.models.assessment import Activity, Question, Submission, Score
+
+from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
 from app.services.grading import grade_submission
 
 logger = logging.getLogger(__name__)
 
 
-def _questions_for(db: Session, tenant_id, bank_id) -> list[dict]:
+def _questions_for(db: Session, tenant_id, bank_id, only_ext_ids=None) -> list[dict]:
     rows = db.scalars(select(Question).where(Question.tenant_id == tenant_id)
                       .where(Question.bank_id == bank_id)).all()
+    if only_ext_ids is not None:
+        keep = set(only_ext_ids)
+        rows = [q for q in rows if q.ext_id in keep]
     return [{"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight,
-             "explanation": q.explanation} for q in rows]
+             "explanation": q.explanation, "options": q.options} for q in rows]
 
 
-def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict) -> Score:
-    qs = _questions_for(db, tenant_id, activity.bank_id) if activity.bank_id else []
+def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict,
+                    only_ext_ids: list | None = None) -> Score | None:
+    """Record a submission and persist only the first score for the activity.
+
+    Retakes are still stored as Submission rows so the app knows the test was
+    taken again, but later attempts do not create replacement Score rows. The
+    originally recorded score remains the one used by progress, gradebook, and
+    reports.
+
+    only_ext_ids (a randomized attempt's question subset) restricts grading to
+    exactly those questions; None grades the whole bank.
+    """
+    existing_score = db.scalars(
+        select(Score)
+        .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
+        .where(Submission.tenant_id == tenant_id)
+        .where(Submission.activity_id == activity.id)
+        .where(Submission.person_id == person_id)
+        .order_by(Submission.attempt_no, Score.created_at)
+    ).first()
+    qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
                      .where(Submission.activity_id == activity.id)
                      .where(Submission.person_id == person_id))
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
-                     answers=answers, attempt_no=int(prev) + 1)
+                     answers=answers, attempt_no=int(prev or 0) + 1)
     db.add(sub); db.flush()
+    if existing_score is not None:
+        return existing_score
+    if activity.grading == "manual":
+        return None  # awaits instructor grading (no auto Score)
     r = grade_submission(answers, qs, activity.pass_threshold)
     score = Score(tenant_id=tenant_id, submission_id=sub.id, score=r.score, max_score=r.max_score,
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
     db.add(score); db.flush()
-    # Auto-on-pass notification — best effort, must never break grading.
+    _recompute_completion(db, tenant_id, person_id, activity.course_id)
+    # Auto-on-pass notification: best effort, must never break grading.
     try:
         from app.services.email import notify_score_if_first_pass
         person = db.get(Person, person_id)
         notify_score_if_first_pass(db, score=score, activity=activity, person=person)
-    except Exception as exc:  # noqa: BLE001 - grading must succeed regardless
+    except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
+
+def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
+    """Update the learner's course completion after a score write (best effort)."""
+    try:
+        from app.services.completion import recompute_completion
+        recompute_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    except Exception as exc:
+        logger.warning("completion recompute failed: %s", exc)
+
+
+def pending_grading(db: Session, *, tenant_id) -> list[tuple[Submission, Activity, str]]:
+    """Submissions with no Score yet — the manual grading queue.
+
+    Returns (submission, activity, person_email) ordered oldest-first.
+    """
+    rows = db.execute(
+        select(Submission, Activity, Person.email)
+        .join(Activity, (Activity.id == Submission.activity_id)
+              & (Activity.tenant_id == Submission.tenant_id))
+        .join(Person, (Person.id == Submission.person_id)
+              & (Person.tenant_id == Submission.tenant_id))
+        .outerjoin(Score, (Score.submission_id == Submission.id)
+                   & (Score.tenant_id == Submission.tenant_id))
+        .where(Submission.tenant_id == tenant_id)
+        .where(Score.id.is_(None))
+        .order_by(Submission.created_at)
+    ).all()
+    return [(s, a, email) for s, a, email in rows]
+
+
+def attempts_used(db: Session, *, tenant_id, person_id, activity_id) -> int:
+    """Number of submissions this person has made for the activity."""
+    return int(db.scalar(
+        select(func.count()).select_from(Submission)
+        .where(Submission.tenant_id == tenant_id)
+        .where(Submission.activity_id == activity_id)
+        .where(Submission.person_id == person_id)
+    ) or 0)
 
 
 def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUID, Score]:
@@ -49,13 +117,12 @@ def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUI
         .where(Activity.tenant_id == tenant_id)
         .where(Activity.course_id == course_id)
         .where(Submission.person_id == person_id)
+        .order_by(Activity.id, Submission.attempt_no, Score.created_at)
     ).all()
-    best: dict = {}
+    first: dict = {}
     for activity_id, score in rows:
-        cur = best.get(activity_id)
-        if cur is None or score.fraction > cur.fraction:
-            best[activity_id] = score
-    return best
+        first.setdefault(activity_id, score)
+    return first
 
 
 def override_score(db: Session, *, tenant_id, submission_id, score_value, max_score, reason) -> Score:
@@ -73,4 +140,6 @@ def override_score(db: Session, *, tenant_id, submission_id, score_value, max_sc
         per_item=[], source="override", override_reason=reason,
     )
     db.add(score); db.flush()
+    if activity is not None:
+        _recompute_completion(db, tenant_id, sub.person_id, activity.course_id)
     return score

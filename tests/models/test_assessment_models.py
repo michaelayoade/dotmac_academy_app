@@ -1,5 +1,5 @@
+from app.models.assessment import Activity, Question, QuestionBank, Score, Submission
 from app.models.course import Course
-from app.models.assessment import QuestionBank, Question, Activity, Submission, Score
 
 
 def test_assessment_chain(admin_session, tenant_a):

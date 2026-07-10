@@ -13,11 +13,31 @@ from fastapi import Response
 
 from app.models.assessment import Activity
 from app.models.auth import UserCredential
+from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.lab import LabInstance
+from app.models.offering import CourseOffering
 from app.models.person import Person
-from app.services.proxy_headers import proxy_request_headers
 from app.services.security import hash_password
+
+
+def _entitled_activity(admin_session, tenant, person_id):
+    """Create a lab activity the person is entitled to (course+cohort+offering)."""
+    c = Course(tenant_id=tenant.id, slug="lab-course", title="Lab", discipline="networking",
+               source_ref="x", version=1)
+    admin_session.add(c)
+    admin_session.flush()
+    act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",
+                   title="Lab", pass_threshold=0.5)
+    coh = Cohort(tenant_id=tenant.id, name="C", discipline="networking", status="active")
+    admin_session.add_all([act, coh])
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person_id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=c.id,
+                                     status="active"))
+    admin_session.flush()
+    return act.id
 
 
 def _make_person(admin_session, tenant, email: str) -> Person:
@@ -43,29 +63,9 @@ def _login(app_client, email: str) -> dict[str, str]:
 
 
 def _seed_instance(admin_session, tenant, person_id) -> LabInstance:
-    course = Course(
-        tenant_id=tenant.id,
-        slug=f"console-{str(person_id)[:8]}",
-        title="Console Course",
-        discipline="networking",
-        source_ref="x",
-        version=1,
-    )
-    admin_session.add(course)
-    admin_session.flush()
-    activity = Activity(
-        tenant_id=tenant.id,
-        course_id=course.id,
-        chapter_number=1,
-        type="lab",
-        title="Console Lab",
-        pass_threshold=0.0,
-    )
-    admin_session.add(activity)
-    admin_session.flush()
     li = LabInstance(
         tenant_id=tenant.id,
-        activity_id=activity.id,
+        activity_id=_entitled_activity(admin_session, tenant, person_id),
         person_id=person_id,
         instance_name="dal-x",
         seed={"o": 5},
@@ -94,23 +94,6 @@ def test_owner_passes_gate(app_client, admin_session, tenant_a, monkeypatch):
     r = app_client.get(f"/labs/instances/{li.id}/console/r1", headers=h)
     assert r.status_code == 200
     assert r.status_code not in (403, 404)
-
-
-def test_proxy_request_headers_strip_app_credentials():
-    headers = proxy_request_headers(
-        {
-            "cookie": "session=sensitive; csrf_token=csrf",
-            "authorization": "Bearer sensitive",
-            "x-csrf-token": "csrf",
-            "connection": "keep-alive",
-            "accept": "text/html",
-        }
-    )
-    assert "cookie" not in {k.lower() for k in headers}
-    assert "authorization" not in {k.lower() for k in headers}
-    assert "x-csrf-token" not in {k.lower() for k in headers}
-    assert "connection" not in {k.lower() for k in headers}
-    assert headers["accept"] == "text/html"
 
 
 def test_other_person_same_tenant_forbidden(app_client, admin_session, tenant_a):

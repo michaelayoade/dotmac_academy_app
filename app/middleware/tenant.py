@@ -24,7 +24,6 @@ from starlette.types import ASGIApp
 from app.config import settings
 from app.db import SessionLocal
 from app.models.tenant import Tenant, TenantDomain
-from app.services.tenant_paths import is_platform_path
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,12 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._root = settings.platform_root_domain.lower().lstrip(".")
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(self, request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
         request.state.tenant = self._resolve(host)
 
         # Platform paths are allowed without a tenant.
-        if request.state.tenant is None and not is_platform_path(
+        if request.state.tenant is None and not _is_platform_path(
             request.url.path,
             host,
             self._root,
@@ -86,3 +85,10 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
 
             # 4. Unknown host → caller decides (will 404)
             return None
+
+
+def _is_platform_path(path: str, host: str, root: str) -> bool:
+    """Routes that are valid without a resolved tenant."""
+    if host == root:
+        return True
+    return path.startswith("/platform/") or path in {"/health", "/health/ready", "/"}

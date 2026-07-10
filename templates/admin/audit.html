@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Audit log — {{ branding_name | default("Technical Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Administration</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Audit log</h1>
+<p class="mt-2 text-ink-soft">A record of actions taken by administrators and the system.</p>
+
+<form method="get" action="/admin/audit" class="mt-8 flex flex-wrap items-end gap-3">
+  <div>
+    <label for="action" class="mb-1 block text-sm font-semibold text-ink">Action</label>
+    <input id="action" name="action" type="text" value="{{ action_filter }}"
+           placeholder="e.g. user.created"
+           class="px-3.5 py-2.5 text-sm border border-sand-300 rounded">
+  </div>
+  <div>
+    <label for="actor_email" class="mb-1 block text-sm font-semibold text-ink">Actor email</label>
+    <input id="actor_email" name="actor_email" type="text" value="{{ actor_email_filter }}"
+           placeholder="actor@example.com"
+           class="px-3.5 py-2.5 text-sm border border-sand-300 rounded">
+  </div>
+  <button type="submit" class="btn-primary">Filter</button>
+  {% if action_filter or actor_email_filter %}
+  <a href="/admin/audit" class="btn-ghost">Clear</a>
+  {% endif %}
+</form>
+
+<div class="card mt-6 overflow-x-auto">
+  {% if events %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-sand-200">
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Time</th>
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Actor</th>
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Action</th>
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Entity type</th>
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Entity ID</th>
+        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Details</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-sand-100">
+      {% for event in events %}
+      <tr class="hover:bg-sand-50">
+        <td class="px-4 py-3 tabular-nums text-ink-soft whitespace-nowrap">
+          {{ event.created_at.strftime("%Y-%m-%d %H:%M:%S") }}
+        </td>
+        <td class="px-4 py-3 text-ink">
+          {% if event.actor_person_id is not none %}
+            {{ actor_map.get(event.actor_person_id, "unknown") }}
+          {% else %}
+            <span class="text-ink-soft italic">system</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 font-mono text-ink">{{ event.action }}</td>
+        <td class="px-4 py-3 font-mono text-ink-soft">{{ event.entity_type }}</td>
+        <td class="px-4 py-3 font-mono text-ink-soft">{{ event.entity_id if event.entity_id else "—" }}</td>
+        <td class="px-4 py-3 text-ink-soft">{{ event.details | tojson if event.details else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="px-4 py-8 text-center text-ink-soft">No audit events found.</p>
+  {% endif %}
+</div>
+
+{% if has_prev or has_next %}
+<nav class="mt-4 flex items-center gap-4 text-sm">
+  {% if has_prev %}
+  <a href="/admin/audit?{% if action_filter %}action={{ action_filter }}&{% endif %}{% if actor_email_filter %}actor_email={{ actor_email_filter }}&{% endif %}limit={{ limit }}&offset={{ [offset - limit, 0] | max }}"
+     class="btn-ghost">&larr; Previous</a>
+  {% endif %}
+  {% if has_next %}
+  <a href="/admin/audit?{% if action_filter %}action={{ action_filter }}&{% endif %}{% if actor_email_filter %}actor_email={{ actor_email_filter }}&{% endif %}limit={{ limit }}&offset={{ offset + limit }}"
+     class="btn-ghost">Next &rarr;</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endblock %}

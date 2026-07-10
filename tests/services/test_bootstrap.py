@@ -1,9 +1,9 @@
 """TDD test for the tenant bootstrap service."""
 
-from app.services.bootstrap import bootstrap_tenant, ensure_roles
-from app.models.rbac import Role, PersonRole
-from app.models.person import Person
 from app.models.auth import UserCredential
+from app.models.person import Person
+from app.models.rbac import PersonRole, Role
+from app.services.bootstrap import bootstrap_tenant
 
 
 def test_bootstrap_creates_tenant_roles_and_admin(admin_session):

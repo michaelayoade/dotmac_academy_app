@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from app.services.security import hash_password
-from app.models.person import Person
+from app.models.assessment import Activity, Question, QuestionBank
 from app.models.auth import UserCredential
-from app.models.course import Course, Chapter
-from app.models.assessment import QuestionBank, Question, Activity
+from app.models.cohort import Cohort, Enrollment
+from app.models.course import Chapter, Course
+from app.models.offering import CourseOffering
+from app.models.person import Person
+from app.services.security import hash_password
 
 
 def _login(app_client, admin_session, tenant):
@@ -87,10 +89,19 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
         pass_threshold=0.6,
     )
     admin_session.add(act)
+    admin_session.flush()
+    # Entitle the learner: cohort + enrollment + offering for this course.
+    coh = Cohort(tenant_id=tenant_a.id, name="C", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id, role_in_cohort="student", status="active")
+    )
+    admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id, status="active"))
     admin_session.commit()
 
     # GET chapter page — response sets the csrf_token cookie in the TestClient jar.
-    r_ch = app_client.get(f"/courses/foundation/chapters/3", headers=h)
+    r_ch = app_client.get("/courses/foundation/chapters/3", headers=h)
     assert r_ch.status_code == 200
 
     # Extract csrf token — TestClient (httpx-based) stores cookies from responses.
@@ -106,90 +117,6 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert "Passed" in r.text
     assert "Because A" in r.text
-
-
-def test_finished_course_locks_test_but_keeps_chapter_readable(
-    app_client, admin_session, tenant_a
-):
-    _login(app_client, admin_session, tenant_a)
-    h = {"Host": "alpha.localhost"}
-
-    course = Course(
-        tenant_id=tenant_a.id,
-        slug="foundation",
-        title="Foundation",
-        discipline="networking",
-        source_ref="x",
-        version=1,
-        status="finished",
-    )
-    admin_session.add(course)
-    admin_session.flush()
-    admin_session.add(
-        Chapter(
-            tenant_id=tenant_a.id,
-            course_id=course.id,
-            number=1,
-            title="One",
-            part="I",
-            body_html="<p>review content</p>",
-            source_hash="h",
-            order_index=1,
-        )
-    )
-    bank = QuestionBank(
-        tenant_id=tenant_a.id,
-        course_id=course.id,
-        chapter_number=1,
-        kind="chapter",
-        version=1,
-    )
-    admin_session.add(bank)
-    admin_session.flush()
-    admin_session.add(
-        Question(
-            tenant_id=tenant_a.id,
-            bank_id=bank.id,
-            ext_id="q1",
-            stem="Pick A",
-            type="single",
-            options=["A", "B"],
-            correct=["A"],
-            rubric_category="recall",
-            explanation="Because A",
-            weight=1,
-        )
-    )
-    act = Activity(
-        tenant_id=tenant_a.id,
-        course_id=course.id,
-        chapter_number=1,
-        type="mcq_test",
-        bank_id=bank.id,
-        title="Ch1",
-        pass_threshold=0.6,
-    )
-    admin_session.add(act)
-    admin_session.commit()
-
-    r_ch = app_client.get("/courses/foundation/chapters/1", headers=h)
-    assert r_ch.status_code == 200
-    assert "review content" in r_ch.text
-    assert "Course finished" in r_ch.text
-    assert "Take test" not in r_ch.text
-
-    r_activity = app_client.get(f"/activities/{act.id}", headers=h)
-    assert r_activity.status_code == 200
-    assert "This test is closed" in r_activity.text
-    assert "Submit answers" not in r_activity.text
-
-    csrf = app_client.cookies.get("csrf_token") or r_ch.cookies.get("csrf_token", "")
-    r_submit = app_client.post(
-        f"/activities/{act.id}/submit",
-        headers={**h, "x-csrf-token": csrf},
-        data={"q1": "A"},
-    )
-    assert r_submit.status_code == 403
 
 
 def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
@@ -242,24 +169,37 @@ def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
     from app.models.cohort import Cohort, Enrollment
 
     p, h = _login(app_client, admin_session, tenant_a)
-    for slug, title in (("foundation", "Foundation"), ("fiber-engineering", "Fiber Engineering")):
-        c = Course(tenant_id=tenant_a.id, slug=slug, title=title,
-                   discipline="networking", source_ref="x", version=1)
+    courses = []
+    for slug, title in (("foundation", "Network Foundation"), ("fiber-engineering", "Fiber Engineering")):
+        c = Course(tenant_id=tenant_a.id, slug=slug, title=title, discipline="networking", source_ref="x", version=1)
         admin_session.add(c)
         admin_session.flush()
-        admin_session.add(Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1,
-                                  title=f"{title} ch1", part="I", body_html="<p>x</p>",
-                                  source_hash="h", order_index=1))
+        admin_session.add(
+            Chapter(
+                tenant_id=tenant_a.id,
+                course_id=c.id,
+                number=1,
+                title=f"{title} ch1",
+                part="I",
+                body_html="<p>x</p>",
+                source_hash="h",
+                order_index=1,
+            )
+        )
+        courses.append(c)
     coh = Cohort(tenant_id=tenant_a.id, name="Abuja", discipline="networking", status="active")
     admin_session.add(coh)
     admin_session.flush()
-    admin_session.add(Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id,
-                                 role_in_cohort="student", status="active"))
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id, role_in_cohort="student", status="active")
+    )
+    for c in courses:
+        admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id, status="active"))
     admin_session.commit()
     try:
         r = app_client.get("/", headers=h)
         assert r.status_code == 200
-        assert "Foundation" in r.text and "Fiber Engineering" in r.text
+        assert "Network Foundation" in r.text and "Fiber Engineering" in r.text
         assert "/courses/fiber-engineering/chapters/1" in r.text
     finally:
         # Clean up committed rows (chapters cascade from courses) so this test

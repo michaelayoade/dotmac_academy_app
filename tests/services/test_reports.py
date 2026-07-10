@@ -9,6 +9,7 @@ import pytest
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.exceptions import NotFoundError
 from app.services.reports import cohort_matrix, student_transcript
@@ -44,6 +45,7 @@ def _seed(db, tid):
     for p in (stu_a, stu_b):
         db.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=p.id,
                           role_in_cohort="student", status="active"))
+    db.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=c.id, status="active"))
     db.flush()
 
     def _score(person, activity, frac, passed):
@@ -95,6 +97,26 @@ def test_cohort_matrix_uses_best_score(admin_session, tenant_a):
     m = cohort_matrix(admin_session, tenant_id=tenant_a.id, cohort_id=coh.id)
     rows = {r["email"]: r for r in m["rows"]}
     assert rows["a@stu.edu"]["cells"][a1.id].fraction == 1.0
+    admin_session.rollback()
+
+
+def test_cohort_matrix_scoped_to_offerings_not_discipline(admin_session, tenant_a):
+    """Finding #2: a same-discipline course with no offering is excluded from the matrix."""
+    c, coh, a1, a2, stu_a, stu_b = _seed(admin_session, tenant_a.id)
+    # A second networking course the cohort is NOT offered.
+    other = Course(tenant_id=tenant_a.id, slug="other", title="Other Networking",
+                   discipline="networking", source_ref="x", version=1)
+    admin_session.add(other)
+    admin_session.flush()
+    other_act = Activity(tenant_id=tenant_a.id, course_id=other.id, chapter_number=1,
+                         type="mcq_test", title="Other Ch1", pass_threshold=0.6)
+    admin_session.add(other_act)
+    admin_session.flush()
+
+    m = cohort_matrix(admin_session, tenant_id=tenant_a.id, cohort_id=coh.id)
+    ids = [a.id for a in m["activities"]]
+    assert other_act.id not in ids
+    assert ids == [a1.id, a2.id]
     admin_session.rollback()
 
 

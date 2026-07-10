@@ -1,7 +1,7 @@
-from app.models.course import Course
 from app.models.assessment import Activity
+from app.models.course import Course
+from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
-from app.models.lab import LabTemplate, LabInstance
 
 
 def test_create_template_and_instance(admin_session, tenant_a):

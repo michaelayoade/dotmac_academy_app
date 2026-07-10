@@ -1,4 +1,4 @@
-from app.models.course import Course, Chapter
+from app.models.course import Chapter, Course
 
 
 def test_course_and_chapter(admin_session, tenant_a):

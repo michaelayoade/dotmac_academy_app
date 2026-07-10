@@ -1,0 +1,16 @@
+# LMS Gaps (feat/lms-gaps) — SDD progress ledger
+
+Spec: docs/superpowers/specs/2026-06-28-lms-gaps-design.md (commit c9aa505)
+Base: feat/lms-buildout @ ad5ec4e | Test DB: academy_gaps :5437
+
+Build order (per-feature implementer + review):
+- [x] F1 catalog + landing — complete (1d39fac, review clean; 34 tests, ruff+mypy clean)
+- [x] F2 calendar/agenda — complete (58086bb, review clean; 21 tests, ruff+mypy clean)
+- [x] F3 search — complete (00b78aa, review clean; 13 tests, ruff+mypy clean; minor: search input bg-white off-palette → final pass)
+- [x] F4 audit viewer — complete (2803cbd, review clean; 13 tests, ruff+mypy clean)
+- [x] F5 notifications center — complete (ccc1c9c, review clean; 12 tests, ruff+mypy clean; hooks best-effort; mig 0020)
+- [x] F6 announcements — complete (79d5ded, review clean; 24 tests, ruff+mypy clean; mig 0021)
+- [x] F7 rich embeds — complete (ee76f78, review clean; 42+10 tests, ruff+mypy clean; ADDED whitelist sanitizer where none existed — courseware tags verified intact; follow-up: consider nh3 later)
+- [x] F8 question types — complete (5eb6a03, review clean; 24+50 tests, ruff+mypy clean; options surfaced to grader in prod)
+- [x] F9 weighted gradebook — complete (305129e, review pending; 20 tests, ruff+mypy clean; mig 0022)
+- [x] integration — 398 passed, ruff+mypy clean, css rebuilt (v=4)

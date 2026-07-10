@@ -5,7 +5,7 @@
 <h1 class="mt-1.5 text-3xl tracking-tight">Platform settings</h1>
 <p class="mt-2 text-ink-soft">Branding, outbound email, and lab capacity. These override environment defaults.</p>
 
-<form hx-post="/admin/settings" hx-target="#settings-flash" hx-swap="innerHTML" class="mt-10 space-y-6">
+<form hx-post="/admin/settings" hx-target="#settings-save-result" hx-swap="innerHTML" class="mt-10 space-y-6">
   <section class="card p-6">
     <h2 class="text-xl">Branding</h2>
     <p class="mt-1.5 text-sm text-ink-soft">The name shown across the portal header and emails.</p>
@@ -19,6 +19,14 @@
   <section class="card p-6">
     <h2 class="text-xl">SMTP &amp; email</h2>
     <p class="mt-1.5 text-sm text-ink-soft">Connection details for outbound mail and automatic notifications.</p>
+    <div class="mt-4 rounded-lg bg-sand-100 p-3 text-sm text-ink-soft">
+      <span class="font-semibold text-ink">Saved SMTP:</span>
+      {% if cfg.smtp_host %}
+        {{ cfg.smtp_user or "no username" }} via {{ cfg.smtp_host }}:{{ cfg.smtp_port }}, from {{ cfg.smtp_from }}
+      {% else %}
+        not configured
+      {% endif %}
+    </div>
     <div class="mt-5 grid gap-4 sm:grid-cols-2">
       <div>
         <label for="smtp_host" class="mb-1.5 block text-sm font-semibold text-ink">SMTP host</label>
@@ -86,7 +94,7 @@
 
   <div class="flex flex-wrap items-center gap-3">
     <button type="submit" class="btn-primary">Save settings</button>
-    <span id="settings-flash" role="status" aria-live="polite"></span>
+    <span id="settings-save-result"></span>
   </div>
 </form>
 

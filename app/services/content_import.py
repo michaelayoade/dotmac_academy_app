@@ -9,16 +9,15 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import markdown as md
 import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.course import Chapter, Course
+from app.services.authoring import render_markdown
 
 
 def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
@@ -36,38 +35,47 @@ def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
     static_figures_dir.mkdir(parents=True, exist_ok=True)
     copied = 0
     for png in figures_dir.glob("*.png"):
-        dest = static_figures_dir / png.name
-        shutil.copy2(png, dest)
-        _make_webp(dest)
+        shutil.copy2(png, static_figures_dir / png.name)
         copied += 1
     return copied
 
-
-def _make_webp(png_path: Path) -> None:
-    """Best-effort WebP sibling ``<name>.png.webp`` next to the PNG.
-
-    nginx serves the WebP to webp-capable clients (Accept: image/webp) and falls
-    back to the PNG otherwise — a ~85% smaller payload for figure-heavy chapters,
-    which matters for low-bandwidth field users. Never fail an import if the
-    converter is absent or hiccups; a missing WebP just means the PNG is served.
-    """
-    if shutil.which("cwebp") is None:
-        return
-    try:
-        subprocess.run(  # noqa: S603 - fixed argv, no shell
-            ["cwebp", "-quiet", "-q", "85", str(png_path), "-o", f"{png_path}.webp"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:  # converter problems must never break content import
-        pass
 
 # Matches the YAML frontmatter block at the top of a file.
 _FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
 # Matches FIGURE callouts like: FIGURE `FND-01-09` *optional caption*
 _FIG = re.compile(r"FIGURE `([A-Z0-9\-]+)`(?:\s*\*(.*?)\*)?")
+
+
+def _course_display_title(title: str) -> str:
+    """Return the learner-facing catalog title for an imported manual."""
+    return title.removeprefix("Technical Academy — ").strip()
+
+
+def missing_figure_refs(chapters_dir: Path, figures_dir: Path) -> dict[str, list[str]]:
+    """Return missing figure ids by chapter filename."""
+    figures_dir = Path(figures_dir)
+    missing: dict[str, list[str]] = {}
+    for chapter_file in sorted(Path(chapters_dir).glob("chapter-*.md")):
+        raw = chapter_file.read_text(encoding="utf-8")
+        refs = sorted({m.group(1) for m in _FIG.finditer(raw)})
+        absent = [fid for fid in refs if not (figures_dir / f"{fid}.png").exists()]
+        if absent:
+            missing[chapter_file.name] = absent
+    return missing
+
+
+def _figure_fingerprint(raw: str, figures_dir: Path) -> str:
+    """Hash the figure files referenced by a chapter into source change state."""
+    h = hashlib.sha256()
+    for fid in sorted({m.group(1) for m in _FIG.finditer(raw)}):
+        img_path = Path(figures_dir) / f"{fid}.png"
+        h.update(fid.encode())
+        if img_path.exists():
+            h.update(img_path.read_bytes())
+        else:
+            h.update(b"<missing>")
+    return h.hexdigest()
 
 
 @dataclass
@@ -90,15 +98,15 @@ def _figure_sub(figures_dir: Path):
         img_path = figures_dir / f"{fid}.png"
         if img_path.exists():
             return (
-                f'<figure>'
+                f"<figure>"
                 f'<img src="/static/figures/{fid}.png" alt="{caption}">'
-                f'<figcaption>{caption}</figcaption>'
-                f'</figure>'
+                f"<figcaption>{caption}</figcaption>"
+                f"</figure>"
             )
         return (
             f'<figure class="placeholder">'
-            f'<figcaption>[figure {fid} not yet produced] {caption}</figcaption>'
-            f'</figure>'
+            f"<figcaption>[figure {fid} not yet produced] {caption}</figcaption>"
+            f"</figure>"
         )
 
     return repl
@@ -118,17 +126,19 @@ def parse_chapter_file(path: Path, figures_dir: Path) -> ChapterDoc:
         A :class:`ChapterDoc` with rendered HTML and metadata from frontmatter.
     """
     raw = Path(path).read_text(encoding="utf-8")
-    source_hash = hashlib.sha256(raw.encode()).hexdigest()
+    source_hash = hashlib.sha256(
+        raw.encode() + _figure_fingerprint(raw, figures_dir).encode()
+    ).hexdigest()
 
     fm_match = _FM.match(raw)
     meta: dict = yaml.safe_load(fm_match.group(1)) if fm_match else {}
-    body_md = raw[fm_match.end():] if fm_match else raw
+    body_md = raw[fm_match.end() :] if fm_match else raw
 
     # Substitute FIGURE callouts before markdown rendering so they become raw
     # HTML blocks (markdown won't re-process them).
     body_md = _FIG.sub(_figure_sub(figures_dir), body_md)
 
-    body_html = md.markdown(body_md, extensions=["tables", "fenced_code"])
+    body_html = render_markdown(body_md)
 
     return ChapterDoc(
         number=int(meta.get("chapter", 0)),
@@ -149,6 +159,7 @@ def import_manual(
     source_ref: str,
     chapters_dir: Path,
     figures_dir: Path,
+    strict_figures: bool = True,
 ) -> Course:
     """Upsert a course and its chapters from a directory of markdown files.
 
@@ -165,21 +176,30 @@ def import_manual(
         source_ref: Provenance recorded on the course (e.g. ``"fiber-engineering@0.1.0"``).
         chapters_dir: Directory containing ``chapter-*.md`` files.
         figures_dir: Directory containing produced figure PNG files.
+        strict_figures: When true, abort if any chapter references a missing figure.
 
     Returns:
         The upserted :class:`Course`.
     """
+    if strict_figures:
+        missing = missing_figure_refs(chapters_dir, figures_dir)
+        if missing:
+            details = "; ".join(
+                f"{chapter}: {', '.join(ids)}" for chapter, ids in missing.items()
+            )
+            raise ValueError(f"missing figure assets for import: {details}")
+
+    display_title = _course_display_title(title)
+
     course = db.scalars(
-        select(Course)
-        .where(Course.tenant_id == tenant_id)
-        .where(Course.slug == slug)
+        select(Course).where(Course.tenant_id == tenant_id).where(Course.slug == slug)
     ).first()
 
     if course is None:
         course = Course(
             tenant_id=tenant_id,
             slug=slug,
-            title=title,
+            title=display_title,
             discipline=discipline,
             source_ref=source_ref,
             version=1,
@@ -188,6 +208,15 @@ def import_manual(
         db.flush()
 
     changed = False
+    if course.title != display_title:
+        course.title = display_title
+        changed = True
+    if course.discipline != discipline:
+        course.discipline = discipline
+        changed = True
+    if course.source_ref != source_ref:
+        course.source_ref = source_ref
+        changed = True
 
     for chapter_file in sorted(Path(chapters_dir).glob("chapter-*.md")):
         doc = parse_chapter_file(chapter_file, figures_dir)
@@ -234,6 +263,7 @@ def import_foundation(
     tenant_id,
     chapters_dir: Path,
     figures_dir: Path,
+    strict_figures: bool = True,
 ) -> Course:
     """Backward-compatible wrapper: import the Foundation manual.
 
@@ -244,9 +274,10 @@ def import_foundation(
         db,
         tenant_id=tenant_id,
         slug="foundation",
-        title="Foundation",
+        title="Network Foundation",
         discipline="networking",
         source_ref="foundation@0.1.0",
         chapters_dir=chapters_dir,
         figures_dir=figures_dir,
+        strict_figures=strict_figures,
     )
