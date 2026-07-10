@@ -5,11 +5,13 @@ then prove it's invisible under an app_user session scoped to tenant B.
 """
 
 import uuid
+
 from sqlalchemy import text
-from app.models.course import Course
+
 from app.models.assessment import Activity
-from app.models.person import Person
+from app.models.course import Course
 from app.models.lab import LabInstance
+from app.models.person import Person
 
 
 def test_lab_instance_invisible_across_tenants(admin_session, tenant_a, tenant_b):

@@ -31,8 +31,11 @@ def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Per
     ).first()
     if cred is None or not verify_password(password, cred.password_hash):
         return None
-    return db.scalars(select(Person).where(Person.id == cred.person_id)
-                      .where(Person.tenant_id == tenant_id)).first()
+    person = db.scalars(select(Person).where(Person.id == cred.person_id)
+                        .where(Person.tenant_id == tenant_id)).first()
+    if person is None or person.status != "active":
+        return None  # suspended accounts cannot authenticate
+    return person
 
 
 def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
@@ -78,8 +81,11 @@ def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person |
     ).first()
     if session is None:
         return None
-    return db.scalars(select(Person).where(Person.id == session.person_id)
-                      .where(Person.tenant_id == tenant_id)).first()
+    person = db.scalars(select(Person).where(Person.id == session.person_id)
+                        .where(Person.tenant_id == tenant_id)).first()
+    if person is None or person.status != "active":
+        return None  # suspended mid-session → treated as logged out
+    return person
 
 
 def require_web_user(

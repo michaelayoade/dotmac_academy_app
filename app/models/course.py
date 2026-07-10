@@ -1,10 +1,13 @@
 from __future__ import annotations
-from datetime import datetime
+
 from uuid import UUID
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
+
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base, TimestampMixin, uuid_pk
+
 
 class Course(Base, TimestampMixin):
     __tablename__ = "courses"
@@ -20,9 +23,9 @@ class Course(Base, TimestampMixin):
     discipline: Mapped[str] = mapped_column(String(40), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(120), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
-    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Authoring lifecycle (Slice 5/#8). Draft courses are hidden from learners
+    # even when offered+entitled; instructors publish them when ready.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="published")
 
 class Chapter(Base, TimestampMixin):
     __tablename__ = "chapters"
@@ -39,5 +42,8 @@ class Chapter(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     part: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Editable markdown source for in-app authoring (Slice 5/#8); body_html is the
+    # rendered output. Empty for filesystem-imported chapters.
+    body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

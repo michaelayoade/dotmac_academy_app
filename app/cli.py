@@ -70,6 +70,7 @@ def _import_foundation(args: argparse.Namespace) -> None:
             tenant_id=tenant.id,
             chapters_dir=args.chapters_dir,
             figures_dir=args.figures_dir,
+            strict_figures=not args.allow_missing_figures,
         )
         db.commit()
         # Copy produced figures into the served static tree so chapter <img> tags resolve.
@@ -102,6 +103,7 @@ def _import_manual(args: argparse.Namespace) -> None:
             source_ref=args.source_ref or f"{args.slug}@0.1.0",
             chapters_dir=args.chapters_dir,
             figures_dir=args.figures_dir,
+            strict_figures=not args.allow_missing_figures,
         )
         db.commit()
         static_figures = Path(__file__).resolve().parent.parent / "static" / "figures"
@@ -212,13 +214,13 @@ def _import_labs(args: argparse.Namespace) -> None:
 
         course = (
             db.query(Course)
-            .filter(Course.tenant_id == tenant.id, Course.slug == "foundation")
+            .filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug)
             .first()
         )
         if course is None:
             raise SystemExit(
-                f"Foundation course not found for tenant '{args.tenant_slug}'. "
-                "Run import-foundation first."
+                f"Course '{args.course_slug}' not found for tenant '{args.tenant_slug}'. "
+                "Import the course chapters before importing its labs."
             )
 
         labs_dir = Path(args.labs_dir)
@@ -235,7 +237,10 @@ def _import_labs(args: argparse.Namespace) -> None:
         db.commit()
         for t in templates:
             print(f"lab '{t.slug}' -> activity {t.activity_id} v{t.version}")
-        print(f"Done — {len(templates)} lab(s) imported for tenant '{args.tenant_slug}'.")
+        print(
+            f"Done — {len(templates)} lab(s) imported for course '{course.slug}' "
+            f"and tenant '{args.tenant_slug}'."
+        )
     finally:
         db.close()
 
@@ -367,6 +372,11 @@ def main() -> None:
         default=_DEFAULT_FIGURES_DIR,
         help="Directory containing produced figure PNG files (default: figures/final)",
     )
+    imp.add_argument(
+        "--allow-missing-figures",
+        action="store_true",
+        help="Import chapters with placeholder blocks for missing figures.",
+    )
     imp.set_defaults(func=_import_foundation)
 
     im = sub.add_parser(
@@ -390,6 +400,11 @@ def main() -> None:
     im.add_argument(
         "--figures-dir", type=Path, default=_DEFAULT_FIGURES_DIR,
         help="Directory containing produced figure PNG files",
+    )
+    im.add_argument(
+        "--allow-missing-figures",
+        action="store_true",
+        help="Import chapters with placeholder blocks for missing figures.",
     )
     im.set_defaults(func=_import_manual)
 
@@ -423,6 +438,11 @@ def main() -> None:
         ),
     )
     il.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    il.add_argument(
+        "--course-slug",
+        default="foundation",
+        help="Course slug to attach labs to (default: foundation)",
+    )
     il.add_argument(
         "--labs-dir",
         type=Path,

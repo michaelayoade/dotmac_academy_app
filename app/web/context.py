@@ -12,6 +12,7 @@ from fastapi import Request
 from sqlalchemy import text
 
 from app.db import SessionLocal
+from app.services import notifications as notif_svc
 from app.services import web_auth
 from app.services.roles import role_slugs
 from app.services.settings_store import effective
@@ -29,6 +30,7 @@ def _empty(request: Request) -> dict:
         "nav_sidebar": [],
         "branding_name": effective(None).branding_name,
         "avatar_url": None,
+        "unread_notifications": 0,
     }
 
 
@@ -54,6 +56,10 @@ def nav_context(request: Request) -> dict:
             is_instructor = "instructor" in slugs or "admin" in slugs
             is_admin = "admin" in slugs
             current_area = nav.area_for_path(request.url.path)
+            try:
+                unread = notif_svc.unread_count(db, tenant_id=tenant.id, person_id=person.id)
+            except Exception:
+                unread = 0
             return {
                 "current_person": person,
                 "is_instructor": is_instructor,
@@ -63,6 +69,7 @@ def nav_context(request: Request) -> dict:
                 "nav_sidebar": nav.sidebar_for(current_area),
                 "branding_name": effective(db).branding_name,
                 "avatar_url": person.avatar_path,
+                "unread_notifications": unread,
             }
         finally:
             db.close()

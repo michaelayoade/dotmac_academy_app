@@ -104,7 +104,23 @@ def delete(db: Session, key: str) -> None:
 
 
 class EffectiveSettings:
-    """Attribute-access view of the merged (DB-over-env) known settings."""
+    """Attribute-access view of the merged (DB-over-env) known settings.
+
+    Attributes are populated dynamically from KNOWN_KEYS; the declarations below
+    document the shape and let static checkers resolve attribute access.
+    """
+
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    smtp_from: str
+    smtp_starttls: bool
+    email_auto_on_pass: bool
+    email_digest_enabled: bool
+    branding_name: str
+    max_concurrent_labs: int
+    lab_idle_minutes: int
 
     def __init__(self, values: dict[str, object]) -> None:
         self.__dict__.update(values)

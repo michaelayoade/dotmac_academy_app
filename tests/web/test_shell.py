@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import re
 
-from app.models.person import Person
 from app.models.auth import UserCredential
+from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
@@ -68,10 +68,7 @@ def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a, monkey
     from app.config import settings
 
     token = "test-platform-admin-token"
-    # platform_admin_token only exists once the platform-auth work lands; guard so
-    # this test is correct whether or not /admin/settings is token-gated.
-    if hasattr(settings, "platform_admin_token"):
-        monkeypatch.setattr(settings, "platform_admin_token", token)
+    monkeypatch.setattr(settings, "platform_admin_token", token)
     p, h = _login(app_client, admin_session, tenant_a, email="admin@a.edu", role="admin")
 
     # On /progress the current area is Learn, but the TABS show every area.

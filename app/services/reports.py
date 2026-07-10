@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.assessment import best_scores_for
 from app.services.exceptions import NotFoundError
@@ -34,12 +34,17 @@ def _cohort_or_404(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
     return cohort
 
 
-def _cohort_activities(db: Session, tenant_id: UUID, discipline: str) -> tuple[list[Activity], list[UUID]]:
-    """Activities across courses matching the discipline, ordered chapter then type."""
+def _cohort_activities(db: Session, tenant_id: UUID, cohort_id: UUID) -> tuple[list[Activity], list[UUID]]:
+    """Activities across the cohort's offered courses, ordered chapter then type.
+
+    Scoped to courses explicitly linked via CourseOffering (active) — not by
+    shared discipline string.
+    """
     course_ids = db.scalars(
-        select(Course.id)
-        .where(Course.tenant_id == tenant_id)
-        .where(Course.discipline == discipline)
+        select(CourseOffering.course_id)
+        .where(CourseOffering.tenant_id == tenant_id)
+        .where(CourseOffering.cohort_id == cohort_id)
+        .where(CourseOffering.status == "active")
     ).all()
     if not course_ids:
         return [], []
@@ -68,7 +73,7 @@ def cohort_matrix(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> dict:
     completion = (# activities with a passing best score) / (# activities).
     """
     cohort = _cohort_or_404(db, tenant_id, cohort_id)
-    activities, course_ids = _cohort_activities(db, tenant_id, cohort.discipline)
+    activities, course_ids = _cohort_activities(db, tenant_id, cohort_id)
     total = len(activities)
 
     students = db.scalars(

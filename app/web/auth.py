@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.services import web_auth
+from app.services.roles import role_slugs
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -46,13 +47,15 @@ def login(
             status_code=401,
         )
     token = web_auth.start_session(db, tenant.id, person.id)
+    slugs = role_slugs(db, tenant.id, person.id)
+    redirect_to = "/instructor" if "instructor" in slugs and "admin" not in slugs else "/"
     # No db.commit() here — get_db commits at request end (and a mid-route commit
     # would clear the transaction-scoped app.current_tenant GUC).
     if hx:
         resp: Response = Response(status_code=204)
-        resp.headers["HX-Redirect"] = "/"
+        resp.headers["HX-Redirect"] = redirect_to
     else:
-        resp = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        resp = RedirectResponse(redirect_to, status_code=status.HTTP_303_SEE_OTHER)
     resp.set_cookie(
         web_auth.COOKIE,
         token,

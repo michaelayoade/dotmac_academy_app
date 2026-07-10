@@ -237,15 +237,15 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             )
             db.add(template)
         elif template.source_hash != source_hash:
-            activity = db.scalars(
+            existing = db.scalars(
                 select(Activity)
                 .where(Activity.tenant_id == tenant_id)
                 .where(Activity.id == template.activity_id)
             ).first()
-            if activity is not None:
-                activity.title = spec.title
-                activity.chapter_number = spec.chapter_number
-                activity.pass_threshold = pass_threshold
+            if existing is not None:
+                existing.title = spec.title
+                existing.chapter_number = spec.chapter_number
+                existing.pass_threshold = pass_threshold
             template.chapter_number = spec.chapter_number
             template.title = spec.title
             template.topology = spec.topology_text

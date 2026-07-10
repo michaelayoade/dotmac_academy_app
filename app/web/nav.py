@@ -19,6 +19,9 @@ AREAS: list[dict] = [
         "required": None,
         "sidebar": [
             {"label": "Home", "path": "/"},
+            {"label": "Courses", "path": "/courses"},
+            {"label": "Calendar", "path": "/calendar"},
+            {"label": "Announcements", "path": "/announcements"},
             {"label": "Progress", "path": "/progress"},
         ],
     },
@@ -29,9 +32,11 @@ AREAS: list[dict] = [
         "required": "instructor",
         "sidebar": [
             {"label": "Home", "path": "/instructor"},
-            {"label": "Courses", "path": "/instructor/courses"},
             {"label": "Cohorts", "path": "/instructor/cohorts"},
+            {"label": "Course content", "path": "/instructor/courses"},
+            {"label": "Announcements", "path": "/instructor/announcements"},
             {"label": "Reports", "path": "/instructor/reports"},
+            {"label": "Gradebook", "path": "/instructor/gradebook"},
             {"label": "Lab monitor", "path": "/instructor/labs"},
         ],
     },
@@ -43,6 +48,7 @@ AREAS: list[dict] = [
         "sidebar": [
             {"label": "Console", "path": "/admin"},
             {"label": "Users", "path": "/admin/users"},
+            {"label": "Audit", "path": "/admin/audit"},
             {"label": "Settings", "path": "/admin/settings"},
         ],
     },
@@ -57,7 +63,8 @@ def areas_for_roles(is_instructor: bool, is_admin: bool) -> list[dict]:
     for area in AREAS:
         required = area["required"]
         if required is None:
-            visible.append(area)
+            if not (is_instructor and not is_admin):
+                visible.append(area)
         elif required == "instructor" and (is_instructor or is_admin):
             visible.append(area)
         elif required == "admin" and is_admin:

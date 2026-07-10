@@ -19,15 +19,61 @@ from __future__ import annotations
 
 import logging
 import smtplib
+from dataclasses import dataclass
 from email.message import EmailMessage
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.assessment import Score, Submission
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class EmailResult:
+    sent: bool
+    error: str = ""
+
+
+def send_email_detailed(
+    to: str,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+    db: Session | None = None,
+) -> EmailResult:
+    """Send an email and return operator-facing delivery diagnostics."""
+    from app.services.settings_store import effective
+
+    cfg = effective(db)
+    if not cfg.smtp_host:
+        msg = "SMTP host is empty"
+        logger.info("SMTP not configured (SMTP_HOST empty); skipping email to %s: %s", to, subject)
+        return EmailResult(False, msg)
+    if not to:
+        msg = "recipient address is empty"
+        logger.info("No recipient address; skipping email: %s", subject)
+        return EmailResult(False, msg)
+    try:
+        msg = EmailMessage()
+        msg["From"] = cfg.smtp_from
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(text_body or "This message requires an HTML-capable email client.")
+        msg.add_alternative(html_body, subtype="html")
+
+        with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as smtp:
+            if cfg.smtp_starttls:
+                smtp.starttls()
+            if cfg.smtp_user:
+                smtp.login(cfg.smtp_user, cfg.smtp_password)
+            smtp.send_message(msg)
+        logger.info("sent email to %s: %s", to, subject)
+        return EmailResult(True)
+    except Exception as exc:  # never let an email failure propagate
+        logger.warning("failed to send email to %s (%s): %s", to, subject, exc)
+        return EmailResult(False, str(exc))
 
 
 def send_email(
@@ -46,37 +92,13 @@ def send_email(
     unconfigured or on ANY exception — it never raises, so callers can treat
     email as best-effort.
     """
-    if db is not None:
-        from app.services.settings_store import effective
-
-        cfg = effective(db)
-    else:
-        cfg = settings
-    if not cfg.smtp_host:
-        logger.info("SMTP not configured (SMTP_HOST empty); skipping email to %s: %s", to, subject)
-        return False
-    if not to:
-        logger.info("No recipient address; skipping email: %s", subject)
-        return False
-    try:
-        msg = EmailMessage()
-        msg["From"] = cfg.smtp_from
-        msg["To"] = to
-        msg["Subject"] = subject
-        msg.set_content(text_body or "This message requires an HTML-capable email client.")
-        msg.add_alternative(html_body, subtype="html")
-
-        with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as smtp:
-            if cfg.smtp_starttls:
-                smtp.starttls()
-            if cfg.smtp_user:
-                smtp.login(cfg.smtp_user, cfg.smtp_password)
-            smtp.send_message(msg)
-        logger.info("sent email to %s: %s", to, subject)
-        return True
-    except Exception as exc:  # never let an email failure propagate
-        logger.warning("failed to send email to %s (%s): %s", to, subject, exc)
-        return False
+    return send_email_detailed(
+        to,
+        subject,
+        html_body,
+        text_body=text_body,
+        db=db,
+    ).sent
 
 
 def recipient_allows(person, kind: str) -> bool:
@@ -145,6 +167,18 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
             f"Congratulations — you passed {activity.title} with a score of {pct}.\n\n"
             f"Keep up the great work!\n\n— Dotmac Academy\n"
         )
+        try:
+            from app.services.notifications import notify as _notify
+            _notify(
+                db,
+                tenant_id=score.tenant_id,
+                person_id=person.id,
+                kind="result",
+                title=f"You passed {activity.title}",
+                body=f"Score: {pct}",
+            )
+        except Exception as _exc:
+            logger.warning("in-app notify (result) failed: %s", _exc)
         return send_email(person.email, subject, html, text_body=text)
     except Exception as exc:  # non-fatal: grading must still succeed
         logger.warning("notify_score_if_first_pass failed: %s", exc)
