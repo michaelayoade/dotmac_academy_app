@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.auth import router as auth_router
+from app.api.admissions import router as admissions_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.api.tenants import router as tenants_router
@@ -178,6 +179,7 @@ def health() -> dict[str, str]:
 app.include_router(tenants_router)
 app.include_router(auth_router)
 app.include_router(persons_router)
+app.include_router(admissions_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
 app.include_router(web_instructor_router)

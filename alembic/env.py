@@ -11,7 +11,16 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from app.models import assessment, auth, cohort, course, person, rbac, tenant  # noqa: F401  (register models for autogenerate)
+from app.models import (  # noqa: F401  (register models for autogenerate)
+    admissions,
+    assessment,
+    auth,
+    cohort,
+    course,
+    person,
+    rbac,
+    tenant,
+)
 from app.models.base import Base
 
 config = context.config
