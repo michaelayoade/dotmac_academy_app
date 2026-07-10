@@ -41,6 +41,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.tenant import Tenant  # noqa: F401  (register Tenant so applicants.tenant_id FK resolves)
 from app.services import admissions as admissions_service
 
 
