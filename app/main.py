@@ -18,6 +18,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
@@ -36,6 +37,7 @@ from app.services.exceptions import (
 from app.web.account import router as web_account_router
 from app.web.accounts import router as web_accounts_router
 from app.web.admin_home import router as web_admin_router
+from app.web.apply import router as web_apply_router
 from app.web.audit import router as web_audit_router
 from app.web.auth import router as web_auth_router
 from app.web.catalog import router as web_catalog_router
@@ -123,11 +125,13 @@ def health() -> dict[str, str]:
 app.include_router(tenants_router)
 app.include_router(auth_router)
 app.include_router(persons_router)
+app.include_router(admissions_router)
 app.include_router(rbac_router)
 app.include_router(web_auth_router)
 app.include_router(web_lifecycle_router)
 app.include_router(web_instructor_router)
 app.include_router(web_accounts_router)
+app.include_router(web_apply_router)
 app.include_router(web_lab_admin_router)
 app.include_router(web_labs_router)
 app.include_router(web_labs_ws_router)

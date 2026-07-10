@@ -1,4 +1,5 @@
 from app.models.account_token import AccountToken  # noqa: F401
+from app.models.admissions import Applicant  # noqa: F401
 from app.models.announcement import Announcement  # noqa: F401
 from app.models.assessment import Activity, Question, QuestionBank, Score, Submission  # noqa: F401
 from app.models.attempt import ActivityAttempt  # noqa: F401
