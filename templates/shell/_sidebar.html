@@ -1,6 +1,6 @@
 {# Contextual sidebar for the current area. Collapses to a horizontal scroll strip on small screens. #}
 <aside class="shell-sidebar shrink-0 border-b border-sand-300/70 bg-sand-50/60 md:w-56 md:border-b-0 md:border-r md:bg-transparent">
-  <nav class="shell-scrollnav flex gap-1 overflow-x-auto px-4 py-2.5 md:sticky md:top-[4.25rem] md:flex-col md:gap-0.5 md:px-3 md:py-6"
+  <nav class="flex gap-1 overflow-x-auto px-4 py-2.5 md:sticky md:top-[4.25rem] md:flex-col md:gap-0.5 md:px-3 md:py-6"
        aria-label="{{ current_area | capitalize }} navigation">
     {% for item in nav_sidebar %}
     <a href="{{ item.path }}"

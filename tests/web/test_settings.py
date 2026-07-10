@@ -16,15 +16,6 @@ from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
 from app.services.settings_store import set_many
 
-PLATFORM_TOKEN = "test-platform-admin-token"
-
-
-@pytest.fixture(autouse=True)
-def _platform_admin_token(monkeypatch):
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "platform_admin_token", PLATFORM_TOKEN)
-
 
 @pytest.fixture(autouse=True)
 def _clean_platform_settings(admin_session):
@@ -52,7 +43,7 @@ def _seed_login(app_client, admin_session, tenant, email, role_slug):
     )
     admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
-    h = {"Host": "alpha.localhost", "x-platform-admin-token": PLATFORM_TOKEN}
+    h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return h
 

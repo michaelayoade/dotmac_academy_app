@@ -25,7 +25,6 @@ from app.models.assessment import Question, QuestionBank
 
 _TARGET = {"recall": 0.20, "application": 0.50, "analysis": 0.30}
 _TOL = 0.10
-_OPTION_TYPES = {"single", "multi"}
 
 
 @dataclass
@@ -58,7 +57,7 @@ def lint_bank(doc: BankDoc) -> list[str]:
     Rules:
     - Bank must not be empty.
     - Each question must have a valid rubric_category (recall/application/analysis).
-    - For single/multi questions, every entry in `correct` must appear in `options`.
+    - For non-truefalse questions, every entry in `correct` must appear in `options`.
     - The overall rubric mix must be 20% recall / 50% application / 30% analysis
       within ±10 percentage points.
     """
@@ -75,7 +74,17 @@ def lint_bank(doc: BankDoc) -> list[str]:
             out.append(f"{q.get('id')}: invalid rubric_category {cat!r}")
             continue
         counts[cat] += 1
-        if q.get("type") in _OPTION_TYPES:
+        qtype = q.get("type")
+        if qtype == "numeric":
+            try:
+                float(q.get("correct", ""))
+            except (ValueError, TypeError):
+                out.append(f"{q.get('id')}: numeric correct must be a parseable number")
+        elif qtype == "short_text":
+            accepted = q.get("correct", [])
+            if not isinstance(accepted, list) or len(accepted) == 0:
+                out.append(f"{q.get('id')}: short_text correct must be a non-empty list")
+        elif qtype != "truefalse":
             opts = set(q.get("options", []))
             for c in q.get("correct", []):
                 if c not in opts:
@@ -83,7 +92,10 @@ def lint_bank(doc: BankDoc) -> list[str]:
 
     for cat, target in _TARGET.items():
         frac = counts[cat] / n
-        if abs(frac - target) > _TOL:
+        # +1e-9 epsilon: a mix exactly at the tolerance edge (e.g. analysis 40%
+        # vs target 30% ±10%) must pass — bare float subtraction yields
+        # 0.4-0.3==0.10000000000000003 and would wrongly reject a compliant bank.
+        if abs(frac - target) > _TOL + 1e-9:
             out.append(
                 f"rubric mix off: {cat} {frac:.0%} (target {target:.0%} ±{_TOL:.0%})"
             )

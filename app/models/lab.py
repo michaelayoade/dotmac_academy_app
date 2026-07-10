@@ -41,12 +41,7 @@ class LabTemplate(Base, TimestampMixin):
 
 class LabInstance(Base, TimestampMixin):
     __tablename__ = "lab_instances"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),
-        UniqueConstraint(
-            "tenant_id", "instance_name", name="uq_lab_instances_tenant_instance_name"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),)
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
     activity_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)

@@ -1,7 +1,9 @@
 import uuid
+
 from sqlalchemy import text
-from app.models.course import Course
+
 from app.models.assessment import QuestionBank
+from app.models.course import Course
 
 
 def test_question_bank_invisible_across_tenants(admin_session, tenant_a, tenant_b):

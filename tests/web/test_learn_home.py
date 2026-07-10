@@ -6,6 +6,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.security import hash_password
 
@@ -48,6 +49,8 @@ def test_learn_home_shows_course_completion_and_results(app_client, admin_sessio
     admin_session.flush()
     admin_session.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=p.id,
                                  role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=course.id,
+                                     status="active"))
     admin_session.flush()
 
     # One passing score on a1 → 1 of 2 activities passed → 50% completion.
@@ -78,60 +81,3 @@ def test_learn_home_empty_state_when_not_enrolled(app_client, admin_session, ten
     r = app_client.get("/", headers=h)
     assert r.status_code == 200
     assert "not enrolled in a course yet" in r.text
-
-
-def test_learn_home_separates_finished_courses(app_client, admin_session, tenant_a):
-    p, h = _login(app_client, admin_session, tenant_a, email="finished@a.edu")
-    active = Course(
-        tenant_id=tenant_a.id,
-        slug="active-net",
-        title="Active Networking",
-        discipline="networking",
-        source_ref="x",
-        version=1,
-        status="active",
-    )
-    finished = Course(
-        tenant_id=tenant_a.id,
-        slug="finished-net",
-        title="Finished Networking",
-        discipline="networking",
-        source_ref="x",
-        version=1,
-        status="finished",
-    )
-    hidden = Course(
-        tenant_id=tenant_a.id,
-        slug="draft-net",
-        title="Draft Networking",
-        discipline="networking",
-        source_ref="x",
-        version=1,
-        status="draft",
-    )
-    cohort = Cohort(
-        tenant_id=tenant_a.id,
-        name="Networking",
-        discipline="networking",
-        status="active",
-    )
-    admin_session.add_all([active, finished, hidden, cohort])
-    admin_session.flush()
-    admin_session.add(
-        Enrollment(
-            tenant_id=tenant_a.id,
-            cohort_id=cohort.id,
-            person_id=p.id,
-            role_in_cohort="student",
-            status="active",
-        )
-    )
-    admin_session.commit()
-
-    r = app_client.get("/", headers=h)
-
-    assert r.status_code == 200
-    assert "Active Networking" in r.text
-    assert "Finished courses" in r.text
-    assert "Finished Networking" in r.text
-    assert "Draft Networking" not in r.text

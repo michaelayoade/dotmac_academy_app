@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
+from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.lab import LabInstance, LabTemplate
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.labengine.interface import ExecResult, LabHandle
 from app.services.security import hash_password
@@ -71,6 +73,20 @@ def _login(app_client, email: str) -> dict[str, str]:
     return h
 
 
+def _entitle(admin_session, tenant, person, course):
+    """Give the person access to the course via cohort + enrollment + offering."""
+    coh = Cohort(tenant_id=tenant.id, name="Lab Cohort", discipline=course.discipline,
+                 status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person.id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=course.id,
+                                     status="active"))
+    admin_session.commit()
+    return coh
+
+
 def _seed_lab(admin_session, tenant, *, with_course=True):
     course = Course(
         tenant_id=tenant.id,
@@ -125,12 +141,51 @@ def _csrf(app_client, path, h):
     return r, app_client.cookies.get("csrf_token") or r.cookies.get("csrf_token", "")
 
 
+def test_dropped_owner_loses_live_instance_access(app_client, admin_session, tenant_a, monkeypatch):
+    """Revocation propagates to live instances: a dropped owner is 403 on status/check."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "drop@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    coh = _entitle(admin_session, tenant_a, p, course)
+    h = _login(app_client, "drop@a.edu")
+    # Launch while entitled.
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    app_client.post(f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf})
+    inst = admin_session.query(LabInstance).filter(
+        LabInstance.activity_id == act.id, LabInstance.person_id == p.id).one()
+
+    # Instructor drops the learner; the live instance must now be off-limits.
+    enr = admin_session.query(Enrollment).filter(
+        Enrollment.cohort_id == coh.id, Enrollment.person_id == p.id).one()
+    enr.status = "dropped"
+    admin_session.commit()
+
+    assert app_client.get(f"/labs/instances/{inst.id}/status", headers=h).status_code == 403
+    r = app_client.post(f"/labs/instances/{inst.id}/check", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 403
+
+
+def test_unentitled_student_forbidden_on_lab(app_client, admin_session, tenant_a, monkeypatch):
+    """Slice 1: no offering for the lab's course → 403 on detail and launch, no instance."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    _make_person(admin_session, tenant_a, "nolab@a.edu")
+    _, act, _ = _seed_lab(admin_session, tenant_a)  # no enrollment/offering
+    h = _login(app_client, "nolab@a.edu")
+    assert app_client.get(f"/labs/{act.id}", headers=h).status_code == 403
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 403
+    n = admin_session.query(LabInstance).filter(LabInstance.activity_id == act.id).count()
+    assert n == 0
+
+
 def test_launch_creates_instance_and_returns_status(
     app_client, admin_session, tenant_a, monkeypatch
 ):
     monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "owner@a.edu")
-    _, act, _ = _seed_lab(admin_session, tenant_a)
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
     h = _login(app_client, "owner@a.edu")
 
     _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
@@ -149,28 +204,11 @@ def test_launch_creates_instance_and_returns_status(
     assert rows[0].status in ("queued", "provisioning")
 
 
-def test_finished_course_locks_lab_actions(app_client, admin_session, tenant_a):
-    _make_person(admin_session, tenant_a, "locked@a.edu")
-    course, act, _ = _seed_lab(admin_session, tenant_a)
-    course.status = "finished"
-    admin_session.commit()
-    h = _login(app_client, "locked@a.edu")
-
-    r_detail, csrf = _csrf(app_client, f"/labs/{act.id}", h)
-    assert r_detail.status_code == 200
-    assert "This lab is closed" in r_detail.text
-    assert "Launch lab" not in r_detail.text
-
-    r_launch = app_client.post(
-        f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf}
-    )
-    assert r_launch.status_code == 403
-
-
 def test_check_grades_and_writes_score(app_client, admin_session, tenant_a, monkeypatch):
     monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "owner2@a.edu")
-    _, act, _ = _seed_lab(admin_session, tenant_a)
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
     h = _login(app_client, "owner2@a.edu")
 
     # Launch, then simulate the worker bringing the instance up (active + consoles).

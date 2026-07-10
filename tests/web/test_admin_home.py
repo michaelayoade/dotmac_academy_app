@@ -60,10 +60,7 @@ def test_admin_settings_still_works(app_client, admin_session, tenant_a, monkeyp
     from app.config import settings
 
     token = "test-platform-admin-token"
-    # platform_admin_token only exists once the platform-auth work lands; guard so
-    # this test is correct whether or not /admin/settings is token-gated.
-    if hasattr(settings, "platform_admin_token"):
-        monkeypatch.setattr(settings, "platform_admin_token", token)
+    monkeypatch.setattr(settings, "platform_admin_token", token)
     _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
     h = _login(app_client, "admin@a.edu")
     r = app_client.get("/admin/settings", headers={**h, "x-platform-admin-token": token})

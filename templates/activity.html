@@ -1,50 +1,29 @@
 {% extends "base.html" %}{% block content %}
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Chapter test</p>
 <h1 class="mt-1.5 text-2xl tracking-tight">{{ activity.title }}</h1>
-{% if course_finished %}
-<div class="card mt-8 p-6">
-  <h2 class="text-xl">Course finished</h2>
-  <p class="mt-2 text-ink-soft">This test is closed. You can still review the course content, then continue to your next available course.</p>
-  <p class="mt-5 flex flex-wrap gap-3">
-    <a class="btn-primary" href="/">Go to my courses</a>
-    {% if course %}
-    <a class="btn-ghost" href="/courses/{{ course.slug }}/chapters/{{ activity.chapter_number or 1 }}">Review chapter</a>
-    {% endif %}
-  </p>
-</div>
-{% else %}
-<form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML"
-      hx-on::after-request="if(event.detail.successful){document.getElementById('result').scrollIntoView({behavior:'smooth',block:'start'})}"
-      class="mt-8 space-y-5">
+<form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML" class="mt-8 space-y-5">
   {% for q in questions %}
   <fieldset class="card p-5">
     <legend class="px-1 font-display text-lg text-ink">{{ q.stem }}</legend>
-    {% if q.type in ["fill_blank", "short_text"] %}
-    <div class="mt-3">
-      <input type="text" name="{{ q.ext_id }}" autocomplete="off"
-             class="w-full px-3.5 py-2.5 text-[0.95rem]"
-             placeholder="Type your answer">
-    </div>
-    {% elif q.type == "long_text" %}
-    <div class="mt-3">
-      <textarea name="{{ q.ext_id }}" rows="5"
-                class="w-full px-3.5 py-2.5 text-[0.95rem]"
-                placeholder="Write your answer"></textarea>
-    </div>
-    {% else %}
     <div class="mt-3 space-y-2">
-    {% for opt in q.options %}
-    <label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-sand-200">
-      <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}" class="h-4 w-4 accent-[oklch(0.44_0.10_161)]">
-      <span class="text-ink">{{ opt }}</span>
-    </label>
-    {% endfor %}
-    </div>
+    {% if q.type == 'numeric' %}
+      <input type="number" step="any" name="{{ q.ext_id }}" aria-label="Your answer"
+             class="w-48 px-3 py-2 text-sm">
+    {% elif q.type == 'short_text' %}
+      <input type="text" name="{{ q.ext_id }}" autocomplete="off" aria-label="Your answer"
+             class="w-full max-w-md px-3 py-2 text-sm">
+    {% else %}
+      {% for opt in q.options %}
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-sand-200">
+        <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}" class="h-4 w-4 accent-[oklch(0.44_0.10_161)]">
+        <span class="text-ink">{{ opt }}</span>
+      </label>
+      {% endfor %}
     {% endif %}
+    </div>
   </fieldset>
   {% endfor %}
   <button class="btn-primary" type="submit">Submit answers</button>
 </form>
 <div id="result" class="mt-6"></div>
-{% endif %}
 {% endblock %}
