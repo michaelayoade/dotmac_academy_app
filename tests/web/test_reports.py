@@ -6,6 +6,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
@@ -38,6 +39,7 @@ def _seed_cohort(admin_session, tid):
     coh = Cohort(tenant_id=tid, name="Abuja 2026", discipline="networking", status="active")
     admin_session.add(coh)
     admin_session.flush()
+    admin_session.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=c.id, status="active"))
     stu_a = Person(tenant_id=tid, email="a@stu.edu", first_name="Aaa", last_name="Student")
     stu_b = Person(tenant_id=tid, email="b@stu.edu", first_name="Bbb", last_name="Student")
     admin_session.add_all([stu_a, stu_b])

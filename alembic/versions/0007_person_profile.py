@@ -13,9 +13,9 @@ Create Date: 2026-06-27
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision = "0007_person_profile"
 down_revision = "0006_platform_settings"

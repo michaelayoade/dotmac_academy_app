@@ -34,7 +34,7 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
-    token_type: str = "bearer"  # noqa: S105 - OAuth token type, not a password.
+    token_type: str = "bearer"
 
 
 class CurrentUserResponse(BaseModel):

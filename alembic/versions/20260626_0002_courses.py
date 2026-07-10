@@ -1,9 +1,13 @@
 from __future__ import annotations
+
 import sqlalchemy as sa
+
 from alembic import op
+
 revision = "0002_courses"; down_revision = "0001_initial_tenant_schema"
 branch_labels = None; depends_on = None
 from sqlalchemy.dialects import postgresql
+
 
 def _ts(): return [
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),

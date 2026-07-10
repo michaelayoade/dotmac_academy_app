@@ -19,13 +19,14 @@ class Settings(BaseSettings):
     trusted_hosts: str = ""
     jwt_secret: str = "dev-insecure-change-me"
     session_hash_secret: str = "dev-insecure-change-me"
-    platform_admin_token: str = ""
     jwt_ttl_seconds: int = 3600
     csrf_enabled: bool = True
     rate_limit_enabled: bool = True
     rate_limit_requests: int = 120
     rate_limit_window_seconds: int = 60
     trust_inbound_request_id: bool = False
+    # Optional platform-admin token gate for platform-level admin endpoints.
+    platform_admin_token: str = ""
 
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20
@@ -63,6 +64,4 @@ def validate_settings(s: Settings) -> list[str]:
         errors.append("JWT_SECRET must be set in production")
     if s.is_production and s.session_hash_secret == "dev-insecure-change-me":  # noqa: S105
         errors.append("SESSION_HASH_SECRET must be set in production")
-    if s.is_production and not s.platform_admin_token:
-        errors.append("PLATFORM_ADMIN_TOKEN must be set in production")
     return errors

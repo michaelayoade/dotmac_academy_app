@@ -30,10 +30,7 @@ def _platform_token(monkeypatch):
     """
     from app.config import settings
 
-    # platform_admin_token only exists once the platform-auth work lands; guard so
-    # these tests are correct whether or not /admin/settings is token-gated.
-    if hasattr(settings, "platform_admin_token"):
-        monkeypatch.setattr(settings, "platform_admin_token", PLATFORM_TOKEN)
+    monkeypatch.setattr(settings, "platform_admin_token", PLATFORM_TOKEN)
 
 
 def _seed_login(app_client, admin_session, tenant, email, role_slug):

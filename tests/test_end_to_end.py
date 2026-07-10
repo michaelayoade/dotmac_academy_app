@@ -10,14 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from sqlalchemy import text
 
+from app.models.assessment import Activity
+from app.models.rbac import PersonRole
+from app.services.bank_loader import lint_bank, load_bank, parse_bank
 from app.services.bootstrap import bootstrap_tenant, ensure_roles
 from app.services.content_import import import_foundation
-from app.services.bank_loader import parse_bank, lint_bank, load_bank
-from app.models.rbac import PersonRole
-from app.models.assessment import Activity
 
 ACADEMY = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation")
 FIGS = Path("/home/dotmac/projects/dotmac-academy/figures/final")
@@ -70,6 +69,8 @@ def test_full_flow(app_client, admin_session):
     )
 
     # Grant the admin person the student role so they can use the learner portal.
+    from app.models.cohort import Cohort, Enrollment
+    from app.models.offering import CourseOffering
     from app.models.person import Person
 
     person = admin_session.query(Person).filter(Person.tenant_id == t.id).first()
@@ -80,6 +81,14 @@ def test_full_flow(app_client, admin_session):
             role_id=roles["student"].id,
         )
     )
+    # Entitle the learner: cohort + enrollment + an offering for the course.
+    coh = Cohort(tenant_id=t.id, name="E2E Cohort", discipline=course.discipline, status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(Enrollment(tenant_id=t.id, cohort_id=coh.id, person_id=person.id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.add(CourseOffering(tenant_id=t.id, cohort_id=coh.id, course_id=course.id,
+                                     status="active"))
     admin_session.commit()
 
     # ── Web flow ───────────────────────────────────────────────────────────────

@@ -1,11 +1,14 @@
 # tests/services/test_assessment_service.py
+from uuid import uuid4
+
 import pytest
+
+from app.models.assessment import Activity, Question, QuestionBank
 from app.models.course import Course
 from app.models.person import Person
-from app.models.assessment import QuestionBank, Question, Activity, Submission
 from app.services import email as email_mod
-from app.services.assessment import submit_activity, best_scores_for, override_score
-from uuid import uuid4
+from app.services.assessment import best_scores_for, override_score, submit_activity
+
 
 def _seed(db, tid):
     c = Course(tenant_id=tid, slug="foundation", title="F", discipline="networking", source_ref="x", version=1)
@@ -72,10 +75,11 @@ def test_override_score_threshold_and_tenant_validation(admin_session, tenant_a)
     person_id = uuid4()
     c, act = _seed(admin_session, tenant_a.id)  # act has pass_threshold=0.6
     # Create a real submission via submit_activity
-    submitted = submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id,
-                                activity=act, answers={"q1": ["B"]})
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id,
+                    activity=act, answers={"q1": ["B"]})
     # Fetch the submission to get its id
     from sqlalchemy import select as sa_select
+
     from app.models.assessment import Submission as Sub
     sub = admin_session.scalars(
         sa_select(Sub).where(Sub.tenant_id == tenant_a.id).where(Sub.activity_id == act.id)

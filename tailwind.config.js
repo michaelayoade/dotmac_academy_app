@@ -2,7 +2,7 @@
 // Dotmac Academy — warm technical-editorial design system.
 // Scans every template so all utility classes used across the portal compile.
 module.exports = {
-  content: ["./templates/**/*.html", "./app/**/*.py"],
+  content: ["./templates/**/*.html"],
   theme: {
     extend: {
       colors: {

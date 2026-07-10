@@ -52,11 +52,9 @@ In dev, browsers resolve `*.localhost` automatically:
 # Provision two tenants (as platform admin)
 curl -X POST http://localhost:8001/platform/tenants \
     -H "Content-Type: application/json" \
-    -H "X-Platform-Admin-Token: dev-platform-admin-token" \
     -d '{"slug":"acme","name":"ACME"}'
 curl -X POST http://localhost:8001/platform/tenants \
     -H "Content-Type: application/json" \
-    -H "X-Platform-Admin-Token: dev-platform-admin-token" \
     -d '{"slug":"widgets","name":"Widgets Inc"}'
 
 # Same Person endpoint, different tenants
@@ -105,7 +103,4 @@ Settings are loaded from the environment and from a local `.env` file.
 
 ## License
 
-Copyright © Dotmac. All rights reserved.
-
-This source is published for reference and transparency only. No license is
-granted to use, copy, modify, or distribute it. It is **not** open source.
+TBD.

@@ -1,4 +1,4 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import ExecResult, LabHandle

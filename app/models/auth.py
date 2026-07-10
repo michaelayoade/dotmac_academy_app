@@ -67,34 +67,3 @@ class AuthSession(Base, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class AccountToken(Base, TimestampMixin):
-    __tablename__ = "account_tokens"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "token_hash", name="uq_account_tokens_tenant_token_hash"),
-        ForeignKeyConstraint(
-            ["tenant_id", "person_id"],
-            ["people.tenant_id", "people.id"],
-            ondelete="CASCADE",
-            name="fk_account_tokens_tenant_person",
-        ),
-    )
-
-    id: Mapped[UUID] = uuid_pk()
-    tenant_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    person_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=False,
-        index=True,
-    )
-    email: Mapped[str] = mapped_column(String(254), nullable=False)
-    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -36,7 +36,7 @@ def eval_command(check, engine, handle, seed):
     if "jsonpath" in a:
         try:
             actual = str(
-                [m.value for m in jp_parse(a["jsonpath"]).find(json.loads(res.stdout))][0]
+                next(m.value for m in jp_parse(a["jsonpath"]).find(json.loads(res.stdout)))
             )
         except Exception:
             actual = None
