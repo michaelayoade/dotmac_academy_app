@@ -17,6 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.admissions import APPLICANT_STATUSES, Applicant
+from app.models.cohort import Cohort, Enrollment
+from app.models.person import Person
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)
@@ -128,5 +130,66 @@ def transition_applicant(
     applicant.status = to_status
     if notes:
         applicant.notes = notes
+    db.flush()
+    return applicant
+
+
+def enroll_applicant(
+    db: Session,
+    *,
+    applicant_id: UUID,
+    cohort_id: UUID,
+) -> Applicant:
+    """Convert an onboarding applicant into an enrolled learner.
+
+    Creates (or reuses) the ``Person`` for this email and enrols them in the
+    target cohort as a student, then marks the applicant ``enrolled`` and links
+    ``person_id``. Idempotent: an existing person/enrolment is reused, so
+    re-running is safe. Requires ``onboarding`` status (the onboarding step
+    gates enrolment).
+    """
+    applicant = get_applicant(db, applicant_id=applicant_id)
+    if applicant.status != "onboarding":
+        raise BadRequestError(
+            f"Applicant must be in 'onboarding' to enrol (is '{applicant.status}')."
+        )
+
+    cohort = db.get(Cohort, cohort_id)
+    if cohort is None:  # missing or hidden by RLS
+        raise NotFoundError("Cohort not found.")
+
+    # Reuse an existing Person for this email (e.g. an employee already in the
+    # tenant), otherwise create one. RLS scopes the lookup to this tenant.
+    person = db.scalar(select(Person).where(Person.email == applicant.email))
+    if person is None:
+        person = Person(
+            tenant_id=applicant.tenant_id,
+            email=applicant.email,
+            first_name=applicant.first_name,
+            last_name=applicant.last_name,
+        )
+        db.add(person)
+        db.flush()
+
+    enrollment = db.scalar(
+        select(Enrollment).where(
+            Enrollment.cohort_id == cohort_id,
+            Enrollment.person_id == person.id,
+        )
+    )
+    if enrollment is None:
+        db.add(
+            Enrollment(
+                tenant_id=applicant.tenant_id,
+                cohort_id=cohort_id,
+                person_id=person.id,
+                role_in_cohort="student",
+                status="active",
+            )
+        )
+        db.flush()
+
+    applicant.person_id = person.id
+    applicant.status = "enrolled"
     db.flush()
     return applicant

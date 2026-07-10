@@ -44,12 +44,17 @@ class ApplicantRead(BaseModel):
     status: str
     source: str
     applied_on: date
+    person_id: UUID | None = None
     model_config = {"from_attributes": True}
 
 
 class ApplicantTransition(BaseModel):
     to_status: str = Field(min_length=1, max_length=20)
     notes: str | None = Field(default=None, max_length=1000)
+
+
+class ApplicantEnroll(BaseModel):
+    cohort_id: UUID
 
 
 @router.post("/apply", response_model=ApplicantRead, status_code=status.HTTP_201_CREATED)
@@ -102,4 +107,17 @@ def transition_applicant(
         applicant_id=applicant_id,
         to_status=payload.to_status,
         notes=payload.notes,
+    )
+
+
+@router.post("/{applicant_id}/enroll", response_model=ApplicantRead)
+def enroll_applicant(
+    applicant_id: UUID,
+    payload: ApplicantEnroll,
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_role("admin")),
+) -> object:
+    """Enrol an onboarding applicant: create/reuse a Person + Enrollment."""
+    return admissions_service.enroll_applicant(
+        db, applicant_id=applicant_id, cohort_id=payload.cohort_id
     )
