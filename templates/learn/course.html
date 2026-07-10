@@ -37,15 +37,15 @@
 {% endif %}
 <div class="mt-4 space-y-3">
 {% for ch in part.chapters %}
-  <div class="card p-5">
+  {% if structure.locked %}
+  <div class="card p-5 opacity-75">
+  {% else %}
+  <a class="card block p-5 transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-soft focus:outline-none focus:ring-2 focus:ring-brand-200"
+     href="/courses/{{ course.slug }}/chapters/{{ ch.chapter.number }}">
+  {% endif %}
     <div class="flex items-start gap-3">
       <div class="min-w-0 flex-1">
-        <p class="font-medium text-ink">
-          <a href="/courses/{{ course.slug }}/chapters/{{ ch.chapter.number }}"
-             class="hover:text-brand-700">
-            Ch {{ ch.chapter.number }}. {{ ch.chapter.title }}
-          </a>
-        </p>
+        <p class="font-medium text-ink">Ch {{ ch.chapter.number }}. {{ ch.chapter.title }}</p>
         {% if ch.activities %}
         <div class="mt-2 space-y-1">
           {% for act_info in ch.activities %}
@@ -61,7 +61,11 @@
         {% endif %}
       </div>
     </div>
+  {% if structure.locked %}
   </div>
+  {% else %}
+  </a>
+  {% endif %}
 {% endfor %}
 </div>
 {% endfor %}

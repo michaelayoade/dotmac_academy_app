@@ -94,10 +94,10 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     coh = Cohort(tenant_id=tenant_a.id, name="C", discipline="networking", status="active")
     admin_session.add(coh)
     admin_session.flush()
-    admin_session.add(Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id,
-                                 role_in_cohort="student", status="active"))
-    admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id,
-                                     status="active"))
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id, role_in_cohort="student", status="active")
+    )
+    admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id, status="active"))
     admin_session.commit()
 
     # GET chapter page — response sets the csrf_token cookie in the TestClient jar.
@@ -170,28 +170,36 @@ def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
 
     p, h = _login(app_client, admin_session, tenant_a)
     courses = []
-    for slug, title in (("foundation", "Foundation"), ("fiber-engineering", "Fiber Engineering")):
-        c = Course(tenant_id=tenant_a.id, slug=slug, title=title,
-                   discipline="networking", source_ref="x", version=1)
+    for slug, title in (("foundation", "Network Foundation"), ("fiber-engineering", "Fiber Engineering")):
+        c = Course(tenant_id=tenant_a.id, slug=slug, title=title, discipline="networking", source_ref="x", version=1)
         admin_session.add(c)
         admin_session.flush()
-        admin_session.add(Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1,
-                                  title=f"{title} ch1", part="I", body_html="<p>x</p>",
-                                  source_hash="h", order_index=1))
+        admin_session.add(
+            Chapter(
+                tenant_id=tenant_a.id,
+                course_id=c.id,
+                number=1,
+                title=f"{title} ch1",
+                part="I",
+                body_html="<p>x</p>",
+                source_hash="h",
+                order_index=1,
+            )
+        )
         courses.append(c)
     coh = Cohort(tenant_id=tenant_a.id, name="Abuja", discipline="networking", status="active")
     admin_session.add(coh)
     admin_session.flush()
-    admin_session.add(Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id,
-                                 role_in_cohort="student", status="active"))
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id, role_in_cohort="student", status="active")
+    )
     for c in courses:
-        admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id,
-                                         course_id=c.id, status="active"))
+        admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id, status="active"))
     admin_session.commit()
     try:
         r = app_client.get("/", headers=h)
         assert r.status_code == 200
-        assert "Foundation" in r.text and "Fiber Engineering" in r.text
+        assert "Network Foundation" in r.text and "Fiber Engineering" in r.text
         assert "/courses/fiber-engineering/chapters/1" in r.text
     finally:
         # Clean up committed rows (chapters cascade from courses) so this test

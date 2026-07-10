@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,14 +14,15 @@ from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
-from app.models.reading import ChapterRead
 from app.models.person import Person
+from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
 from app.services.assessment import attempts_used, best_scores_for, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
 from app.services.pacing import require_activity_readable, require_activity_submittable
+from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -113,6 +114,9 @@ def home(
 ):
     """Student Learn Home — my courses (completion %), continue, recent results."""
     tenant = require_tenant(request)
+    slugs = role_slugs(db, tenant.id, person.id)
+    if "instructor" in slugs and "admin" not in slugs:
+        return RedirectResponse("/instructor", status_code=303)
     enrolled = _enrolled_courses(db, tenant.id, person.id)
 
     # My courses: completion % = passed activities / total activities.
@@ -423,13 +427,47 @@ async def submit(
             '<div class="submit-pending" role="status">Submitted — your instructor '
             "will grade this and your result will appear once it's marked.</div>"
         )
-    # get_db handles the final db.commit(); calling it here would expire all ORM
-    # objects (including `qs`) and clear the SET LOCAL tenant config, causing
-    # ObjectDeletedError on the lazy-load triggered by by_id construction below.
-    by_id = {q.ext_id: q for q in qs}
+    # get_db handles the final db.commit(); calling it here would expire ORM
+    # objects and clear the SET LOCAL tenant config. Render from all bank questions
+    # so retakes can display the originally recorded score, including random pools.
+    display_questions = db.scalars(
+        select(Question)
+        .where(Question.tenant_id == tenant.id)
+        .where(Question.bank_id == act.bank_id)
+    ).all()
+    by_id = {q.ext_id: q for q in display_questions}
+    course = db.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant.id)
+        .where(Course.id == act.course_id)
+    ).first()
+    next_chapter = None
+    course_completion = None
+    if course is not None and act.chapter_number is not None:
+        next_chapter = db.scalars(
+            select(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id == course.id)
+            .where(Chapter.number > act.chapter_number)
+            .order_by(Chapter.number)
+        ).first()
+    if course is not None:
+        course_completion = db.scalars(
+            select(CourseCompletion)
+            .where(CourseCompletion.tenant_id == tenant.id)
+            .where(CourseCompletion.person_id == person.id)
+            .where(CourseCompletion.course_id == course.id)
+        ).first()
     return templates.TemplateResponse(
         "_activity_result.html",
-        {"request": request, "score": score, "questions": by_id},
+        {
+            "request": request,
+            "score": score,
+            "questions": by_id,
+            "course": course,
+            "next_chapter": next_chapter,
+            "course_completion": course_completion,
+        },
     )
 
 

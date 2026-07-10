@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from html import escape as _html_escape
 from html.parser import HTMLParser
+from typing import ClassVar
 from uuid import UUID
 
 import markdown as md
@@ -250,6 +251,63 @@ def embed_media(body: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class _EditorTextParser(HTMLParser):
+    """Convert existing rendered HTML into readable editor text."""
+
+    _BLOCK_TAGS: ClassVar[set[str]] = {
+        "address", "article", "aside", "blockquote", "div", "figcaption",
+        "figure", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+        "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody",
+        "td", "tfoot", "th", "thead", "tr", "ul",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "br":
+            self.parts.append("\n")
+        elif tag == "li":
+            self._block_break()
+            self.parts.append("- ")
+        elif tag in self._BLOCK_TAGS:
+            self._block_break()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._BLOCK_TAGS:
+            self._block_break()
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def _block_break(self) -> None:
+        text = "".join(self.parts).rstrip()
+        self.parts = [text, "\n\n"] if text else []
+
+    def text(self) -> str:
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in "".join(self.parts).splitlines()]
+        out: list[str] = []
+        blank = False
+        for line in lines:
+            if line:
+                out.append(line)
+                blank = False
+            elif not blank and out:
+                out.append("")
+                blank = True
+        return "\n".join(out).strip()
+
+
+def editable_chapter_source(chapter: Chapter) -> str:
+    """Return instructor-friendly source text for a chapter editor textarea."""
+    if chapter.body_md.strip():
+        return chapter.body_md
+    parser = _EditorTextParser()
+    parser.feed(chapter.body_html or "")
+    return parser.text()
+
+
 def render_markdown(body_md: str) -> str:
     """Render *body_md* to sanitised HTML and apply media embeds."""
     raw = md.markdown(body_md or "", extensions=_MD_EXTENSIONS)
@@ -308,3 +366,23 @@ def upsert_chapter(db: Session, *, tenant_id: UUID, course_id: UUID, number: int
     course.version += 1
     db.flush()
     return chapter
+
+
+def delete_chapter(db: Session, *, tenant_id: UUID, course_id: UUID, chapter_id: UUID) -> None:
+    """Delete one chapter from a tenant course and bump the course version."""
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
+    ).first()
+    if course is None:
+        raise NotFoundError("course not found for tenant")
+    chapter = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant_id)
+        .where(Chapter.course_id == course_id)
+        .where(Chapter.id == chapter_id)
+    ).first()
+    if chapter is None:
+        raise NotFoundError("chapter not found for tenant")
+    db.delete(chapter)
+    course.version += 1
+    db.flush()

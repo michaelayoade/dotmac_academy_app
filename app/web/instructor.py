@@ -11,6 +11,7 @@ after the response is built. A mid-handler commit would clear that GUC and break
 
 from __future__ import annotations
 
+import re
 from html import escape
 from uuid import UUID
 
@@ -21,15 +22,18 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Score, Submission
-from app.models.cohort import Cohort
+from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
-from app.services.authoring import create_course, upsert_chapter
+from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
 from app.services.dashboards import cohort_overview
+from app.services.email import send_email
 from app.services.lifecycle import invite_user, set_account_status
+from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role, require_web_user
 from app.web.templating import templates
@@ -53,9 +57,32 @@ def _e(value: object) -> str:
 @router.get("/cohorts", response_class=HTMLResponse)
 def cohorts_list(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
-    rows = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
+    rows = db.scalars(
+        select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)
+    ).all()
+    roster_rows = db.execute(
+        select(Enrollment, Person)
+        .join(
+            Person,
+            (Person.id == Enrollment.person_id)
+            & (Person.tenant_id == Enrollment.tenant_id),
+        )
+        .where(Enrollment.tenant_id == tenant.id)
+        .order_by(Person.last_name, Person.first_name, Person.email)
+    ).all()
+    roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    for enrollment, student in roster_rows:
+        if enrollment.cohort_id in roster_by_cohort:
+            roster_by_cohort[enrollment.cohort_id].append(
+                {"enrollment": enrollment, "person": student}
+            )
+    cohort_rows = [
+        {"cohort": cohort, "roster": roster_by_cohort.get(cohort.id, [])}
+        for cohort in rows
+    ]
     return templates.TemplateResponse(
-        "instructor/cohorts.html", {"request": request, "cohorts": rows}
+        "instructor/cohorts.html",
+        {"request": request, "cohorts": rows, "cohort_rows": cohort_rows},
     )
 
 
@@ -86,6 +113,55 @@ def _split_emails(*fields: str) -> list[str]:
     return out
 
 
+def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
+    return "admin" in role_slugs(db, tenant_id, person_id)
+
+
+def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
+    rows = db.scalars(
+        select(CourseOffering.course_id)
+        .join(
+            Enrollment,
+            (Enrollment.cohort_id == CourseOffering.cohort_id)
+            & (Enrollment.tenant_id == CourseOffering.tenant_id),
+        )
+        .where(CourseOffering.tenant_id == tenant_id)
+        .where(CourseOffering.status == "active")
+        .where(Enrollment.person_id == instructor_id)
+        .where(Enrollment.role_in_cohort == "instructor")
+        .where(Enrollment.status == "active")
+    ).all()
+    return set(rows)
+
+
+def _authorable_courses(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[Course]:
+    stmt = select(Course).where(Course.tenant_id == tenant_id).order_by(Course.title)
+    if _is_admin(db, tenant_id, person_id):
+        return list(db.scalars(stmt).all())
+    assigned_ids = _assigned_course_ids(db, tenant_id=tenant_id, instructor_id=person_id)
+    if not assigned_ids:
+        return []
+    return list(db.scalars(stmt.where(Course.id.in_(assigned_ids))).all())
+
+
+def _authorable_course_or_404(
+    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
+) -> Course:
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    if _is_admin(db, tenant_id, person_id):
+        return course
+    assigned_ids = _assigned_course_ids(db, tenant_id=tenant_id, instructor_id=person_id)
+    if course.id not in assigned_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return course
+
+
+
+
 @router.post("/cohorts/{cohort_id}/enroll")
 def enroll_student(
     cohort_id: UUID,
@@ -103,7 +179,10 @@ def enroll_student(
         emails=_split_emails(emails, email),
     )
     enrolled = len(result["enrolled"]) + len(result["reactivated"])
+    already_active = len(result["already_active"])
     summary = f"Enrolled {enrolled}."
+    if already_active:
+        summary += f" Already active: {already_active}."
     if result["not_found"]:
         summary += " Unknown (not enrolled): " + ", ".join(_e(e) for e in result["not_found"]) + "."
     if request.headers.get("HX-Request"):
@@ -144,11 +223,31 @@ def invite_to_cohort(
     person, token = invite_user(db, tenant_id=tenant.id, email=email,
                                 first_name=first_name, last_name=last_name, role="student")
     bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email])
-    link = f"/accept-invite?token={token}"
+    link = str(request.url_for("accept_form").include_query_params(token=token))
     link_e = _e(link)
+    sent = send_email(
+        person.email,
+        "You're invited to Dotmac Academy",
+        (
+            f"<p>Hi {_e(person.first_name)},</p>"
+            f"<p>You have been invited to Dotmac Academy.</p>"
+            f"<p><a href=\"{link_e}\">Set up your account</a></p>"
+            f"<p>If the button does not work, open this link: {link_e}</p>"
+        ),
+        text_body=(
+            f"Hi {person.first_name},\n\n"
+            f"You have been invited to Dotmac Academy.\n\n"
+            f"Set up your account: {link}\n"
+        ),
+        db=db,
+    )
+    status = "Invite email sent." if sent else "Invite created. Email was not sent; use the activation link below."
     return HTMLResponse(
-        f'<div class="invite-summary" role="status">Invited {_e(person.email)}. '
-        f'Activation link: <a href="{link_e}">{link_e}</a></div>'
+        f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+        f'<p class="font-semibold">{_e(status)}</p>'
+        f'<p>Student: {_e(person.email)}</p>'
+        f'<p>Activation link: <a class="underline" href="{link_e}">{link_e}</a></p>'
+        f'</div>'
     )
 
 
@@ -173,16 +272,35 @@ def change_account_status(
     return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.get("/courses", response_class=HTMLResponse)
+def author_courses_list(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Instructor content management scoped to assigned courses."""
+    tenant = require_tenant(request)
+    is_admin = _is_admin(db, tenant.id, person.id)
+    courses = _authorable_courses(db, tenant_id=tenant.id, person_id=person.id)
+    return templates.TemplateResponse(
+        "instructor/courses.html",
+        {"request": request, "courses": courses, "is_admin": is_admin},
+    )
+
+
 @router.post("/courses")
 def author_create_course(
     request: Request,
     slug: str = Form(...),
     title: str = Form(...),
     discipline: str = Form(...),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Create a new draft course in-app (finding #8)."""
+    """Create a new draft course in-app. Admin-only because assignment is admin-owned."""
     tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can create courses")
     course = create_course(db, tenant_id=tenant.id, slug=slug, title=title, discipline=discipline)
     target = f"/instructor/courses/{course.id}/edit"
     if request.headers.get("HX-Request"):
@@ -193,21 +311,113 @@ def author_create_course(
 
 
 @router.get("/courses/{course_id}/edit", response_class=HTMLResponse)
-def author_course_page(course_id: UUID, request: Request, db: Session = Depends(get_db)):
-    """Markdown authoring page: existing chapters + an add/edit form (finding #8)."""
+def author_course_page(
+    course_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Authoring page for an assigned course."""
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
-    ).first()
-    if course is None:
-        raise HTTPException(status_code=404)
+    course = _authorable_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
+    )
     chapters = db.scalars(
         select(Chapter).where(Chapter.tenant_id == tenant.id)
         .where(Chapter.course_id == course_id).order_by(Chapter.number)
     ).all()
+    chapter_rows = [
+        {"chapter": chapter, "source": editable_chapter_source(chapter)}
+        for chapter in chapters
+    ]
     return templates.TemplateResponse(
         "instructor/authoring.html",
-        {"request": request, "course": course, "chapters": chapters},
+        {"request": request, "course": course, "chapters": chapter_rows},
+    )
+
+
+@router.get("/courses/{course_id}/preview", response_class=HTMLResponse)
+def preview_course(
+    course_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only instructor preview for an assigned course."""
+    tenant = require_tenant(request)
+    course = _authorable_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
+    )
+    chapters = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .order_by(Chapter.number)
+    ).all()
+    chapter = chapters[0] if chapters else None
+    return _preview_course_response(request, db, tenant.id, course, chapters, chapter)
+
+
+@router.get("/courses/{course_id}/preview/chapters/{chapter_number}", response_class=HTMLResponse)
+def preview_course_chapter(
+    course_id: UUID,
+    chapter_number: int,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only instructor preview for one chapter in an assigned course."""
+    tenant = require_tenant(request)
+    course = _authorable_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
+    )
+    chapters = db.scalars(
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .order_by(Chapter.number)
+    ).all()
+    chapter = next((row for row in chapters if row.number == chapter_number), None)
+    if chapter is None:
+        raise HTTPException(status_code=404)
+    return _preview_course_response(request, db, tenant.id, course, chapters, chapter)
+
+
+def _preview_course_response(
+    request: Request,
+    db: Session,
+    tenant_id: UUID,
+    course: Course,
+    chapters: list[Chapter],
+    chapter: Chapter | None,
+) -> HTMLResponse:
+    activity = None
+    reading_minutes = 0
+    previous_chapter = None
+    next_chapter = None
+    if chapter is not None:
+        activity = db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant_id)
+            .where(Activity.course_id == course.id)
+            .where(Activity.chapter_number == chapter.number)
+        ).first()
+        words = len(re.sub(r"<[^>]+>", " ", chapter.body_html or "").split())
+        reading_minutes = max(1, round(words / 200))
+        previous_chapter = next((row for row in reversed(chapters) if row.number < chapter.number), None)
+        next_chapter = next((row for row in chapters if row.number > chapter.number), None)
+    return templates.TemplateResponse(
+        "instructor/course_preview.html",
+        {
+            "request": request,
+            "course": course,
+            "chapters": chapters,
+            "chapter": chapter,
+            "activity": activity,
+            "reading_minutes": reading_minutes,
+            "previous_chapter": previous_chapter,
+            "next_chapter": next_chapter,
+        },
     )
 
 
@@ -219,12 +429,34 @@ def author_upsert_chapter(
     title: str = Form(...),
     body_md: str = Form(...),
     part: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Create or update a chapter from markdown (finding #8)."""
+    """Create or update a chapter for an assigned course."""
     tenant = require_tenant(request)
+    _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     upsert_chapter(db, tenant_id=tenant.id, course_id=course_id, number=number,
                    title=title, body_md=body_md, part=part)
+    target = f"/instructor/courses/{course_id}/edit"
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = target
+        return resp
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/courses/{course_id}/chapters/{chapter_id}/delete")
+def author_delete_chapter(
+    course_id: UUID,
+    chapter_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a chapter from an assigned course."""
+    tenant = require_tenant(request)
+    _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    delete_chapter(db, tenant_id=tenant.id, course_id=course_id, chapter_id=chapter_id)
     target = f"/instructor/courses/{course_id}/edit"
     if request.headers.get("HX-Request"):
         resp: Response = Response(status_code=200)
@@ -238,23 +470,23 @@ def set_course_status(
     course_id: UUID,
     request: Request,
     status_value: str = Form(...),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Publish or unpublish a course (finding #8). Draft courses are hidden from learners."""
+    """Set lifecycle status for an assigned course."""
     tenant = require_tenant(request)
-    if status_value not in ("draft", "published"):
+    if status_value not in ("draft", "published", "completed"):
         raise HTTPException(status_code=400, detail="invalid status")
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
-    ).first()
-    if course is None:
-        raise HTTPException(status_code=404)
+    course = _authorable_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
+    )
     course.status = status_value
+    target = f"/instructor/courses/{course_id}/edit"
     if request.headers.get("HX-Request"):
         resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/cohorts"
+        resp.headers["HX-Redirect"] = target
         return resp
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/results", response_class=HTMLResponse)

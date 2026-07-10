@@ -16,13 +16,14 @@ on POST means "keep the existing value".
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_platform_db, require_tenant
+from app.config import settings
 from app.models.person import Person
-from app.services.email import send_email
+from app.services.email import send_email_detailed
 from app.services.settings_store import effective, set_many
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
@@ -70,6 +71,9 @@ def settings_save(
     platform_db: Session = Depends(get_platform_db),
 ):
     """Upsert settings via a platform_api session. Blank password keeps existing."""
+    smtp_from = (smtp_from or "").strip()
+    if smtp_user and smtp_from in {"", settings.smtp_from, "Dotmac Academy <academy@localhost>"}:
+        smtp_from = smtp_user.strip()
     values: dict[str, str | None] = {
         "smtp_host": smtp_host,
         "smtp_port": smtp_port,
@@ -88,12 +92,14 @@ def settings_save(
         values["smtp_password"] = smtp_password
 
     set_many(platform_db, values)
-    # get_platform_db commits after the response is returned.
+    platform_db.commit()
+    cfg = effective(platform_db)
 
     if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/admin/settings"
-        return resp
+        return templates.TemplateResponse(
+            "admin/_settings_save_result.html",
+            {"request": request, "cfg": cfg, "saved": True},
+        )
     return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -111,7 +117,7 @@ def settings_test_email(
             "admin/_test_email_result.html",
             {"request": request, "sent": False, "to": to, "unconfigured": True},
         )
-    sent = send_email(
+    result = send_email_detailed(
         to,
         "Dotmac Academy — test email",
         "<p>This is a test email from your Dotmac Academy settings page.</p>",
@@ -120,5 +126,11 @@ def settings_test_email(
     )
     return templates.TemplateResponse(
         "admin/_test_email_result.html",
-        {"request": request, "sent": sent, "to": to, "unconfigured": False},
+        {
+            "request": request,
+            "sent": result.sent,
+            "to": to,
+            "unconfigured": False,
+            "error": result.error,
+        },
     )

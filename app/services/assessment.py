@@ -26,12 +26,24 @@ def _questions_for(db: Session, tenant_id, bank_id, only_ext_ids=None) -> list[d
 
 def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict,
                     only_ext_ids: list | None = None) -> Score | None:
-    """Record a submission. Auto-grades and returns the Score, or returns None for
-    manual-grading activities (the submission then waits in the grading queue).
+    """Record a submission and persist only the first score for the activity.
 
-    ``only_ext_ids`` (a randomized attempt's question subset) restricts grading to
+    Retakes are still stored as Submission rows so the app knows the test was
+    taken again, but later attempts do not create replacement Score rows. The
+    originally recorded score remains the one used by progress, gradebook, and
+    reports.
+
+    only_ext_ids (a randomized attempt's question subset) restricts grading to
     exactly those questions; None grades the whole bank.
     """
+    existing_score = db.scalars(
+        select(Score)
+        .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
+        .where(Submission.tenant_id == tenant_id)
+        .where(Submission.activity_id == activity.id)
+        .where(Submission.person_id == person_id)
+        .order_by(Submission.attempt_no, Score.created_at)
+    ).first()
     qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
@@ -40,6 +52,8 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
                      answers=answers, attempt_no=int(prev or 0) + 1)
     db.add(sub); db.flush()
+    if existing_score is not None:
+        return existing_score
     if activity.grading == "manual":
         return None  # awaits instructor grading (no auto Score)
     r = grade_submission(answers, qs, activity.pass_threshold)
@@ -47,7 +61,7 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
     db.add(score); db.flush()
     _recompute_completion(db, tenant_id, person_id, activity.course_id)
-    # Auto-on-pass notification — best effort, must never break grading.
+    # Auto-on-pass notification: best effort, must never break grading.
     try:
         from app.services.email import notify_score_if_first_pass
         person = db.get(Person, person_id)
@@ -55,7 +69,6 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score
-
 
 def _recompute_completion(db: Session, tenant_id, person_id, course_id) -> None:
     """Update the learner's course completion after a score write (best effort)."""
@@ -104,13 +117,12 @@ def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUI
         .where(Activity.tenant_id == tenant_id)
         .where(Activity.course_id == course_id)
         .where(Submission.person_id == person_id)
+        .order_by(Activity.id, Submission.attempt_no, Score.created_at)
     ).all()
-    best: dict = {}
+    first: dict = {}
     for activity_id, score in rows:
-        cur = best.get(activity_id)
-        if cur is None or score.fraction > cur.fraction:
-            best[activity_id] = score
-    return best
+        first.setdefault(activity_id, score)
+    return first
 
 
 def override_score(db: Session, *, tenant_id, submission_id, score_value, max_score, reason) -> Score:

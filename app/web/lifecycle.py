@@ -38,8 +38,21 @@ def _page(title: str, body: str) -> HTMLResponse:
         f"<title>{title}</title><link rel=stylesheet href='/static/app.css?v=2'>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
         f"<body class='min-h-screen bg-sand-100 text-ink'>"
-        f"<main class='mx-auto max-w-sm px-6 py-16'><h1 class='font-display text-2xl mb-4'>{title}</h1>"
-        f"{body}</main>{_CSRF_JS}</body></html>"
+        f"<main class='mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12'>"
+        f"<a href='/login' class='mb-8 text-sm font-semibold text-brand-700'>Dotmac Academy</a>"
+        f"<section class='card p-6'><h1 class='font-display text-2xl mb-4'>{title}</h1>"
+        f"{body}</section></main>{_CSRF_JS}</body></html>"
+    )
+
+
+def _result_panel(title: str, message: str, *, ok: bool = True) -> str:
+    tone = "bg-brand-100 text-brand-800" if ok else "bg-clay-500/15 text-clay-600"
+    return (
+        f"<div id='activation-panel' class='rounded-lg {tone} p-4'>"
+        f"<p class='font-semibold'>{title}</p>"
+        f"<p class='mt-1 text-sm'>{message}</p>"
+        f"</div>"
+        "<a class='btn-primary mt-5 inline-flex w-full justify-center' href='/login'>Go to login</a>"
     )
 
 
@@ -75,12 +88,14 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
 @router.get("/reset")
 def reset_form(request: Request, token: str = ""):
     return _page("Choose a new password",
-        f"<form hx-post='/reset' hx-target='#msg' hx-swap='innerHTML' class='space-y-4'>"
+        f"<div id='activation-panel'>"
+        f"<form method='post' action='/reset' hx-post='/reset' "
+        f"hx-target='#activation-panel' hx-swap='outerHTML' class='space-y-4'>"
         f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
         f"<input name='password' type='password' required minlength='8' "
         f"placeholder='New password (min 8 chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Set password</button></form>"
-        f"<div id='msg' class='mt-4 text-sm' role='status'></div>")
+        f"</div>")
 
 
 @router.post("/reset")
@@ -90,8 +105,14 @@ def reset_submit(request: Request, token: str = Form(...), password: str = Form(
     try:
         lifecycle.reset_password(db, tenant_id=tenant.id, raw=token, new_password=password)
     except BadRequestError as exc:
-        return HTMLResponse(f"<span class='text-clay-600'>{escape(str(exc))}</span>", status_code=400)
-    return HTMLResponse("Password updated. <a href='/login'>Sign in</a>.")
+        body = _result_panel("Password was not changed", escape(str(exc)), ok=False)
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(body, status_code=400)
+        return _page("Choose a new password", body)
+    body = _result_panel("Password updated", "You can now sign in with your new password.")
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(body)
+    return _page("Password updated", body)
 
 
 # ── Accept invitation ─────────────────────────────────────────────────────────
@@ -99,12 +120,14 @@ def reset_submit(request: Request, token: str = Form(...), password: str = Form(
 @router.get("/accept-invite")
 def accept_form(request: Request, token: str = ""):
     return _page("Set up your account",
-        f"<form hx-post='/accept-invite' hx-target='#msg' hx-swap='innerHTML' class='space-y-4'>"
+        f"<div id='activation-panel'>"
+        f"<form method='post' action='/accept-invite' hx-post='/accept-invite' "
+        f"hx-target='#activation-panel' hx-swap='outerHTML' class='space-y-4'>"
         f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
         f"<input name='password' type='password' required minlength='8' "
         f"placeholder='Choose a password (min 8 chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Activate account</button></form>"
-        f"<div id='msg' class='mt-4 text-sm' role='status'></div>")
+        f"</div>")
 
 
 @router.post("/accept-invite")
@@ -114,5 +137,11 @@ def accept_submit(request: Request, token: str = Form(...), password: str = Form
     try:
         lifecycle.accept_invite(db, tenant_id=tenant.id, raw=token, password=password)
     except (BadRequestError, ConflictError) as exc:
-        return HTMLResponse(f"<span class='text-clay-600'>{escape(str(exc))}</span>", status_code=400)
-    return HTMLResponse("Account activated. <a href='/login'>Sign in</a>.")
+        body = _result_panel("Account was not activated", escape(str(exc)), ok=False)
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(body, status_code=400)
+        return _page("Set up your account", body)
+    body = _result_panel("Account activated", "Your password has been saved. You can now sign in.")
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(body)
+    return _page("Account activated", body)

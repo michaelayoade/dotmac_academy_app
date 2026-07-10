@@ -8,6 +8,7 @@ score write; ``completed_at`` is stamped once, the first time pct reaches 1.0.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -16,7 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity
 from app.models.completion import CourseCompletion
+from app.models.course import Course
 from app.services.assessment import best_scores_for
+
+logger = logging.getLogger(__name__)
 
 
 def recompute_completion(
@@ -44,6 +48,7 @@ def recompute_completion(
         rec = CourseCompletion(tenant_id=tenant_id, person_id=person_id, course_id=course_id)
         db.add(rec)
 
+    first_completion = is_complete and rec.completed_at is None
     rec.pct = pct
     if is_complete:
         rec.status = "completed"
@@ -53,4 +58,23 @@ def recompute_completion(
         rec.status = "in_progress"
         rec.completed_at = None
     db.flush()
+    if first_completion:
+        try:
+            from app.services.notifications import notify
+
+            course = db.scalars(
+                select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
+            ).first()
+            course_title = course.title if course is not None else "the course"
+            notify(
+                db,
+                tenant_id=tenant_id,
+                person_id=person_id,
+                kind="course_completed",
+                title="Well done, course completed",
+                body=f"Congratulations on completing {course_title}.",
+                link=f"/certificates/{course_id}",
+            )
+        except Exception as exc:
+            logger.warning("course completion notification failed: %s", exc)
     return rec

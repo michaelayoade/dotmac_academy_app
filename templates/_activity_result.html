@@ -23,4 +23,18 @@
     </li>
   {% endfor %}
   </ul>
+  {% if course and course_completion and course_completion.status == "completed" %}
+  <div class="border-t border-sand-200 bg-brand-100 px-5 py-5">
+    <p class="text-lg font-semibold text-brand-900">Well done, you completed {{ course.title }}.</p>
+    <p class="mt-1 text-sm text-brand-900/80">Congratulations. Your certificate is ready to download.</p>
+    <div class="mt-4 flex flex-wrap gap-3">
+      <a class="btn-primary" href="/certificates/{{ course.id }}">Download certificate</a>
+      <a class="btn-ghost bg-white/80" href="/courses/{{ course.slug }}">Back to course</a>
+    </div>
+  </div>
+  {% elif course and next_chapter %}
+  <div class="border-t border-sand-200 bg-white px-5 py-4">
+    <a class="btn-primary" href="/courses/{{ course.slug }}/chapters/{{ next_chapter.number }}">Continue to Chapter {{ next_chapter.number }} <span aria-hidden="true">&rarr;</span></a>
+  </div>
+  {% endif %}
 </div>
