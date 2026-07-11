@@ -41,3 +41,10 @@ static/figures/
 
 # User-uploaded avatars (runtime data, not source)
 static/avatars/
+
+# Prod-local secrets / data — must never be committed (rescued 2026-07-11)
+.pgsecret.env
+.tenant-admin-pw
+*-admin-pw
+enrolled_students_progress.csv
+*_progress.csv
