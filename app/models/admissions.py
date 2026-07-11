@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -91,3 +91,7 @@ class Applicant(Base, TimestampMixin):
     assessment_taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # HMAC of the self-serve entrance-exam access token (the raw is emailed once).
     assessment_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Timed sitting: stamped when the exam is first opened; flagged if a submit
+    # arrives past the cohort's time limit (+grace).
+    assessment_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assessment_time_exceeded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")

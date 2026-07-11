@@ -129,9 +129,18 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
         return _notice(request, "Link not valid", "This assessment link is invalid or has expired.")
     if applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
+    timing = entrance_exam.start_exam(db, applicant=applicant)
+    if timing["expired"]:
+        return _notice(request, "Time is up", "Your entrance-assessment time has expired.")
     return templates.TemplateResponse(
         "apply_assessment.html",
-        {"request": request, "token": token, "questions": _exam_questions(db, tenant.id, applicant), "notice": None},
+        {
+            "request": request,
+            "token": token,
+            "questions": _exam_questions(db, tenant.id, applicant),
+            "remaining_seconds": timing["remaining_seconds"],
+            "notice": None,
+        },
     )
 
 

@@ -21,8 +21,15 @@
       </div>
       {% else %}
       <p class="mt-2 text-sm text-ink-soft">
-        Answer each question as best you can. You have one attempt — take your time, and choose the single best answer.
+        Answer each question as best you can. You have one attempt — choose the single best answer.
       </p>
+      {% if remaining_seconds is not none %}
+      <div id="exam-timer" data-remaining="{{ remaining_seconds }}"
+           class="sticky top-2 z-10 mt-4 rounded-lg bg-sand-200 px-4 py-2 text-sm font-semibold text-ink">
+        Time remaining: <span id="timer-display" class="font-mono tabular-nums">--:--</span>
+        <span class="font-normal text-ink-soft">— the assessment submits automatically when time runs out.</span>
+      </div>
+      {% endif %}
       <div id="exam-result">
         <form hx-post="/apply/assessment" hx-target="#exam-result" hx-swap="outerHTML" class="mt-6 space-y-6">
           <input type="hidden" name="token" value="{{ token }}">
@@ -53,6 +60,31 @@
       var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
       if (m) { evt.detail.headers['x-csrf-token'] = m[1]; }
     });
+
+    // Countdown: server-seeded remaining seconds (survives a re-open). At zero,
+    // auto-submit whatever's answered — noValidate so partial answers go through.
+    (function () {
+      var el = document.getElementById('exam-timer');
+      if (!el) return;
+      var remaining = parseInt(el.getAttribute('data-remaining'), 10) || 0;
+      var display = document.getElementById('timer-display');
+      var form = document.querySelector('#exam-result form');
+      function render() {
+        var m = Math.floor(remaining / 60), s = remaining % 60;
+        display.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+      }
+      render();
+      var iv = setInterval(function () {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(iv);
+          display.textContent = '0:00';
+          if (form) { form.noValidate = true; form.requestSubmit(); }
+          return;
+        }
+        render();
+      }, 1000);
+    })();
   </script>
 </body>
 </html>

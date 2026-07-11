@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,8 @@ class Cohort(Base, TimestampMixin):
     delivery_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="self_paced")
     # QuestionBank used as this cohort's entrance assessment (null = none configured).
     entrance_bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    # Per-sitting time limit for this cohort's entrance exam (null = untimed).
+    entrance_time_limit_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Enrollment(Base, TimestampMixin):
