@@ -34,8 +34,8 @@ from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
 from app.services.dashboards import cohort_overview
-from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.email import send_email
+from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
