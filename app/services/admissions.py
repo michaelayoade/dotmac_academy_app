@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.admissions import APPLICANT_STATUSES, Applicant
 from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
+from app.services import onboarding
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)
@@ -131,6 +132,9 @@ def transition_applicant(
     if notes:
         applicant.notes = notes
     db.flush()
+    # Entering onboarding seeds the checklist the applicant must clear to enrol.
+    if to_status == "onboarding":
+        onboarding.seed_tasks(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
     return applicant
 
 
@@ -153,6 +157,8 @@ def enroll_applicant(
         raise BadRequestError(
             f"Applicant must be in 'onboarding' to enrol (is '{applicant.status}')."
         )
+    if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
+        raise BadRequestError("Applicant has outstanding onboarding tasks and cannot enrol yet.")
 
     cohort = db.get(Cohort, cohort_id)
     if cohort is None:  # missing or hidden by RLS

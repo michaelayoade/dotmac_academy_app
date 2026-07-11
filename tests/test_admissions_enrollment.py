@@ -35,9 +35,28 @@ def _cohort(admin_session, tenant, name="Fiber intake"):
     return c
 
 
+def _clear_onboarding(client, auth, app_id):
+    """Mark every onboarding task done via the API.
+
+    The GET sets a csrf_token cookie; once cookies exist the CSRF middleware
+    enforces the double-submit on POSTs, so we echo the token. Clearing cookies
+    afterwards keeps the rest of the (Bearer-auth) API flow cookie-free.
+    """
+    tasks = client.get(f"/admissions/{app_id}/onboarding", headers=auth).json()
+    csrf = client.cookies.get("csrf_token", "")
+    for t in tasks:
+        client.post(
+            f"/admissions/onboarding-tasks/{t['id']}",
+            json={"status": "done"},
+            headers={**auth, "x-csrf-token": csrf},
+        )
+    client.cookies.clear()
+
+
 def _to_onboarding(client, auth, app_id):
     for nxt in ("screened", "accepted", "onboarding"):
         client.post(f"/admissions/{app_id}/transition", json={"to_status": nxt}, headers=auth)
+    _clear_onboarding(client, auth, app_id)
 
 
 def test_enroll_creates_person_and_enrollment(app_client, tenant_a, admin_session):
@@ -99,6 +118,23 @@ def test_enroll_requires_onboarding_status(app_client, tenant_a, admin_session):
     # still 'applied' — enrol must fail
     r = a.post(f"/admissions/{app_id}/enroll", json={"cohort_id": str(cohort.id)}, headers=auth)
     assert r.status_code == 400
+
+
+def test_enroll_blocked_by_incomplete_onboarding(app_client, tenant_a, admin_session):
+    a = client_for(app_client, tenant_a.slug)
+    auth = _admin(app_client, tenant_a.slug)
+    cohort = _cohort(admin_session, tenant_a)
+    app_id = a.post(
+        "/admissions/apply", json={"email": "wip@a.ex", "first_name": "W", "last_name": "P"}
+    ).json()["id"]
+    # Reach onboarding but leave the checklist unfinished.
+    for nxt in ("screened", "accepted", "onboarding"):
+        a.post(f"/admissions/{app_id}/transition", json={"to_status": nxt}, headers=auth)
+    tasks = a.get(f"/admissions/{app_id}/onboarding", headers=auth).json()
+    assert len(tasks) >= 1 and all(t["status"] == "pending" for t in tasks)
+    a.cookies.clear()  # keep the enrol POST cookie-free (Bearer API, no CSRF)
+    r = a.post(f"/admissions/{app_id}/enroll", json={"cohort_id": str(cohort.id)}, headers=auth)
+    assert r.status_code == 400  # outstanding onboarding tasks
 
 
 def test_enroll_reuses_existing_person(app_client, tenant_a, admin_session):

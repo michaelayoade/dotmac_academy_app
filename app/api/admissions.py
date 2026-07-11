@@ -7,7 +7,7 @@ like ``POST /auth/register``. Everything else is admin-only.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role, require_tenant
 from app.models.admissions import Applicant
+from app.models.onboarding import OnboardingTask
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
+from app.services import onboarding as onboarding_service
 
 router = APIRouter(
     prefix="/admissions",
@@ -56,6 +58,20 @@ class ApplicantTransition(BaseModel):
 
 class ApplicantEnroll(BaseModel):
     cohort_id: UUID
+
+
+class OnboardingTaskRead(BaseModel):
+    id: UUID
+    key: str
+    label: str
+    order_index: int
+    status: str
+    completed_at: datetime | None = None
+    model_config = {"from_attributes": True}
+
+
+class OnboardingTaskUpdate(BaseModel):
+    status: str = Field(min_length=1, max_length=10)
 
 
 @router.post("/apply", response_model=ApplicantRead, status_code=status.HTTP_201_CREATED)
@@ -122,3 +138,25 @@ def enroll_applicant(
     return admissions_service.enroll_applicant(
         db, applicant_id=applicant_id, cohort_id=payload.cohort_id
     )
+
+
+@router.get("/{applicant_id}/onboarding", response_model=list[OnboardingTaskRead])
+def list_onboarding_tasks(
+    applicant_id: UUID,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    _: Person = Depends(require_role("admin")),
+) -> list[OnboardingTask]:
+    """The applicant's onboarding checklist, ordered."""
+    return onboarding_service.list_tasks(db, tenant_id=tenant.id, applicant_id=applicant_id)
+
+
+@router.post("/onboarding-tasks/{task_id}", response_model=OnboardingTaskRead)
+def update_onboarding_task(
+    task_id: UUID,
+    payload: OnboardingTaskUpdate,
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_role("admin")),
+) -> object:
+    """Mark an onboarding task done (or back to pending)."""
+    return onboarding_service.set_task_status(db, task_id=task_id, status=payload.status)
