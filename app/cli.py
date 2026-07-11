@@ -324,6 +324,22 @@ def _erp_training_sync(args: argparse.Namespace) -> None:
     print(f"erp-training-sync: pushed {pushed} completion(s)")
 
 
+def _set_entrance_bank(args: argparse.Namespace) -> None:
+    """Designate a cohort's entrance-assessment question bank (opens it for intake)."""
+    import uuid
+
+    from app.models.cohort import Cohort
+    from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        cohort = db.get(Cohort, uuid.UUID(args.cohort_id))
+        if cohort is None:
+            raise SystemExit(f"Cohort {args.cohort_id} not found.")
+        cohort.entrance_bank_id = uuid.UUID(args.bank_id)
+        db.commit()
+        print(f"cohort '{cohort.name}' entrance bank set to {args.bank_id}")
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     from app.config import settings
     from app.services import lab_jobs
@@ -528,6 +544,11 @@ def main() -> None:
 
     ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
     ets.set_defaults(func=_erp_training_sync)
+
+    seb = sub.add_parser("set-entrance-bank", help="Designate a cohort's entrance-assessment bank")
+    seb.add_argument("--cohort-id", required=True)
+    seb.add_argument("--bank-id", required=True)
+    seb.set_defaults(func=_set_entrance_bank)
 
     args = p.parse_args()
     args.func(args)
