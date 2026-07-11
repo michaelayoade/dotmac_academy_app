@@ -40,7 +40,8 @@
               {% for opt in q.options %}
               <label class="flex items-start gap-2.5 text-sm">
                 <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}"
-                       class="mt-0.5" {% if q.type != 'multi' %}required{% endif %}>
+                       class="mt-0.5" {% if q.type != 'multi' %}required{% endif %}
+                       {% if opt in (saved.get(q.ext_id) or []) %}checked{% endif %}>
                 <span>{{ opt }}</span>
               </label>
               {% endfor %}
@@ -60,6 +61,34 @@
       var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
       if (m) { evt.detail.headers['x-csrf-token'] = m[1]; }
     });
+
+    // Autosave: persist each answer as it's chosen, so a dropped connection (or a
+    // dead battery, or a closed tab) doesn't cost the candidate their one sitting.
+    // The page re-opens with these answers pre-filled and the clock still running.
+    // Fire-and-forget: a failed autosave must never interrupt the exam.
+    (function () {
+      var form = document.querySelector('#exam-result form');
+      if (!form) return;
+      var pending = null;
+      function save() {
+        try {
+          var body = new FormData(form);
+          var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+          fetch('/apply/assessment/save', {
+            method: 'POST',
+            body: body,
+            headers: m ? { 'x-csrf-token': m[1] } : {},
+            keepalive: true          // still sent if the tab is closing
+          }).catch(function () { /* offline — the next change retries */ });
+        } catch (e) { /* never block the candidate */ }
+      }
+      form.addEventListener('change', function () {
+        clearTimeout(pending);
+        pending = setTimeout(save, 800);   // debounce rapid clicking
+      });
+      // Best-effort flush if they navigate away or lose the tab.
+      window.addEventListener('pagehide', save);
+    })();
 
     // Countdown: server-seeded remaining seconds (survives a re-open). At zero,
     // auto-submit whatever's answered — noValidate so partial answers go through.

@@ -102,11 +102,18 @@ def list_applicants(
     status: str | None = None,
     cohort_id: UUID | None = None,
     rank_by_score: bool = False,
+    include_invalid: bool = False,
 ) -> list[Applicant]:
     """List applicants (RLS scopes to the current tenant).
 
     ``cohort_id`` filters to one intake's candidates; ``rank_by_score`` orders
     by entrance-assessment score (best first, un-assessed last) for selection.
+
+    When ranking, sittings that failed the validity gate (``assessment_valid`` is
+    false — near-chance score, or submitted too fast to have engaged) are EXCLUDED
+    by default. Those carry no signal: ranking them would seat, or reject, people
+    on the strength of random clicking. Pass ``include_invalid=True`` to see them
+    anyway (e.g. to review who needs a reset).
     """
     stmt = select(Applicant)
     if status is not None:
@@ -116,6 +123,8 @@ def list_applicants(
     if cohort_id is not None:
         stmt = stmt.where(Applicant.cohort_id == cohort_id)
     if rank_by_score:
+        if not include_invalid:
+            stmt = stmt.where(Applicant.assessment_valid.is_not(False))
         stmt = stmt.order_by(Applicant.assessment_score.desc().nullslast(), Applicant.created_at.desc())
     else:
         stmt = stmt.order_by(Applicant.applied_on.desc(), Applicant.created_at.desc())
@@ -178,9 +187,7 @@ def enroll_applicant(
     """
     applicant = get_applicant(db, applicant_id=applicant_id)
     if applicant.status != "onboarding":
-        raise BadRequestError(
-            f"Applicant must be in 'onboarding' to enrol (is '{applicant.status}')."
-        )
+        raise BadRequestError(f"Applicant must be in 'onboarding' to enrol (is '{applicant.status}').")
     if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
         raise BadRequestError("Applicant has outstanding onboarding tasks and cannot enrol yet.")
 
