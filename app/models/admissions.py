@@ -114,3 +114,47 @@ class Applicant(Base, TimestampMixin):
     # Audit: how many times an admin reset this sitting (the recovery path for a
     # dropped connection / interrupted exam).
     assessment_reset_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    # Deadline model: the exam link stays valid until this moment, so a candidate
+    # can pick their own good-connectivity time rather than being pinned to a slot.
+    assessment_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the tokenised invitation was emailed (the exam link used to be shown
+    # once on-screen and then lost forever — this is the durable copy).
+    invite_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- the evaluable application profile -------------------------------
+    # Name/email/phone alone cannot be assessed. These are what an admissions
+    # decision actually rests on, alongside the entrance-exam profile.
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    state: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    highest_qualification: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    field_of_study: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    years_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    has_device: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    has_internet: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    can_work_at_height: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    available_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    heard_from: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    cv_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Fields an admissions decision cannot sensibly be made without.
+    REQUIRED_PROFILE = (
+        "date_of_birth",
+        "state",
+        "city",
+        "highest_qualification",
+        "years_experience",
+        "has_device",
+        "has_internet",
+    )
+
+    @property
+    def profile_complete(self) -> bool:
+        """True when every field needed to evaluate this candidate is present."""
+        return all(getattr(self, f) is not None for f in self.REQUIRED_PROFILE)
+
+    @property
+    def missing_profile_fields(self) -> list[str]:
+        return [f for f in self.REQUIRED_PROFILE if getattr(self, f) is None]

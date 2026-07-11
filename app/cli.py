@@ -370,6 +370,71 @@ def _set_default_entrance_bank(args: argparse.Namespace) -> None:
         )
 
 
+def _invite_applicants(args: argparse.Namespace) -> None:
+    """Email the entrance-assessment invitation to applicants who haven't sat it.
+
+    This is the backfill for every applicant who applied before the invitation
+    email existed — they were shown the link once on-screen (or never), so they
+    have no way to reach the exam. Also the recovery path for a bounced email.
+
+    Idempotent-ish: re-inviting mints a fresh token and a fresh deadline, which
+    invalidates any older link for that applicant.
+    """
+    from sqlalchemy import select
+
+    from app.models.admissions import Applicant
+    from app.models.tenant import Tenant
+    from app.services import entrance_exam, lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+
+        stmt = (
+            select(Applicant)
+            .where(Applicant.tenant_id == tenant.id)
+            .where(Applicant.assessment_taken_at.is_(None))  # never sat it
+        )
+        if args.cohort_id:
+            import uuid
+
+            stmt = stmt.where(Applicant.cohort_id == uuid.UUID(args.cohort_id))
+        if not args.resend:
+            stmt = stmt.where(Applicant.invite_sent_at.is_(None))  # not already invited
+        if args.email:
+            stmt = stmt.where(Applicant.email == args.email)
+        targets = list(db.scalars(stmt).all())
+
+        print(f"{len(targets)} applicant(s) to invite (deadline {args.deadline_days} days, base {args.base_url})")
+        if args.dry_run:
+            for a in targets[:20]:
+                print(f"  DRY-RUN would email {a.email}")
+            if len(targets) > 20:
+                print(f"  ... and {len(targets) - 20} more")
+            print("\nDRY RUN — no tokens minted, no email sent.")
+            return
+
+        sent = failed = skipped = 0
+        for a in targets:
+            if not entrance_exam.has_entrance_exam(db, applicant=a):
+                skipped += 1
+                continue
+            res = entrance_exam.invite(db, applicant=a, base_url=args.base_url, deadline_days=args.deadline_days)
+            if res["emailed"]:
+                sent += 1
+            else:
+                failed += 1
+                print(f"  !! email FAILED for {a.email} (token minted; link still valid)")
+        db.commit()
+        print(f"\ninvited: {sent}   email failed: {failed}   no exam configured: {skipped}")
+        if failed:
+            print(
+                "NOTE: failures mean SMTP rejected/was unconfigured. The tokens ARE valid — "
+                "re-run once mail is working, or hand the link out another way."
+            )
+
+
 def _reset_entrance_exam(args: argparse.Namespace) -> None:
     """Reopen an applicant's entrance sitting and mint a fresh exam link.
 
@@ -684,6 +749,25 @@ def main() -> None:
         "--time-limit-minutes", type=int, default=None, help="Per-sitting time limit (0 or omit = untimed)"
     )
     sdb.set_defaults(func=_set_default_entrance_bank)
+
+    inv = sub.add_parser(
+        "invite-applicants",
+        help="Email the entrance-assessment invitation to applicants who haven't sat it",
+    )
+    inv.add_argument("--tenant-slug", required=True)
+    inv.add_argument(
+        "--base-url", default="https://academy.dotmac.io", help="Public base URL used to build the exam link"
+    )
+    inv.add_argument("--deadline-days", type=int, default=7, help="Days the link stays valid (default 7)")
+    inv.add_argument("--cohort-id", default=None, help="Limit to one intake")
+    inv.add_argument("--email", default=None, help="Just this one applicant (use to test first)")
+    inv.add_argument(
+        "--resend",
+        action="store_true",
+        help="Also re-invite applicants already emailed (mints a NEW token, killing the old link)",
+    )
+    inv.add_argument("--dry-run", action="store_true")
+    inv.set_defaults(func=_invite_applicants)
 
     rex = sub.add_parser(
         "reset-entrance-exam",

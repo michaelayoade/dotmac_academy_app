@@ -37,6 +37,29 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
+# Profile fields the application form may supply. Only these are accepted from a
+# public form, so a crafted POST cannot write arbitrary columns.
+PROFILE_FIELDS = (
+    "date_of_birth", "state", "city", "highest_qualification", "field_of_study",
+    "years_experience", "current_role", "has_device", "has_internet",
+    "can_work_at_height", "available_from", "heard_from", "cv_url",
+)
+
+
+def _apply_profile(applicant: Applicant, profile: dict | None) -> None:
+    """Copy supplied profile fields onto the applicant.
+
+    A field the candidate left blank must never wipe one they already gave, so
+    None is skipped rather than written.
+    """
+    if not profile:
+        return
+    for f in PROFILE_FIELDS:
+        v = profile.get(f)
+        if v is not None:
+            setattr(applicant, f, v)
+
+
 def submit_application(
     db: Session,
     *,
@@ -50,6 +73,7 @@ def submit_application(
     source: str = "website",
     external_ref: str | None = None,
     applied_on: date | None = None,
+    profile: dict | None = None,
 ) -> Applicant:
     """Create (or refresh) an application. Idempotent on (tenant, email).
 
@@ -71,6 +95,7 @@ def submit_application(
             existing.cohort_id = cohort_id
         if external_ref and not existing.external_ref:
             existing.external_ref = external_ref
+        _apply_profile(existing, profile)
         db.flush()
         return existing
 
@@ -87,6 +112,7 @@ def submit_application(
         external_ref=external_ref,
         applied_on=applied_on or date.today(),
     )
+    _apply_profile(applicant, profile)
     db.add(applicant)
     try:
         db.flush()
