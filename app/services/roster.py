@@ -13,9 +13,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.cohort import Cohort, Enrollment
+from app.models.cohort import Enrollment
 from app.models.person import Person
 from app.services.exceptions import NotFoundError
+from app.services.lookups import cohort_or_404
 
 ROSTER_STATES = frozenset({"active", "waitlisted", "dropped"})
 
@@ -29,22 +30,13 @@ def _normalize_emails(emails) -> list[str]:
     return list(seen)
 
 
-def _cohort_or_404(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)
-    ).first()
-    if cohort is None:
-        raise NotFoundError("cohort not found for tenant")
-    return cohort
-
-
 def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails) -> dict:
     """Enroll each email's person into the cohort as an active student.
 
     Returns {"enrolled", "reactivated", "already_active", "not_found"} lists of
     emails. Unknown emails are reported, never silently dropped.
     """
-    _cohort_or_404(db, tenant_id, cohort_id)
+    cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
     result: dict[str, list[str]] = {
         "enrolled": [], "reactivated": [], "already_active": [], "not_found": [],
     }

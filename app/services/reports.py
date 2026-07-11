@@ -18,20 +18,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.cohort import Cohort, Enrollment
+from app.models.cohort import Enrollment
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.assessment import best_scores_for
 from app.services.exceptions import NotFoundError
-
-
-def _cohort_or_404(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)
-    ).first()
-    if cohort is None:
-        raise NotFoundError("cohort not found for tenant")
-    return cohort
+from app.services.lookups import cohort_or_404
 
 
 def _cohort_activities(db: Session, tenant_id: UUID, cohort_id: UUID) -> tuple[list[Activity], list[UUID]]:
@@ -72,7 +64,7 @@ def cohort_matrix(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> dict:
     {"person_id", "name", "email", "cells": {activity_id: Score|None}, "completion": float}.
     completion = (# activities with a passing best score) / (# activities).
     """
-    cohort = _cohort_or_404(db, tenant_id, cohort_id)
+    cohort = cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
     activities, course_ids = _cohort_activities(db, tenant_id, cohort_id)
     total = len(activities)
 

@@ -37,9 +37,11 @@ from app.services.dashboards import cohort_overview
 from app.services.email import send_email
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lifecycle import invite_user, set_account_status
+from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.web_auth import require_web_role, require_web_user
+from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(
@@ -100,12 +102,7 @@ def create_cohort(
     tenant = require_tenant(request)
     db.add(Cohort(tenant_id=tenant.id, name=name, discipline=discipline, status="active"))
     # No db.commit() here — get_db commits after the response is returned.
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/cohorts"
-        return resp
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/cohorts")
 
 
 def _split_emails(*fields: str) -> list[str]:
@@ -205,11 +202,7 @@ def change_roster_state(
     """Drop / waitlist / reactivate a roster member (finding #6)."""
     tenant = require_tenant(request)
     set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/cohorts"
-        return resp
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/cohorts")
 
 
 @router.post("/cohorts/{cohort_id}/invite")
@@ -266,20 +259,11 @@ def _parse_dt(value: str | None) -> datetime | None:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
-def _cohort_or_404(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)
-    ).first()
-    if cohort is None:
-        raise HTTPException(status_code=404)
-    return cohort
-
-
 @router.get("/cohorts/{cohort_id}/timetable", response_class=HTMLResponse)
 def cohort_timetable(cohort_id: UUID, request: Request, db: Session = Depends(get_db)):
     """A cohort's class-session timetable, with add/cancel controls."""
     tenant = require_tenant(request)
-    cohort = _cohort_or_404(db, tenant.id, cohort_id)
+    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     sessions = scheduling.list_for_cohort(db, cohort_id=cohort_id)
     return templates.TemplateResponse(
         "instructor/timetable.html",
@@ -307,7 +291,7 @@ def create_class_session(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _cohort_or_404(db, tenant.id, cohort_id)
+    cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     starts = _parse_dt(starts_at)
     if starts is None:
         raise HTTPException(status_code=400, detail="A start time is required.")
@@ -347,7 +331,7 @@ def set_cohort_delivery_mode(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _cohort_or_404(db, tenant.id, cohort_id)
+    cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     try:
         scheduling.set_delivery_mode(db, cohort_id=cohort_id, mode=mode)
     except BadRequestError as exc:
@@ -357,11 +341,7 @@ def set_cohort_delivery_mode(
 
 def _timetable_redirect(request: Request, cohort_id: UUID) -> Response:
     target = f"/instructor/cohorts/{cohort_id}/timetable"
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = target
-        return resp
-    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, target)
 
 
 @router.post("/people/{person_id}/status", dependencies=[Depends(require_web_role("admin"))])
@@ -378,11 +358,7 @@ def change_account_status(
     """
     tenant = require_tenant(request)
     set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/cohorts"
-        return resp
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/cohorts")
 
 
 @router.get("/courses", response_class=HTMLResponse)
@@ -416,11 +392,7 @@ def author_create_course(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can create courses")
     course = create_course(db, tenant_id=tenant.id, slug=slug, title=title, discipline=discipline)
     target = f"/instructor/courses/{course.id}/edit"
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = target
-        return resp
-    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, target)
 
 
 @router.get("/courses/{course_id}/edit", response_class=HTMLResponse)
@@ -551,11 +523,7 @@ def author_upsert_chapter(
     upsert_chapter(db, tenant_id=tenant.id, course_id=course_id, number=number,
                    title=title, body_md=body_md, part=part)
     target = f"/instructor/courses/{course_id}/edit"
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = target
-        return resp
-    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, target)
 
 
 @router.post("/courses/{course_id}/chapters/{chapter_id}/delete")
@@ -571,11 +539,7 @@ def author_delete_chapter(
     _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     delete_chapter(db, tenant_id=tenant.id, course_id=course_id, chapter_id=chapter_id)
     target = f"/instructor/courses/{course_id}/edit"
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = target
-        return resp
-    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, target)
 
 
 @router.post("/courses/{course_id}/status")
@@ -595,11 +559,7 @@ def set_course_status(
     )
     course.status = status_value
     target = f"/instructor/courses/{course_id}/edit"
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = target
-        return resp
-    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, target)
 
 
 @router.get("/results", response_class=HTMLResponse)
@@ -686,12 +646,7 @@ def override(
         max_score=max_score,
         reason=reason,
     )
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/results"
-        return resp
-    return RedirectResponse("/instructor/results", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/results")
 
 
 @router.get("/announcements", response_class=HTMLResponse)
@@ -736,12 +691,7 @@ def announcements_create(
         body_md=body_md,
         cohort_id=cid,
     )
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/announcements"
-        return resp
-    return RedirectResponse("/instructor/announcements", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/announcements")
 
 
 @router.post("/announcements/{announcement_id}/delete")
@@ -752,9 +702,4 @@ def announcement_delete(
 ):
     tenant = require_tenant(request)
     ann_svc.delete(db, tenant_id=tenant.id, announcement_id=announcement_id)
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/announcements"
-        return resp
-    return RedirectResponse("/instructor/announcements", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/announcements")
