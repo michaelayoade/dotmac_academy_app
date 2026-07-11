@@ -346,6 +346,30 @@ def _set_entrance_bank(args: argparse.Namespace) -> None:
         )
 
 
+def _set_default_entrance_bank(args: argparse.Namespace) -> None:
+    """Set the academy-wide default entrance bank — every applicant sits it."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+        tenant.default_entrance_bank_id = uuid.UUID(args.bank_id)
+        if args.time_limit_minutes is not None:
+            tenant.default_entrance_time_limit_minutes = args.time_limit_minutes or None
+        db.commit()
+        limit = tenant.default_entrance_time_limit_minutes
+        print(
+            f"academy '{tenant.slug}' default entrance bank set to {args.bank_id}"
+            + (f" (time limit {limit} min)" if limit else " (untimed)")
+        )
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     from app.config import settings
     from app.services import lab_jobs
@@ -557,6 +581,14 @@ def main() -> None:
     seb.add_argument("--time-limit-minutes", type=int, default=None,
                      help="Per-sitting time limit (0 or omit = untimed)")
     seb.set_defaults(func=_set_entrance_bank)
+
+    sdb = sub.add_parser("set-default-entrance-bank",
+                         help="Academy-wide default entrance bank (all applicants sit it)")
+    sdb.add_argument("--tenant-slug", required=True)
+    sdb.add_argument("--bank-id", required=True)
+    sdb.add_argument("--time-limit-minutes", type=int, default=None,
+                     help="Per-sitting time limit (0 or omit = untimed)")
+    sdb.set_defaults(func=_set_default_entrance_bank)
 
     args = p.parse_args()
     args.func(args)
