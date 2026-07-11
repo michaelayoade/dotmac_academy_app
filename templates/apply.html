@@ -43,6 +43,18 @@
             <input id="phone" name="phone" type="tel" maxlength="40"
                    class="w-full px-3.5 py-2.5 text-[0.95rem]">
           </div>
+          {% if cohorts %}
+          <div>
+            <label for="cohort_id" class="mb-1.5 block text-sm font-semibold text-ink">Which intake are you applying to?</label>
+            <select id="cohort_id" name="cohort_id" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
+              <option value="" disabled selected>Choose an intake…</option>
+              {% for c in cohorts %}
+              <option value="{{ c.id }}">{{ c.name }}{% if c.discipline %} — {{ c.discipline }}{% endif %}</option>
+              {% endfor %}
+            </select>
+            <p class="mt-1.5 text-xs text-ink-soft">You'll take a short entrance assessment right after applying.</p>
+          </div>
+          {% endif %}
           <input type="hidden" name="program" value="Fiber Academy">
           <button type="submit" class="btn-primary w-full py-2.5 text-[0.95rem]">Submit application</button>
         </form>

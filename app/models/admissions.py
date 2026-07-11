@@ -89,3 +89,5 @@ class Applicant(Base, TimestampMixin):
     assessment_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     assessment_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     assessment_taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # HMAC of the self-serve entrance-exam access token (the raw is emailed once).
+    assessment_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)

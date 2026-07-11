@@ -9,6 +9,7 @@ all run on.
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
+from app.services.security import hash_token
 
 # Overall-fraction → level band. Ordered low→high; tune the floors as needed.
 LEVELS: tuple[tuple[str, float], ...] = (("beginner", 0.0), ("intermediate", 0.4), ("advanced", 0.7))
@@ -32,6 +34,28 @@ def level_for(fraction: float) -> str:
         if fraction >= floor:
             band = name
     return band
+
+
+def issue_token(db: Session, *, applicant: Applicant) -> str:
+    """Mint a self-serve access token for the applicant's entrance exam.
+
+    Returns the raw token (deliver once, e.g. by email); only its hash is stored.
+    """
+    raw = secrets.token_urlsafe(32)
+    applicant.assessment_token_hash = hash_token(raw)
+    db.flush()
+    return raw
+
+
+def applicant_for_token(db: Session, *, tenant_id: UUID, raw: str) -> Applicant | None:
+    """Resolve the applicant holding this access token (tenant-scoped by RLS)."""
+    if not raw:
+        return None
+    return db.scalars(
+        select(Applicant)
+        .where(Applicant.tenant_id == tenant_id)
+        .where(Applicant.assessment_token_hash == hash_token(raw))
+    ).first()
 
 
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:

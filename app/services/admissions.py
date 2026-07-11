@@ -46,6 +46,7 @@ def submit_application(
     last_name: str,
     phone: str | None = None,
     program: str | None = None,
+    cohort_id: UUID | None = None,
     source: str = "website",
     external_ref: str | None = None,
     applied_on: date | None = None,
@@ -66,6 +67,8 @@ def submit_application(
             existing.phone = phone.strip()
         if program:
             existing.program = program.strip()
+        if cohort_id is not None:
+            existing.cohort_id = cohort_id
         if external_ref and not existing.external_ref:
             existing.external_ref = external_ref
         db.flush()
@@ -78,6 +81,7 @@ def submit_application(
         last_name=last_name.strip(),
         phone=phone.strip() if phone else None,
         program=program.strip() if program else None,
+        cohort_id=cohort_id,
         status="applied",
         source=source,
         external_ref=external_ref,
