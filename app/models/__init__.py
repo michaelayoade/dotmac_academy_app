@@ -11,6 +11,7 @@ from app.models.course import Chapter, Course  # noqa: F401
 from app.models.lab import LabInstance, LabTemplate  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.offering import CourseOffering  # noqa: F401
+from app.models.onboarding import OnboardingTask  # noqa: F401
 from app.models.pacing import OfferingActivity  # noqa: F401
 from app.models.prerequisite import CoursePrerequisite  # noqa: F401
 from app.models.reading import ChapterRead  # noqa: F401

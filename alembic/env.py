@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401  (register models for autogenerate)
     class_session,
     cohort,
     course,
+    onboarding,
     person,
     rbac,
     tenant,
