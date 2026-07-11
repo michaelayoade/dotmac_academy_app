@@ -26,24 +26,18 @@ def _questions_for(db: Session, tenant_id, bank_id, only_ext_ids=None) -> list[d
 
 def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, answers: dict,
                     only_ext_ids: list | None = None) -> Score | None:
-    """Record a submission and persist only the first score for the activity.
+    """Grade a submission. Every auto-graded attempt is scored (best-of policy).
 
-    Retakes are still stored as Submission rows so the app knows the test was
-    taken again, but later attempts do not create replacement Score rows. The
-    originally recorded score remains the one used by progress, gradebook, and
-    reports.
+    Each attempt is a Submission; for auto-graded activities each attempt also
+    gets its own Score, and the *score of record* is the best attempt (see
+    ``best_scores_for``). A weak first attempt therefore no longer locks a
+    learner out — retakes can improve the recorded score, bounded by
+    ``activity.max_attempts`` (enforced at the web layer). Manual-graded
+    activities record the Submission and await instructor grading (no auto Score).
 
     only_ext_ids (a randomized attempt's question subset) restricts grading to
     exactly those questions; None grades the whole bank.
     """
-    existing_score = db.scalars(
-        select(Score)
-        .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
-        .where(Submission.tenant_id == tenant_id)
-        .where(Submission.activity_id == activity.id)
-        .where(Submission.person_id == person_id)
-        .order_by(Submission.attempt_no, Score.created_at)
-    ).first()
     qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
@@ -52,8 +46,6 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
                      answers=answers, attempt_no=int(prev or 0) + 1)
     db.add(sub); db.flush()
-    if existing_score is not None:
-        return existing_score
     if activity.grading == "manual":
         return None  # awaits instructor grading (no auto Score)
     r = grade_submission(answers, qs, activity.pass_threshold)
@@ -109,7 +101,34 @@ def attempts_used(db: Session, *, tenant_id, person_id, activity_id) -> int:
     ) or 0)
 
 
+def reveal_feedback(activity: Activity, *, passed: bool, attempts_used: int) -> bool:
+    """Whether to show per-question feedback (correct/incorrect, explanations,
+    expected answers) for this activity, given the learner's current state.
+
+    - practice: always (formative — learning first)
+    - graded:   once the learner passes or has used all their attempts
+    - exam:     never (score + pass/fail only)
+
+    Withholding the answer key on graded/exam assessments stops a learner from
+    failing once, reading the key, and acing the retake.
+    """
+    mode = activity.assessment_mode
+    if mode == "practice":
+        return True
+    if mode == "exam":
+        return False
+    # graded
+    exhausted = activity.max_attempts is not None and attempts_used >= activity.max_attempts
+    return passed or exhausted
+
+
 def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUID, Score]:
+    """The score of record per activity: the best attempt (highest fraction).
+
+    Ties prefer a passing score, then a manual override, then the most recent —
+    so passing is sticky (a later failing retake can't un-pass you) and an
+    instructor override wins over an auto score of equal fraction.
+    """
     rows = db.execute(
         select(Activity.id, Score)
         .join(Submission, (Submission.activity_id == Activity.id) & (Submission.tenant_id == Activity.tenant_id))
@@ -119,10 +138,17 @@ def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUI
         .where(Submission.person_id == person_id)
         .order_by(Activity.id, Submission.attempt_no, Score.created_at)
     ).all()
-    first: dict = {}
+
+    def _rank(score: Score) -> tuple:
+        # Higher is better: fraction, then passed, then override, then recency.
+        return (score.fraction, score.passed, score.source == "override", score.created_at)
+
+    best: dict[UUID, Score] = {}
     for activity_id, score in rows:
-        first.setdefault(activity_id, score)
-    return first
+        current = best.get(activity_id)
+        if current is None or _rank(score) > _rank(current):
+            best[activity_id] = score
+    return best
 
 
 def override_score(db: Session, *, tenant_id, submission_id, score_value, max_score, reason) -> Score:

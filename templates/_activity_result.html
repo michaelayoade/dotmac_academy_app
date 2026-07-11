@@ -7,6 +7,7 @@
     {% endif %}
     <span class="flex items-baseline gap-1.5 text-sm text-ink-soft"><span class="text-xs font-semibold uppercase tracking-[0.16em]">Score</span><span class="font-mono tabular-nums text-ink">{{ score.score }}/{{ score.max_score }} ({{ "%.0f"|format(score.fraction*100) }}%)</span></span>
   </div>
+  {% if reveal %}
   <ul class="divide-y divide-sand-200">
   {% for item in score.per_item %}
     <li class="flex items-start gap-3 px-5 py-3.5">
@@ -23,6 +24,11 @@
     </li>
   {% endfor %}
   </ul>
+  {% else %}
+  <div class="px-5 py-4 text-sm text-ink-soft">
+    Per-question answers are held back until you pass or use all your attempts, so retakes stay fair. Your score is shown above.
+  </div>
+  {% endif %}
   {% if course and course_completion and course_completion.status == "completed" %}
   <div class="border-t border-sand-200 bg-brand-100 px-5 py-5">
     <p class="text-lg font-semibold text-brand-900">Well done, you completed {{ course.title }}.</p>
