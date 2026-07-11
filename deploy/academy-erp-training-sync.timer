@@ -1,0 +1,10 @@
+[Unit]
+Description=Push Dotmac Academy course completions to ERP HR hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=academy-erp-training-sync.service
+
+[Install]
+WantedBy=timers.target
