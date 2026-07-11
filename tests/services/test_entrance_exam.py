@@ -404,3 +404,100 @@ def test_options_shuffle_per_applicant_but_are_stable(admin_session, tenant_a):
     assert sorted(entrance_exam.options_for(a1, q)) == sorted(q.options)
     assert sorted(entrance_exam.options_for(a2, q)) == sorted(q.options)
     admin_session.rollback()
+
+
+# --- the applicant flow: invitation, deadline, evaluable profile ------------
+# /apply used to send NO email and render the exam link once on-screen. Close the
+# tab and the token was gone forever — which is how 180 applicants produced zero
+# sittings. These cover the wiring that fixes it.
+
+
+def test_invite_mints_a_working_link_and_sets_a_deadline(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+
+    res = entrance_exam.invite(
+        admin_session, applicant=applicant, base_url="https://academy.example",
+        deadline_days=7, send=False,          # don't touch SMTP in a test
+    )
+
+    assert res["url"].startswith("https://academy.example/apply/assessment?token=")
+    assert applicant.assessment_deadline is not None
+    # the SAME token backs the emailed link and the on-screen one
+    found = entrance_exam.applicant_for_token(admin_session, tenant_id=tenant_a.id, raw=res["token"])
+    assert found.id == applicant.id
+    admin_session.rollback()
+
+
+def test_past_deadline_closes_the_exam(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    assert entrance_exam.past_deadline(applicant) is False        # no deadline = open
+
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(hours=1)
+    assert entrance_exam.past_deadline(applicant) is True
+
+    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=3)
+    assert entrance_exam.past_deadline(applicant) is False
+    admin_session.rollback()
+
+
+def test_reset_clears_the_deadline_so_a_reinvite_reopens_it(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    entrance_exam.invite(admin_session, applicant=applicant,
+                         base_url="https://x.example", send=False)
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(days=1)   # they missed it
+
+    entrance_exam.reset_exam(admin_session, applicant=applicant)
+
+    assert applicant.assessment_deadline is None
+    assert entrance_exam.past_deadline(applicant) is False        # reopened
+    admin_session.rollback()
+
+
+def test_profile_completeness_is_reported(admin_session, tenant_a):
+    from datetime import date as _date
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+
+    assert applicant.profile_complete is False
+    assert "date_of_birth" in applicant.missing_profile_fields   # can't evaluate this yet
+
+    applicant.date_of_birth = _date(1998, 5, 1)
+    applicant.state = "Lagos"
+    applicant.city = "Ikeja"
+    applicant.highest_qualification = "OND"
+    applicant.years_experience = 2
+    applicant.has_device = True
+    applicant.has_internet = True
+    admin_session.flush()
+
+    assert applicant.profile_complete is True
+    assert applicant.missing_profile_fields == []
+    admin_session.rollback()
+
+
+def test_reapplying_blank_does_not_wipe_a_supplied_profile(admin_session, tenant_a):
+    from datetime import date as _date
+    from app.services import admissions as adm
+
+    a = adm.submit_application(
+        admin_session, tenant_id=tenant_a.id, email=f"p{uuid.uuid4().hex[:6]}@x.ex",
+        first_name="A", last_name="B",
+        profile={"state": "Lagos", "years_experience": 3, "date_of_birth": _date(1997, 1, 1)},
+    )
+    assert a.state == "Lagos" and a.years_experience == 3
+
+    # they re-apply and leave the optional fields blank — that must not erase what
+    # they already told us
+    again = adm.submit_application(
+        admin_session, tenant_id=tenant_a.id, email=a.email,
+        first_name="A", last_name="B",
+        profile={"state": None, "years_experience": None, "city": "Ikeja"},
+    )
+    assert again.id == a.id
+    assert again.state == "Lagos"          # preserved
+    assert again.years_experience == 3     # preserved
+    assert again.city == "Ikeja"           # newly supplied
+    admin_session.rollback()
