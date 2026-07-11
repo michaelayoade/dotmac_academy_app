@@ -15,6 +15,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role, require_tenant
+from app.models.admissions import Applicant
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
@@ -81,7 +82,7 @@ def list_applicants(
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: Person = Depends(require_role("admin")),
-) -> list[object]:
+) -> list[Applicant]:
     return admissions_service.list_applicants(db, status=status)
 
 
