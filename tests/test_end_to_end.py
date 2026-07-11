@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from app.models.assessment import Activity
@@ -20,6 +21,13 @@ from app.services.content_import import import_foundation
 
 ACADEMY = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation")
 FIGS = Path("/home/dotmac/projects/dotmac-academy/figures/final")
+
+# This smoke test reads authored Foundation manuals from a fixed local path that
+# only exists on an author's machine — skip cleanly where the content isn't present
+# (CI, fresh clones) rather than fail on a missing directory.
+pytestmark = pytest.mark.skipif(
+    not ACADEMY.exists(), reason="Foundation manuals not present in this checkout"
+)
 
 # ─── Part A: lint only ────────────────────────────────────────────────────────
 

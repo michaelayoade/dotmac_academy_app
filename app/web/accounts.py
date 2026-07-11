@@ -298,11 +298,12 @@ def users_invite(
             role=role,
         )
     except ConflictError:
-        invited = db.scalars(
+        found = db.scalars(
             select(Person).where(Person.tenant_id == tenant.id).where(Person.email == normalized_email)
         ).first()
-        if invited is None:
+        if found is None:
             return _html_error("A user with this email already exists")
+        invited = found
         existing_user = True
         _ensure_person_role(db, tenant_id=tenant.id, person_id=invited.id, role=role)
         credential = db.scalars(

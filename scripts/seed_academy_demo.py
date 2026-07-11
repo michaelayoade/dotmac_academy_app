@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -17,9 +19,8 @@ from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 
-
 ADMIN_EMAIL = "admin@dotmac.io"
-ADMIN_PASSWORD = "OoH9YPABpCqlGxvk"
+ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "changeme-dev-only")
 TENANT_SLUG = "dotmac"
 DISCIPLINE = "networking"
 
@@ -428,8 +429,8 @@ topology:
         print(f"Admin: {ADMIN_EMAIL}")
         print(f"Cohort: {cohort.name} ({cohort.id})")
         print(f"Course: {course.title} / {course.slug} ({course.id})")
-        print(f"Assessment: Chapter 1 Mixed Form Assessment")
-        print(f"Lab: Verify Gateway Reachability")
+        print("Assessment: Chapter 1 Mixed Form Assessment")
+        print("Lab: Verify Gateway Reachability")
     except Exception:
         db.rollback()
         raise

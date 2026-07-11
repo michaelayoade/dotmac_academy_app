@@ -12,6 +12,7 @@ after the response is built. A mid-handler commit would clear that GUC and break
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from html import escape
 from uuid import UUID
 
@@ -388,7 +389,7 @@ def _preview_course_response(
     db: Session,
     tenant_id: UUID,
     course: Course,
-    chapters: list[Chapter],
+    chapters: Sequence[Chapter],
     chapter: Chapter | None,
 ) -> HTMLResponse:
     activity = None

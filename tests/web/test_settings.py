@@ -105,8 +105,13 @@ def test_test_email_invokes_send_email(app_client, admin_session, tenant_a, monk
     admin_session.commit()
     calls = []
     import app.web.settings as settings_web
-    monkeypatch.setattr(settings_web, "send_email",
-                        lambda *a, **k: calls.append(k.get("db") is not None) or True)
+    from app.services.email import EmailResult
+
+    def _fake_send(*a, **k):
+        calls.append(k.get("db") is not None)
+        return EmailResult(True, None)
+
+    monkeypatch.setattr(settings_web, "send_email_detailed", _fake_send)
 
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
     app_client.get("/admin/settings", headers=h)
