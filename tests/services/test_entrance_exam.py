@@ -223,3 +223,117 @@ def test_cohort_bank_overrides_tenant_default(admin_session, tenant_a):
     admin_session.flush()
     assert entrance_exam.resolve_bank_id(admin_session, applicant=applicant) == cohort_bank.id
     admin_session.rollback()
+
+
+# --- validity gate ---------------------------------------------------------
+# A sitting that fails these carries NO SIGNAL. It is an absence of data, not a
+# weak candidate — scoring it as real pollutes the ranking and the talent pool.
+
+
+def test_near_chance_score_is_flagged_invalid(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=20)
+    # 1 of 4 = 0.25, at the guessing baseline for a 4-option MCQ
+    result = entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"], "q2": ["B"], "q3": ["B"], "q4": ["B"]},
+    )
+    assert result["valid"] is False
+    assert result["invalid_reason"] == entrance_exam.INVALID_NEAR_CHANCE
+    assert applicant.assessment_valid is False
+    admin_session.rollback()
+
+
+def test_too_fast_submission_is_flagged_invalid(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(seconds=30)  # click-through
+    result = entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},  # a good score...
+    )
+    assert result["valid"] is False                                   # ...but nobody engaged in 30s
+    assert result["invalid_reason"] == entrance_exam.INVALID_TOO_FAST
+    admin_session.rollback()
+
+
+def test_genuine_sitting_is_valid(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=18)
+    result = entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]},
+    )
+    assert result["valid"] is True
+    assert result["invalid_reason"] is None
+    admin_session.rollback()
+
+
+# --- autosave / resume / reset --------------------------------------------
+# The drop-recovery path: without these, a network blip costs a good candidate
+# their one attempt, permanently.
+
+
+def test_autosave_survives_and_prefills_a_resumed_sitting(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["A"], "q2": []})
+    assert applicant.assessment_answers == {"q1": ["A"]}      # empties dropped
+    # ...connection dies, candidate re-opens: the saved answer is still there
+    entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["A"], "q3": ["B"]})
+    assert applicant.assessment_answers == {"q1": ["A"], "q3": ["B"]}
+    admin_session.rollback()
+
+
+def test_autosave_is_ignored_after_grading(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=15)
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]},
+    )
+    entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["B"]})
+    assert applicant.assessment_answers is None               # a graded sitting is closed
+    admin_session.rollback()
+
+
+def test_reset_reopens_a_lost_sitting(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    # candidate opened it, the clock ran down, they never got to submit
+    entrance_exam.start_exam(admin_session, applicant=applicant)
+    entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["A"]})
+    assert applicant.assessment_started_at is not None
+
+    raw = entrance_exam.reset_exam(admin_session, applicant=applicant)
+
+    assert applicant.assessment_started_at is None            # clock reset
+    assert applicant.assessment_answers is None
+    assert applicant.assessment_taken_at is None              # they can sit it again
+    assert applicant.assessment_reset_count == 1              # audited
+    assert entrance_exam.applicant_for_token(
+        admin_session, tenant_id=tenant_a.id, raw=raw
+    ).id == applicant.id                                       # fresh link works
+    admin_session.rollback()
+
+
+# --- option shuffling (anti-leak) -----------------------------------------
+
+
+def test_options_shuffle_per_applicant_but_are_stable(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    cohort = _cohort(admin_session, tenant_a, bank)
+    a1 = _applicant(admin_session, tenant_a, cohort)
+    a2 = _applicant(admin_session, tenant_a, cohort)
+    q = admin_session.query(Question).filter(Question.bank_id == bank.id).first()
+
+    # stable for the same applicant — a reload/resume must not reorder the options,
+    # or autosaved answers would line up against the wrong ones
+    assert entrance_exam.options_for(a1, q) == entrance_exam.options_for(a1, q)
+    # and every option survives the shuffle
+    assert sorted(entrance_exam.options_for(a1, q)) == sorted(q.options)
+    assert sorted(entrance_exam.options_for(a2, q)) == sorted(q.options)
+    admin_session.rollback()
