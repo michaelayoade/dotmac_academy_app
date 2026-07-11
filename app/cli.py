@@ -22,18 +22,10 @@ import argparse
 import time
 from pathlib import Path
 
-_DEFAULT_CHAPTERS_DIR = Path(
-    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters"
-)
-_DEFAULT_FIGURES_DIR = Path(
-    "/home/dotmac/projects/dotmac-academy/figures/final"
-)
-_DEFAULT_BANKS_DIR = Path(
-    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/assessments/banks"
-)
-_DEFAULT_LABS_DIR = Path(
-    "/home/dotmac/projects/dotmac-academy/manuals/00-foundation/labs"
-)
+_DEFAULT_CHAPTERS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters")
+_DEFAULT_FIGURES_DIR = Path("/home/dotmac/projects/dotmac-academy/figures/final")
+_DEFAULT_BANKS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/assessments/banks")
+_DEFAULT_LABS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/labs")
 
 
 def _bootstrap(args: argparse.Namespace) -> None:
@@ -149,11 +141,7 @@ def _load_banks(args: argparse.Namespace) -> None:
                 continue
 
             # Resolve the course by slug within this tenant
-            course = (
-                db.query(Course)
-                .filter(Course.tenant_id == tenant.id, Course.slug == doc.course)
-                .first()
-            )
+            course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == doc.course).first()
             if course is None:
                 print(f"SKIP {yaml_path.name}: course '{doc.course}' not found for tenant '{args.tenant_slug}'")
                 continue
@@ -212,11 +200,7 @@ def _import_labs(args: argparse.Namespace) -> None:
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
 
-        course = (
-            db.query(Course)
-            .filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug)
-            .first()
-        )
+        course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
             raise SystemExit(
                 f"Course '{args.course_slug}' not found for tenant '{args.tenant_slug}'. "
@@ -237,10 +221,7 @@ def _import_labs(args: argparse.Namespace) -> None:
         db.commit()
         for t in templates:
             print(f"lab '{t.slug}' -> activity {t.activity_id} v{t.version}")
-        print(
-            f"Done — {len(templates)} lab(s) imported for course '{course.slug}' "
-            f"and tenant '{args.tenant_slug}'."
-        )
+        print(f"Done — {len(templates)} lab(s) imported for course '{course.slug}' and tenant '{args.tenant_slug}'.")
     finally:
         db.close()
 
@@ -269,17 +250,14 @@ def _email_digest(args: argparse.Namespace) -> None:
             return
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
-            cohorts = db.scalars(
-                select(Cohort).where(Cohort.tenant_id == tenant.id)
-            ).all()
+            cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
             for cohort in cohorts:
                 matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort.id)
                 instructors = db.scalars(
                     select(Person)
                     .join(
                         Enrollment,
-                        (Enrollment.person_id == Person.id)
-                        & (Enrollment.tenant_id == Person.tenant_id),
+                        (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id),
                     )
                     .where(Enrollment.tenant_id == tenant.id)
                     .where(Enrollment.cohort_id == cohort.id)
@@ -296,6 +274,34 @@ def _email_digest(args: argparse.Namespace) -> None:
                     ):
                         sent += 1
     print(f"email-digest: sent {sent} message(s)")
+
+
+def _at_risk_sweep(args: argparse.Namespace) -> None:
+    """Cross-tenant: nudge students who are behind/overdue (in-app notification).
+
+    BYPASSRLS admin session like the digest; deduped so re-runs don't spam.
+    """
+    from sqlalchemy import select
+
+    from app.models.cohort import Enrollment
+    from app.models.tenant import Tenant
+    from app.services import at_risk, lab_jobs
+
+    sent = 0
+    with lab_jobs.admin_session() as db:
+        for tenant in db.scalars(select(Tenant)).all():
+            student_ids = set(
+                db.scalars(
+                    select(Enrollment.person_id)
+                    .where(Enrollment.tenant_id == tenant.id)
+                    .where(Enrollment.role_in_cohort == "student")
+                    .where(Enrollment.status == "active")
+                ).all()
+            )
+            for pid in student_ids:
+                sent += at_risk.notify_person_if_at_risk(db, tenant_id=tenant.id, person_id=pid)
+        db.commit()
+    print(f"at-risk-sweep: sent {sent} nudge(s)")
 
 
 def _lab_worker(args: argparse.Namespace) -> None:
@@ -394,11 +400,15 @@ def main() -> None:
     im.add_argument("--discipline", default="networking", help="Discipline tag (default: networking)")
     im.add_argument("--source-ref", default=None, help="Provenance string (default: <slug>@0.1.0)")
     im.add_argument(
-        "--chapters-dir", type=Path, required=True,
+        "--chapters-dir",
+        type=Path,
+        required=True,
         help="Directory containing chapter-*.md files",
     )
     im.add_argument(
-        "--figures-dir", type=Path, default=_DEFAULT_FIGURES_DIR,
+        "--figures-dir",
+        type=Path,
+        default=_DEFAULT_FIGURES_DIR,
         help="Directory containing produced figure PNG files",
     )
     im.add_argument(
@@ -492,6 +502,9 @@ def main() -> None:
         ),
     )
     ed.set_defaults(func=_email_digest)
+
+    ar = sub.add_parser("at-risk-sweep", help="Nudge students who are behind/overdue")
+    ar.set_defaults(func=_at_risk_sweep)
 
     args = p.parse_args()
     args.func(args)
