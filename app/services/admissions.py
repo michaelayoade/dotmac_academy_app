@@ -96,14 +96,29 @@ def submit_application(
     return applicant
 
 
-def list_applicants(db: Session, *, status: str | None = None) -> list[Applicant]:
-    """List applicants (RLS scopes to the current tenant), newest first."""
+def list_applicants(
+    db: Session,
+    *,
+    status: str | None = None,
+    cohort_id: UUID | None = None,
+    rank_by_score: bool = False,
+) -> list[Applicant]:
+    """List applicants (RLS scopes to the current tenant).
+
+    ``cohort_id`` filters to one intake's candidates; ``rank_by_score`` orders
+    by entrance-assessment score (best first, un-assessed last) for selection.
+    """
     stmt = select(Applicant)
     if status is not None:
         if status not in VALID_STATUSES:
             raise BadRequestError(f"Unknown status: {status}")
         stmt = stmt.where(Applicant.status == status)
-    stmt = stmt.order_by(Applicant.applied_on.desc(), Applicant.created_at.desc())
+    if cohort_id is not None:
+        stmt = stmt.where(Applicant.cohort_id == cohort_id)
+    if rank_by_score:
+        stmt = stmt.order_by(Applicant.assessment_score.desc().nullslast(), Applicant.created_at.desc())
+    else:
+        stmt = stmt.order_by(Applicant.applied_on.desc(), Applicant.created_at.desc())
     return list(db.scalars(stmt).all())
 
 

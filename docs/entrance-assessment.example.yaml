@@ -1,0 +1,61 @@
+# Entrance-assessment bank — FORMAT REFERENCE for the content team.
+#
+# Same YAML shape the academy already uses for course question banks, with one
+# addition for the entrance exam: a per-question `category` (skill/topic domain).
+# The candidate profile is scored PER category, so tag every question with the
+# competency it measures (numeracy / reading / reasoning / safety / technical …).
+#
+# `category` (skill domain) is separate from `rubric_category` (cognitive level:
+# recall / application / analysis) — set both.
+#
+# To use a real bank:
+#   1. Create an "intake" course (any slug), e.g. via the CLI/bootstrap.
+#   2. Load the bank:   python -m app.cli load-banks --tenant-slug <t> --banks-dir <dir>
+#   3. Designate it:    python -m app.cli set-entrance-bank --cohort-id <c> --bank-id <b>
+#   ...then the cohort appears on /apply and applicants sit the exam.
+
+bank:
+  course: intake            # slug of the course the bank is loaded into
+  kind: entrance
+  chapter: null
+  version: 1
+  questions:
+    - id: num1
+      stem: "A drum holds 500 m of fibre. After 3 pulls of 120 m each, how much is left?"
+      type: single
+      options: ["140 m", "160 m", "260 m", "380 m"]
+      correct: ["140 m"]
+      rubric_category: application
+      category: numeracy
+      explanation: "500 − 3×120 = 140."
+      weight: 1
+
+    - id: read1
+      stem: "A work order says 'terminate at the ODP, then test both directions'. What must you do after terminating?"
+      type: single
+      options: ["Nothing further", "Test in both directions", "Only test upstream", "Return the ODP"]
+      correct: ["Test in both directions"]
+      rubric_category: recall
+      category: reading
+      explanation: "Following written instructions."
+      weight: 1
+
+    - id: safe1
+      stem: "You must work at height on a pole. What do you check first?"
+      type: single
+      options: ["The weather forecast", "Your fall-arrest harness and anchor", "Your phone battery", "The house number"]
+      correct: ["Your fall-arrest harness and anchor"]
+      rubric_category: application
+      category: safety
+      explanation: "PPE and anchor before any work at height."
+      weight: 1
+
+    - id: reason1
+      stem: "Two homes on the same street report no service; a third is fine. The fault is most likely at…"
+      type: single
+      options: ["Each home's router", "A shared upstream point", "The third home", "The billing system"]
+      correct: ["A shared upstream point"]
+      rubric_category: analysis
+      category: reasoning
+      explanation: "A shared symptom points upstream of the common branch."
+      weight: 1
