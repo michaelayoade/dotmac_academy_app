@@ -135,6 +135,11 @@ def transition_applicant(
     # Entering onboarding seeds the checklist the applicant must clear to enrol.
     if to_status == "onboarding":
         onboarding.seed_tasks(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
+        # A completed entrance assessment satisfies its onboarding task (carry-forward).
+        if applicant.assessment_taken_at is not None:
+            onboarding.complete_task_by_key(
+                db, tenant_id=applicant.tenant_id, applicant_id=applicant.id, key="entrance_assessment"
+            )
     return applicant
 
 

@@ -10,10 +10,11 @@ Tenant-scoped and RLS-isolated like every other table.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, Float, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -76,3 +77,15 @@ class Applicant(Base, TimestampMixin):
 
     # Set when the applicant is converted to an enrolled learner (P2).
     person_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+
+    # Which cohort/intake they applied to (FK-less, matching the person_id convention).
+    cohort_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+
+    # Entrance-assessment result — a competency profile, stored once taken:
+    #   assessment_score   overall fraction 0..1
+    #   assessment_level   band (see entrance_exam.LEVELS)
+    #   assessment_profile per-category fractions, e.g. {"numeracy": 0.8, "safety": 0.9}
+    assessment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    assessment_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    assessment_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    assessment_taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

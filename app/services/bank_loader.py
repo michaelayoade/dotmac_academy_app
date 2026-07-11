@@ -144,6 +144,7 @@ def load_bank(db: Session, *, tenant_id, course_id, doc: BankDoc) -> QuestionBan
                 options=q.get("options", []),
                 correct=q.get("correct", []),
                 rubric_category=q["rubric_category"],
+                category=q.get("category"),
                 explanation=q.get("explanation", ""),
                 weight=int(q.get("weight", 1)),
             )
