@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.models.lab import LabInstance
 from app.models.person import Person
 from app.services.assessment import override_score
 from app.services.web_auth import require_web_role
+from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(
@@ -80,9 +81,4 @@ def override(
         reason=reason,
     )
     # No db.commit() here — get_db commits after the response is returned.
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/instructor/labs"
-        return resp
-    return RedirectResponse("/instructor/labs", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/instructor/labs")

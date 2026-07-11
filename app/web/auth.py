@@ -11,13 +11,14 @@ POST /logout  — revoke session, clear cookie, 303 → /login
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.services import web_auth
 from app.services.roles import role_slugs
+from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -51,11 +52,7 @@ def login(
     redirect_to = "/instructor" if "instructor" in slugs and "admin" not in slugs else "/"
     # No db.commit() here — get_db commits at request end (and a mid-route commit
     # would clear the transaction-scoped app.current_tenant GUC).
-    if hx:
-        resp: Response = Response(status_code=204)
-        resp.headers["HX-Redirect"] = redirect_to
-    else:
-        resp = RedirectResponse(redirect_to, status_code=status.HTTP_303_SEE_OTHER)
+    resp = hx_redirect(request, redirect_to, hx_status=204)
     resp.set_cookie(
         web_auth.COOKIE,
         token,
@@ -71,10 +68,6 @@ def logout(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     web_auth.revoke_session(db, tenant.id, request.cookies.get(web_auth.COOKIE))
     # No db.commit() here — get_db commits at request end.
-    if request.headers.get("HX-Request"):
-        resp: Response = Response(status_code=204)
-        resp.headers["HX-Redirect"] = "/login"
-    else:
-        resp = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    resp = hx_redirect(request, "/login", hx_status=204)
     resp.delete_cookie(web_auth.COOKIE)
     return resp

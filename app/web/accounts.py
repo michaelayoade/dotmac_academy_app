@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 from html import escape
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -41,6 +41,7 @@ from app.services.exceptions import ConflictError
 from app.services.lifecycle import _issue_token, invite_user, request_password_reset, set_account_status
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
+from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(prefix="/admin/users", dependencies=[Depends(require_tenant)])
@@ -479,10 +480,4 @@ def users_create(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # No db.commit() here — get_db commits after the response is returned.
-
-    hx = request.headers.get("HX-Request")
-    if hx:
-        resp: Response = Response(status_code=200)
-        resp.headers["HX-Redirect"] = "/admin/users"
-        return resp
-    return RedirectResponse("/admin/users", status_code=status.HTTP_303_SEE_OTHER)
+    return hx_redirect(request, "/admin/users")

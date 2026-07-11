@@ -15,7 +15,8 @@ from app.models.assessment import Activity
 from app.models.cohort import Enrollment
 from app.models.person import Person
 from app.services.assessment import best_scores_for
-from app.services.reports import _best_for_person, _cohort_activities, _cohort_or_404
+from app.services.lookups import cohort_or_404
+from app.services.reports import _best_for_person, _cohort_activities
 
 
 def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> dict:
@@ -61,7 +62,7 @@ def cohort_gradebook(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> dict:
 
     Returns {cohort, activities, rows:[{person, email, cells:[{activity_id, pct}], final_pct}]}.
     """
-    cohort = _cohort_or_404(db, tenant_id, cohort_id)
+    cohort = cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
     activities, course_ids = _cohort_activities(db, tenant_id, cohort_id)
     total_weight = sum(a.weight for a in activities)
 
