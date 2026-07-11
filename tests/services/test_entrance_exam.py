@@ -17,8 +17,12 @@ from app.services.exceptions import BadRequestError
 
 def _bank_with_questions(admin_session, tenant):
     course = Course(
-        tenant_id=tenant.id, slug=f"c-{uuid.uuid4().hex[:6]}", title="Intake",
-        discipline="fiber", source_ref="x", version=1,
+        tenant_id=tenant.id,
+        slug=f"c-{uuid.uuid4().hex[:6]}",
+        title="Intake",
+        discipline="fiber",
+        source_ref="x",
+        version=1,
     )
     admin_session.add(course)
     admin_session.flush()
@@ -26,18 +30,31 @@ def _bank_with_questions(admin_session, tenant):
     admin_session.add(bank)
     admin_session.flush()
     for ext, cat in [("q1", "numeracy"), ("q2", "numeracy"), ("q3", "safety"), ("q4", "safety")]:
-        admin_session.add(Question(
-            tenant_id=tenant.id, bank_id=bank.id, ext_id=ext, stem="?", type="single",
-            options=["A", "B"], correct=["A"], rubric_category="recall", category=cat,
-            explanation="", weight=1,
-        ))
+        admin_session.add(
+            Question(
+                tenant_id=tenant.id,
+                bank_id=bank.id,
+                ext_id=ext,
+                stem="?",
+                type="single",
+                options=["A", "B"],
+                correct=["A"],
+                rubric_category="recall",
+                category=cat,
+                explanation="",
+                weight=1,
+            )
+        )
     admin_session.flush()
     return bank
 
 
 def _cohort(admin_session, tenant, bank=None):
     c = Cohort(
-        tenant_id=tenant.id, name="FA2", discipline="fiber", status="active",
+        tenant_id=tenant.id,
+        name="FA2",
+        discipline="fiber",
+        status="active",
         entrance_bank_id=(bank.id if bank else None),
     )
     admin_session.add(c)
@@ -47,8 +64,12 @@ def _cohort(admin_session, tenant, bank=None):
 
 def _applicant(admin_session, tenant, cohort):
     a = Applicant(
-        tenant_id=tenant.id, email=f"a{uuid.uuid4().hex[:6]}@x.ex", first_name="A",
-        last_name="B", status="applied", cohort_id=cohort.id,
+        tenant_id=tenant.id,
+        email=f"a{uuid.uuid4().hex[:6]}@x.ex",
+        first_name="A",
+        last_name="B",
+        status="applied",
+        cohort_id=cohort.id,
     )
     admin_session.add(a)
     admin_session.flush()
@@ -60,9 +81,7 @@ def test_grade_records_profile_and_level(admin_session, tenant_a):
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     # numeracy both correct -> 1.0; safety one correct, one wrong -> 0.5; overall 3/4
     answers = {"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]}
-    result = entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant, answers=answers
-    )
+    result = entrance_exam.grade_and_record(admin_session, tenant_id=tenant_a.id, applicant=applicant, answers=answers)
     assert result["score"] == 0.75
     assert result["profile"] == {"numeracy": 1.0, "safety": 0.5}
     assert result["level"] == "advanced"
@@ -83,13 +102,9 @@ def test_level_bands():
 def test_single_sitting(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
-    entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]}
-    )
+    entrance_exam.grade_and_record(admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]})
     with pytest.raises(BadRequestError):
-        entrance_exam.grade_and_record(
-            admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]}
-        )
+        entrance_exam.grade_and_record(admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]})
     admin_session.rollback()
 
 
@@ -104,7 +119,9 @@ def test_completed_assessment_satisfies_onboarding_task(admin_session, tenant_a)
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},
     )
     for nxt in ("screened", "accepted", "onboarding"):
@@ -120,16 +137,54 @@ def test_list_ranks_candidates_by_score(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a, bank)
     high = _applicant(admin_session, tenant_a, cohort)
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=high,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=high,
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},  # 1.0
     )
     low = _applicant(admin_session, tenant_a, cohort)
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=low,
-        answers={"q1": ["A"], "q2": ["B"], "q3": ["B"], "q4": ["B"]},  # 0.25
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=low,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["B"], "q4": ["B"]},  # 0.5 — low, but real signal
     )
     ranked = admissions.list_applicants(admin_session, cohort_id=cohort.id, rank_by_score=True)
     assert [a.id for a in ranked] == [high.id, low.id]
+    admin_session.rollback()
+
+
+def test_ranking_excludes_no_signal_sittings(admin_session, tenant_a):
+    """A near-chance sitting must not be ranked.
+
+    Ranking it would seat — or reject — a person on the strength of random clicking,
+    and would drop a junk row into the talent pool, which is only worth querying
+    later if the rows in it are real.
+    """
+    bank = _bank_with_questions(admin_session, tenant_a)
+    cohort = _cohort(admin_session, tenant_a, bank)
+    genuine = _applicant(admin_session, tenant_a, cohort)
+    entrance_exam.grade_and_record(
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=genuine,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]},  # 0.75
+    )
+    clicker = _applicant(admin_session, tenant_a, cohort)
+    entrance_exam.grade_and_record(
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=clicker,
+        answers={"q1": ["A"], "q2": ["B"], "q3": ["B"], "q4": ["B"]},  # 0.25 — at chance
+    )
+    assert clicker.assessment_valid is False
+
+    ranked = admissions.list_applicants(admin_session, cohort_id=cohort.id, rank_by_score=True)
+    assert [a.id for a in ranked] == [genuine.id]  # the clicker is gone
+
+    # ...but an admin can still see them, e.g. to decide who needs a reset
+    everyone = admissions.list_applicants(admin_session, cohort_id=cohort.id, rank_by_score=True, include_invalid=True)
+    assert clicker.id in [a.id for a in everyone]
     admin_session.rollback()
 
 
@@ -159,8 +214,11 @@ def test_grade_flags_time_exceeded(admin_session, tenant_a):
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
-        answers={"q1": ["A"]}, now=t0 + timedelta(minutes=40),
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
+        answers={"q1": ["A"]},
+        now=t0 + timedelta(minutes=40),
     )
     assert applicant.assessment_time_exceeded is True
     admin_session.rollback()
@@ -171,8 +229,11 @@ def test_grade_within_limit_not_exceeded(admin_session, tenant_a):
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
-        answers={"q1": ["A"]}, now=t0 + timedelta(minutes=20),
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
+        answers={"q1": ["A"]},
+        now=t0 + timedelta(minutes=20),
     )
     assert applicant.assessment_time_exceeded is False
     admin_session.rollback()
@@ -183,9 +244,7 @@ def test_untimed_cohort_never_exceeds(admin_session, tenant_a):
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     info = entrance_exam.start_exam(admin_session, applicant=applicant)
     assert info["limit_minutes"] is None and info["remaining_seconds"] is None
-    entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]}
-    )
+    entrance_exam.grade_and_record(admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]})
     assert applicant.assessment_time_exceeded is False
     admin_session.rollback()
 
@@ -236,7 +295,9 @@ def test_near_chance_score_is_flagged_invalid(admin_session, tenant_a):
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=20)
     # 1 of 4 = 0.25, at the guessing baseline for a 4-option MCQ
     result = entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
         answers={"q1": ["A"], "q2": ["B"], "q3": ["B"], "q4": ["B"]},
     )
     assert result["valid"] is False
@@ -250,10 +311,12 @@ def test_too_fast_submission_is_flagged_invalid(admin_session, tenant_a):
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(seconds=30)  # click-through
     result = entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},  # a good score...
     )
-    assert result["valid"] is False                                   # ...but nobody engaged in 30s
+    assert result["valid"] is False  # ...but nobody engaged in 30s
     assert result["invalid_reason"] == entrance_exam.INVALID_TOO_FAST
     admin_session.rollback()
 
@@ -263,7 +326,9 @@ def test_genuine_sitting_is_valid(admin_session, tenant_a):
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=18)
     result = entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]},
     )
     assert result["valid"] is True
@@ -280,7 +345,7 @@ def test_autosave_survives_and_prefills_a_resumed_sitting(admin_session, tenant_
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["A"], "q2": []})
-    assert applicant.assessment_answers == {"q1": ["A"]}      # empties dropped
+    assert applicant.assessment_answers == {"q1": ["A"]}  # empties dropped
     # ...connection dies, candidate re-opens: the saved answer is still there
     entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["A"], "q3": ["B"]})
     assert applicant.assessment_answers == {"q1": ["A"], "q3": ["B"]}
@@ -292,11 +357,13 @@ def test_autosave_is_ignored_after_grading(admin_session, tenant_a):
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=15)
     entrance_exam.grade_and_record(
-        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        admin_session,
+        tenant_id=tenant_a.id,
+        applicant=applicant,
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["B"]},
     )
     entrance_exam.save_answers(admin_session, applicant=applicant, answers={"q1": ["B"]})
-    assert applicant.assessment_answers is None               # a graded sitting is closed
+    assert applicant.assessment_answers is None  # a graded sitting is closed
     admin_session.rollback()
 
 
@@ -310,13 +377,13 @@ def test_reset_reopens_a_lost_sitting(admin_session, tenant_a):
 
     raw = entrance_exam.reset_exam(admin_session, applicant=applicant)
 
-    assert applicant.assessment_started_at is None            # clock reset
+    assert applicant.assessment_started_at is None  # clock reset
     assert applicant.assessment_answers is None
-    assert applicant.assessment_taken_at is None              # they can sit it again
-    assert applicant.assessment_reset_count == 1              # audited
-    assert entrance_exam.applicant_for_token(
-        admin_session, tenant_id=tenant_a.id, raw=raw
-    ).id == applicant.id                                       # fresh link works
+    assert applicant.assessment_taken_at is None  # they can sit it again
+    assert applicant.assessment_reset_count == 1  # audited
+    assert (
+        entrance_exam.applicant_for_token(admin_session, tenant_id=tenant_a.id, raw=raw).id == applicant.id
+    )  # fresh link works
     admin_session.rollback()
 
 
