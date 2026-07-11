@@ -37,6 +37,24 @@ def _login_instructor(app_client, admin_session, tenant):
     return h
 
 
+def _grant_admin(admin_session, tenant):
+    """Give the logged-in instructor (i@a.edu) the admin role too.
+
+    Course creation is admin-only and authoring/publishing any course requires
+    admin (or a per-course instructor assignment), so authoring tests act as admin.
+    """
+    from sqlalchemy import select
+
+    roles = ensure_roles(admin_session, tenant.id)
+    person = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant.id).where(Person.email == "i@a.edu")
+    ).first()
+    admin_session.add(
+        PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles["admin"].id)
+    )
+    admin_session.commit()
+
+
 def test_instructor_can_create_cohort(app_client, admin_session, tenant_a):
     """An instructor can POST to create a cohort; the row lands in the DB."""
     h = _login_instructor(app_client, admin_session, tenant_a)
@@ -163,6 +181,7 @@ def test_authoring_create_course_and_chapter(app_client, admin_session, tenant_a
     from app.models.course import Chapter, Course
 
     h = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
     csrf = app_client.cookies.get("csrf_token", "")
     # Create a draft course.
     r = app_client.post("/instructor/courses",
@@ -194,6 +213,7 @@ def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
     from app.models.course import Course
 
     h = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
     course = Course(tenant_id=tenant_a.id, slug="pub", title="Pub", discipline="networking",
                     source_ref="x", version=1, status="draft")
     admin_session.add(course)

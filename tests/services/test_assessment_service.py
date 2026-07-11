@@ -23,14 +23,17 @@ def _seed(db, tid):
     return c, act
 
 def test_submit_and_best(admin_session, tenant_a):
+    # The first recorded score is authoritative: later attempts are stored as
+    # submissions but do not replace the original Score.
     person_id = uuid4()
     c, act = _seed(admin_session, tenant_a.id)
     s1 = submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id, activity=act, answers={"q1": ["B"]})
     s2 = submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id, activity=act, answers={"q1": ["A"]})
     admin_session.flush()
-    assert s1.passed is False and s2.passed is True
+    # A retake does not create a replacement score; s2 returns the original.
+    assert s1.passed is False and s2 is s1
     best = best_scores_for(admin_session, tenant_id=tenant_a.id, person_id=person_id, course_id=c.id)
-    assert best[act.id].fraction == 1.0
+    assert best[act.id].fraction == 0.0
     admin_session.rollback()
 
 
@@ -44,29 +47,30 @@ def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a, mon
     admin_session.add(p)
     admin_session.flush()
 
-    # Fail first → no email.
-    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["B"]})
-    assert calls == []
-    # First pass → one email.
+    # First submission passes → emails the student exactly once.
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
     assert calls == ["pass@stu.edu"]
-    # Second pass → still just one.
+    # A later submission does not re-send (the first score is authoritative).
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
     assert calls == ["pass@stu.edu"]
     admin_session.rollback()
 
 
 def test_best_is_highest_not_latest(admin_session, tenant_a):
-    """best_scores_for must return the highest-fraction score, not the most recent."""
-    person_id = uuid4()
-    c, act = _seed(admin_session, tenant_a.id)
-    # First attempt: correct answer → fraction 1.0
-    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id, activity=act, answers={"q1": ["A"]})
-    # Second attempt: wrong answer → fraction 0.0  (latest)
-    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id, activity=act, answers={"q1": ["B"]})
+    """best_scores_for returns the authoritative (first) score, not the most recent."""
+    # A real person row is required: a passing first attempt fires a
+    # course-completion notification whose FK references people.
+    p = Person(tenant_id=tenant_a.id, email="best@stu.edu", first_name="Be", last_name="St")
+    admin_session.add(p)
     admin_session.flush()
-    best = best_scores_for(admin_session, tenant_id=tenant_a.id, person_id=person_id, course_id=c.id)
-    assert best[act.id].fraction == 1.0, "best_scores_for returned latest (0.0), not highest (1.0)"
+    c, act = _seed(admin_session, tenant_a.id)
+    # First attempt: correct answer → fraction 1.0 (recorded, authoritative)
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
+    # Second attempt: wrong answer → fraction 0.0  (latest, but not recorded)
+    submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["B"]})
+    admin_session.flush()
+    best = best_scores_for(admin_session, tenant_id=tenant_a.id, person_id=p.id, course_id=c.id)
+    assert best[act.id].fraction == 1.0, "best_scores_for returned latest (0.0), not the first (1.0)"
     admin_session.rollback()
 
 

@@ -116,7 +116,9 @@ def test_instructor_invite_returns_activation_link(app_client, admin_session, te
 
 def test_invalid_reset_token_shows_error(app_client, admin_session, tenant_a):
     csrf = _csrf(app_client, "/reset?token=bogus")
-    r = app_client.post("/reset", headers={**H, "x-csrf-token": csrf},
+    # The 400 status is returned on the htmx (inline) path; a full-page POST renders
+    # the same error as a 200 page. The reset form posts via hx-post, so assert that.
+    r = app_client.post("/reset", headers={**H, "x-csrf-token": csrf, "HX-Request": "true"},
                         data={"token": "bogus", "password": "brandnew9"})
     assert r.status_code == 400
     assert "invalid or expired" in r.text
