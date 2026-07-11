@@ -304,6 +304,26 @@ def _at_risk_sweep(args: argparse.Namespace) -> None:
     print(f"at-risk-sweep: sent {sent} nudge(s)")
 
 
+def _erp_training_sync(args: argparse.Namespace) -> None:
+    """Cross-tenant: push completed courses to dotmac_erp HR (training reports).
+
+    BYPASSRLS admin session; idempotent — only unsynced completions are pushed
+    and ERP dedups on the certificate ref, so re-runs are safe. Inert unless
+    ERP_WEBHOOK_URL is configured.
+    """
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import erp_sync, lab_jobs
+
+    pushed = 0
+    with lab_jobs.admin_session() as db:
+        for tenant in db.scalars(select(Tenant)).all():
+            pushed += erp_sync.sync_pending(db, tenant_id=tenant.id)
+        db.commit()
+    print(f"erp-training-sync: pushed {pushed} completion(s)")
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     from app.config import settings
     from app.services import lab_jobs
@@ -505,6 +525,9 @@ def main() -> None:
 
     ar = sub.add_parser("at-risk-sweep", help="Nudge students who are behind/overdue")
     ar.set_defaults(func=_at_risk_sweep)
+
+    ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
+    ets.set_defaults(func=_erp_training_sync)
 
     args = p.parse_args()
     args.func(args)
