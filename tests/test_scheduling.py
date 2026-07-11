@@ -124,8 +124,9 @@ def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
 
 
 def test_session_isolated_between_tenants(admin_session, tenant_a, tenant_b):
-    from app.models.class_session import ClassSession
     from sqlalchemy import select as sa_select
+
+    from app.models.class_session import ClassSession
 
     cohort = _cohort(admin_session, tenant_a)
     s = scheduling.create_session(
