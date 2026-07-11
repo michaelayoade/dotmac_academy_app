@@ -21,6 +21,8 @@ class Cohort(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     # self_paced | live | blended — whether this cohort runs scheduled sessions.
     delivery_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="self_paced")
+    # QuestionBank used as this cohort's entrance assessment (null = none configured).
+    entrance_bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 
 
 class Enrollment(Base, TimestampMixin):
