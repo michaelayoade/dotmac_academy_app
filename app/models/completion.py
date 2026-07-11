@@ -37,3 +37,5 @@ class CourseCompletion(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="in_progress")
     pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this completion was pushed to dotmac_erp HR (null = not yet synced).
+    erp_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

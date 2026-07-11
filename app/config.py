@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     lab_workdir: str = "/home/dotmac/labs"
     lab_idle_minutes: int = 60
 
+    # dotmac_erp training-report push (inert by default — empty URL disables it).
+    # On course completion, a signed webhook records the result on the employee's
+    # HR record; ERP matches by work email and ignores non-employees.
+    erp_webhook_url: str = ""
+    erp_webhook_secret: str = ""
+
     # Email / SMTP (inert by default — empty smtp_host disables sending).
     smtp_host: str = ""
     smtp_port: int = 587
