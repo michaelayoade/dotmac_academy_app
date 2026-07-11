@@ -12,7 +12,8 @@ from __future__ import annotations
 import hashlib
 import random
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 from uuid import UUID
 
 from sqlalchemy import select
@@ -169,6 +170,58 @@ def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None
     }
 
 
+# --- deadline model --------------------------------------------------------
+#
+# The invitation link stays valid until a fixed date rather than pinning the
+# candidate to a booked slot. On unreliable connectivity that matters: they pick
+# their own good moment instead of missing a window they cannot control.
+DEFAULT_DEADLINE_DAYS = 7
+
+
+def past_deadline(applicant: Applicant, now: datetime | None = None) -> bool:
+    if applicant.assessment_deadline is None:
+        return False
+    return (now or datetime.now(UTC)) > applicant.assessment_deadline
+
+
+def invite(
+    db: Session,
+    *,
+    applicant: Applicant,
+    base_url: str,
+    deadline_days: int = DEFAULT_DEADLINE_DAYS,
+    send: bool = True,
+) -> dict:
+    """Mint the exam link, set the deadline, and email the invitation.
+
+    This is the step that was missing: the token used to be shown once on-screen
+    and then lost. Returns {token, url, deadline, emailed} — the SAME token backs
+    the emailed link and the on-screen one, so neither invalidates the other.
+    """
+    from app.services import applicant_email  # local: avoid an import cycle
+
+    raw = issue_token(db, applicant=applicant)
+    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=deadline_days)
+    db.flush()
+
+    url = f"{base_url.rstrip('/')}/apply/assessment?token={quote(raw)}"
+    emailed = False
+    if send:
+        emailed = applicant_email.send_exam_invite(
+            db,
+            applicant=applicant,
+            url=url,
+            minutes=time_limit_minutes(db, applicant=applicant),
+        )
+        db.flush()
+    return {
+        "token": raw,
+        "url": url,
+        "deadline": applicant.assessment_deadline,
+        "emailed": emailed,
+    }
+
+
 def save_answers(db: Session, *, applicant: Applicant, answers: dict) -> None:
     """Autosave in-progress answers so an interrupted sitting can resume.
 
@@ -199,6 +252,7 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     applicant.assessment_valid = None
     applicant.assessment_invalid_reason = None
     applicant.assessment_time_exceeded = False
+    applicant.assessment_deadline = None
     applicant.assessment_reset_count = (applicant.assessment_reset_count or 0) + 1
     return issue_token(db, applicant=applicant)
 

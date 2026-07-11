@@ -10,6 +10,7 @@ via the same cookie→header shim as login.
 from __future__ import annotations
 
 import html
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, Request, Response
@@ -23,7 +24,7 @@ from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
-from app.services import entrance_exam
+from app.services import applicant_email, entrance_exam
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.web.templating import templates
 
@@ -102,6 +103,24 @@ def apply_form(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/apply")
+def _d(v: str) -> date | None:
+    try:
+        return date.fromisoformat(v) if v else None
+    except ValueError:
+        return None
+
+
+def _i(v: str) -> int | None:
+    try:
+        return int(v) if v.strip() != "" else None
+    except ValueError:
+        return None
+
+
+def _b(v: str) -> bool | None:
+    return {"yes": True, "no": False}.get((v or "").strip().lower())
+
+
 def submit_apply(
     request: Request,
     first_name: str = Form(...),
@@ -110,6 +129,20 @@ def submit_apply(
     phone: str = Form(default=""),
     program: str = Form(default="Fiber Academy"),
     cohort_id: str = Form(default=""),
+    # --- evaluable profile ---
+    date_of_birth: str = Form(default=""),
+    state: str = Form(default=""),
+    city: str = Form(default=""),
+    highest_qualification: str = Form(default=""),
+    field_of_study: str = Form(default=""),
+    years_experience: str = Form(default=""),
+    current_role: str = Form(default=""),
+    has_device: str = Form(default=""),
+    has_internet: str = Form(default=""),
+    can_work_at_height: str = Form(default=""),
+    available_from: str = Form(default=""),
+    heard_from: str = Form(default=""),
+    cv_url: str = Form(default=""),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     tenant = require_tenant(request)
@@ -124,12 +157,35 @@ def submit_apply(
         program=program or None,
         cohort_id=cid,
         source="website",
+        profile={
+            "date_of_birth": _d(date_of_birth),
+            "state": state.strip() or None,
+            "city": city.strip() or None,
+            "highest_qualification": highest_qualification.strip() or None,
+            "field_of_study": field_of_study.strip() or None,
+            "years_experience": _i(years_experience),
+            "current_role": current_role.strip() or None,
+            "has_device": _b(has_device),
+            "has_internet": _b(has_internet),
+            "can_work_at_height": _b(can_work_at_height),
+            "available_from": _d(available_from),
+            "heard_from": heard_from.strip() or None,
+            "cv_url": cv_url.strip() or None,
+        },
     )
     safe_name = html.escape((first_name or "").strip()[:80]) or "there"
 
+    applicant_email.send_application_received(db, applicant=applicant)
+
     if applicant.assessment_taken_at is None and entrance_exam.has_entrance_exam(db, applicant=applicant):
-        token = entrance_exam.issue_token(db, applicant=applicant)
-        return HTMLResponse(_START_EXAM.format(name=safe_name, token=html.escape(token, quote=True)))
+        # Mint the link, set the deadline, and EMAIL it. The link is still shown
+        # on-screen so they can start now — but the email is the durable copy, so
+        # closing the tab no longer costs them the exam.
+        base = str(request.base_url).rstrip("/")
+        inv = entrance_exam.invite(db, applicant=applicant, base_url=base)
+        return HTMLResponse(
+            _START_EXAM.format(name=safe_name, token=html.escape(inv["token"], quote=True))
+        )
     return HTMLResponse(_THANKS.format(name=safe_name))
 
 
@@ -141,6 +197,13 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
         return _notice(request, "Link not valid", "This assessment link is invalid or has expired.")
     if applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
+    if entrance_exam.past_deadline(applicant):
+        return _notice(
+            request,
+            "This assessment has closed",
+            "The deadline for your entrance assessment has passed. If you were unable to "
+            "sit it in time, contact us and we can reopen it for you.",
+        )
     timing = entrance_exam.start_exam(db, applicant=applicant)
     if timing["expired"]:
         return _notice(
