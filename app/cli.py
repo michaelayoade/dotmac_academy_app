@@ -370,6 +370,100 @@ def _set_default_entrance_bank(args: argparse.Namespace) -> None:
         )
 
 
+def _reset_entrance_exam(args: argparse.Namespace) -> None:
+    """Reopen an applicant's entrance sitting and mint a fresh exam link.
+
+    The recovery path when a candidate loses their one attempt to a dropped
+    connection, a dead battery, or a clock that ran down while they were offline.
+    Without this, a network blip permanently locks a good candidate out.
+    """
+    from sqlalchemy import select
+
+    from app.models.admissions import Applicant
+    from app.models.tenant import Tenant
+    from app.services import entrance_exam, lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+        applicant = db.scalars(
+            select(Applicant).where(Applicant.tenant_id == tenant.id).where(Applicant.email == args.email)
+        ).first()
+        if applicant is None:
+            raise SystemExit(f"No applicant with email '{args.email}' in '{args.tenant_slug}'.")
+
+        had = applicant.assessment_taken_at is not None
+        raw = entrance_exam.reset_exam(db, applicant=applicant)
+        db.commit()
+        print(f"reset entrance sitting for {applicant.email} (reset #{applicant.assessment_reset_count})")
+        if had:
+            print("  note: a completed result was discarded — they now re-sit from scratch.")
+        print(f"  new exam link: /apply/assessment?token={raw}")
+
+
+def _recompute_entrance_levels(args: argparse.Namespace) -> None:
+    """Re-derive level bands from a cohort's ACTUAL score distribution.
+
+    The built-in floors (beginner/intermediate/advanced) are a *prediction* of item
+    difficulty, not a measurement of it. If the real cohort clusters differently,
+    absolute cut-offs mis-stream everyone — e.g. an empty "advanced" band.
+
+    Percentile banding is self-calibrating: bottom 25% -> beginner, top 25% ->
+    advanced. Computed over VALID sittings only (a near-chance or click-through
+    result is an absence of data and must not drag the distribution).
+    """
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.admissions import Applicant
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+
+        stmt = (
+            select(Applicant)
+            .where(Applicant.tenant_id == tenant.id)
+            .where(Applicant.assessment_score.is_not(None))
+            .where(Applicant.assessment_valid.is_not(False))
+        )
+        if args.cohort_id:
+            stmt = stmt.where(Applicant.cohort_id == uuid.UUID(args.cohort_id))
+        rows = list(db.scalars(stmt).all())
+
+        if len(rows) < args.min_cohort:
+            raise SystemExit(
+                f"only {len(rows)} valid sitting(s) — below --min-cohort {args.min_cohort}. "
+                "Percentiles on a handful of scores are noise; leaving bands as they are."
+            )
+
+        scores = sorted(a.assessment_score for a in rows)
+        n = len(scores)
+        p25 = scores[int(0.25 * (n - 1))]
+        p75 = scores[int(0.75 * (n - 1))]
+        print(f"valid sittings: {n}   p25={p25:.3f}  p75={p75:.3f}")
+
+        if args.dry_run:
+            print("DRY RUN — no levels written.")
+            return
+
+        changed = 0
+        for a in rows:
+            band = (
+                "beginner" if a.assessment_score <= p25 else "advanced" if a.assessment_score >= p75 else "intermediate"
+            )
+            if a.assessment_level != band:
+                a.assessment_level = band
+                changed += 1
+        db.commit()
+        print(f"re-banded {changed} applicant(s) by percentile (bottom 25% / middle / top 25%).")
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     from app.config import settings
     from app.services import lab_jobs
@@ -578,17 +672,41 @@ def main() -> None:
     seb = sub.add_parser("set-entrance-bank", help="Designate a cohort's entrance-assessment bank")
     seb.add_argument("--cohort-id", required=True)
     seb.add_argument("--bank-id", required=True)
-    seb.add_argument("--time-limit-minutes", type=int, default=None,
-                     help="Per-sitting time limit (0 or omit = untimed)")
+    seb.add_argument(
+        "--time-limit-minutes", type=int, default=None, help="Per-sitting time limit (0 or omit = untimed)"
+    )
     seb.set_defaults(func=_set_entrance_bank)
 
-    sdb = sub.add_parser("set-default-entrance-bank",
-                         help="Academy-wide default entrance bank (all applicants sit it)")
+    sdb = sub.add_parser("set-default-entrance-bank", help="Academy-wide default entrance bank (all applicants sit it)")
     sdb.add_argument("--tenant-slug", required=True)
     sdb.add_argument("--bank-id", required=True)
-    sdb.add_argument("--time-limit-minutes", type=int, default=None,
-                     help="Per-sitting time limit (0 or omit = untimed)")
+    sdb.add_argument(
+        "--time-limit-minutes", type=int, default=None, help="Per-sitting time limit (0 or omit = untimed)"
+    )
     sdb.set_defaults(func=_set_default_entrance_bank)
+
+    rex = sub.add_parser(
+        "reset-entrance-exam",
+        help="Reopen an applicant's entrance sitting (dropped connection / lost attempt)",
+    )
+    rex.add_argument("--tenant-slug", required=True)
+    rex.add_argument("--email", required=True, help="Applicant's email")
+    rex.set_defaults(func=_reset_entrance_exam)
+
+    rel = sub.add_parser(
+        "recompute-entrance-levels",
+        help="Re-derive level bands from the cohort's real score distribution (percentiles)",
+    )
+    rel.add_argument("--tenant-slug", required=True)
+    rel.add_argument("--cohort-id", default=None, help="Limit to one intake (default: all)")
+    rel.add_argument(
+        "--min-cohort",
+        type=int,
+        default=20,
+        help="Refuse below this many valid sittings — percentiles on few scores are noise",
+    )
+    rel.add_argument("--dry-run", action="store_true")
+    rel.set_defaults(func=_recompute_entrance_levels)
 
     args = p.parse_args()
     args.func(args)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import html
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -66,10 +66,26 @@ def _open_cohorts(db: Session, tenant_id: UUID) -> list[Cohort]:
 def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list[Question]:
     bank_id = entrance_exam.resolve_bank_id(db, applicant=applicant)
     return list(
-        db.scalars(
-            select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)
-        ).all()
+        db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
     )
+
+
+def _exam_view(applicant: Applicant, questions: list[Question]) -> list[dict]:
+    """Questions as the candidate sees them: options shuffled per-applicant.
+
+    Deterministic in (applicant, question), so the order is stable across a reload
+    or a resumed sitting — otherwise autosaved answers would line up against the
+    wrong options.
+    """
+    return [
+        {
+            "ext_id": q.ext_id,
+            "stem": q.stem,
+            "type": q.type,
+            "options": entrance_exam.options_for(applicant, q),
+        }
+        for q in questions
+    ]
 
 
 def _notice(request: Request, title: str, body: str) -> HTMLResponse:
@@ -82,9 +98,7 @@ def _notice(request: Request, title: str, body: str) -> HTMLResponse:
 @router.get("/apply")
 def apply_form(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
-    return templates.TemplateResponse(
-        "apply.html", {"request": request, "cohorts": _open_cohorts(db, tenant.id)}
-    )
+    return templates.TemplateResponse("apply.html", {"request": request, "cohorts": _open_cohorts(db, tenant.id)})
 
 
 @router.post("/apply")
@@ -129,17 +143,44 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
         return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
     timing = entrance_exam.start_exam(db, applicant=applicant)
     if timing["expired"]:
-        return _notice(request, "Time is up", "Your entrance-assessment time has expired.")
+        return _notice(
+            request,
+            "Time is up",
+            "Your entrance-assessment time has expired. If you were cut off before you "
+            "could finish, contact us and we can reopen your sitting.",
+        )
+    questions = _exam_questions(db, tenant.id, applicant)
     return templates.TemplateResponse(
         "apply_assessment.html",
         {
             "request": request,
             "token": token,
-            "questions": _exam_questions(db, tenant.id, applicant),
+            "questions": _exam_view(applicant, questions),
+            # Autosaved progress, so a resumed sitting comes back with answers intact.
+            "saved": applicant.assessment_answers or {},
             "remaining_seconds": timing["remaining_seconds"],
             "notice": None,
         },
     )
+
+
+@router.post("/apply/assessment/save")
+async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
+    """Autosave in-progress answers (fire-and-forget from the exam page).
+
+    This is what makes a dropped connection survivable: without it the candidate
+    loses every answer while the clock keeps running. Always 204 — a failed
+    autosave must never interrupt the sitting.
+    """
+    tenant = require_tenant(request)
+    form = await request.form()
+    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=str(form.get("token") or ""))
+    if applicant is None or applicant.assessment_taken_at is not None:
+        return Response(status_code=204)
+    questions = _exam_questions(db, tenant.id, applicant)
+    answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
+    entrance_exam.save_answers(db, applicant=applicant, answers=answers)
+    return Response(status_code=204)
 
 
 @router.post("/apply/assessment", response_class=HTMLResponse)
@@ -150,7 +191,14 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         return _notice(request, "Already completed", "This assessment was already submitted, or the link is invalid.")
     questions = _exam_questions(db, tenant.id, applicant)
     form = await request.form()
-    answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
+    # Start from anything autosaved, then let this submission win where it answered.
+    # Matters on the auto-submit at zero, and after a resumed sitting: an answer the
+    # candidate gave earlier must not be dropped just because it wasn't re-posted.
+    answers: dict[str, list[str]] = dict(applicant.assessment_answers or {})
+    for q in questions:
+        posted = form.getlist(q.ext_id)
+        if posted:
+            answers[q.ext_id] = posted
     try:
         entrance_exam.grade_and_record(db, tenant_id=tenant.id, applicant=applicant, answers=answers)
     except (BadRequestError, NotFoundError):
