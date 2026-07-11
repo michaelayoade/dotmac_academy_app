@@ -55,6 +55,33 @@ class ApplicantRead(BaseModel):
     assessment_profile: dict | None = None
     assessment_taken_at: datetime | None = None
     assessment_time_exceeded: bool = False
+    # Validity: False = the sitting carries NO SIGNAL (near-chance, or too fast to
+    # have engaged). Do not read such a score as a weak candidate — it is an
+    # absence of data, and it is excluded from score-ranked listings.
+    assessment_valid: bool | None = None
+    assessment_invalid_reason: str | None = None
+    assessment_deadline: datetime | None = None
+    invite_sent_at: datetime | None = None
+    assessment_reset_count: int = 0
+
+    # --- the evaluable application profile ---
+    date_of_birth: date | None = None
+    state: str | None = None
+    city: str | None = None
+    highest_qualification: str | None = None
+    field_of_study: str | None = None
+    years_experience: int | None = None
+    current_role: str | None = None
+    has_device: bool | None = None
+    has_internet: bool | None = None
+    can_work_at_height: bool | None = None
+    available_from: date | None = None
+    heard_from: str | None = None
+    cv_url: str | None = None
+    # Can this candidate actually be evaluated yet?
+    profile_complete: bool = False
+    missing_profile_fields: list[str] = []
+
     model_config = {"from_attributes": True}
 
 
@@ -108,9 +135,7 @@ def list_applicants(
     db: Session = Depends(get_db),
     _: Person = Depends(require_role("admin")),
 ) -> list[Applicant]:
-    return admissions_service.list_applicants(
-        db, status=status, cohort_id=cohort_id, rank_by_score=rank
-    )
+    return admissions_service.list_applicants(db, status=status, cohort_id=cohort_id, rank_by_score=rank)
 
 
 @router.get("/{applicant_id}", response_model=ApplicantRead)
@@ -146,9 +171,7 @@ def enroll_applicant(
     _: Person = Depends(require_role("admin")),
 ) -> object:
     """Enrol an onboarding applicant: create/reuse a Person + Enrollment."""
-    return admissions_service.enroll_applicant(
-        db, applicant_id=applicant_id, cohort_id=payload.cohort_id
-    )
+    return admissions_service.enroll_applicant(db, applicant_id=applicant_id, cohort_id=payload.cohort_id)
 
 
 @router.get("/{applicant_id}/onboarding", response_model=list[OnboardingTaskRead])
