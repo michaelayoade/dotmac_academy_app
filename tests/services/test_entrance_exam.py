@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -129,4 +130,61 @@ def test_list_ranks_candidates_by_score(admin_session, tenant_a):
     )
     ranked = admissions.list_applicants(admin_session, cohort_id=cohort.id, rank_by_score=True)
     assert [a.id for a in ranked] == [high.id, low.id]
+    admin_session.rollback()
+
+
+def _timed(admin_session, tenant, minutes=30):
+    bank = _bank_with_questions(admin_session, tenant)
+    cohort = _cohort(admin_session, tenant, bank)
+    cohort.entrance_time_limit_minutes = minutes
+    admin_session.flush()
+    return _applicant(admin_session, tenant, cohort)
+
+
+def test_start_exam_stamps_once_and_counts_down(admin_session, tenant_a):
+    applicant = _timed(admin_session, tenant_a, minutes=30)
+    t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+    info = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    assert info["limit_minutes"] == 30 and info["remaining_seconds"] == 1800
+    assert applicant.assessment_started_at == t0
+    # re-opening 5 min later keeps counting from t0 (no reset)
+    info2 = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0 + timedelta(minutes=5))
+    assert applicant.assessment_started_at == t0
+    assert info2["remaining_seconds"] == 1500
+    admin_session.rollback()
+
+
+def test_grade_flags_time_exceeded(admin_session, tenant_a):
+    applicant = _timed(admin_session, tenant_a, minutes=30)
+    t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+    entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"]}, now=t0 + timedelta(minutes=40),
+    )
+    assert applicant.assessment_time_exceeded is True
+    admin_session.rollback()
+
+
+def test_grade_within_limit_not_exceeded(admin_session, tenant_a):
+    applicant = _timed(admin_session, tenant_a, minutes=30)
+    t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+    entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant,
+        answers={"q1": ["A"]}, now=t0 + timedelta(minutes=20),
+    )
+    assert applicant.assessment_time_exceeded is False
+    admin_session.rollback()
+
+
+def test_untimed_cohort_never_exceeds(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    info = entrance_exam.start_exam(admin_session, applicant=applicant)
+    assert info["limit_minutes"] is None and info["remaining_seconds"] is None
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]}
+    )
+    assert applicant.assessment_time_exceeded is False
     admin_session.rollback()

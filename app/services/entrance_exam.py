@@ -68,6 +68,49 @@ def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
     return cohort.entrance_bank_id
 
 
+# A submit within this many seconds past the limit still counts as on-time
+# (network / auto-submit latency).
+GRACE_SECONDS = 15
+
+
+def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
+    """The cohort's per-sitting entrance limit in minutes (None = untimed)."""
+    if applicant.cohort_id is None:
+        return None
+    cohort = db.get(Cohort, applicant.cohort_id)
+    return cohort.entrance_time_limit_minutes if cohort is not None else None
+
+
+def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
+    """Stamp the sitting start on first open (idempotent). Returns timing info.
+
+    ``remaining_seconds`` counts down from the first open, so re-opening the page
+    doesn't reset the clock; ``expired`` is true once it hits zero.
+    """
+    now = now or datetime.now(UTC)
+    if applicant.assessment_started_at is None:
+        applicant.assessment_started_at = now
+        db.flush()
+    limit = time_limit_minutes(db, applicant=applicant)
+    remaining: int | None = None
+    if limit is not None:
+        elapsed = (now - applicant.assessment_started_at).total_seconds()
+        remaining = max(0, int(limit * 60 - elapsed))
+    return {
+        "limit_minutes": limit,
+        "remaining_seconds": remaining,
+        "expired": (remaining == 0) if limit is not None else False,
+    }
+
+
+def _time_exceeded(db: Session, applicant: Applicant, now: datetime) -> bool:
+    limit = time_limit_minutes(db, applicant=applicant)
+    if limit is None or applicant.assessment_started_at is None:
+        return False
+    elapsed = (now - applicant.assessment_started_at).total_seconds()
+    return elapsed > limit * 60 + GRACE_SECONDS
+
+
 def grade_and_record(
     db: Session,
     *,
@@ -84,6 +127,7 @@ def grade_and_record(
     """
     if applicant.assessment_taken_at is not None:
         raise BadRequestError("Entrance assessment already completed.")
+    now = now or datetime.now(UTC)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
 
     questions = list(
@@ -117,6 +161,7 @@ def grade_and_record(
     applicant.assessment_score = overall
     applicant.assessment_level = level
     applicant.assessment_profile = profile
-    applicant.assessment_taken_at = now or datetime.now(UTC)
+    applicant.assessment_time_exceeded = _time_exceeded(db, applicant, now)
+    applicant.assessment_taken_at = now
     db.flush()
     return {"score": overall, "level": level, "profile": profile}

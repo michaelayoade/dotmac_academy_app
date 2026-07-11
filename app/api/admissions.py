@@ -54,6 +54,7 @@ class ApplicantRead(BaseModel):
     assessment_level: str | None = None
     assessment_profile: dict | None = None
     assessment_taken_at: datetime | None = None
+    assessment_time_exceeded: bool = False
     model_config = {"from_attributes": True}
 
 
