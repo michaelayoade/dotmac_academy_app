@@ -48,6 +48,12 @@ class ApplicantRead(BaseModel):
     source: str
     applied_on: date
     person_id: UUID | None = None
+    # Entrance-assessment result (the candidate competency profile).
+    cohort_id: UUID | None = None
+    assessment_score: float | None = None
+    assessment_level: str | None = None
+    assessment_profile: dict | None = None
+    assessment_taken_at: datetime | None = None
     model_config = {"from_attributes": True}
 
 
@@ -96,10 +102,14 @@ def apply(
 @router.get("", response_model=list[ApplicantRead])
 def list_applicants(
     status: str | None = Query(default=None),
+    cohort_id: UUID | None = Query(default=None),
+    rank: bool = Query(default=False, description="Order by entrance-assessment score, best first"),
     db: Session = Depends(get_db),
     _: Person = Depends(require_role("admin")),
 ) -> list[Applicant]:
-    return admissions_service.list_applicants(db, status=status)
+    return admissions_service.list_applicants(
+        db, status=status, cohort_id=cohort_id, rank_by_score=rank
+    )
 
 
 @router.get("/{applicant_id}", response_model=ApplicantRead)

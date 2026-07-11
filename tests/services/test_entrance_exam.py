@@ -112,3 +112,21 @@ def test_completed_assessment_satisfies_onboarding_task(admin_session, tenant_a)
     entrance = next(t for t in tasks if t.key == "entrance_assessment")
     assert entrance.status == "done"
     admin_session.rollback()
+
+
+def test_list_ranks_candidates_by_score(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    cohort = _cohort(admin_session, tenant_a, bank)
+    high = _applicant(admin_session, tenant_a, cohort)
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=high,
+        answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},  # 1.0
+    )
+    low = _applicant(admin_session, tenant_a, cohort)
+    entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=low,
+        answers={"q1": ["A"], "q2": ["B"], "q3": ["B"], "q4": ["B"]},  # 0.25
+    )
+    ranked = admissions.list_applicants(admin_session, cohort_id=cohort.id, rank_by_score=True)
+    assert [a.id for a in ranked] == [high.id, low.id]
+    admin_session.rollback()
