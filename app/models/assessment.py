@@ -18,6 +18,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, uuid_pk
 
+# Assessment modes — bundle scoring + answer-reveal policy by purpose.
+ASSESSMENT_MODES = ("practice", "graded", "exam")
+
 
 def _tenant_fk():
     return mapped_column(PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
@@ -68,6 +71,12 @@ class Activity(Base, TimestampMixin):
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Assessment policy (Slice 4). Null = unlimited attempts.
     max_attempts: Mapped[int | None] = mapped_column(Integer)
+    # Assessment mode bundles the scoring + answer-reveal policy by purpose:
+    #   practice — best-of, immediate feedback (formative)
+    #   graded   — best-of, answers withheld until pass or attempts exhausted
+    #   exam     — best-of, score only (never reveal per-question feedback)
+    # Scoring is best-of (highest attempt) in every mode; pass is sticky.
+    assessment_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="graded")
     # "auto" grades on submit; "manual" leaves submissions for instructor grading.
     grading: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")
     # Weighted gradebook (lms-gaps F9): per-activity weight in the course grade.

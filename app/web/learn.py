@@ -17,7 +17,7 @@ from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
-from app.services.assessment import attempts_used, best_scores_for, submit_activity
+from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import accessible_course_ids, require_course_open
@@ -467,6 +467,15 @@ async def submit(
             "course": course,
             "next_chapter": next_chapter,
             "course_completion": course_completion,
+            # Withhold the answer key on graded/exam assessments until the learner
+            # has passed or used all their attempts (see assessment.reveal_feedback).
+            "reveal": reveal_feedback(
+                act,
+                passed=score.passed,
+                attempts_used=attempts_used(
+                    db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
+                ),
+            ),
         },
     )
 
