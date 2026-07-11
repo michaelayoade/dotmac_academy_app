@@ -55,8 +55,116 @@
             <p class="mt-1.5 text-xs text-ink-soft">You'll take a short entrance assessment right after applying.</p>
           </div>
           {% endif %}
+
+          <div class="border-t border-sand-300 pt-5">
+            <p class="text-sm font-semibold text-ink">About you</p>
+            <p class="mt-0.5 text-xs text-ink-soft">We use this to assess your application. Nothing here needs prior fibre experience.</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label for="date_of_birth" class="mb-1.5 block text-sm font-semibold text-ink">Date of birth</label>
+              <input id="date_of_birth" name="date_of_birth" type="date" required
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+            <div>
+              <label for="state" class="mb-1.5 block text-sm font-semibold text-ink">State</label>
+              <input id="state" name="state" type="text" required maxlength="60"
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+          </div>
+          <div>
+            <label for="city" class="mb-1.5 block text-sm font-semibold text-ink">City / town</label>
+            <input id="city" name="city" type="text" required maxlength="60"
+                   class="w-full px-3.5 py-2.5 text-[0.95rem]">
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label for="highest_qualification" class="mb-1.5 block text-sm font-semibold text-ink">Highest qualification</label>
+              <select id="highest_qualification" name="highest_qualification" required
+                      class="w-full px-3.5 py-2.5 text-[0.95rem]">
+                <option value="" disabled selected>Choose…</option>
+                <option>SSCE / WAEC</option>
+                <option>OND</option>
+                <option>NCE</option>
+                <option>HND</option>
+                <option>BSc / BEng</option>
+                <option>MSc and above</option>
+                <option>Trade / vocational certificate</option>
+                <option>None of these</option>
+              </select>
+            </div>
+            <div>
+              <label for="field_of_study" class="mb-1.5 block text-sm font-semibold text-ink">Field of study <span class="font-normal text-ink-soft">(optional)</span></label>
+              <input id="field_of_study" name="field_of_study" type="text" maxlength="120"
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label for="years_experience" class="mb-1.5 block text-sm font-semibold text-ink">Years of work experience</label>
+              <input id="years_experience" name="years_experience" type="number" min="0" max="60" required
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+            <div>
+              <label for="current_role" class="mb-1.5 block text-sm font-semibold text-ink">Current role <span class="font-normal text-ink-soft">(optional)</span></label>
+              <input id="current_role" name="current_role" type="text" maxlength="120"
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <label for="has_device" class="mb-1.5 block text-sm font-semibold text-ink">Laptop or smartphone?</label>
+              <select id="has_device" name="has_device" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
+                <option value="" disabled selected>…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+            <div>
+              <label for="has_internet" class="mb-1.5 block text-sm font-semibold text-ink">Reliable internet?</label>
+              <select id="has_internet" name="has_internet" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
+                <option value="" disabled selected>…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+            <div>
+              <label for="can_work_at_height" class="mb-1.5 block text-sm font-semibold text-ink">Able to work at height?</label>
+              <select id="can_work_at_height" name="can_work_at_height" class="w-full px-3.5 py-2.5 text-[0.95rem]">
+                <option value="" disabled selected>…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label for="available_from" class="mb-1.5 block text-sm font-semibold text-ink">Available from <span class="font-normal text-ink-soft">(optional)</span></label>
+              <input id="available_from" name="available_from" type="date"
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+            <div>
+              <label for="heard_from" class="mb-1.5 block text-sm font-semibold text-ink">How did you hear about us? <span class="font-normal text-ink-soft">(optional)</span></label>
+              <input id="heard_from" name="heard_from" type="text" maxlength="60"
+                     class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            </div>
+          </div>
+          <div>
+            <label for="cv_url" class="mb-1.5 block text-sm font-semibold text-ink">Link to your CV <span class="font-normal text-ink-soft">(optional — Google Drive, Dropbox…)</span></label>
+            <input id="cv_url" name="cv_url" type="url" maxlength="500" placeholder="https://…"
+                   class="w-full px-3.5 py-2.5 text-[0.95rem]">
+          </div>
+
           <input type="hidden" name="program" value="Fiber Academy">
           <button type="submit" class="btn-primary w-full py-2.5 text-[0.95rem]">Submit application</button>
+          <p class="text-center text-xs text-ink-soft">
+            We'll email you your entrance assessment link straight away — check your spam folder if you don't see it.
+          </p>
         </form>
       </div>
     </div>
