@@ -13,7 +13,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -71,9 +81,7 @@ class Applicant(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     # The date the application was made (may predate row creation on backfill).
-    applied_on: Mapped[date] = mapped_column(
-        Date, nullable=False, server_default=func.current_date()
-    )
+    applied_on: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
 
     # Set when the applicant is converted to an enrolled learner (P2).
     person_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
@@ -95,3 +103,14 @@ class Applicant(Base, TimestampMixin):
     # arrives past the cohort's time limit (+grace).
     assessment_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assessment_time_exceeded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Autosaved progress {ext_id: [chosen option, ...]}. Persisted as the candidate
+    # answers, so a dropped connection resumes intact instead of losing the sitting.
+    assessment_answers: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Validity gate. False = the sitting carries NO SIGNAL (near-chance score, or
+    # submitted too fast to have engaged) — an absence of data, not a weak
+    # candidate. Invalid sittings are excluded from score-ranked admissions.
+    assessment_valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    assessment_invalid_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Audit: how many times an admin reset this sitting (the recovery path for a
+    # dropped connection / interrupted exam).
+    assessment_reset_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
