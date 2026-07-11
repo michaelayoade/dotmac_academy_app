@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from html import escape
 from uuid import UUID
 
@@ -28,11 +29,13 @@ from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services import announcements as ann_svc
+from app.services import scheduling
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
 from app.services.dashboards import cohort_overview
 from app.services.email import send_email
+from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
@@ -250,6 +253,115 @@ def invite_to_cohort(
         f'<p>Activation link: <a class="underline" href="{link_e}">{link_e}</a></p>'
         f'</div>'
     )
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    """Parse a datetime-local form value (naive) into a UTC-aware datetime."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date/time.") from exc
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
+def _cohort_or_404(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
+    cohort = db.scalars(
+        select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)
+    ).first()
+    if cohort is None:
+        raise HTTPException(status_code=404)
+    return cohort
+
+
+@router.get("/cohorts/{cohort_id}/timetable", response_class=HTMLResponse)
+def cohort_timetable(cohort_id: UUID, request: Request, db: Session = Depends(get_db)):
+    """A cohort's class-session timetable, with add/cancel controls."""
+    tenant = require_tenant(request)
+    cohort = _cohort_or_404(db, tenant.id, cohort_id)
+    sessions = scheduling.list_for_cohort(db, cohort_id=cohort_id)
+    return templates.TemplateResponse(
+        "instructor/timetable.html",
+        {
+            "request": request,
+            "cohort": cohort,
+            "sessions": sessions,
+            "session_types": list(scheduling.SESSION_TYPES),
+            "delivery_modes": sorted(scheduling.DELIVERY_MODES),
+        },
+    )
+
+
+@router.post("/cohorts/{cohort_id}/sessions")
+def create_class_session(
+    cohort_id: UUID,
+    request: Request,
+    title: str = Form(...),
+    starts_at: str = Form(...),
+    session_type: str = Form("live_class"),
+    ends_at: str = Form(""),
+    location: str = Form(""),
+    join_url: str = Form(""),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _cohort_or_404(db, tenant.id, cohort_id)
+    starts = _parse_dt(starts_at)
+    if starts is None:
+        raise HTTPException(status_code=400, detail="A start time is required.")
+    try:
+        scheduling.create_session(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            title=title,
+            session_type=session_type,
+            starts_at=starts,
+            ends_at=_parse_dt(ends_at),
+            location=location or None,
+            join_url=join_url or None,
+            notes=notes or None,
+        )
+    except (BadRequestError, NotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _timetable_redirect(request, cohort_id)
+
+
+@router.post("/sessions/{session_id}/cancel")
+def cancel_class_session(session_id: UUID, request: Request, db: Session = Depends(get_db)):
+    require_tenant(request)
+    try:
+        session = scheduling.cancel_session(db, session_id=session_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404) from exc
+    return _timetable_redirect(request, session.cohort_id)
+
+
+@router.post("/cohorts/{cohort_id}/delivery-mode")
+def set_cohort_delivery_mode(
+    cohort_id: UUID,
+    request: Request,
+    mode: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _cohort_or_404(db, tenant.id, cohort_id)
+    try:
+        scheduling.set_delivery_mode(db, cohort_id=cohort_id, mode=mode)
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _timetable_redirect(request, cohort_id)
+
+
+def _timetable_redirect(request: Request, cohort_id: UUID) -> Response:
+    target = f"/instructor/cohorts/{cohort_id}/timetable"
+    if request.headers.get("HX-Request"):
+        resp: Response = Response(status_code=200)
+        resp.headers["HX-Redirect"] = target
+        return resp
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/people/{person_id}/status", dependencies=[Depends(require_web_role("admin"))])
