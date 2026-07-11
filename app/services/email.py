@@ -56,19 +56,19 @@ def send_email_detailed(
         logger.info("No recipient address; skipping email: %s", subject)
         return EmailResult(False, msg)
     try:
-        msg = EmailMessage()
-        msg["From"] = cfg.smtp_from
-        msg["To"] = to
-        msg["Subject"] = subject
-        msg.set_content(text_body or "This message requires an HTML-capable email client.")
-        msg.add_alternative(html_body, subtype="html")
+        email_msg = EmailMessage()
+        email_msg["From"] = cfg.smtp_from
+        email_msg["To"] = to
+        email_msg["Subject"] = subject
+        email_msg.set_content(text_body or "This message requires an HTML-capable email client.")
+        email_msg.add_alternative(html_body, subtype="html")
 
         with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as smtp:
             if cfg.smtp_starttls:
                 smtp.starttls()
             if cfg.smtp_user:
                 smtp.login(cfg.smtp_user, cfg.smtp_password)
-            smtp.send_message(msg)
+            smtp.send_message(email_msg)
         logger.info("sent email to %s: %s", to, subject)
         return EmailResult(True)
     except Exception as exc:  # never let an email failure propagate
