@@ -1,0 +1,11 @@
+[Unit]
+Description=Dotmac Academy → ERP training-report sync (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli erp-training-sync
