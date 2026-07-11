@@ -188,3 +188,38 @@ def test_untimed_cohort_never_exceeds(admin_session, tenant_a):
     )
     assert applicant.assessment_time_exceeded is False
     admin_session.rollback()
+
+
+def test_falls_back_to_tenant_default_bank(admin_session, tenant_a):
+    from app.models.tenant import Tenant
+
+    bank = _bank_with_questions(admin_session, tenant_a)
+    cohort = _cohort(admin_session, tenant_a, bank=None)  # cohort has no own bank
+    applicant = _applicant(admin_session, tenant_a, cohort)
+    assert entrance_exam.has_entrance_exam(admin_session, applicant=applicant) is False
+
+    t = admin_session.get(Tenant, tenant_a.id)
+    t.default_entrance_bank_id = bank.id
+    t.default_entrance_time_limit_minutes = 30
+    admin_session.flush()
+
+    assert entrance_exam.has_entrance_exam(admin_session, applicant=applicant) is True
+    assert entrance_exam.resolve_bank_id(admin_session, applicant=applicant) == bank.id
+    assert entrance_exam.time_limit_minutes(admin_session, applicant=applicant) == 30
+    res = entrance_exam.grade_and_record(
+        admin_session, tenant_id=tenant_a.id, applicant=applicant, answers={"q1": ["A"]}
+    )
+    assert "numeracy" in res["profile"]
+    admin_session.rollback()
+
+
+def test_cohort_bank_overrides_tenant_default(admin_session, tenant_a):
+    from app.models.tenant import Tenant
+
+    cohort_bank = _bank_with_questions(admin_session, tenant_a)
+    default_bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank=cohort_bank))
+    admin_session.get(Tenant, tenant_a.id).default_entrance_bank_id = default_bank.id
+    admin_session.flush()
+    assert entrance_exam.resolve_bank_id(admin_session, applicant=applicant) == cohort_bank.id
+    admin_session.rollback()

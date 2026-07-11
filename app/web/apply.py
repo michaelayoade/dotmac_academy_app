@@ -21,6 +21,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
+from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
 from app.services import entrance_exam
 from app.services.exceptions import BadRequestError, NotFoundError
@@ -52,16 +53,14 @@ _RESULT = (
 
 
 def _open_cohorts(db: Session, tenant_id: UUID) -> list[Cohort]:
-    """Active cohorts with an entrance assessment configured (open for intake)."""
-    return list(
-        db.scalars(
-            select(Cohort)
-            .where(Cohort.tenant_id == tenant_id)
-            .where(Cohort.status == "active")
-            .where(Cohort.entrance_bank_id.isnot(None))
-            .order_by(Cohort.name)
-        ).all()
-    )
+    """Cohorts open for intake. If the academy has a tenant-wide default entrance
+    bank, every active cohort is open (all applicants sit the exam); otherwise
+    only cohorts with their own entrance bank."""
+    stmt = select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.status == "active")
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None or tenant.default_entrance_bank_id is None:
+        stmt = stmt.where(Cohort.entrance_bank_id.isnot(None))
+    return list(db.scalars(stmt.order_by(Cohort.name)).all())
 
 
 def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list[Question]:
@@ -114,8 +113,7 @@ def submit_apply(
     )
     safe_name = html.escape((first_name or "").strip()[:80]) or "there"
 
-    cohort = db.get(Cohort, cid) if cid else None
-    if cohort is not None and cohort.entrance_bank_id is not None and applicant.assessment_taken_at is None:
+    if applicant.assessment_taken_at is None and entrance_exam.has_entrance_exam(db, applicant=applicant):
         token = entrance_exam.issue_token(db, applicant=applicant)
         return HTMLResponse(_START_EXAM.format(name=safe_name, token=html.escape(token, quote=True)))
     return HTMLResponse(_THANKS.format(name=safe_name))

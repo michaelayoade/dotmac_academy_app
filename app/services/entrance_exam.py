@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
+from app.models.tenant import Tenant
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
 from app.services.security import hash_token
@@ -59,13 +60,25 @@ def applicant_for_token(db: Session, *, tenant_id: UUID, raw: str) -> Applicant 
 
 
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
-    """The entrance bank configured for the applicant's cohort."""
-    if applicant.cohort_id is None:
-        raise BadRequestError("Applicant is not linked to a cohort.")
-    cohort = db.get(Cohort, applicant.cohort_id)
-    if cohort is None or cohort.entrance_bank_id is None:
-        raise BadRequestError("This cohort has no entrance assessment configured.")
-    return cohort.entrance_bank_id
+    """The entrance bank for this applicant: the cohort's override, else the
+    academy-wide default (so every applicant sits an entrance exam)."""
+    if applicant.cohort_id is not None:
+        cohort = db.get(Cohort, applicant.cohort_id)
+        if cohort is not None and cohort.entrance_bank_id is not None:
+            return cohort.entrance_bank_id
+    tenant = db.get(Tenant, applicant.tenant_id)
+    if tenant is not None and tenant.default_entrance_bank_id is not None:
+        return tenant.default_entrance_bank_id
+    raise BadRequestError("No entrance assessment is configured for this cohort or academy.")
+
+
+def has_entrance_exam(db: Session, *, applicant: Applicant) -> bool:
+    """Whether an entrance exam applies to this applicant (cohort or academy default)."""
+    try:
+        resolve_bank_id(db, applicant=applicant)
+        return True
+    except BadRequestError:
+        return False
 
 
 # A submit within this many seconds past the limit still counts as on-time
@@ -74,11 +87,14 @@ GRACE_SECONDS = 15
 
 
 def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
-    """The cohort's per-sitting entrance limit in minutes (None = untimed)."""
-    if applicant.cohort_id is None:
-        return None
-    cohort = db.get(Cohort, applicant.cohort_id)
-    return cohort.entrance_time_limit_minutes if cohort is not None else None
+    """Per-sitting entrance limit in minutes: cohort override, else the
+    academy-wide default (None = untimed)."""
+    if applicant.cohort_id is not None:
+        cohort = db.get(Cohort, applicant.cohort_id)
+        if cohort is not None and cohort.entrance_time_limit_minutes is not None:
+            return cohort.entrance_time_limit_minutes
+    tenant = db.get(Tenant, applicant.tenant_id)
+    return tenant.default_entrance_time_limit_minutes if tenant is not None else None
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
