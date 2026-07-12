@@ -102,7 +102,6 @@ def apply_form(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("apply.html", {"request": request, "cohorts": _open_cohorts(db, tenant.id)})
 
 
-@router.post("/apply")
 def _d(v: str) -> date | None:
     try:
         return date.fromisoformat(v) if v else None
@@ -121,6 +120,7 @@ def _b(v: str) -> bool | None:
     return {"yes": True, "no": False}.get((v or "").strip().lower())
 
 
+@router.post("/apply")
 def submit_apply(
     request: Request,
     first_name: str = Form(...),
@@ -259,7 +259,7 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
     # candidate gave earlier must not be dropped just because it wasn't re-posted.
     answers: dict[str, list[str]] = dict(applicant.assessment_answers or {})
     for q in questions:
-        posted = form.getlist(q.ext_id)
+        posted = [v for v in form.getlist(q.ext_id) if isinstance(v, str)]
         if posted:
             answers[q.ext_id] = posted
     try:
