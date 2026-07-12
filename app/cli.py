@@ -499,7 +499,9 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
         )
         if args.cohort_id:
             stmt = stmt.where(Applicant.cohort_id == uuid.UUID(args.cohort_id))
-        rows = list(db.scalars(stmt).all())
+        # The query already excludes NULL scores; pair each applicant with its score
+        # so the band comparisons below are over plain floats.
+        rows = [(a, a.assessment_score) for a in db.scalars(stmt).all() if a.assessment_score is not None]
 
         if len(rows) < args.min_cohort:
             raise SystemExit(
@@ -507,7 +509,7 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
                 "Percentiles on a handful of scores are noise; leaving bands as they are."
             )
 
-        scores = sorted(a.assessment_score for a in rows)
+        scores = sorted(score for _, score in rows)
         n = len(scores)
         p25 = scores[int(0.25 * (n - 1))]
         p75 = scores[int(0.75 * (n - 1))]
@@ -518,10 +520,8 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
             return
 
         changed = 0
-        for a in rows:
-            band = (
-                "beginner" if a.assessment_score <= p25 else "advanced" if a.assessment_score >= p75 else "intermediate"
-            )
+        for a, score in rows:
+            band = "beginner" if score <= p25 else "advanced" if score >= p75 else "intermediate"
             if a.assessment_level != band:
                 a.assessment_level = band
                 changed += 1
