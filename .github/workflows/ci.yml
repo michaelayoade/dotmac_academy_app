@@ -55,11 +55,16 @@ jobs:
       - name: Run migrations
         run: poetry run alembic upgrade head
 
+      # Each gate runs even if an earlier one failed, so a lint error can't mask a
+      # broken test. The job still fails if any gate fails — you just see all of
+      # them in one run instead of peeling them off one push at a time.
       - name: Lint (ruff)
         run: poetry run ruff check .
 
       - name: Type check (mypy)
+        if: '!cancelled()'
         run: poetry run mypy
 
       - name: Tests
+        if: '!cancelled()'
         run: poetry run pytest -q
