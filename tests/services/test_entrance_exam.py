@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -479,19 +479,16 @@ def test_profile_completeness_is_reported(admin_session, tenant_a):
 
 
 def test_reapplying_blank_does_not_wipe_a_supplied_profile(admin_session, tenant_a):
-    from datetime import date as _date
-    from app.services import admissions as adm
-
-    a = adm.submit_application(
+    a = admissions.submit_application(
         admin_session, tenant_id=tenant_a.id, email=f"p{uuid.uuid4().hex[:6]}@x.ex",
         first_name="A", last_name="B",
-        profile={"state": "Lagos", "years_experience": 3, "date_of_birth": _date(1997, 1, 1)},
+        profile={"state": "Lagos", "years_experience": 3, "date_of_birth": date(1997, 1, 1)},
     )
     assert a.state == "Lagos" and a.years_experience == 3
 
     # they re-apply and leave the optional fields blank — that must not erase what
     # they already told us
-    again = adm.submit_application(
+    again = admissions.submit_application(
         admin_session, tenant_id=tenant_a.id, email=a.email,
         first_name="A", last_name="B",
         profile={"state": None, "years_experience": None, "city": "Ikeja"},
