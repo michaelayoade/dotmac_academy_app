@@ -20,9 +20,26 @@ from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 
 ADMIN_EMAIL = "admin@dotmac.io"
-ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "changeme-dev-only")
 TENANT_SLUG = "dotmac"
 DISCIPLINE = "networking"
+
+# Weak sentinels that must never seed a real environment. A committed default is
+# exactly how a public-repo credential leak happened before — so the password is
+# resolved at runtime from the environment and refuses to fall back.
+_FORBIDDEN_PASSWORDS = {"", "changeme-dev-only", "changeme", "password", "admin"}
+_MIN_PASSWORD_LEN = 12
+
+
+def resolve_admin_password() -> str:
+    """The seed admin password, from SEED_ADMIN_PASSWORD. No default on purpose."""
+    pw = os.environ.get("SEED_ADMIN_PASSWORD", "")
+    if pw in _FORBIDDEN_PASSWORDS or len(pw) < _MIN_PASSWORD_LEN:
+        raise SystemExit(
+            "Refusing to seed: set SEED_ADMIN_PASSWORD to a strong secret "
+            f"(>= {_MIN_PASSWORD_LEN} chars, not a placeholder) before running this script. "
+            "e.g. SEED_ADMIN_PASSWORD=$(openssl rand -base64 24)"
+        )
+    return pw
 
 
 def one(db, stmt):
@@ -30,6 +47,7 @@ def one(db, stmt):
 
 
 def main() -> None:
+    admin_password = resolve_admin_password()  # fail fast before touching the DB
     engine = create_engine(settings.migration_database_url, future=True)
     Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     db = Session()
@@ -52,7 +70,7 @@ def main() -> None:
                 email=ADMIN_EMAIL,
                 first_name="Dotmac",
                 last_name="Admin",
-                password=ADMIN_PASSWORD,
+                password=admin_password,
                 role="admin",
             )
         else:
@@ -71,12 +89,12 @@ def main() -> None:
                         tenant_id=tenant.id,
                         person_id=admin.id,
                         email=ADMIN_EMAIL,
-                        password_hash=hash_password(ADMIN_PASSWORD),
+                        password_hash=hash_password(admin_password),
                     )
                 )
             else:
                 cred.person_id = admin.id
-                cred.password_hash = hash_password(ADMIN_PASSWORD)
+                cred.password_hash = hash_password(admin_password)
 
         for role_slug in ("admin", "instructor"):
             role = roles[role_slug]
