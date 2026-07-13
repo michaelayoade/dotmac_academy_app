@@ -170,3 +170,70 @@ def test_created_student_can_login_and_reach_learner_page(app_client, admin_sess
         assert login.status_code == 303
         dash = student_client.get("/", headers=sh)
         assert dash.status_code == 200
+
+
+def test_admin_can_search_users(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "admin-search@a.edu", "admin")
+    _seed_user(admin_session, tenant_a, "needle.user@a.edu", "student")
+    _seed_user(admin_session, tenant_a, "other.user@a.edu", "student")
+    h, _ = _login(app_client, "admin-search@a.edu")
+
+    r = app_client.get("/admin/users?q=needle", headers=h)
+
+    assert r.status_code == 200
+    assert "needle.user@a.edu" in r.text
+    assert "other.user@a.edu" not in r.text
+    assert "Showing results for" in r.text
+
+
+def test_admin_can_change_existing_user_role(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "role-admin@a.edu", "admin")
+    target = _seed_user(admin_session, tenant_a, "role-target@a.edu", "student")
+    h, csrf = _login(app_client, "role-admin@a.edu")
+
+    r = app_client.post(
+        f"/admin/users/{target.id}/role",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"role": "instructor"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 200
+    assert r.headers.get("HX-Redirect") == "/admin/users"
+    grants = (
+        admin_session.query(Role.slug)
+        .join(
+            PersonRole,
+            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+        )
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .order_by(Role.slug)
+        .all()
+    )
+    assert [slug for (slug,) in grants] == ["instructor"]
+
+
+def test_instructor_cannot_change_existing_user_role(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "role-inst@a.edu", "instructor")
+    target = _seed_user(admin_session, tenant_a, "role-student@a.edu", "student")
+    h, csrf = _login(app_client, "role-inst@a.edu")
+
+    r = app_client.post(
+        f"/admin/users/{target.id}/role",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"role": "admin"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 403
+    grants = (
+        admin_session.query(Role.slug)
+        .join(
+            PersonRole,
+            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+        )
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .order_by(Role.slug)
+        .all()
+    )
+    assert [slug for (slug,) in grants] == ["student"]

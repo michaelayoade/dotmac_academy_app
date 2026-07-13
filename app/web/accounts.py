@@ -24,7 +24,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -146,6 +146,7 @@ def _assign_invited_user(
 @router.get("", response_class=HTMLResponse)
 def users_list(
     request: Request,
+    q: str = "",
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
@@ -155,9 +156,19 @@ def users_list(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     is_admin = "admin" in slugs
 
-    people = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).order_by(Person.email)
-    ).all()
+    normalized_q = (q or "").strip()
+    people_query = select(Person).where(Person.tenant_id == tenant.id)
+    if normalized_q:
+        like = f"%{normalized_q}%"
+        people_query = people_query.where(
+            or_(
+                Person.email.ilike(like),
+                Person.first_name.ilike(like),
+                Person.last_name.ilike(like),
+                (Person.first_name + " " + Person.last_name).ilike(like),
+            )
+        )
+    people = db.scalars(people_query.order_by(Person.email)).all()
     cohorts = db.scalars(
         select(Cohort)
         .where(Cohort.tenant_id == tenant.id)
@@ -205,6 +216,7 @@ def users_list(
             "cohorts": cohorts,
             "courses": courses,
             "cohort_course_groups": cohort_course_groups,
+            "search_query": normalized_q,
         },
     )
 
@@ -421,6 +433,107 @@ def users_reset_link(
         f'<p><a class="underline" href="{link}">{link}</a></p>'
         f'</div>'
     )
+
+
+@router.post("/{person_id}/invite-link", response_class=HTMLResponse)
+def users_invite_link(
+    person_id: UUID,
+    request: Request,
+    actor: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    slugs = _role_slugs(db, tenant.id, actor.id)
+    if "admin" not in slugs:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send invites")
+    target = db.scalars(
+        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
+    ).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    credential = db.scalars(
+        select(UserCredential)
+        .where(UserCredential.tenant_id == tenant.id)
+        .where(UserCredential.person_id == target.id)
+    ).first()
+    if credential is not None:
+        return HTMLResponse(
+            (
+                '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
+                '<p class="font-semibold">This user already has a password.</p>'
+                '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
+                '</div>'
+            )
+        )
+    token = _issue_token(
+        db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC)
+    )
+    link = str(request.url_for("accept_form").include_query_params(token=token))
+    sent = send_email(
+        target.email,
+        "Activate your Dotmac Academy account",
+        (
+            f"<p>Hi {escape(target.first_name)},</p>"
+            "<p>Use this link to activate your Dotmac Academy account:</p>"
+            f"<p><a href=\"{link}\">Set up your account</a></p>"
+            f"<p>If the button does not work, open this link: {link}</p>"
+        ),
+        text_body=f"Set up your Dotmac Academy account: {link}\n",
+        db=db,
+    )
+    status_text = "Invite email sent." if sent else "Invite link created. Email was not sent; use this link."
+    return HTMLResponse(
+        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+        f'<p class="font-semibold">{status_text}</p>'
+        f'<p><a class="underline" href="{link}">{link}</a></p>'
+        f'</div>'
+    )
+
+
+@router.post("/{person_id}/role")
+def users_role(
+    person_id: UUID,
+    request: Request,
+    role: str = Form(...),
+    actor: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    slugs = _role_slugs(db, tenant.id, actor.id)
+    if "admin" not in slugs:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change roles")
+    roles = ensure_roles(db, tenant.id)
+    if role not in {"student", "instructor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
+    target = db.scalars(
+        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
+    ).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.id == actor.id and role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot remove your own admin role here",
+        )
+
+    standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
+    target_role_id = roles[role].id
+    existing_grants = db.scalars(
+        select(PersonRole)
+        .where(PersonRole.tenant_id == tenant.id)
+        .where(PersonRole.person_id == target.id)
+        .where(PersonRole.role_id.in_(standard_role_ids))
+    ).all()
+    has_target_role = False
+    for grant in existing_grants:
+        if grant.role_id == target_role_id:
+            has_target_role = True
+        else:
+            db.delete(grant)
+    if not has_target_role:
+        db.add(PersonRole(tenant_id=tenant.id, person_id=target.id, role_id=target_role_id))
+    db.flush()
+    return hx_redirect(request, "/admin/users")
 
 
 @router.post("/{person_id}/status", response_class=HTMLResponse)
