@@ -51,8 +51,26 @@ def admin_session(admin_engine) -> Generator[Session, None, None]:
         db.close()
 
 
+@pytest.fixture
+def app_user_session() -> Generator[Session, None, None]:
+    """Connection as app_user for RLS visibility assertions."""
+    url = os.getenv("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
+    engine = create_engine(url, future=True)
+    SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    db = SessionLocal()
+    try:
+        yield db
+        db.rollback()
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def _make_tenant(admin_session: Session, slug: str, name: str):
     from app.models.tenant import Tenant
+
     # Self-heal: clear any aborted-transaction state and any leftover tenant with
     # this slug (from an interrupted run, or a prior test that left the session
     # aborted — psycopg silently ignores the teardown DELETE in that case, so the
@@ -91,6 +109,7 @@ def tenant_b(admin_session: Session):
 def app_client():
     """TestClient that lets you set Host header per request."""
     from app.main import app
+
     return TestClient(app)
 
 
