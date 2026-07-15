@@ -30,6 +30,7 @@ from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services import scheduling
+from app.services import tracks as track_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
@@ -61,7 +62,11 @@ def _e(value: object) -> str:
 
 
 @router.get("/cohorts", response_class=HTMLResponse)
-def cohorts_list(request: Request, db: Session = Depends(get_db)):
+def cohorts_list(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     tenant = require_tenant(request)
     rows = db.scalars(
         select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)
@@ -77,18 +82,68 @@ def cohorts_list(request: Request, db: Session = Depends(get_db)):
         .order_by(Person.last_name, Person.first_name, Person.email)
     ).all()
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
+    cohort_names = {cohort.id: cohort.name for cohort in rows}
     for enrollment, student in roster_rows:
-        if enrollment.cohort_id in roster_by_cohort:
+        if enrollment.cohort_id not in roster_by_cohort:
+            continue
+        is_active_student = (
+            enrollment.status == "active"
+            and enrollment.role_in_cohort == "student"
+            and student.status == "active"
+        )
+        if is_active_student:
+            active_student_counts[enrollment.cohort_id] += 1
+        if is_active_student or cohort_names.get(enrollment.cohort_id) == "Dotmac Academy Demo Cohort":
             roster_by_cohort[enrollment.cohort_id].append(
                 {"enrollment": enrollment, "person": student}
             )
+    tracks_by_cohort = {
+        cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id)
+        for cohort in rows
+    }
+    courses = list(
+        db.scalars(
+            select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)
+        ).all()
+    )
+    offering_rows = db.execute(
+        select(CourseOffering.cohort_id, Course)
+        .join(
+            Course,
+            (Course.id == CourseOffering.course_id)
+            & (Course.tenant_id == CourseOffering.tenant_id),
+        )
+        .where(CourseOffering.tenant_id == tenant.id)
+        .where(CourseOffering.status == "active")
+        .order_by(Course.title)
+    ).all()
+    courses_by_cohort: dict[UUID, list[Course]] = {cohort.id: [] for cohort in rows}
+    seen_course_pairs: set[tuple[UUID, UUID]] = set()
+    for cohort_id, course in offering_rows:
+        key = (cohort_id, course.id)
+        if cohort_id in courses_by_cohort and key not in seen_course_pairs:
+            courses_by_cohort[cohort_id].append(course)
+            seen_course_pairs.add(key)
     cohort_rows = [
-        {"cohort": cohort, "roster": roster_by_cohort.get(cohort.id, [])}
+        {
+            "cohort": cohort,
+            "roster": roster_by_cohort.get(cohort.id, []),
+            "active_student_count": active_student_counts.get(cohort.id, 0),
+            "tracks": tracks_by_cohort.get(cohort.id, []),
+            "available_courses": courses,
+        }
         for cohort in rows
     ]
     return templates.TemplateResponse(
         "instructor/cohorts.html",
-        {"request": request, "cohorts": rows, "cohort_rows": cohort_rows},
+        {
+            "request": request,
+            "cohorts": rows,
+            "cohort_rows": cohort_rows,
+            "courses": courses,
+            "all_courses": courses,
+        },
     )
 
 
@@ -169,15 +224,17 @@ def enroll_student(
     request: Request,
     emails: str = Form(""),
     email: str = Form(""),
+    track_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Bulk-enroll people by email; reports unknown emails instead of silently
     dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``."""
     tenant = require_tenant(request)
     # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
+    track_uuid = UUID(track_id) if track_id else None
     result = bulk_enroll(
         db, tenant_id=tenant.id, cohort_id=cohort_id,
-        emails=_split_emails(emails, email),
+        emails=_split_emails(emails, email), track_id=track_uuid,
     )
     enrolled = len(result["enrolled"]) + len(result["reactivated"])
     already_active = len(result["already_active"])
@@ -205,6 +262,78 @@ def change_roster_state(
     return hx_redirect(request, "/instructor/cohorts")
 
 
+@router.post("/cohorts/{cohort_id}/tracks")
+def create_track_for_cohort(
+    cohort_id: UUID,
+    request: Request,
+    name: str = Form(...),
+    course_ids: list[str] = Form([]),
+    course_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    selected: list[UUID] = []
+    for raw in [*course_ids, course_id]:
+        if raw:
+            selected.append(UUID(raw))
+    try:
+        track_svc.create_cohort_track(
+            db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected
+        )
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/tracks/{track_id}/courses")
+def add_courses_to_track(
+    cohort_id: UUID,
+    track_id: UUID,
+    request: Request,
+    course_ids: list[str] = Form([]),
+    course_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    selected: list[UUID] = []
+    for raw in [*course_ids, course_id]:
+        if raw:
+            selected.append(UUID(raw))
+    try:
+        track_svc.add_courses_to_cohort_track(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            track_id=track_id,
+            course_ids=selected,
+        )
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/roster/{person_id}/track")
+def change_roster_track(
+    cohort_id: UUID,
+    person_id: UUID,
+    request: Request,
+    track_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    try:
+        track_svc.assign_enrollment_track(
+            db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, track_id=UUID(track_id)
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
 @router.post("/cohorts/{cohort_id}/invite")
 def invite_to_cohort(
     cohort_id: UUID,
@@ -212,6 +341,7 @@ def invite_to_cohort(
     email: str = Form(...),
     first_name: str = Form("New"),
     last_name: str = Form("Learner"),
+    track_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
@@ -219,7 +349,8 @@ def invite_to_cohort(
     tenant = require_tenant(request)
     person, token = invite_user(db, tenant_id=tenant.id, email=email,
                                 first_name=first_name, last_name=last_name, role="student")
-    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email])
+    track_uuid = UUID(track_id) if track_id else None
+    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email], track_id=track_uuid)
     link = str(request.url_for("accept_form").include_query_params(token=token))
     link_e = _e(link)
     sent = send_email(

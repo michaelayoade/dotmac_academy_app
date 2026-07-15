@@ -20,12 +20,14 @@ from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.prerequisite import CoursePrerequisite
+from app.models.track import TrackCourse
 
 
 def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> set[UUID]:
     """Course ids the person may access via active enrollment -> active offering."""
     rows = db.scalars(
         select(CourseOffering.course_id)
+        .distinct()
         .join(
             Enrollment,
             (Enrollment.cohort_id == CourseOffering.cohort_id)
@@ -36,11 +38,18 @@ def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> s
             (Course.id == CourseOffering.course_id)
             & (Course.tenant_id == CourseOffering.tenant_id),
         )
+        .outerjoin(
+            TrackCourse,
+            (TrackCourse.tenant_id == Enrollment.tenant_id)
+            & (TrackCourse.track_id == Enrollment.track_id)
+            & (TrackCourse.course_id == CourseOffering.course_id),
+        )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(CourseOffering.status == "active")
         .where(Course.status.in_(("published", "completed")))
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
+        .where(or_(Enrollment.track_id.is_(None), TrackCourse.id.isnot(None)))
     ).all()
     return set(rows)
 
@@ -71,6 +80,7 @@ def open_course_ids(
     now = now or datetime.now(UTC)
     rows = db.scalars(
         select(CourseOffering.course_id)
+        .distinct()
         .join(
             Enrollment,
             (Enrollment.cohort_id == CourseOffering.cohort_id)
@@ -81,11 +91,18 @@ def open_course_ids(
             (Course.id == CourseOffering.course_id)
             & (Course.tenant_id == CourseOffering.tenant_id),
         )
+        .outerjoin(
+            TrackCourse,
+            (TrackCourse.tenant_id == Enrollment.tenant_id)
+            & (TrackCourse.track_id == Enrollment.track_id)
+            & (TrackCourse.course_id == CourseOffering.course_id),
+        )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(CourseOffering.status == "active")
         .where(Course.status.in_(("published", "completed")))
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
+        .where(or_(Enrollment.track_id.is_(None), TrackCourse.id.isnot(None)))
         .where(or_(CourseOffering.starts_at.is_(None), CourseOffering.starts_at <= now))
         .where(or_(CourseOffering.ends_at.is_(None), CourseOffering.ends_at >= now))
     ).all()

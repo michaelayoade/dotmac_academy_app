@@ -237,3 +237,59 @@ def test_instructor_cannot_change_existing_user_role(app_client, admin_session, 
         .all()
     )
     assert [slug for (slug,) in grants] == ["student"]
+
+
+def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a):
+    from sqlalchemy import select
+
+    from app.models.cohort import Cohort, Enrollment
+    from app.models.course import Course
+    from app.models.track import Track
+    from app.services.tracks import create_cohort_track
+
+    _seed_user(admin_session, tenant_a, "track-admin@a.edu", "admin")
+    cohort = Cohort(tenant_id=tenant_a.id, name="Track Cohort", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="track-invite-course",
+        title="Track Invite Course",
+        discipline="networking",
+        source_ref="test",
+        version=1,
+        status="published",
+    )
+    admin_session.add_all([cohort, course])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, name="Invite Track", course_ids=[course.id]
+    )
+    admin_session.commit()
+    h, csrf = _login(app_client, "track-admin@a.edu")
+
+    r = app_client.post(
+        "/admin/users/invite",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={
+            "first_name": "Track",
+            "last_name": "Student",
+            "email": "track-student@a.edu",
+            "role": "student",
+            "cohort_ids": [str(cohort.id)],
+            "track_ids": [f"{cohort.id}:{track.id}"],
+        },
+    )
+
+    assert r.status_code == 200
+    assert "Invite Track track in Track Cohort" in r.text
+    invited = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "track-student@a.edu")
+    ).first()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant_a.id)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == invited.id)
+    ).first()
+    assert enrollment.track_id == track.id
+    assert admin_session.scalars(select(Track).where(Track.id == track.id)).first().name == "Invite Track"
+
