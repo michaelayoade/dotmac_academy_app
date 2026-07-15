@@ -15,3 +15,4 @@ from app.models.onboarding import OnboardingTask  # noqa: F401
 from app.models.pacing import OfferingActivity  # noqa: F401
 from app.models.prerequisite import CoursePrerequisite  # noqa: F401
 from app.models.reading import ChapterRead  # noqa: F401
+from app.models.track import CohortTrack, Track, TrackCourse  # noqa: F401

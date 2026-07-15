@@ -42,11 +42,19 @@ def teaching_home(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     rows = db.execute(
-        select(Cohort, func.count(Enrollment.id))
+        select(Cohort, func.count(Person.id))
         .outerjoin(
             Enrollment,
             (Enrollment.cohort_id == Cohort.id)
-            & (Enrollment.tenant_id == Cohort.tenant_id),
+            & (Enrollment.tenant_id == Cohort.tenant_id)
+            & (Enrollment.status == "active")
+            & (Enrollment.role_in_cohort == "student"),
+        )
+        .outerjoin(
+            Person,
+            (Person.id == Enrollment.person_id)
+            & (Person.tenant_id == Enrollment.tenant_id)
+            & (Person.status == "active"),
         )
         .where(Cohort.tenant_id == tenant.id)
         .group_by(Cohort.id)

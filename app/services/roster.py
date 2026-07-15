@@ -17,6 +17,7 @@ from app.models.cohort import Enrollment
 from app.models.person import Person
 from app.services.exceptions import NotFoundError
 from app.services.lookups import cohort_or_404
+from app.services.tracks import assign_enrollment_track, ensure_track_offerings
 
 ROSTER_STATES = frozenset({"active", "waitlisted", "dropped"})
 
@@ -30,13 +31,15 @@ def _normalize_emails(emails) -> list[str]:
     return list(seen)
 
 
-def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails) -> dict:
+def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails, track_id: UUID | None = None) -> dict:
     """Enroll each email's person into the cohort as an active student.
 
     Returns {"enrolled", "reactivated", "already_active", "not_found"} lists of
     emails. Unknown emails are reported, never silently dropped.
     """
     cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
+    if track_id is not None:
+        ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track_id)
     result: dict[str, list[str]] = {
         "enrolled": [], "reactivated": [], "already_active": [], "not_found": [],
     }
@@ -55,12 +58,28 @@ def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails) -> dic
         ).first()
         if enr is None:
             db.add(Enrollment(tenant_id=tenant_id, cohort_id=cohort_id, person_id=person.id,
-                              role_in_cohort="student", status="active"))
+                              track_id=track_id, role_in_cohort="student", status="active"))
             result["enrolled"].append(email)
         elif enr.status != "active":
             enr.status = "active"
+            if track_id is not None:
+                assign_enrollment_track(
+                    db,
+                    tenant_id=tenant_id,
+                    cohort_id=cohort_id,
+                    person_id=person.id,
+                    track_id=track_id,
+                )
             result["reactivated"].append(email)
         else:
+            if track_id is not None and enr.track_id != track_id:
+                assign_enrollment_track(
+                    db,
+                    tenant_id=tenant_id,
+                    cohort_id=cohort_id,
+                    person_id=person.id,
+                    track_id=track_id,
+                )
             result["already_active"].append(email)
     db.flush()
     return result

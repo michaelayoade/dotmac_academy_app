@@ -32,6 +32,11 @@ class Enrollment(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "cohort_id", "person_id", name="uq_enrollments_member"),
         ForeignKeyConstraint(
+            ["tenant_id", "cohort_id", "track_id"],
+            ["cohort_tracks.tenant_id", "cohort_tracks.cohort_id", "cohort_tracks.track_id"],
+            name="fk_enrollments_tenant_cohort_track",
+        ),
+        ForeignKeyConstraint(
             ["tenant_id", "cohort_id"],
             ["cohorts.tenant_id", "cohorts.id"],
             ondelete="CASCADE",
@@ -50,5 +55,6 @@ class Enrollment(Base, TimestampMixin):
     )
     cohort_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     person_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    track_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
     role_in_cohort: Mapped[str] = mapped_column(String(20), nullable=False, default="student")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")

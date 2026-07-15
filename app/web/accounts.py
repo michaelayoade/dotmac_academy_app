@@ -34,6 +34,8 @@ from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
+from app.models.track import Track
+from app.services import tracks as track_svc
 from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
 from app.services.email import send_email
@@ -91,6 +93,7 @@ def _assign_invited_user(
     role: str,
     cohorts: list[Cohort],
     courses_by_cohort: dict[UUID, list[Course]],
+    tracks_by_cohort: dict[UUID, Track],
 ) -> list[str]:
     assignments: list[str] = []
     if not cohorts:
@@ -105,19 +108,26 @@ def _assign_invited_user(
             .where(Enrollment.person_id == invited.id)
         ).first()
         if enrollment is None:
-            db.add(
-                Enrollment(
-                    tenant_id=tenant_id,
-                    cohort_id=cohort.id,
-                    person_id=invited.id,
-                    role_in_cohort=member_role,
-                    status="active",
-                )
+            enrollment = Enrollment(
+                tenant_id=tenant_id,
+                cohort_id=cohort.id,
+                person_id=invited.id,
+                role_in_cohort=member_role,
+                status="active",
             )
+            db.add(enrollment)
         else:
             enrollment.role_in_cohort = member_role
             enrollment.status = "active"
+        track = tracks_by_cohort.get(cohort.id)
+        if track is not None:
+            enrollment.track_id = track.id
+            track_svc.ensure_track_offerings(
+                db, tenant_id=tenant_id, cohort_id=cohort.id, track_id=track.id
+            )
         assignments.append(f"{cohort.name} cohort as {member_role}")
+        if track is not None:
+            assignments.append(f"{track.name} track in {cohort.name}")
 
         for course in courses_by_cohort.get(cohort.id, []):
             offering = db.scalars(
@@ -178,6 +188,13 @@ def users_list(
     courses = db.scalars(
         select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)
     ).all()
+    track_groups = track_svc.tracks_for_cohorts(
+        db, tenant_id=tenant.id, cohort_ids=[cohort.id for cohort in cohorts]
+    )
+    cohort_track_groups = [
+        {"cohort": cohort, "tracks": track_groups.get(cohort.id, [])}
+        for cohort in cohorts
+    ]
     offering_rows = db.execute(
         select(CourseOffering, Course)
         .join(
@@ -216,6 +233,7 @@ def users_list(
             "cohorts": cohorts,
             "courses": courses,
             "cohort_course_groups": cohort_course_groups,
+            "cohort_track_groups": cohort_track_groups,
             "search_query": normalized_q,
         },
     )
@@ -230,6 +248,8 @@ def users_invite(
     role: str = Form(...),
     cohort_ids: list[str] = Form([]),
     cohort_id: str = Form(""),
+    track_ids: list[str] = Form([]),
+    track_id: str = Form(""),
     course_ids: list[str] = Form([]),
     course_id: str = Form(""),
     person: Person = Depends(require_web_user),
@@ -244,7 +264,9 @@ def users_invite(
 
     cohorts: list[Cohort] = []
     courses_by_cohort: dict[UUID, list[Course]] = {}
+    tracks_by_cohort: dict[UUID, Track] = {}
     selected_cohort_ids = [raw for raw in [*cohort_ids, cohort_id] if raw]
+    selected_track_ids = [raw for raw in [*track_ids, track_id] if raw]
     selected_course_ids = [raw for raw in [*course_ids, course_id] if raw]
     seen_cohort_ids: set[UUID] = set()
     for raw_cohort_id in selected_cohort_ids:
@@ -265,7 +287,36 @@ def users_invite(
         seen_cohort_ids.add(cohort_uuid)
         cohorts.append(cohort)
         courses_by_cohort[cohort_uuid] = []
+    if selected_track_ids:
+        if not cohorts:
+            return _html_error("Select at least one cohort before assigning tracks")
+        for raw_track_id in selected_track_ids:
+            raw_track_id = raw_track_id.strip()
+            if ":" not in raw_track_id:
+                return _html_error("Invalid track selection")
+            raw_cohort_id, raw_track_uuid = raw_track_id.split(":", 1)
+            try:
+                pair_cohort_id = UUID(raw_cohort_id)
+                track_uuid = UUID(raw_track_uuid)
+            except ValueError:
+                return _html_error("Invalid track selection")
+            if pair_cohort_id not in seen_cohort_ids:
+                return _html_error("Selected track does not belong to a selected cohort")
+            if pair_cohort_id in tracks_by_cohort:
+                return _html_error("Select only one track per cohort")
+            cohort_track = track_svc.cohort_track_or_404(
+                db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=track_uuid
+            )
+            track = db.scalars(
+                select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
+            ).first()
+            if track is None:
+                return _html_error("Selected track was not found")
+            tracks_by_cohort[pair_cohort_id] = track
+
     if selected_course_ids:
+        if tracks_by_cohort:
+            return _html_error("Direct course assignment cannot be combined with track assignment")
         if not cohorts:
             return _html_error("Select at least one cohort before assigning courses")
         seen_course_pairs: set[tuple[UUID, UUID]] = set()
@@ -337,6 +388,7 @@ def users_invite(
         role=role,
         cohorts=cohorts,
         courses_by_cohort=courses_by_cohort,
+        tracks_by_cohort=tracks_by_cohort,
     )
     link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
     assignment_html = ""
