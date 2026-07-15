@@ -41,12 +41,13 @@ def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails, track_
     if track_id is not None:
         ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track_id)
     result: dict[str, list[str]] = {
-        "enrolled": [], "reactivated": [], "already_active": [], "not_found": [],
+        "enrolled": [],
+        "reactivated": [],
+        "already_active": [],
+        "not_found": [],
     }
     for email in _normalize_emails(emails):
-        person = db.scalars(
-            select(Person).where(Person.tenant_id == tenant_id).where(Person.email == email)
-        ).first()
+        person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.email == email)).first()
         if person is None:
             result["not_found"].append(email)
             continue
@@ -57,8 +58,16 @@ def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails, track_
             .where(Enrollment.person_id == person.id)
         ).first()
         if enr is None:
-            db.add(Enrollment(tenant_id=tenant_id, cohort_id=cohort_id, person_id=person.id,
-                              track_id=track_id, role_in_cohort="student", status="active"))
+            db.add(
+                Enrollment(
+                    tenant_id=tenant_id,
+                    cohort_id=cohort_id,
+                    person_id=person.id,
+                    track_id=track_id,
+                    role_in_cohort="student",
+                    status="active",
+                )
+            )
             result["enrolled"].append(email)
         elif enr.status != "active":
             enr.status = "active"
@@ -85,8 +94,7 @@ def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails, track_
     return result
 
 
-def set_roster_state(db: Session, *, tenant_id: UUID, cohort_id: UUID, person_id: UUID,
-                     state: str) -> Enrollment:
+def set_roster_state(db: Session, *, tenant_id: UUID, cohort_id: UUID, person_id: UUID, state: str) -> Enrollment:
     """Transition an enrollment to active | waitlisted | dropped."""
     if state not in ROSTER_STATES:
         raise NotFoundError(f"invalid roster state: {state}")

@@ -4,6 +4,7 @@ Adds first-class tracks without replacing CourseOffering. Existing production
 access remains intact because CourseOffering stays the entitlement source; this
 migration backfills one legacy track per cohort from current offerings.
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -39,7 +40,9 @@ def upgrade() -> None:
     op.create_table(
         "tracks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("slug", sa.String(80), nullable=False),
         sa.Column("name", sa.String(160), nullable=False),
         sa.Column("status", sa.String(20), nullable=False, server_default="active"),
@@ -53,15 +56,27 @@ def upgrade() -> None:
     op.create_table(
         "cohort_tracks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("cohort_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("track_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("status", sa.String(20), nullable=False, server_default="active"),
         *_ts(),
         sa.UniqueConstraint("tenant_id", "id", name="uq_cohort_tracks_tenant_id_id"),
         sa.UniqueConstraint("tenant_id", "cohort_id", "track_id", name="uq_cohort_tracks_cohort_track"),
-        sa.ForeignKeyConstraint(["tenant_id", "cohort_id"], ["cohorts.tenant_id", "cohorts.id"], ondelete="CASCADE", name="fk_cohort_tracks_tenant_cohort"),
-        sa.ForeignKeyConstraint(["tenant_id", "track_id"], ["tracks.tenant_id", "tracks.id"], ondelete="CASCADE", name="fk_cohort_tracks_tenant_track"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "cohort_id"],
+            ["cohorts.tenant_id", "cohorts.id"],
+            ondelete="CASCADE",
+            name="fk_cohort_tracks_tenant_cohort",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "track_id"],
+            ["tracks.tenant_id", "tracks.id"],
+            ondelete="CASCADE",
+            name="fk_cohort_tracks_tenant_track",
+        ),
     )
     op.create_index("ix_cohort_tracks_tenant_id", "cohort_tracks", ["tenant_id"])
     op.create_index("ix_cohort_tracks_cohort_id", "cohort_tracks", ["cohort_id"])
@@ -71,14 +86,26 @@ def upgrade() -> None:
     op.create_table(
         "track_courses",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("track_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("course_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("order_index", sa.Integer(), nullable=False, server_default="0"),
         *_ts(),
         sa.UniqueConstraint("tenant_id", "track_id", "course_id", name="uq_track_courses_track_course"),
-        sa.ForeignKeyConstraint(["tenant_id", "track_id"], ["tracks.tenant_id", "tracks.id"], ondelete="CASCADE", name="fk_track_courses_tenant_track"),
-        sa.ForeignKeyConstraint(["tenant_id", "course_id"], ["courses.tenant_id", "courses.id"], ondelete="CASCADE", name="fk_track_courses_tenant_course"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "track_id"],
+            ["tracks.tenant_id", "tracks.id"],
+            ondelete="CASCADE",
+            name="fk_track_courses_tenant_track",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "course_id"],
+            ["courses.tenant_id", "courses.id"],
+            ondelete="CASCADE",
+            name="fk_track_courses_tenant_course",
+        ),
     )
     op.create_index("ix_track_courses_tenant_id", "track_courses", ["tenant_id"])
     op.create_index("ix_track_courses_track_id", "track_courses", ["track_id"])

@@ -60,8 +60,7 @@ def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
 
 def _html_error(message: str, status_code: int = status.HTTP_200_OK) -> HTMLResponse:
     return HTMLResponse(
-        f'<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">'
-        f'{escape(message)}</div>',
+        f'<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">' f"{escape(message)}</div>",
         status_code=status_code,
     )
 
@@ -122,9 +121,7 @@ def _assign_invited_user(
         track = tracks_by_cohort.get(cohort.id)
         if track is not None:
             enrollment.track_id = track.id
-            track_svc.ensure_track_offerings(
-                db, tenant_id=tenant_id, cohort_id=cohort.id, track_id=track.id
-            )
+            track_svc.ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort.id, track_id=track.id)
         assignments.append(f"{cohort.name} cohort as {member_role}")
         if track is not None:
             assignments.append(f"{track.name} track in {cohort.name}")
@@ -180,27 +177,16 @@ def users_list(
         )
     people = db.scalars(people_query.order_by(Person.email)).all()
     cohorts = db.scalars(
-        select(Cohort)
-        .where(Cohort.tenant_id == tenant.id)
-        .where(Cohort.status == "active")
-        .order_by(Cohort.name)
+        select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.status == "active").order_by(Cohort.name)
     ).all()
-    courses = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)
-    ).all()
-    track_groups = track_svc.tracks_for_cohorts(
-        db, tenant_id=tenant.id, cohort_ids=[cohort.id for cohort in cohorts]
-    )
-    cohort_track_groups = [
-        {"cohort": cohort, "tracks": track_groups.get(cohort.id, [])}
-        for cohort in cohorts
-    ]
+    courses = db.scalars(select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)).all()
+    track_groups = track_svc.tracks_for_cohorts(db, tenant_id=tenant.id, cohort_ids=[cohort.id for cohort in cohorts])
+    cohort_track_groups = [{"cohort": cohort, "tracks": track_groups.get(cohort.id, [])} for cohort in cohorts]
     offering_rows = db.execute(
         select(CourseOffering, Course)
         .join(
             Course,
-            (Course.id == CourseOffering.course_id)
-            & (Course.tenant_id == CourseOffering.tenant_id),
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
         )
         .where(CourseOffering.tenant_id == tenant.id)
         .where(CourseOffering.status == "active")
@@ -213,10 +199,7 @@ def users_list(
         if offering.cohort_id in courses_by_cohort and key not in seen_offerings:
             courses_by_cohort[offering.cohort_id].append(course)
             seen_offerings.add(key)
-    cohort_course_groups = [
-        {"cohort": cohort, "courses": courses_by_cohort.get(cohort.id, [])}
-        for cohort in cohorts
-    ]
+    cohort_course_groups = [{"cohort": cohort, "courses": courses_by_cohort.get(cohort.id, [])} for cohort in cohorts]
     rows = [
         {
             "person": row,
@@ -377,9 +360,7 @@ def users_invite(
         ).first()
         token = None
         if credential is None:
-            token = _issue_token(
-                db, tenant_id=tenant.id, person_id=invited.id, kind="invite", now=datetime.now(UTC)
-            )
+            token = _issue_token(db, tenant_id=tenant.id, person_id=invited.id, kind="invite", now=datetime.now(UTC))
 
     assignments = _assign_invited_user(
         db,
@@ -406,7 +387,7 @@ def users_invite(
                 f"<p>Hi {escape(invited.first_name)},</p>"
                 f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
                 f"{assignment_html}"
-                f"<p><a href=\"{link}\">Set up your account</a></p>"
+                f'<p><a href="{link}">Set up your account</a></p>'
                 f"<p>If the button does not work, open this link: {link}</p>"
             ),
             text_body=(
@@ -451,9 +432,7 @@ def users_reset_link(
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send reset links")
-    target = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
-    ).first()
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     token = request_password_reset(db, tenant_id=tenant.id, email=target.email)
@@ -461,7 +440,7 @@ def users_reset_link(
         return HTMLResponse(
             (
                 '<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">'
-                'No account credential exists yet. Use an invite link instead.</div>'
+                "No account credential exists yet. Use an invite link instead.</div>"
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -472,7 +451,7 @@ def users_reset_link(
         (
             f"<p>Hi {target.first_name},</p>"
             f"<p>Use this link to reset your password:</p>"
-            f"<p><a href=\"{link}\">Reset password</a></p>"
+            f'<p><a href="{link}">Reset password</a></p>'
             f"<p>If the button does not work, open this link: {link}</p>"
         ),
         text_body=f"Reset your Dotmac Academy password: {link}\n",
@@ -483,7 +462,7 @@ def users_reset_link(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
         f'<p><a class="underline" href="{link}">{link}</a></p>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -498,15 +477,11 @@ def users_invite_link(
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send invites")
-    target = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
-    ).first()
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     credential = db.scalars(
-        select(UserCredential)
-        .where(UserCredential.tenant_id == tenant.id)
-        .where(UserCredential.person_id == target.id)
+        select(UserCredential).where(UserCredential.tenant_id == tenant.id).where(UserCredential.person_id == target.id)
     ).first()
     if credential is not None:
         return HTMLResponse(
@@ -514,12 +489,10 @@ def users_invite_link(
                 '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
                 '<p class="font-semibold">This user already has a password.</p>'
                 '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
-                '</div>'
+                "</div>"
             )
         )
-    token = _issue_token(
-        db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC)
-    )
+    token = _issue_token(db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC))
     link = str(request.url_for("accept_form").include_query_params(token=token))
     sent = send_email(
         target.email,
@@ -527,7 +500,7 @@ def users_invite_link(
         (
             f"<p>Hi {escape(target.first_name)},</p>"
             "<p>Use this link to activate your Dotmac Academy account:</p>"
-            f"<p><a href=\"{link}\">Set up your account</a></p>"
+            f'<p><a href="{link}">Set up your account</a></p>'
             f"<p>If the button does not work, open this link: {link}</p>"
         ),
         text_body=f"Set up your Dotmac Academy account: {link}\n",
@@ -538,7 +511,7 @@ def users_invite_link(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
         f'<p><a class="underline" href="{link}">{link}</a></p>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -557,9 +530,7 @@ def users_role(
     roles = ensure_roles(db, tenant.id)
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    target = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
-    ).first()
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if target.id == actor.id and role != "admin":

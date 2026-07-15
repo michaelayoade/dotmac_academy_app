@@ -23,9 +23,7 @@ def _seed_user(admin_session, tenant, email, role_slug):
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id)
-    )
+    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
     return p
 
@@ -71,19 +69,21 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert r.headers.get("HX-Redirect") == "/admin/users"
 
-    person = admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu"
-    ).one()
-    cred = admin_session.query(UserCredential).filter(
-        UserCredential.tenant_id == tenant_a.id, UserCredential.person_id == person.id
-    ).one()
+    person = (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu").one()
+    )
+    cred = (
+        admin_session.query(UserCredential)
+        .filter(UserCredential.tenant_id == tenant_a.id, UserCredential.person_id == person.id)
+        .one()
+    )
     assert cred is not None
-    student_role = admin_session.query(Role).filter(
-        Role.tenant_id == tenant_a.id, Role.slug == "student"
-    ).one()
-    grant = admin_session.query(PersonRole).filter(
-        PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id
-    ).one()
+    student_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "student").one()
+    grant = (
+        admin_session.query(PersonRole)
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        .one()
+    )
     assert grant.role_id == student_role.id
 
 
@@ -104,9 +104,10 @@ def test_instructor_cannot_create_admin(app_client, admin_session, tenant_a):
         follow_redirects=False,
     )
     assert r.status_code == 403
-    assert admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "no-admin@a.edu"
-    ).count() == 0
+    assert (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "no-admin@a.edu").count()
+        == 0
+    )
 
 
 def test_admin_can_create_admin(app_client, admin_session, tenant_a):
@@ -126,15 +127,15 @@ def test_admin_can_create_admin(app_client, admin_session, tenant_a):
         follow_redirects=False,
     )
     assert r.status_code == 200
-    admin_role = admin_session.query(Role).filter(
-        Role.tenant_id == tenant_a.id, Role.slug == "admin"
-    ).one()
-    person = admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "extra-admin@a.edu"
-    ).one()
-    grant = admin_session.query(PersonRole).filter(
-        PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id
-    ).one()
+    admin_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "admin").one()
+    person = (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "extra-admin@a.edu").one()
+    )
+    grant = (
+        admin_session.query(PersonRole)
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        .one()
+    )
     assert grant.role_id == admin_role.id
 
 
@@ -292,4 +293,3 @@ def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a
     ).first()
     assert enrollment.track_id == track.id
     assert admin_session.scalars(select(Track).where(Track.id == track.id)).first().name == "Invite Track"
-

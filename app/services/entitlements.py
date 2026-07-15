@@ -30,13 +30,11 @@ def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> s
         .distinct()
         .join(
             Enrollment,
-            (Enrollment.cohort_id == CourseOffering.cohort_id)
-            & (Enrollment.tenant_id == CourseOffering.tenant_id),
+            (Enrollment.cohort_id == CourseOffering.cohort_id) & (Enrollment.tenant_id == CourseOffering.tenant_id),
         )
         .join(
             Course,
-            (Course.id == CourseOffering.course_id)
-            & (Course.tenant_id == CourseOffering.tenant_id),
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
         )
         .outerjoin(
             TrackCourse,
@@ -54,25 +52,17 @@ def accessible_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> s
     return set(rows)
 
 
-def person_can_access_course(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
-) -> bool:
+def person_can_access_course(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> bool:
     return course_id in accessible_course_ids(db, tenant_id=tenant_id, person_id=person_id)
 
 
-def require_course_access(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
-) -> None:
+def require_course_access(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> None:
     """Raise 403 if the person is not entitled to the course."""
-    if not person_can_access_course(
-        db, tenant_id=tenant_id, person_id=person_id, course_id=course_id
-    ):
+    if not person_can_access_course(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
-def open_course_ids(
-    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime | None = None
-) -> set[UUID]:
+def open_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime | None = None) -> set[UUID]:
     """Entitled course ids whose offering window is currently open.
 
     A null window edge is open-ended; a fully null window is always open.
@@ -83,13 +73,11 @@ def open_course_ids(
         .distinct()
         .join(
             Enrollment,
-            (Enrollment.cohort_id == CourseOffering.cohort_id)
-            & (Enrollment.tenant_id == CourseOffering.tenant_id),
+            (Enrollment.cohort_id == CourseOffering.cohort_id) & (Enrollment.tenant_id == CourseOffering.tenant_id),
         )
         .join(
             Course,
-            (Course.id == CourseOffering.course_id)
-            & (Course.tenant_id == CourseOffering.tenant_id),
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
         )
         .outerjoin(
             TrackCourse,
@@ -109,9 +97,7 @@ def open_course_ids(
     return set(rows)
 
 
-def unmet_prerequisites(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
-) -> list[UUID]:
+def unmet_prerequisites(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> list[UUID]:
     """Prerequisite course ids the person has not yet completed."""
     required = db.scalars(
         select(CoursePrerequisite.requires_course_id)
@@ -120,26 +106,29 @@ def unmet_prerequisites(
     ).all()
     if not required:
         return []
-    completed = set(db.scalars(
-        select(CourseCompletion.course_id)
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.person_id == person_id)
-        .where(CourseCompletion.status == "completed")
-        .where(CourseCompletion.course_id.in_(set(required)))
-    ).all())
+    completed = set(
+        db.scalars(
+            select(CourseCompletion.course_id)
+            .where(CourseCompletion.tenant_id == tenant_id)
+            .where(CourseCompletion.person_id == person_id)
+            .where(CourseCompletion.status == "completed")
+            .where(CourseCompletion.course_id.in_(set(required)))
+        ).all()
+    )
     return [cid for cid in required if cid not in completed]
 
 
 def require_course_open(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID,
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    course_id: UUID,
     now: datetime | None = None,
 ) -> None:
     """Raise 403 if not entitled, the offering window isn't open, or a
     prerequisite course is not yet completed."""
-    if course_id not in open_course_ids(
-        db, tenant_id=tenant_id, person_id=person_id, now=now
-    ):
+    if course_id not in open_course_ids(db, tenant_id=tenant_id, person_id=person_id, now=now):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     if unmet_prerequisites(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Prerequisite course not completed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Prerequisite course not completed")

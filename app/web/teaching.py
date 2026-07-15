@@ -62,6 +62,4 @@ def teaching_home(
     ).all()
     cohorts = [{"cohort": c, "count": n} for c, n in rows]
 
-    return templates.TemplateResponse(
-        "teaching/home.html", {"request": request, "cohorts": cohorts}
-    )
+    return templates.TemplateResponse("teaching/home.html", {"request": request, "cohorts": cohorts})

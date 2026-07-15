@@ -98,9 +98,7 @@ def create_cohort_track(
     for course_id in course_ids:
         if course_id not in seen:
             seen.append(course_id)
-    courses = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.id.in_(seen))
-    ).all()
+    courses = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id.in_(seen))).all()
     found = {course.id for course in courses}
     if found != set(seen):
         raise NotFoundError("one or more courses were not found")
@@ -136,9 +134,7 @@ def add_courses_to_cohort_track(
     for course_id in course_ids:
         if course_id not in seen:
             seen.append(course_id)
-    courses = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.id.in_(seen))
-    ).all()
+    courses = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id.in_(seen))).all()
     found = {course.id for course in courses}
     if found != set(seen):
         raise NotFoundError("one or more courses were not found")
@@ -150,13 +146,16 @@ def add_courses_to_cohort_track(
             .where(TrackCourse.track_id == track_id)
         ).all()
     )
-    max_order = db.scalar(
-        select(TrackCourse.order_index)
-        .where(TrackCourse.tenant_id == tenant_id)
-        .where(TrackCourse.track_id == track_id)
-        .order_by(TrackCourse.order_index.desc())
-        .limit(1)
-    ) or 0
+    max_order = (
+        db.scalar(
+            select(TrackCourse.order_index)
+            .where(TrackCourse.tenant_id == tenant_id)
+            .where(TrackCourse.track_id == track_id)
+            .order_by(TrackCourse.order_index.desc())
+            .limit(1)
+        )
+        or 0
+    )
     next_order = max_order + 1
     for course_id in seen:
         if course_id in existing:
@@ -172,9 +171,7 @@ def add_courses_to_cohort_track(
         next_order += 1
     db.flush()
     ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track_id)
-    track = db.scalars(
-        select(Track).where(Track.tenant_id == tenant_id).where(Track.id == track_id)
-    ).first()
+    track = db.scalars(select(Track).where(Track.tenant_id == tenant_id).where(Track.id == track_id)).first()
     if track is None:
         raise NotFoundError("track not found")
     return track
@@ -198,9 +195,7 @@ def cohort_track_or_404(db: Session, *, tenant_id: UUID, cohort_id: UUID, track_
 def ensure_track_offerings(db: Session, *, tenant_id: UUID, cohort_id: UUID, track_id: UUID) -> None:
     cohort_track_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track_id)
     course_ids = db.scalars(
-        select(TrackCourse.course_id)
-        .where(TrackCourse.tenant_id == tenant_id)
-        .where(TrackCourse.track_id == track_id)
+        select(TrackCourse.course_id).where(TrackCourse.tenant_id == tenant_id).where(TrackCourse.track_id == track_id)
     ).all()
     for course_id in course_ids:
         offering = db.scalars(
@@ -240,15 +235,19 @@ def assign_enrollment_track(
 
 
 def default_track_for_cohort(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> Track | None:
-    row = db.execute(
-        select(Track)
-        .join(CohortTrack, (CohortTrack.track_id == Track.id) & (CohortTrack.tenant_id == Track.tenant_id))
-        .where(CohortTrack.tenant_id == tenant_id)
-        .where(CohortTrack.cohort_id == cohort_id)
-        .where(CohortTrack.status == "active")
-        .where(Track.status == "active")
-        .order_by(Track.created_at, Track.name)
-    ).scalars().first()
+    row = (
+        db.execute(
+            select(Track)
+            .join(CohortTrack, (CohortTrack.track_id == Track.id) & (CohortTrack.tenant_id == Track.tenant_id))
+            .where(CohortTrack.tenant_id == tenant_id)
+            .where(CohortTrack.cohort_id == cohort_id)
+            .where(CohortTrack.status == "active")
+            .where(Track.status == "active")
+            .order_by(Track.created_at, Track.name)
+        )
+        .scalars()
+        .first()
+    )
     return row
 
 

@@ -57,7 +57,9 @@ def test_track_assignment_restricts_access_within_cohort(admin_session, tenant_a
     assert course_a.id in ids
     assert course_b.id not in ids
     assert admin_session.scalars(
-        select(CourseOffering).where(CourseOffering.tenant_id == tenant_a.id).where(CourseOffering.cohort_id == cohort.id)
+        select(CourseOffering)
+        .where(CourseOffering.tenant_id == tenant_a.id)
+        .where(CourseOffering.cohort_id == cohort.id)
     ).all()
     assert track_b.id != track_a.id
 
@@ -69,17 +71,19 @@ def test_null_track_enrollment_keeps_existing_cohort_wide_access(admin_session, 
     course_b = _course(admin_session, tenant_a, "legacy-b", "Legacy B")
     admin_session.add_all([cohort, learner])
     admin_session.flush()
-    admin_session.add_all([
-        CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course_a.id, status="active"),
-        CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course_b.id, status="active"),
-        Enrollment(
-            tenant_id=tenant_a.id,
-            cohort_id=cohort.id,
-            person_id=learner.id,
-            role_in_cohort="student",
-            status="active",
-        ),
-    ])
+    admin_session.add_all(
+        [
+            CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course_a.id, status="active"),
+            CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course_b.id, status="active"),
+            Enrollment(
+                tenant_id=tenant_a.id,
+                cohort_id=cohort.id,
+                person_id=learner.id,
+                role_in_cohort="student",
+                status="active",
+            ),
+        ]
+    )
     admin_session.commit()
 
     ids = accessible_course_ids(admin_session, tenant_id=tenant_a.id, person_id=learner.id)
@@ -100,5 +104,10 @@ def test_create_cohort_track_links_courses_and_offerings(admin_session, tenant_a
 
     assert admin_session.scalars(select(Track).where(Track.id == track.id)).first() is not None
     assert admin_session.scalars(select(CohortTrack).where(CohortTrack.track_id == track.id)).first() is not None
-    assert admin_session.scalars(select(TrackCourse).where(TrackCourse.track_id == track.id)).first().course_id == course.id
-    assert admin_session.scalars(select(CourseOffering).where(CourseOffering.course_id == course.id)).first() is not None
+    assert (
+        admin_session.scalars(select(TrackCourse).where(TrackCourse.track_id == track.id)).first().course_id
+        == course.id
+    )
+    assert (
+        admin_session.scalars(select(CourseOffering).where(CourseOffering.course_id == course.id)).first() is not None
+    )
