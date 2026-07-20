@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from app.models.assessment import Activity, Question, QuestionBank
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
@@ -205,4 +207,68 @@ def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
         # Clean up committed rows (chapters cascade from courses) so this test
         # leaves no residue in the shared test DB.
         admin_session.query(Course).filter(Course.tenant_id == tenant_a.id).delete()
+        admin_session.commit()
+
+
+def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
+    p, h = _login(app_client, admin_session, tenant_a)
+    slug = f"multi-activity-{uuid.uuid4().hex[:8]}"
+    c = Course(
+        tenant_id=tenant_a.id,
+        slug=slug,
+        title="Multi Activity",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+    )
+    admin_session.add(c)
+    admin_session.flush()
+    admin_session.add(
+        Chapter(
+            tenant_id=tenant_a.id,
+            course_id=c.id,
+            number=14,
+            title="Fourteen",
+            part="II",
+            body_html="<h2>Read this</h2><p>body</p>",
+            source_hash="h",
+            order_index=14,
+        )
+    )
+    lab = Activity(
+        tenant_id=tenant_a.id,
+        course_id=c.id,
+        chapter_number=14,
+        type="lab",
+        title="Router lab",
+        pass_threshold=0.7,
+    )
+    test = Activity(
+        tenant_id=tenant_a.id,
+        course_id=c.id,
+        chapter_number=14,
+        type="mcq_test",
+        title="Chapter 14 test",
+        pass_threshold=0.0,
+    )
+    admin_session.add_all([lab, test])
+    coh = Cohort(tenant_id=tenant_a.id, name="C", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=p.id, role_in_cohort="student", status="active")
+    )
+    admin_session.add(CourseOffering(tenant_id=tenant_a.id, cohort_id=coh.id, course_id=c.id, status="active"))
+    admin_session.commit()
+    try:
+        r = app_client.get(f"/courses/{slug}/chapters/14", headers=h)
+        assert r.status_code == 200
+        assert "Chapter activities" in r.text
+        assert "Chapter 14 test" in r.text
+        assert "Router lab" in r.text
+        assert f"/activities/{test.id}" in r.text
+        assert f"/labs/{lab.id}" in r.text
+        assert 'id="chapter-test-link"' in r.text
+    finally:
+        admin_session.query(Course).filter(Course.tenant_id == tenant_a.id, Course.slug == slug).delete()
         admin_session.commit()
