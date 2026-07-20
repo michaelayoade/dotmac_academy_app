@@ -113,8 +113,21 @@
             <button id="subtopic-complete-button" type="button" class="subtopic-complete-button">Mark as complete</button>
             <button id="subtopic-next-button" type="button" class="subtopic-next-button">Next</button>
           </div>
-          {% if activity %}
-          <a id="chapter-test-link" class="btn-ghost action-disabled" href="/activities/{{ activity.id }}" aria-disabled="true" tabindex="-1">{{ "Retake test" if activity_taken else "Take test" }}</a>
+          {% if activity_items %}
+          <div class="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-80" aria-label="Chapter activities">
+            <p class="text-right text-xs font-semibold uppercase tracking-[0.12em] text-ink-soft">Chapter activities</p>
+            {% for item in activity_items %}
+            {% set item_activity = item.activity %}
+            <a {% if activity and item_activity.id == activity.id %}id="chapter-test-link"{% endif %}
+               class="chapter-activity-link btn-ghost action-disabled justify-between gap-3"
+               href="{{ item.href }}" aria-disabled="true" tabindex="-1">
+              <span class="min-w-0 truncate">{{ item_activity.title }}</span>
+              <span class="shrink-0 text-xs text-ink-soft">
+                {% if item.passed %}Passed{% elif item.attempts %}{{ item.pct or 0 }}%{% elif item_activity.type == "lab" %}Lab{% else %}Test{% endif %}
+              </span>
+            </a>
+            {% endfor %}
+          </div>
           {% endif %}
         </div>
       </nav>
@@ -122,5 +135,5 @@
   </div>
 </div>
 
-<script src="/static/chapter.js?v=8" defer></script>
+<script src="/static/chapter.js?v=9" defer></script>
 {% endblock %}
