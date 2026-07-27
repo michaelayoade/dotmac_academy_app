@@ -149,25 +149,44 @@ def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
-    """Stamp the sitting start on first open (idempotent). Returns timing info.
+    """Stamp the first open and return timing info for a resumable sitting.
 
-    ``remaining_seconds`` counts down from the first open, so re-opening the page
-    doesn't reset the clock; ``expired`` is true once it hits zero.
+    ``remaining_seconds`` is based on persisted active seconds, not wall-clock
+    time since first open. The browser heartbeats while connected; when the
+    candidate drops offline or closes the tab, elapsed time stops advancing.
     """
     now = now or datetime.now(UTC)
     if applicant.assessment_started_at is None:
         applicant.assessment_started_at = now
+        applicant.assessment_elapsed_seconds = 0
         db.flush()
     limit = time_limit_minutes(db, applicant=applicant)
+    elapsed = max(0, int(applicant.assessment_elapsed_seconds or 0))
     remaining: int | None = None
     if limit is not None:
-        elapsed = (now - applicant.assessment_started_at).total_seconds()
         remaining = max(0, int(limit * 60 - elapsed))
     return {
         "limit_minutes": limit,
+        "elapsed_seconds": elapsed,
         "remaining_seconds": remaining,
         "expired": (remaining == 0) if limit is not None else False,
     }
+
+
+def record_elapsed(db: Session, *, applicant: Applicant, elapsed_seconds: int | str | None) -> None:
+    """Persist the highest active elapsed time reported by the exam page."""
+    if applicant.assessment_taken_at is not None or elapsed_seconds is None:
+        return
+    try:
+        elapsed = int(elapsed_seconds)
+    except (TypeError, ValueError):
+        return
+    if elapsed < 0:
+        return
+    current = int(applicant.assessment_elapsed_seconds or 0)
+    if elapsed > current:
+        applicant.assessment_elapsed_seconds = elapsed
+        db.flush()
 
 
 # --- deadline model --------------------------------------------------------
@@ -244,6 +263,7 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     the timer, the autosaved answers and any recorded result, and audits the reset.
     """
     applicant.assessment_started_at = None
+    applicant.assessment_elapsed_seconds = 0
     applicant.assessment_taken_at = None
     applicant.assessment_answers = None
     applicant.assessment_score = None
@@ -261,7 +281,7 @@ def _time_exceeded(db: Session, applicant: Applicant, now: datetime) -> bool:
     limit = time_limit_minutes(db, applicant=applicant)
     if limit is None or applicant.assessment_started_at is None:
         return False
-    elapsed = (now - applicant.assessment_started_at).total_seconds()
+    elapsed = int(applicant.assessment_elapsed_seconds or 0)
     return elapsed > limit * 60 + GRACE_SECONDS
 
 
@@ -314,7 +334,7 @@ def grade_and_record(
     # Validity gate: is this a real measurement, or an absence of data?
     duration: float | None = None
     if applicant.assessment_started_at is not None:
-        duration = (now - applicant.assessment_started_at).total_seconds()
+        duration = float(applicant.assessment_elapsed_seconds or 0)
     valid, reason = check_validity(overall, duration)
 
     applicant.assessment_score = overall

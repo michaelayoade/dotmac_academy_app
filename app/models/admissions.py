@@ -102,6 +102,9 @@ class Applicant(Base, TimestampMixin):
     # Timed sitting: stamped when the exam is first opened; flagged if a submit
     # arrives past the cohort's time limit (+grace).
     assessment_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Active timed seconds consumed. Updated by the assessment page heartbeat so
+    # disconnected/offline time does not keep draining the candidate's clock.
+    assessment_elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     assessment_time_exceeded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # Autosaved progress {ext_id: [chosen option, ...]}. Persisted as the candidate
     # answers, so a dropped connection resumes intact instead of losing the sitting.
