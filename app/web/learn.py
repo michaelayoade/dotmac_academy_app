@@ -230,12 +230,14 @@ def chapter(
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
-    act = db.scalars(
+    activities = list(db.scalars(
         select(Activity)
         .where(Activity.tenant_id == tenant.id)
         .where(Activity.course_id == course.id)
         .where(Activity.chapter_number == n)
-    ).first()
+    ).all())
+    activities.sort(key=lambda a: (0 if a.type == "mcq_test" else 1 if a.type == "lab" else 2, a.title))
+    act = next((a for a in activities if a.type == "mcq_test"), activities[0] if activities else None)
     total_chapters = int(db.scalar(
         select(func.count()).select_from(Chapter)
         .where(Chapter.tenant_id == tenant.id).where(Chapter.course_id == course.id)
@@ -282,6 +284,20 @@ def chapter(
         .where(ChapterRead.person_id == person.id)
         .where(ChapterRead.chapter_id == ch.id)
     ) or 0
+    best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+    activity_items = []
+    for item in activities:
+        score = best.get(item.id)
+        used = attempts_used(db, tenant_id=tenant.id, person_id=person.id, activity_id=item.id)
+        activity_items.append(
+            {
+                "activity": item,
+                "href": f"/labs/{item.id}" if item.type == "lab" else f"/activities/{item.id}",
+                "attempts": used,
+                "passed": bool(score.passed) if score is not None else False,
+                "pct": round(100 * score.fraction) if score is not None else None,
+            }
+        )
     activity_taken = False
     if act is not None:
         activity_taken = attempts_used(
@@ -291,6 +307,7 @@ def chapter(
         "chapter.html",
         {
             "request": request, "course": course, "chapter": ch, "activity": act,
+            "activity_items": activity_items,
             "total_chapters": total_chapters, "previous_chapter": prev_ch,
             "next_chapter": next_ch, "reading_minutes": reading_minutes,
             "completed": bool(completed), "activity_taken": activity_taken,

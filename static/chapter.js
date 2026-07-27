@@ -27,6 +27,7 @@
   var completeButton = document.getElementById("subtopic-complete-button");
   var nextButton = document.getElementById("subtopic-next-button");
   var chapterTestLink = document.getElementById("chapter-test-link");
+  var chapterActivityLinks = [].slice.call(document.querySelectorAll(".chapter-activity-link"));
   var sidebarContinueLink = document.getElementById("sidebar-continue-link");
   var activityTaken = article.dataset.activityTaken === "true";
   var hasActivity = article.dataset.hasActivity === "true";
@@ -107,6 +108,7 @@
   function updateChapterGates() {
     var chapterComplete = allCurrentSubtopicsComplete();
     setLinkDisabled(chapterTestLink, !chapterComplete);
+    chapterActivityLinks.forEach(function (link) { setLinkDisabled(link, !chapterComplete); });
     updateSidebarContinue(chapterComplete);
   }
   function paintAllSubtopics() {
