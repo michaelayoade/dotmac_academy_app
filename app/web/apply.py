@@ -243,7 +243,8 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
         return Response(status_code=204)
     questions = _exam_questions(db, tenant.id, applicant)
     answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
-    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=form.get("assessment_elapsed_seconds"))
+    elapsed = form.get("assessment_elapsed_seconds")
+    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
     entrance_exam.save_answers(db, applicant=applicant, answers=answers)
     return Response(status_code=204)
 
@@ -264,7 +265,8 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         posted = [v for v in form.getlist(q.ext_id) if isinstance(v, str)]
         if posted:
             answers[q.ext_id] = posted
-    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=form.get("assessment_elapsed_seconds"))
+    elapsed = form.get("assessment_elapsed_seconds")
+    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
     try:
         entrance_exam.grade_and_record(db, tenant_id=tenant.id, applicant=applicant, answers=answers)
     except (BadRequestError, NotFoundError):
