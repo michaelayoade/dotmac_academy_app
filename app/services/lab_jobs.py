@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.models  # noqa: F401  # ensure all FK target tables are registered for CLI workers
 from app.config import settings
 from app.models.lab import LabInstance, LabTemplate
 from app.services.lab_lifecycle import destroy, provision

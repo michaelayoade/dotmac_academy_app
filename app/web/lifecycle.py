@@ -76,13 +76,30 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
         # Best-effort email; never block on delivery and never reveal existence.
         try:
             from app.services.email import send_email
-            link = f"/reset?token={raw}"
-            send_email(to=email.strip().lower(), subject="Reset your password",
-                       html_body=f"<p>Reset your password: <a href='{link}'>{link}</a></p>")
+            link = str(request.url_for("reset_form").include_query_params(token=raw))
+            escaped_link = escape(link, quote=True)
+            send_email(
+                to=email.strip().lower(),
+                subject="Reset your password",
+                html_body=(
+                    "<p>Reset your password: "
+                    f"<a href='{escaped_link}'>{escaped_link}</a></p>"
+                ),
+                text_body=f"Reset your password: {link}\n",
+                db=db,
+            )
         except Exception as exc:
             logger.debug("password-reset email send failed: %s", exc)
     # Identical response whether or not the email exists (anti-enumeration).
-    return HTMLResponse("If that email has an account, a reset link is on its way.")
+    return HTMLResponse(
+        "<div class='rounded-lg bg-brand-100 p-4 text-brand-800'>"
+        "<p class='font-semibold'>Reset link requested</p>"
+        "<p class='mt-1'>If that email has an account, a reset link is on its way.</p>"
+        "<p class='mt-2 text-xs'>Returning to login...</p>"
+        "<a class='mt-3 inline-flex text-sm font-semibold underline' href='/login'>Go to login</a>"
+        "<script>setTimeout(function(){window.location.href='/login';},3000);</script>"
+        "</div>"
+    )
 
 
 @router.get("/reset")

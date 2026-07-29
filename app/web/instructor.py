@@ -30,6 +30,7 @@ from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services import scheduling
+from app.services import tracks as track_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
@@ -61,34 +62,75 @@ def _e(value: object) -> str:
 
 
 @router.get("/cohorts", response_class=HTMLResponse)
-def cohorts_list(request: Request, db: Session = Depends(get_db)):
+def cohorts_list(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     tenant = require_tenant(request)
-    rows = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)
-    ).all()
+    rows = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)).all()
     roster_rows = db.execute(
         select(Enrollment, Person)
         .join(
             Person,
-            (Person.id == Enrollment.person_id)
-            & (Person.tenant_id == Enrollment.tenant_id),
+            (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
         )
         .where(Enrollment.tenant_id == tenant.id)
         .order_by(Person.last_name, Person.first_name, Person.email)
     ).all()
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
+    cohort_names = {cohort.id: cohort.name for cohort in rows}
     for enrollment, student in roster_rows:
-        if enrollment.cohort_id in roster_by_cohort:
-            roster_by_cohort[enrollment.cohort_id].append(
-                {"enrollment": enrollment, "person": student}
-            )
+        if enrollment.cohort_id not in roster_by_cohort:
+            continue
+        is_active_student = (
+            enrollment.status == "active" and enrollment.role_in_cohort == "student" and student.status == "active"
+        )
+        if is_active_student:
+            active_student_counts[enrollment.cohort_id] += 1
+        if is_active_student or cohort_names.get(enrollment.cohort_id) == "Dotmac Academy Demo Cohort":
+            roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
+    tracks_by_cohort = {
+        cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
+    }
+    courses = list(db.scalars(select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)).all())
+    offering_rows = db.execute(
+        select(CourseOffering.cohort_id, Course)
+        .join(
+            Course,
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
+        )
+        .where(CourseOffering.tenant_id == tenant.id)
+        .where(CourseOffering.status == "active")
+        .order_by(Course.title)
+    ).all()
+    courses_by_cohort: dict[UUID, list[Course]] = {cohort.id: [] for cohort in rows}
+    seen_course_pairs: set[tuple[UUID, UUID]] = set()
+    for cohort_id, course in offering_rows:
+        key = (cohort_id, course.id)
+        if cohort_id in courses_by_cohort and key not in seen_course_pairs:
+            courses_by_cohort[cohort_id].append(course)
+            seen_course_pairs.add(key)
     cohort_rows = [
-        {"cohort": cohort, "roster": roster_by_cohort.get(cohort.id, [])}
+        {
+            "cohort": cohort,
+            "roster": roster_by_cohort.get(cohort.id, []),
+            "active_student_count": active_student_counts.get(cohort.id, 0),
+            "tracks": tracks_by_cohort.get(cohort.id, []),
+            "available_courses": courses,
+        }
         for cohort in rows
     ]
     return templates.TemplateResponse(
         "instructor/cohorts.html",
-        {"request": request, "cohorts": rows, "cohort_rows": cohort_rows},
+        {
+            "request": request,
+            "cohorts": rows,
+            "cohort_rows": cohort_rows,
+            "courses": courses,
+            "all_courses": courses,
+        },
     )
 
 
@@ -123,8 +165,7 @@ def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -
         select(CourseOffering.course_id)
         .join(
             Enrollment,
-            (Enrollment.cohort_id == CourseOffering.cohort_id)
-            & (Enrollment.tenant_id == CourseOffering.tenant_id),
+            (Enrollment.cohort_id == CourseOffering.cohort_id) & (Enrollment.tenant_id == CourseOffering.tenant_id),
         )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(CourseOffering.status == "active")
@@ -145,12 +186,8 @@ def _authorable_courses(db: Session, *, tenant_id: UUID, person_id: UUID) -> lis
     return list(db.scalars(stmt.where(Course.id.in_(assigned_ids))).all())
 
 
-def _authorable_course_or_404(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID
-) -> Course:
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
-    ).first()
+def _authorable_course_or_404(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> Course:
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)).first()
     if course is None:
         raise HTTPException(status_code=404)
     if _is_admin(db, tenant_id, person_id):
@@ -161,23 +198,26 @@ def _authorable_course_or_404(
     return course
 
 
-
-
 @router.post("/cohorts/{cohort_id}/enroll")
 def enroll_student(
     cohort_id: UUID,
     request: Request,
     emails: str = Form(""),
     email: str = Form(""),
+    track_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Bulk-enroll people by email; reports unknown emails instead of silently
     dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``."""
     tenant = require_tenant(request)
     # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
+    track_uuid = UUID(track_id) if track_id else None
     result = bulk_enroll(
-        db, tenant_id=tenant.id, cohort_id=cohort_id,
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
         emails=_split_emails(emails, email),
+        track_id=track_uuid,
     )
     enrolled = len(result["enrolled"]) + len(result["reactivated"])
     already_active = len(result["already_active"])
@@ -205,6 +245,76 @@ def change_roster_state(
     return hx_redirect(request, "/instructor/cohorts")
 
 
+@router.post("/cohorts/{cohort_id}/tracks")
+def create_track_for_cohort(
+    cohort_id: UUID,
+    request: Request,
+    name: str = Form(...),
+    course_ids: list[str] = Form([]),
+    course_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    selected: list[UUID] = []
+    for raw in [*course_ids, course_id]:
+        if raw:
+            selected.append(UUID(raw))
+    try:
+        track_svc.create_cohort_track(db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected)
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/tracks/{track_id}/courses")
+def add_courses_to_track(
+    cohort_id: UUID,
+    track_id: UUID,
+    request: Request,
+    course_ids: list[str] = Form([]),
+    course_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    selected: list[UUID] = []
+    for raw in [*course_ids, course_id]:
+        if raw:
+            selected.append(UUID(raw))
+    try:
+        track_svc.add_courses_to_cohort_track(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            track_id=track_id,
+            course_ids=selected,
+        )
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/roster/{person_id}/track")
+def change_roster_track(
+    cohort_id: UUID,
+    person_id: UUID,
+    request: Request,
+    track_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    try:
+        track_svc.assign_enrollment_track(
+            db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, track_id=UUID(track_id)
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return hx_redirect(request, "/instructor/cohorts")
+
+
 @router.post("/cohorts/{cohort_id}/invite")
 def invite_to_cohort(
     cohort_id: UUID,
@@ -212,14 +322,17 @@ def invite_to_cohort(
     email: str = Form(...),
     first_name: str = Form("New"),
     last_name: str = Form("Learner"),
+    track_id: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
     where unknown emails were silently dropped. Returns the activation link."""
     tenant = require_tenant(request)
-    person, token = invite_user(db, tenant_id=tenant.id, email=email,
-                                first_name=first_name, last_name=last_name, role="student")
-    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email])
+    person, token = invite_user(
+        db, tenant_id=tenant.id, email=email, first_name=first_name, last_name=last_name, role="student"
+    )
+    track_uuid = UUID(track_id) if track_id else None
+    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email], track_id=track_uuid)
     link = str(request.url_for("accept_form").include_query_params(token=token))
     link_e = _e(link)
     sent = send_email(
@@ -228,7 +341,7 @@ def invite_to_cohort(
         (
             f"<p>Hi {_e(person.first_name)},</p>"
             f"<p>You have been invited to Dotmac Academy.</p>"
-            f"<p><a href=\"{link_e}\">Set up your account</a></p>"
+            f'<p><a href="{link_e}">Set up your account</a></p>'
             f"<p>If the button does not work, open this link: {link_e}</p>"
         ),
         text_body=(
@@ -242,9 +355,9 @@ def invite_to_cohort(
     return HTMLResponse(
         f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{_e(status)}</p>'
-        f'<p>Student: {_e(person.email)}</p>'
+        f"<p>Student: {_e(person.email)}</p>"
         f'<p>Activation link: <a class="underline" href="{link_e}">{link_e}</a></p>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -404,17 +517,14 @@ def author_course_page(
 ):
     """Authoring page for an assigned course."""
     tenant = require_tenant(request)
-    course = _authorable_course_or_404(
-        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
-    )
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     chapters = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course_id).order_by(Chapter.number)
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course_id)
+        .order_by(Chapter.number)
     ).all()
-    chapter_rows = [
-        {"chapter": chapter, "source": editable_chapter_source(chapter)}
-        for chapter in chapters
-    ]
+    chapter_rows = [{"chapter": chapter, "source": editable_chapter_source(chapter)} for chapter in chapters]
     return templates.TemplateResponse(
         "instructor/authoring.html",
         {"request": request, "course": course, "chapters": chapter_rows},
@@ -430,9 +540,7 @@ def preview_course(
 ):
     """Read-only instructor preview for an assigned course."""
     tenant = require_tenant(request)
-    course = _authorable_course_or_404(
-        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
-    )
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     chapters = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
@@ -453,9 +561,7 @@ def preview_course_chapter(
 ):
     """Read-only instructor preview for one chapter in an assigned course."""
     tenant = require_tenant(request)
-    course = _authorable_course_or_404(
-        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
-    )
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     chapters = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
@@ -520,8 +626,7 @@ def author_upsert_chapter(
     """Create or update a chapter for an assigned course."""
     tenant = require_tenant(request)
     _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    upsert_chapter(db, tenant_id=tenant.id, course_id=course_id, number=number,
-                   title=title, body_md=body_md, part=part)
+    upsert_chapter(db, tenant_id=tenant.id, course_id=course_id, number=number, title=title, body_md=body_md, part=part)
     target = f"/instructor/courses/{course_id}/edit"
     return hx_redirect(request, target)
 
@@ -554,9 +659,7 @@ def set_course_status(
     tenant = require_tenant(request)
     if status_value not in ("draft", "published", "completed"):
         raise HTTPException(status_code=400, detail="invalid status")
-    course = _authorable_course_or_404(
-        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
-    )
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     course.status = status_value
     target = f"/instructor/courses/{course_id}/edit"
     return hx_redirect(request, target)
@@ -569,24 +672,19 @@ def results(request: Request, db: Session = Depends(get_db)):
         select(Person.email, Activity.title, Score)
         .join(
             Submission,
-            (Submission.person_id == Person.id)
-            & (Submission.tenant_id == Person.tenant_id),
+            (Submission.person_id == Person.id) & (Submission.tenant_id == Person.tenant_id),
         )
         .join(
             Activity,
-            (Activity.id == Submission.activity_id)
-            & (Activity.tenant_id == Submission.tenant_id),
+            (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id),
         )
         .join(
             Score,
-            (Score.submission_id == Submission.id)
-            & (Score.tenant_id == Submission.tenant_id),
+            (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id),
         )
         .where(Person.tenant_id == tenant.id)
     ).all()
-    return templates.TemplateResponse(
-        "instructor/results.html", {"request": request, "rows": rows}
-    )
+    return templates.TemplateResponse("instructor/results.html", {"request": request, "rows": rows})
 
 
 @router.get("/grading", response_class=HTMLResponse)
@@ -594,13 +692,10 @@ def grading_queue(request: Request, db: Session = Depends(get_db)):
     """Manual grading queue: submissions awaiting a score (finding #4)."""
     tenant = require_tenant(request)
     rows = [
-        {"submission_id": sub.id, "activity_title": act.title, "email": email,
-         "attempt_no": sub.attempt_no}
+        {"submission_id": sub.id, "activity_title": act.title, "email": email, "attempt_no": sub.attempt_no}
         for sub, act, email in pending_grading(db, tenant_id=tenant.id)
     ]
-    return templates.TemplateResponse(
-        "instructor/grading.html", {"request": request, "rows": rows}
-    )
+    return templates.TemplateResponse("instructor/grading.html", {"request": request, "rows": rows})
 
 
 @router.get("/dashboard/cohort/{cohort_id}", response_class=HTMLResponse)
@@ -612,13 +707,13 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
         "instructor/dashboard_cohort.html",
         {"request": request, "cohort": ov["cohort"], "rows": ov["rows"]},
     )
+
+
 @router.get("/items/{activity_id}", response_class=HTMLResponse)
 def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(get_db)):
     """Per-question difficulty (p-value) for an activity (finding #4/#9)."""
     tenant = require_tenant(request)
-    act = db.scalars(
-        select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)
-    ).first()
+    act = db.scalars(select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)).first()
     if act is None:
         raise HTTPException(status_code=404)
     items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
@@ -678,9 +773,7 @@ def announcements_create(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid cohort") from None
         # Reject a cohort that isn't this tenant's (avoids a cross-tenant FK 500).
-        owns = db.scalar(
-            select(Cohort.id).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cid)
-        )
+        owns = db.scalar(select(Cohort.id).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cid))
         if owns is None:
             raise HTTPException(status_code=400, detail="Unknown cohort")
     ann_svc.create(

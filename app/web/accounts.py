@@ -24,7 +24,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -34,6 +34,8 @@ from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
+from app.models.track import Track
+from app.services import tracks as track_svc
 from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
 from app.services.email import send_email
@@ -58,8 +60,7 @@ def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
 
 def _html_error(message: str, status_code: int = status.HTTP_200_OK) -> HTMLResponse:
     return HTMLResponse(
-        f'<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">'
-        f'{escape(message)}</div>',
+        f'<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">' f"{escape(message)}</div>",
         status_code=status_code,
     )
 
@@ -91,6 +92,7 @@ def _assign_invited_user(
     role: str,
     cohorts: list[Cohort],
     courses_by_cohort: dict[UUID, list[Course]],
+    tracks_by_cohort: dict[UUID, Track],
 ) -> list[str]:
     assignments: list[str] = []
     if not cohorts:
@@ -105,19 +107,24 @@ def _assign_invited_user(
             .where(Enrollment.person_id == invited.id)
         ).first()
         if enrollment is None:
-            db.add(
-                Enrollment(
-                    tenant_id=tenant_id,
-                    cohort_id=cohort.id,
-                    person_id=invited.id,
-                    role_in_cohort=member_role,
-                    status="active",
-                )
+            enrollment = Enrollment(
+                tenant_id=tenant_id,
+                cohort_id=cohort.id,
+                person_id=invited.id,
+                role_in_cohort=member_role,
+                status="active",
             )
+            db.add(enrollment)
         else:
             enrollment.role_in_cohort = member_role
             enrollment.status = "active"
+        track = tracks_by_cohort.get(cohort.id)
+        if track is not None:
+            enrollment.track_id = track.id
+            track_svc.ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort.id, track_id=track.id)
         assignments.append(f"{cohort.name} cohort as {member_role}")
+        if track is not None:
+            assignments.append(f"{track.name} track in {cohort.name}")
 
         for course in courses_by_cohort.get(cohort.id, []):
             offering = db.scalars(
@@ -146,6 +153,7 @@ def _assign_invited_user(
 @router.get("", response_class=HTMLResponse)
 def users_list(
     request: Request,
+    q: str = "",
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
@@ -155,24 +163,30 @@ def users_list(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     is_admin = "admin" in slugs
 
-    people = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).order_by(Person.email)
-    ).all()
+    normalized_q = (q or "").strip()
+    people_query = select(Person).where(Person.tenant_id == tenant.id)
+    if normalized_q:
+        like = f"%{normalized_q}%"
+        people_query = people_query.where(
+            or_(
+                Person.email.ilike(like),
+                Person.first_name.ilike(like),
+                Person.last_name.ilike(like),
+                (Person.first_name + " " + Person.last_name).ilike(like),
+            )
+        )
+    people = db.scalars(people_query.order_by(Person.email)).all()
     cohorts = db.scalars(
-        select(Cohort)
-        .where(Cohort.tenant_id == tenant.id)
-        .where(Cohort.status == "active")
-        .order_by(Cohort.name)
+        select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.status == "active").order_by(Cohort.name)
     ).all()
-    courses = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)
-    ).all()
+    courses = db.scalars(select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)).all()
+    track_groups = track_svc.tracks_for_cohorts(db, tenant_id=tenant.id, cohort_ids=[cohort.id for cohort in cohorts])
+    cohort_track_groups = [{"cohort": cohort, "tracks": track_groups.get(cohort.id, [])} for cohort in cohorts]
     offering_rows = db.execute(
         select(CourseOffering, Course)
         .join(
             Course,
-            (Course.id == CourseOffering.course_id)
-            & (Course.tenant_id == CourseOffering.tenant_id),
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
         )
         .where(CourseOffering.tenant_id == tenant.id)
         .where(CourseOffering.status == "active")
@@ -185,10 +199,7 @@ def users_list(
         if offering.cohort_id in courses_by_cohort and key not in seen_offerings:
             courses_by_cohort[offering.cohort_id].append(course)
             seen_offerings.add(key)
-    cohort_course_groups = [
-        {"cohort": cohort, "courses": courses_by_cohort.get(cohort.id, [])}
-        for cohort in cohorts
-    ]
+    cohort_course_groups = [{"cohort": cohort, "courses": courses_by_cohort.get(cohort.id, [])} for cohort in cohorts]
     rows = [
         {
             "person": row,
@@ -205,6 +216,8 @@ def users_list(
             "cohorts": cohorts,
             "courses": courses,
             "cohort_course_groups": cohort_course_groups,
+            "cohort_track_groups": cohort_track_groups,
+            "search_query": normalized_q,
         },
     )
 
@@ -218,6 +231,8 @@ def users_invite(
     role: str = Form(...),
     cohort_ids: list[str] = Form([]),
     cohort_id: str = Form(""),
+    track_ids: list[str] = Form([]),
+    track_id: str = Form(""),
     course_ids: list[str] = Form([]),
     course_id: str = Form(""),
     person: Person = Depends(require_web_user),
@@ -232,7 +247,9 @@ def users_invite(
 
     cohorts: list[Cohort] = []
     courses_by_cohort: dict[UUID, list[Course]] = {}
+    tracks_by_cohort: dict[UUID, Track] = {}
     selected_cohort_ids = [raw for raw in [*cohort_ids, cohort_id] if raw]
+    selected_track_ids = [raw for raw in [*track_ids, track_id] if raw]
     selected_course_ids = [raw for raw in [*course_ids, course_id] if raw]
     seen_cohort_ids: set[UUID] = set()
     for raw_cohort_id in selected_cohort_ids:
@@ -253,7 +270,36 @@ def users_invite(
         seen_cohort_ids.add(cohort_uuid)
         cohorts.append(cohort)
         courses_by_cohort[cohort_uuid] = []
+    if selected_track_ids:
+        if not cohorts:
+            return _html_error("Select at least one cohort before assigning tracks")
+        for raw_track_id in selected_track_ids:
+            raw_track_id = raw_track_id.strip()
+            if ":" not in raw_track_id:
+                return _html_error("Invalid track selection")
+            raw_cohort_id, raw_track_uuid = raw_track_id.split(":", 1)
+            try:
+                pair_cohort_id = UUID(raw_cohort_id)
+                track_uuid = UUID(raw_track_uuid)
+            except ValueError:
+                return _html_error("Invalid track selection")
+            if pair_cohort_id not in seen_cohort_ids:
+                return _html_error("Selected track does not belong to a selected cohort")
+            if pair_cohort_id in tracks_by_cohort:
+                return _html_error("Select only one track per cohort")
+            cohort_track = track_svc.cohort_track_or_404(
+                db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=track_uuid
+            )
+            track = db.scalars(
+                select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
+            ).first()
+            if track is None:
+                return _html_error("Selected track was not found")
+            tracks_by_cohort[pair_cohort_id] = track
+
     if selected_course_ids:
+        if tracks_by_cohort:
+            return _html_error("Direct course assignment cannot be combined with track assignment")
         if not cohorts:
             return _html_error("Select at least one cohort before assigning courses")
         seen_course_pairs: set[tuple[UUID, UUID]] = set()
@@ -314,9 +360,7 @@ def users_invite(
         ).first()
         token = None
         if credential is None:
-            token = _issue_token(
-                db, tenant_id=tenant.id, person_id=invited.id, kind="invite", now=datetime.now(UTC)
-            )
+            token = _issue_token(db, tenant_id=tenant.id, person_id=invited.id, kind="invite", now=datetime.now(UTC))
 
     assignments = _assign_invited_user(
         db,
@@ -325,6 +369,7 @@ def users_invite(
         role=role,
         cohorts=cohorts,
         courses_by_cohort=courses_by_cohort,
+        tracks_by_cohort=tracks_by_cohort,
     )
     link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
     assignment_html = ""
@@ -342,7 +387,7 @@ def users_invite(
                 f"<p>Hi {escape(invited.first_name)},</p>"
                 f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
                 f"{assignment_html}"
-                f"<p><a href=\"{link}\">Set up your account</a></p>"
+                f'<p><a href="{link}">Set up your account</a></p>'
                 f"<p>If the button does not work, open this link: {link}</p>"
             ),
             text_body=(
@@ -387,9 +432,7 @@ def users_reset_link(
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send reset links")
-    target = db.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)
-    ).first()
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     token = request_password_reset(db, tenant_id=tenant.id, email=target.email)
@@ -397,7 +440,7 @@ def users_reset_link(
         return HTMLResponse(
             (
                 '<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">'
-                'No account credential exists yet. Use an invite link instead.</div>'
+                "No account credential exists yet. Use an invite link instead.</div>"
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -408,7 +451,7 @@ def users_reset_link(
         (
             f"<p>Hi {target.first_name},</p>"
             f"<p>Use this link to reset your password:</p>"
-            f"<p><a href=\"{link}\">Reset password</a></p>"
+            f'<p><a href="{link}">Reset password</a></p>'
             f"<p>If the button does not work, open this link: {link}</p>"
         ),
         text_body=f"Reset your Dotmac Academy password: {link}\n",
@@ -419,8 +462,101 @@ def users_reset_link(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
         f'<p><a class="underline" href="{link}">{link}</a></p>'
-        f'</div>'
+        f"</div>"
     )
+
+
+@router.post("/{person_id}/invite-link", response_class=HTMLResponse)
+def users_invite_link(
+    person_id: UUID,
+    request: Request,
+    actor: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    slugs = _role_slugs(db, tenant.id, actor.id)
+    if "admin" not in slugs:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send invites")
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    credential = db.scalars(
+        select(UserCredential).where(UserCredential.tenant_id == tenant.id).where(UserCredential.person_id == target.id)
+    ).first()
+    if credential is not None:
+        return HTMLResponse(
+            (
+                '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
+                '<p class="font-semibold">This user already has a password.</p>'
+                '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
+                "</div>"
+            )
+        )
+    token = _issue_token(db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC))
+    link = str(request.url_for("accept_form").include_query_params(token=token))
+    sent = send_email(
+        target.email,
+        "Activate your Dotmac Academy account",
+        (
+            f"<p>Hi {escape(target.first_name)},</p>"
+            "<p>Use this link to activate your Dotmac Academy account:</p>"
+            f'<p><a href="{link}">Set up your account</a></p>'
+            f"<p>If the button does not work, open this link: {link}</p>"
+        ),
+        text_body=f"Set up your Dotmac Academy account: {link}\n",
+        db=db,
+    )
+    status_text = "Invite email sent." if sent else "Invite link created. Email was not sent; use this link."
+    return HTMLResponse(
+        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+        f'<p class="font-semibold">{status_text}</p>'
+        f'<p><a class="underline" href="{link}">{link}</a></p>'
+        f"</div>"
+    )
+
+
+@router.post("/{person_id}/role")
+def users_role(
+    person_id: UUID,
+    request: Request,
+    role: str = Form(...),
+    actor: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    slugs = _role_slugs(db, tenant.id, actor.id)
+    if "admin" not in slugs:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change roles")
+    roles = ensure_roles(db, tenant.id)
+    if role not in {"student", "instructor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
+    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.id == actor.id and role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot remove your own admin role here",
+        )
+
+    standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
+    target_role_id = roles[role].id
+    existing_grants = db.scalars(
+        select(PersonRole)
+        .where(PersonRole.tenant_id == tenant.id)
+        .where(PersonRole.person_id == target.id)
+        .where(PersonRole.role_id.in_(standard_role_ids))
+    ).all()
+    has_target_role = False
+    for grant in existing_grants:
+        if grant.role_id == target_role_id:
+            has_target_role = True
+        else:
+            db.delete(grant)
+    if not has_target_role:
+        db.add(PersonRole(tenant_id=tenant.id, person_id=target.id, role_id=target_role_id))
+    db.flush()
+    return hx_redirect(request, "/admin/users")
 
 
 @router.post("/{person_id}/status", response_class=HTMLResponse)

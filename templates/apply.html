@@ -55,9 +55,9 @@
           </div>
           {% if cohorts %}
           <div>
-            <label for="cohort_id" class="mb-1.5 block text-sm font-semibold text-ink">Which intake are you applying to?</label>
+            <label for="cohort_id" class="mb-1.5 block text-sm font-semibold text-ink">Which track are you applying to?</label>
             <select id="cohort_id" name="cohort_id" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
-              <option value="" disabled selected>Choose an intake…</option>
+              <option value="" disabled selected>Choose a track…</option>
               {% for c in cohorts %}
               <option value="{{ c.id }}">{{ c.name }}{% if c.discipline %} — {{ c.discipline }}{% endif %}</option>
               {% endfor %}

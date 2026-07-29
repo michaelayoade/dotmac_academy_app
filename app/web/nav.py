@@ -47,6 +47,7 @@ AREAS: list[dict] = [
         "required": "admin",
         "sidebar": [
             {"label": "Console", "path": "/admin"},
+            {"label": "Applications", "path": "/admin/applications"},
             {"label": "Users", "path": "/admin/users"},
             {"label": "Audit", "path": "/admin/audit"},
             {"label": "Settings", "path": "/admin/settings"},

@@ -23,9 +23,7 @@ def _seed_user(admin_session, tenant, email, role_slug):
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id)
-    )
+    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
     return p
 
@@ -71,19 +69,21 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert r.headers.get("HX-Redirect") == "/admin/users"
 
-    person = admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu"
-    ).one()
-    cred = admin_session.query(UserCredential).filter(
-        UserCredential.tenant_id == tenant_a.id, UserCredential.person_id == person.id
-    ).one()
+    person = (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu").one()
+    )
+    cred = (
+        admin_session.query(UserCredential)
+        .filter(UserCredential.tenant_id == tenant_a.id, UserCredential.person_id == person.id)
+        .one()
+    )
     assert cred is not None
-    student_role = admin_session.query(Role).filter(
-        Role.tenant_id == tenant_a.id, Role.slug == "student"
-    ).one()
-    grant = admin_session.query(PersonRole).filter(
-        PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id
-    ).one()
+    student_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "student").one()
+    grant = (
+        admin_session.query(PersonRole)
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        .one()
+    )
     assert grant.role_id == student_role.id
 
 
@@ -104,9 +104,10 @@ def test_instructor_cannot_create_admin(app_client, admin_session, tenant_a):
         follow_redirects=False,
     )
     assert r.status_code == 403
-    assert admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "no-admin@a.edu"
-    ).count() == 0
+    assert (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "no-admin@a.edu").count()
+        == 0
+    )
 
 
 def test_admin_can_create_admin(app_client, admin_session, tenant_a):
@@ -126,15 +127,15 @@ def test_admin_can_create_admin(app_client, admin_session, tenant_a):
         follow_redirects=False,
     )
     assert r.status_code == 200
-    admin_role = admin_session.query(Role).filter(
-        Role.tenant_id == tenant_a.id, Role.slug == "admin"
-    ).one()
-    person = admin_session.query(Person).filter(
-        Person.tenant_id == tenant_a.id, Person.email == "extra-admin@a.edu"
-    ).one()
-    grant = admin_session.query(PersonRole).filter(
-        PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id
-    ).one()
+    admin_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "admin").one()
+    person = (
+        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "extra-admin@a.edu").one()
+    )
+    grant = (
+        admin_session.query(PersonRole)
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        .one()
+    )
     assert grant.role_id == admin_role.id
 
 
@@ -170,3 +171,125 @@ def test_created_student_can_login_and_reach_learner_page(app_client, admin_sess
         assert login.status_code == 303
         dash = student_client.get("/", headers=sh)
         assert dash.status_code == 200
+
+
+def test_admin_can_search_users(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "admin-search@a.edu", "admin")
+    _seed_user(admin_session, tenant_a, "needle.user@a.edu", "student")
+    _seed_user(admin_session, tenant_a, "other.user@a.edu", "student")
+    h, _ = _login(app_client, "admin-search@a.edu")
+
+    r = app_client.get("/admin/users?q=needle", headers=h)
+
+    assert r.status_code == 200
+    assert "needle.user@a.edu" in r.text
+    assert "other.user@a.edu" not in r.text
+    assert "Showing results for" in r.text
+
+
+def test_admin_can_change_existing_user_role(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "role-admin@a.edu", "admin")
+    target = _seed_user(admin_session, tenant_a, "role-target@a.edu", "student")
+    h, csrf = _login(app_client, "role-admin@a.edu")
+
+    r = app_client.post(
+        f"/admin/users/{target.id}/role",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"role": "instructor"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 200
+    assert r.headers.get("HX-Redirect") == "/admin/users"
+    grants = (
+        admin_session.query(Role.slug)
+        .join(
+            PersonRole,
+            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+        )
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .order_by(Role.slug)
+        .all()
+    )
+    assert [slug for (slug,) in grants] == ["instructor"]
+
+
+def test_instructor_cannot_change_existing_user_role(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "role-inst@a.edu", "instructor")
+    target = _seed_user(admin_session, tenant_a, "role-student@a.edu", "student")
+    h, csrf = _login(app_client, "role-inst@a.edu")
+
+    r = app_client.post(
+        f"/admin/users/{target.id}/role",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"role": "admin"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 403
+    grants = (
+        admin_session.query(Role.slug)
+        .join(
+            PersonRole,
+            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+        )
+        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .order_by(Role.slug)
+        .all()
+    )
+    assert [slug for (slug,) in grants] == ["student"]
+
+
+def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a):
+    from sqlalchemy import select
+
+    from app.models.cohort import Cohort, Enrollment
+    from app.models.course import Course
+    from app.models.track import Track
+    from app.services.tracks import create_cohort_track
+
+    _seed_user(admin_session, tenant_a, "track-admin@a.edu", "admin")
+    cohort = Cohort(tenant_id=tenant_a.id, name="Track Cohort", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="track-invite-course",
+        title="Track Invite Course",
+        discipline="networking",
+        source_ref="test",
+        version=1,
+        status="published",
+    )
+    admin_session.add_all([cohort, course])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, name="Invite Track", course_ids=[course.id]
+    )
+    admin_session.commit()
+    h, csrf = _login(app_client, "track-admin@a.edu")
+
+    r = app_client.post(
+        "/admin/users/invite",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={
+            "first_name": "Track",
+            "last_name": "Student",
+            "email": "track-student@a.edu",
+            "role": "student",
+            "cohort_ids": [str(cohort.id)],
+            "track_ids": [f"{cohort.id}:{track.id}"],
+        },
+    )
+
+    assert r.status_code == 200
+    assert "Invite Track track in Track Cohort" in r.text
+    invited = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "track-student@a.edu")
+    ).first()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant_a.id)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == invited.id)
+    ).first()
+    assert enrollment.track_id == track.id
+    assert admin_session.scalars(select(Track).where(Track.id == track.id)).first().name == "Invite Track"

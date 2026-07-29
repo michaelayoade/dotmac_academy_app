@@ -10,6 +10,7 @@ from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.lifecycle import invite_user, request_password_reset, set_account_status
 from app.services.security import hash_password
+from app.services.settings_store import set_many
 
 H = {"Host": "alpha.localhost"}
 
@@ -35,6 +36,8 @@ def test_forgot_creates_token_and_is_neutral(app_client, admin_session, tenant_a
     r = app_client.post("/forgot", headers={**H, "x-csrf-token": csrf}, data={"email": "fp@a.edu"})
     assert r.status_code == 200
     assert "on its way" in r.text
+    assert "Returning to login" in r.text
+    assert "window.location.href='/login'" in r.text
     n = admin_session.query(AccountToken).filter(
         AccountToken.tenant_id == tenant_a.id, AccountToken.person_id == p.id,
         AccountToken.kind == "password_reset").count()
@@ -44,6 +47,33 @@ def test_forgot_creates_token_and_is_neutral(app_client, admin_session, tenant_a
     r2 = app_client.post("/forgot", headers={**H, "x-csrf-token": csrf}, data={"email": "ghost@a.edu"})
     assert r2.status_code == 200
     assert "on its way" in r2.text
+
+
+def test_forgot_email_uses_stored_smtp_settings(app_client, admin_session, tenant_a, monkeypatch):
+    _account(admin_session, tenant_a.id, email="smtp-reset@a.edu")
+    set_many(admin_session, {"smtp_host": "smtp.example", "smtp_from": "academy@example.com"})
+    admin_session.commit()
+    sent = {}
+
+    def _fake_send_email(**kwargs):
+        sent.update(kwargs)
+        return True
+
+    from app.services import email as email_mod
+
+    monkeypatch.setattr(email_mod, "send_email", _fake_send_email)
+    csrf = _csrf(app_client, "/forgot")
+    r = app_client.post(
+        "/forgot",
+        headers={**H, "x-csrf-token": csrf},
+        data={"email": "smtp-reset@a.edu"},
+    )
+
+    assert r.status_code == 200
+    assert sent["to"] == "smtp-reset@a.edu"
+    assert sent["db"] is not None
+    assert "http://alpha.localhost/reset?token=" in sent["html_body"]
+    assert "http://alpha.localhost/reset?token=" in sent["text_body"]
 
 
 def test_reset_flow_changes_password(app_client, admin_session, tenant_a):

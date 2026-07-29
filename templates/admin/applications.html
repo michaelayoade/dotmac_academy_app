@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Applications - {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Admin</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Applications</h1>
+<p class="mt-2 text-ink-soft">Review application records submitted through the intake form.</p>
+
+<div class="card mt-10" id="applications-list">
+  <div class="border-b border-sand-200 p-5">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <h2 class="text-xl">Applicant pipeline</h2>
+        <p class="mt-1 text-sm text-ink-soft">Filter by status, applicant name, application date, or rank candidates with entrance assessment scores first.</p>
+      </div>
+      <form method="get" action="/admin/applications" class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-[minmax(9rem,1fr)_minmax(12rem,1.4fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]">
+        <label for="application-status" class="sr-only">Status</label>
+        <select id="application-status" name="status" class="min-w-0 px-3.5 py-2.5 text-[0.95rem]">
+          <option value="">All statuses</option>
+          {% for status in statuses %}
+          <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status | capitalize }}</option>
+          {% endfor %}
+        </select>
+        <label for="application-search" class="sr-only">Applicant name</label>
+        <input id="application-search" name="q" type="search" value="{{ search_query }}" placeholder="Search applicant name" class="min-w-0 px-3.5 py-2.5 text-[0.95rem]">
+        <label for="application-from" class="sr-only">Applied from</label>
+        <input id="application-from" name="applied_from" type="date" value="{{ applied_from }}" class="min-w-0 px-3.5 py-2.5 text-[0.95rem]">
+        <label for="application-to" class="sr-only">Applied to</label>
+        <input id="application-to" name="applied_to" type="date" value="{{ applied_to }}" class="min-w-0 px-3.5 py-2.5 text-[0.95rem]">
+        <div class="flex items-stretch gap-2 sm:col-span-2 lg:col-span-1">
+          <label class="flex shrink-0 items-center gap-2 rounded-lg border border-sand-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-ink">
+            <input type="checkbox" name="rank" value="true" {% if rank %}checked{% endif %}>
+            Rank
+          </label>
+          <button type="submit" class="btn-primary shrink-0">Apply</button>
+          {% if selected_status or search_query or applied_from or applied_to or rank %}
+          <a href="/admin/applications" class="btn-ghost shrink-0">Clear</a>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if filter_error %}
+  <div class="border-b border-clay-500/20 bg-clay-500/10 px-5 py-3 text-sm font-semibold text-clay-600">
+    {{ filter_error }}
+  </div>
+  {% endif %}
+
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-sand-200 text-left text-sm">
+      <thead class="bg-sand-100 text-xs font-semibold uppercase tracking-[0.12em] text-ink-soft">
+        <tr>
+          <th scope="col" class="px-4 py-3">Applicant</th>
+          <th scope="col" class="px-4 py-3">Program</th>
+          <th scope="col" class="px-4 py-3">Status</th>
+          <th scope="col" class="px-4 py-3">Applied</th>
+          <th scope="col" class="px-4 py-3">Assessment</th>
+          <th scope="col" class="px-4 py-3">Profile</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-sand-200 bg-white">
+        {% for applicant in applicants %}
+        <tr class="align-top transition-colors hover:bg-sand-100">
+          <td class="px-4 py-4">
+            <p class="font-medium text-ink">{{ applicant.first_name }} {{ applicant.last_name }}</p>
+            <p class="break-all text-sm text-ink-soft">{{ applicant.email }}</p>
+            {% if applicant.phone %}
+            <p class="mt-1 text-xs text-ink-soft">{{ applicant.phone }}</p>
+            {% endif %}
+          </td>
+          <td class="px-4 py-4 text-ink-soft">{{ applicant.program or "Fiber Academy" }}</td>
+          <td class="px-4 py-4">
+            <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">{{ applicant.status }}</span>
+          </td>
+          <td class="px-4 py-4 tabular-nums text-ink-soft">{{ applicant.applied_on }}</td>
+          <td class="px-4 py-4">
+            {% if applicant.assessment_taken_at %}
+            <p class="font-medium text-ink">{% if applicant.assessment_score is not none %}{{ "%.0f"|format(applicant.assessment_score * 100) }}%{% else %}Completed{% endif %}</p>
+            {% if applicant.assessment_level %}
+            <p class="mt-1 text-xs text-ink-soft">{{ applicant.assessment_level }}</p>
+            {% endif %}
+            {% else %}
+            <span class="text-ink-soft">Not taken</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-4">
+            {% if applicant.profile_complete %}
+            <span class="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600">Complete</span>
+            {% else %}
+            <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Incomplete</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-4 py-10 text-center text-ink-soft">{% if filter_error %}{{ filter_error }}{% else %}No applications found.{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

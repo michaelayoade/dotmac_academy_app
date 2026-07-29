@@ -12,12 +12,12 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Activity
 from app.models.course import Chapter, Course
 from app.services.assessment import best_scores_for
-from app.services.entitlements import accessible_course_ids, unmet_prerequisites
+from app.services.entitlements import unmet_prerequisites, visible_course_ids
 
 
 def my_courses(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[Course]:
-    """Courses the person is entitled to access, ordered by title."""
-    ids = accessible_course_ids(db, tenant_id=tenant_id, person_id=person_id)
+    """Courses the person is entitled to see, ordered by title."""
+    ids = visible_course_ids(db, tenant_id=tenant_id, person_id=person_id)
     if not ids:
         return []
     return list(

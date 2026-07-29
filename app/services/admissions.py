@@ -13,7 +13,7 @@ import secrets
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -142,6 +142,9 @@ def list_applicants(
     *,
     status: str | None = None,
     cohort_id: UUID | None = None,
+    search: str | None = None,
+    applied_from: date | None = None,
+    applied_to: date | None = None,
     rank_by_score: bool = False,
     include_invalid: bool = False,
 ) -> list[Applicant]:
@@ -163,6 +166,19 @@ def list_applicants(
         stmt = stmt.where(Applicant.status == status)
     if cohort_id is not None:
         stmt = stmt.where(Applicant.cohort_id == cohort_id)
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        stmt = stmt.where(
+            or_(
+                Applicant.first_name.ilike(pattern),
+                Applicant.last_name.ilike(pattern),
+                (Applicant.first_name + " " + Applicant.last_name).ilike(pattern),
+            )
+        )
+    if applied_from is not None:
+        stmt = stmt.where(Applicant.applied_on >= applied_from)
+    if applied_to is not None:
+        stmt = stmt.where(Applicant.applied_on <= applied_to)
     if rank_by_score:
         if not include_invalid:
             stmt = stmt.where(Applicant.assessment_valid.is_not(False))
