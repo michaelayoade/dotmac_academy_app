@@ -119,3 +119,55 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     if ok:
         applicant.invite_sent_at = datetime.now(UTC)
     return ok
+
+
+def send_onboarding_invite(db: Session, *, applicant: Applicant, url: str) -> bool:
+    """The offer email: you're in — complete your onboarding online.
+
+    This is the durable copy of the onboarding-portal token.
+    """
+    name = html.escape((applicant.first_name or "there").strip())
+    track = html.escape((applicant.program or "").strip())
+    track_line = f"<p>Track: <strong>{track}</strong></p>" if track else ""
+    body = (
+        f"<p>Hi {name},</p>"
+        "<p>Good news — your Dotmac Academy application has been accepted.</p>"
+        + track_line
+        + "<p>One short step before your training starts: confirm your details and review "
+        "the programme orientation. It takes a few minutes, all online.</p>"
+        + _BTN.format(url=html.escape(url, quote=True)).replace("Start the assessment", "Complete your onboarding")
+    )
+    text = (
+        f"Hi {name},\n\nGood news — your Dotmac Academy application has been accepted.\n\n"
+        "Complete your onboarding (confirm your details and review the programme "
+        f"orientation) here:\n{url}\n"
+    )
+    return send_email(
+        applicant.email,
+        "You're in — complete your Dotmac Academy onboarding",
+        _WRAP.format(title="Application accepted", body=body),
+        text_body=text,
+        db=db,
+    )
+
+
+def send_enrollment_welcome(db: Session, *, applicant: Applicant, setup_url: str | None) -> bool:
+    """Enrolment confirmation. With ``setup_url``, invites the new student to set
+    their password; without it (account already exists) points them at login."""
+    name = html.escape((applicant.first_name or "there").strip())
+    if setup_url:
+        action = "<p>Set your password to open your student account and start your courses:</p>" + _BTN.format(
+            url=html.escape(setup_url, quote=True)
+        ).replace("Start the assessment", "Set your password")
+        text_action = f"Set your password to start learning:\n{setup_url}\n"
+    else:
+        action = "<p>Your existing account now has student access — log in to start your courses.</p>"
+        text_action = "Your existing account now has student access — log in to start your courses.\n"
+    body = f"<p>Hi {name},</p>" "<p>You are enrolled. Welcome to the Dotmac Academy.</p>" + action
+    return send_email(
+        applicant.email,
+        "You're enrolled — welcome to the Dotmac Academy",
+        _WRAP.format(title="You're enrolled", body=body),
+        text_body=f"Hi {name},\n\nYou are enrolled. Welcome to the Dotmac Academy.\n\n" + text_action,
+        db=db,
+    )
