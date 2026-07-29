@@ -11,6 +11,7 @@ from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
 from app.models.cohort import Cohort
 from app.models.course import Course
+from app.models.track import CohortTrack, Track
 from app.services import admissions, entrance_exam, onboarding
 from app.services.exceptions import BadRequestError
 
@@ -62,7 +63,7 @@ def _cohort(admin_session, tenant, bank=None):
     return c
 
 
-def _applicant(admin_session, tenant, cohort):
+def _applicant(admin_session, tenant, cohort, *, started=True):
     a = Applicant(
         tenant_id=tenant.id,
         email=f"a{uuid.uuid4().hex[:6]}@x.ex",
@@ -70,6 +71,9 @@ def _applicant(admin_session, tenant, cohort):
         last_name="B",
         status="applied",
         cohort_id=cohort.id,
+        assessment_started_at=(
+            datetime.now(UTC) - timedelta(minutes=15) if started else None
+        ),
     )
     admin_session.add(a)
     admin_session.flush()
@@ -115,9 +119,48 @@ def test_requires_configured_bank(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_grade_requires_explicit_server_start(admin_session, tenant_a):
+    bank = _bank_with_questions(admin_session, tenant_a)
+    applicant = _applicant(
+        admin_session,
+        tenant_a,
+        _cohort(admin_session, tenant_a, bank),
+        started=False,
+    )
+    with pytest.raises(BadRequestError, match="has not been started"):
+        entrance_exam.grade_and_record(
+            admin_session,
+            tenant_id=tenant_a.id,
+            applicant=applicant,
+            answers={"q1": ["A"]},
+        )
+    admin_session.rollback()
+
+
 def test_completed_assessment_satisfies_onboarding_task(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
-    applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
+    cohort = _cohort(admin_session, tenant_a, bank)
+    track = Track(
+        tenant_id=tenant_a.id,
+        slug=f"fiber-{uuid.uuid4().hex[:6]}",
+        name="Fiber",
+        status="active",
+    )
+    admin_session.add(track)
+    admin_session.flush()
+    admin_session.add(
+        CohortTrack(
+            tenant_id=tenant_a.id,
+            cohort_id=cohort.id,
+            track_id=track.id,
+            status="active",
+        )
+    )
+    admin_session.flush()
+    applicant = _applicant(admin_session, tenant_a, cohort)
+    applicant.track_id = track.id
+    applicant.program = track.name
+    admin_session.flush()
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -193,10 +236,10 @@ def _timed(admin_session, tenant, minutes=30):
     cohort = _cohort(admin_session, tenant, bank)
     cohort.entrance_time_limit_minutes = minutes
     admin_session.flush()
-    return _applicant(admin_session, tenant, cohort)
+    return _applicant(admin_session, tenant, cohort, started=False)
 
 
-def test_start_exam_stamps_once_and_pauses_without_heartbeat(admin_session, tenant_a):
+def test_start_exam_stamps_once_and_keeps_server_clock_running(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     info = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
@@ -204,30 +247,45 @@ def test_start_exam_stamps_once_and_pauses_without_heartbeat(admin_session, tena
     assert info["elapsed_seconds"] == 0
     assert applicant.assessment_started_at == t0
 
-    # Re-opening later does not burn disconnected/offline wall-clock time.
+    # Re-opening later derives elapsed time from the original server timestamp.
     info2 = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0 + timedelta(minutes=5))
     assert applicant.assessment_started_at == t0
-    assert info2["remaining_seconds"] == 1800
+    assert info2["elapsed_seconds"] == 300
+    assert info2["remaining_seconds"] == 1500
     admin_session.rollback()
 
 
-def test_heartbeat_elapsed_time_counts_down(admin_session, tenant_a):
+def test_elapsed_snapshot_and_timing_are_server_derived(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
-    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=300)
+    entrance_exam.record_elapsed(
+        admin_session,
+        applicant=applicant,
+        now=t0 + timedelta(minutes=5),
+    )
+    assert applicant.assessment_elapsed_seconds == 300
 
     info = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0 + timedelta(hours=1))
-    assert info["elapsed_seconds"] == 300
-    assert info["remaining_seconds"] == 1500
+    assert info["elapsed_seconds"] == 3600
+    assert info["remaining_seconds"] == 0
     admin_session.rollback()
 
 
 def test_elapsed_time_never_moves_backwards(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
-    entrance_exam.start_exam(admin_session, applicant=applicant)
-    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=300)
-    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=120)
+    t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+    entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.record_elapsed(
+        admin_session,
+        applicant=applicant,
+        now=t0 + timedelta(minutes=5),
+    )
+    entrance_exam.record_elapsed(
+        admin_session,
+        applicant=applicant,
+        now=t0 + timedelta(minutes=2),
+    )
     assert applicant.assessment_elapsed_seconds == 300
     admin_session.rollback()
 
@@ -236,7 +294,6 @@ def test_grade_flags_time_exceeded(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
-    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=40 * 60)
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -252,7 +309,6 @@ def test_grade_within_limit_not_exceeded(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
-    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=20 * 60)
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,

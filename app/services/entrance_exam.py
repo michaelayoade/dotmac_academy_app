@@ -65,7 +65,7 @@ def check_validity(fraction: float, duration_seconds: float | None) -> tuple[boo
     """Is this sitting real signal? Returns (valid, reason_if_not)."""
     if fraction <= MIN_VALID_FRACTION + 1e-9:
         return False, INVALID_NEAR_CHANCE
-    if duration_seconds is not None and duration_seconds < MIN_DURATION_SECONDS:
+    if duration_seconds is None or duration_seconds < MIN_DURATION_SECONDS:
         return False, INVALID_TOO_FAST
     return True, None
 
@@ -99,15 +99,24 @@ def issue_token(db: Session, *, applicant: Applicant) -> str:
     return raw
 
 
-def applicant_for_token(db: Session, *, tenant_id: UUID, raw: str) -> Applicant | None:
+def applicant_for_token(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    raw: str,
+    lock: bool = False,
+) -> Applicant | None:
     """Resolve the applicant holding this access token (tenant-scoped by RLS)."""
     if not raw:
         return None
-    return db.scalars(
+    stmt = (
         select(Applicant)
         .where(Applicant.tenant_id == tenant_id)
         .where(Applicant.assessment_token_hash == hash_token(raw))
-    ).first()
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return db.scalars(stmt).first()
 
 
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
@@ -149,19 +158,22 @@ def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
-    """Stamp the first open and return timing info for a resumable sitting.
-
-    ``remaining_seconds`` is based on persisted active seconds, not wall-clock
-    time since first open. The browser heartbeats while connected; when the
-    candidate drops offline or closes the tab, elapsed time stops advancing.
-    """
+    """Server-stamp the explicit start and return authoritative timing."""
     now = now or datetime.now(UTC)
     if applicant.assessment_started_at is None:
         applicant.assessment_started_at = now
         applicant.assessment_elapsed_seconds = 0
         db.flush()
+    return timing_info(db, applicant=applicant, now=now)
+
+
+def timing_info(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
+    """Return server-derived elapsed/remaining time without trusting the browser."""
+    now = now or datetime.now(UTC)
     limit = time_limit_minutes(db, applicant=applicant)
-    elapsed = max(0, int(applicant.assessment_elapsed_seconds or 0))
+    elapsed = 0
+    if applicant.assessment_started_at is not None:
+        elapsed = max(0, int((now - applicant.assessment_started_at).total_seconds()))
     remaining: int | None = None
     if limit is not None:
         remaining = max(0, int(limit * 60 - elapsed))
@@ -173,20 +185,25 @@ def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None
     }
 
 
-def record_elapsed(db: Session, *, applicant: Applicant, elapsed_seconds: int | str | None) -> None:
-    """Persist the highest active elapsed time reported by the exam page."""
-    if applicant.assessment_taken_at is not None or elapsed_seconds is None:
+def record_elapsed(
+    db: Session,
+    *,
+    applicant: Applicant,
+    now: datetime | None = None,
+) -> None:
+    """Persist a server-derived elapsed snapshot for reporting.
+
+    Client duration is deliberately not accepted. The explicit server start
+    timestamp is the sole clock owner.
+    """
+    if applicant.assessment_taken_at is not None or applicant.assessment_started_at is None:
         return
-    try:
-        elapsed = int(elapsed_seconds)
-    except (TypeError, ValueError):
-        return
-    if elapsed < 0:
-        return
-    current = int(applicant.assessment_elapsed_seconds or 0)
-    if elapsed > current:
-        applicant.assessment_elapsed_seconds = elapsed
-        db.flush()
+    elapsed = max(0, int(((now or datetime.now(UTC)) - applicant.assessment_started_at).total_seconds()))
+    applicant.assessment_elapsed_seconds = max(
+        int(applicant.assessment_elapsed_seconds or 0),
+        elapsed,
+    )
+    db.flush()
 
 
 # --- deadline model --------------------------------------------------------
@@ -277,11 +294,34 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     return issue_token(db, applicant=applicant)
 
 
+def reset_and_invite(
+    db: Session,
+    *,
+    applicant: Applicant,
+    base_url: str,
+    deadline_days: int = DEFAULT_DEADLINE_DAYS,
+) -> bool:
+    """Reset a sitting and atomically queue its replacement invitation."""
+    from app.services import applicant_email
+
+    raw = reset_exam(db, applicant=applicant)
+    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=deadline_days)
+    url = f"{base_url.rstrip('/')}/apply/assessment?token={quote(raw)}"
+    queued = applicant_email.send_exam_invite(
+        db,
+        applicant=applicant,
+        url=url,
+        minutes=time_limit_minutes(db, applicant=applicant),
+    )
+    db.flush()
+    return queued
+
+
 def _time_exceeded(db: Session, applicant: Applicant, now: datetime) -> bool:
     limit = time_limit_minutes(db, applicant=applicant)
     if limit is None or applicant.assessment_started_at is None:
         return False
-    elapsed = int(applicant.assessment_elapsed_seconds or 0)
+    elapsed = max(0, int((now - applicant.assessment_started_at).total_seconds()))
     return elapsed > limit * 60 + GRACE_SECONDS
 
 
@@ -302,6 +342,10 @@ def grade_and_record(
     if applicant.assessment_taken_at is not None:
         raise BadRequestError("Entrance assessment already completed.")
     now = now or datetime.now(UTC)
+    db.execute(select(Applicant.id).where(Applicant.id == applicant.id).with_for_update())
+    if applicant.assessment_started_at is None:
+        raise BadRequestError("Entrance assessment has not been started.")
+    record_elapsed(db, applicant=applicant, now=now)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
 
     questions = list(
@@ -332,9 +376,7 @@ def grade_and_record(
     level = level_for(overall)
 
     # Validity gate: is this a real measurement, or an absence of data?
-    duration: float | None = None
-    if applicant.assessment_started_at is not None:
-        duration = float(applicant.assessment_elapsed_seconds or 0)
+    duration = float(applicant.assessment_elapsed_seconds)
     valid, reason = check_validity(overall, duration)
 
     applicant.assessment_score = overall

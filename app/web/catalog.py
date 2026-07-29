@@ -67,6 +67,7 @@ def courses_list(
         all_ = all_courses(db, tenant_id=tenant.id)
 
     return templates.TemplateResponse(
+        request,
         "learn/courses.html",
         {
             "request": request,
@@ -115,6 +116,7 @@ def course_landing(
     )
 
     return templates.TemplateResponse(
+        request,
         "learn/course.html",
         {
             "request": request,
@@ -146,6 +148,7 @@ def announcements(
         ).all()
         cohort_map = {c.id: c.name for c in cohorts}
     return templates.TemplateResponse(
+        request,
         "learn/announcements.html",
         {"request": request, "person": person, "announcements": items, "cohort_map": cohort_map},
     )
@@ -165,6 +168,7 @@ def calendar(
         for day, day_items in groupby(items, key=lambda x: x["when"].date())
     ]
     return templates.TemplateResponse(
+        request,
         "learn/calendar.html",
         {
             "request": request,

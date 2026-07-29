@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
+
+from sqlalchemy import select
 
 from app.models.account_token import AccountToken
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort
+from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
@@ -57,13 +61,32 @@ def test_forgot_email_uses_stored_smtp_settings(app_client, admin_session, tenan
     admin_session.commit()
     sent = {}
 
-    def _fake_send_email(**kwargs):
-        sent.update(kwargs)
-        return True
+    def _fake_send_email(
+        to,
+        subject,
+        html_body,
+        text_body=None,
+        db=None,
+        attachments=None,
+        message_id=None,
+    ):
+        from app.services.email import EmailResult
+        from app.services.settings_store import effective
 
-    from app.services import email as email_mod
+        cfg = effective(db)
+        sent.update(
+            to=to,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            smtp_host=cfg.smtp_host,
+            smtp_from=cfg.smtp_from,
+        )
+        return EmailResult(True)
 
-    monkeypatch.setattr(email_mod, "send_email", _fake_send_email)
+    from app.services import email_outbox as outbox_mod
+
+    monkeypatch.setattr(outbox_mod, "send_email_detailed", _fake_send_email)
     csrf = _csrf(app_client, "/forgot")
     r = app_client.post(
         "/forgot",
@@ -72,8 +95,25 @@ def test_forgot_email_uses_stored_smtp_settings(app_client, admin_session, tenan
     )
 
     assert r.status_code == 200
+    admin_session.rollback()
+    queued = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "password_reset")
+    ).one()
+    assert queued.status == "pending"
+    assert "http://alpha.localhost/reset?token=" in queued.html_body
+    assert "http://alpha.localhost/reset?token=" in queued.text_body
+
+    delivered = outbox_mod.deliver_pending(
+        admin_session,
+        now=queued.available_at + timedelta(seconds=1),
+    )
+    admin_session.commit()
+    assert delivered["sent"] == 1
     assert sent["to"] == "smtp-reset@a.edu"
-    assert sent["db"] is not None
+    assert sent["smtp_host"] == "smtp.example"
+    assert sent["smtp_from"] == "academy@example.com"
     assert "http://alpha.localhost/reset?token=" in sent["html_body"]
     assert "http://alpha.localhost/reset?token=" in sent["text_body"]
 
@@ -130,7 +170,11 @@ def test_suspended_account_cannot_log_in(app_client, admin_session, tenant_a):
     assert r.status_code in (200, 401)  # invalid-credentials response, never a session
 
 
-def test_instructor_invite_returns_activation_link(app_client, admin_session, tenant_a):
+def test_instructor_invite_queues_activation_link_without_exposing_token(
+    app_client,
+    admin_session,
+    tenant_a,
+):
     roles = ensure_roles(admin_session, tenant_a.id)
     p = Person(tenant_id=tenant_a.id, email="adm@a.edu", first_name="Ad", last_name="Min")
     admin_session.add(p)
@@ -149,7 +193,16 @@ def test_instructor_invite_returns_activation_link(app_client, admin_session, te
                         headers={**H, "x-csrf-token": csrf},
                         data={"email": "newbie@a.edu", "first_name": "New", "last_name": "Bie"})
     assert r.status_code == 200
-    assert "/accept-invite?token=" in r.text
+    assert "Invite email queued" in r.text
+    assert "/accept-invite?token=" not in r.text
+    admin_session.rollback()
+    queued = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "account_invite")
+    ).one()
+    assert queued.recipient == "newbie@a.edu"
+    assert "/accept-invite?token=" in queued.html_body
     assert admin_session.query(Person).filter(
         Person.tenant_id == tenant_a.id, Person.email == "newbie@a.edu").count() == 1
 

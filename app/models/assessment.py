@@ -92,6 +92,13 @@ class Submission(Base, TimestampMixin):
     __tablename__ = "submissions"
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_submissions_tenant_id_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "activity_id",
+            "person_id",
+            "attempt_no",
+            name="uq_submissions_person_activity_attempt",
+        ),
         ForeignKeyConstraint(["tenant_id", "activity_id"], ["activities.tenant_id", "activities.id"],
                              ondelete="CASCADE", name="fk_submissions_tenant_activity"),
     )

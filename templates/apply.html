@@ -44,27 +44,15 @@
                    class="w-full px-3.5 py-2.5 text-[0.95rem]">
           </div>
           <div>
-            <label for="program" class="mb-1.5 block text-sm font-semibold text-ink">Preferred training track</label>
-            <select id="program" name="program" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
+            <label for="track_choice" class="mb-1.5 block text-sm font-semibold text-ink">Training track</label>
+            <select id="track_choice" name="track_choice" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
               <option value="" disabled selected>Choose a track…</option>
-              {% for t in tracks %}
-              <option value="{{ t }}">{{ t }}</option>
+              {% for choice in track_choices %}
+              <option value="{{ choice.value }}">{{ choice.label }} — {{ choice.cohort }}</option>
               {% endfor %}
             </select>
-            <p class="mt-1.5 text-xs text-ink-soft">Final assignment depends on availability and fit — we prioritise your preference.</p>
+            <p class="mt-1.5 text-xs text-ink-soft">Your selection determines the curriculum and intake you will receive if admitted.</p>
           </div>
-          {% if cohorts %}
-          <div>
-            <label for="cohort_id" class="mb-1.5 block text-sm font-semibold text-ink">Which track are you applying to?</label>
-            <select id="cohort_id" name="cohort_id" required class="w-full px-3.5 py-2.5 text-[0.95rem]">
-              <option value="" disabled selected>Choose a track…</option>
-              {% for c in cohorts %}
-              <option value="{{ c.id }}">{{ c.name }}{% if c.discipline %} — {{ c.discipline }}{% endif %}</option>
-              {% endfor %}
-            </select>
-            <p class="mt-1.5 text-xs text-ink-soft">You'll take a short entrance assessment right after applying.</p>
-          </div>
-          {% endif %}
 
           <div class="border-t border-sand-300 pt-5">
             <p class="text-sm font-semibold text-ink">About you</p>

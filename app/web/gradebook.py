@@ -51,6 +51,7 @@ def gradebook_index(
     _require_instructor_or_admin(db, tenant.id, person.id)
     cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
     return templates.TemplateResponse(
+        request,
         "instructor/gradebook_index.html", {"request": request, "cohorts": cohorts}
     )
 
@@ -99,5 +100,6 @@ def gradebook_cohort(
     _require_instructor_or_admin(db, tenant.id, person.id)
     gb = cohort_gradebook(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
+        request,
         "instructor/gradebook.html", {"request": request, **gb}
     )

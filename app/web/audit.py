@@ -81,6 +81,7 @@ def audit_log(
         actor_map = {p.id: p.email for p in people}
 
     return templates.TemplateResponse(
+        request,
         "admin/audit.html",
         {
             "request": request,

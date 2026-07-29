@@ -6,20 +6,27 @@ Requires a migrated disposable Postgres (skipped otherwise by the fixtures).
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.models.admissions import Applicant
+from app.models.email_outbox import EmailOutbox
 from tests.conftest import client_for
 from tests.test_apply_assessment import _cohort_with_exam
 
 
-def _apply(app_client, tenant, cohort, email):
+def _apply(app_client, tenant, cohort, track, email):
     a = client_for(TestClient(app_client.app), tenant.slug)
     r = a.post(
         "/apply",
-        data={"first_name": "Com", "last_name": "Ms", "email": email, "cohort_id": str(cohort.id)},
+        data={
+            "first_name": "Com",
+            "last_name": "Ms",
+            "email": email,
+            "track_choice": f"{cohort.id}:{track.id}",
+        },
     )
     token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
     return a, token
@@ -36,8 +43,8 @@ def _start(client, token):
 
 
 def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_session):
-    cohort = _cohort_with_exam(admin_session, tenant_a)
-    a, token = _apply(app_client, tenant_a, cohort, "intro@a.ex")
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
+    a, token = _apply(app_client, tenant_a, cohort, track, "intro@a.ex")
 
     page = a.get(f"/apply/assessment?token={token}")
     assert "Before you begin" in page.text
@@ -63,26 +70,27 @@ def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_se
 def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch):
     import app.services.applicant_email as ae
 
-    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
     cohort.auto_accept_threshold = 0.9
     admin_session.commit()
-    a, token = _apply(app_client, tenant_a, cohort, "wl@a.ex")
+    a, token = _apply(app_client, tenant_a, cohort, track, "wl@a.ex")
     _start(a, token)
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(
+        select(Applicant).where(Applicant.email == "wl@a.ex")
+    ).one()
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=10)
+    admin_session.commit()
 
     sent: list[str] = []
     monkeypatch.setattr(ae, "send_waitlist_notice", lambda db, *, applicant: sent.append("waitlist") or True)
     monkeypatch.setattr(ae, "send_results_received", lambda db, *, applicant: sent.append("received") or True)
 
     csrf = a.cookies.get("csrf_token", "")
-    # Enough active seconds that the sitting passes the too-fast validity gate.
-    a.post(
-        "/apply/assessment/save",
-        data={"token": token, "assessment_elapsed_seconds": "600"},
-        headers={"x-csrf-token": csrf},
-    )
     r = a.post(
         "/apply/assessment",
-        data={"token": token, "q1": "A", "q2": "B", "assessment_elapsed_seconds": "600"},
+        data={"token": token, "q1": "A", "q2": "B"},
         headers={"x-csrf-token": csrf},
     )
     assert r.status_code == 200
@@ -96,10 +104,10 @@ def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch
 def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session, monkeypatch):
     import app.services.applicant_email as ae
 
-    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
     cohort.auto_accept_threshold = 0.4
     admin_session.commit()
-    a, token = _apply(app_client, tenant_a, cohort, "inv2@a.ex")
+    a, token = _apply(app_client, tenant_a, cohort, track, "inv2@a.ex")
     _start(a, token)
 
     sent: list[str] = []
@@ -128,7 +136,8 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
     from app.models.course import Course
     from app.models.person import Person
     from app.services import completion as completion_svc
-    from app.services import email as email_svc
+    from app.services import email_outbox as outbox_svc
+    from app.services.email import EmailResult
 
     admin_session.rollback()
     course = Course(
@@ -154,11 +163,24 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
 
     captured: dict = {}
 
-    def fake_send(to, subject, html_body, text_body=None, db=None, attachments=None):
-        captured.update(to=to, subject=subject, attachments=attachments)
-        return True
+    def fake_send(
+        to,
+        subject,
+        html_body,
+        text_body=None,
+        db=None,
+        attachments=None,
+        message_id=None,
+    ):
+        captured.update(
+            to=to,
+            subject=subject,
+            attachments=attachments,
+            message_id=message_id,
+        )
+        return EmailResult(True)
 
-    monkeypatch.setattr(email_svc, "send_email", fake_send)
+    monkeypatch.setattr(outbox_svc, "send_email_detailed", fake_send)
 
     ok = completion_svc._email_certificate(
         admin_session,
@@ -168,9 +190,21 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
         course_title="Cert Course",
     )
     assert ok
+    admin_session.commit()
+    row = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "certificate")
+    ).one()
+    assert row.status == "pending"
+
+    result = outbox_svc.deliver_pending(admin_session)
+    admin_session.commit()
+    assert result["sent"] == 1
     assert captured["to"] == "grad@a.ex"
     assert "Cert Course" in captured["subject"]
     filename, data, mime = captured["attachments"][0]
     assert filename == "certificate.pdf"
     assert mime == "application/pdf"
     assert data[:4] == b"%PDF"
+    assert captured["message_id"].startswith("<academy-outbox-")

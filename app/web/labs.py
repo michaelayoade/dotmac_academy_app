@@ -257,6 +257,7 @@ def lab_detail(
     tpl = _lab_template(db, tenant, activity_id)
     instance = _current_instance(db, tenant, person, activity_id)
     return templates.TemplateResponse(
+        request,
         "labs/detail.html",
         {"request": request, "activity": act, "template": tpl, "instance": instance},
     )
@@ -278,6 +279,7 @@ def lab_launch(
         db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl
     )
     return templates.TemplateResponse(
+        request,
         "labs/_status.html", {"request": request, "instance": instance}
     )
 
@@ -293,6 +295,7 @@ def lab_status(
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
     return templates.TemplateResponse(
+        request,
         "labs/_status.html", {"request": request, "instance": instance}
     )
 
@@ -311,6 +314,7 @@ def lab_check(
     handle = lab_lifecycle.handle_for(instance)
     score = lab_lifecycle.grade(db, instance, _engine(), tpl, handle)
     return templates.TemplateResponse(
+        request,
         "labs/_checks.html", {"request": request, "score": score}
     )
 
@@ -328,6 +332,7 @@ def lab_reset(
     tpl = _lab_template(db, tenant, instance.activity_id)
     lab_lifecycle.reset(db, instance, _engine(), tpl)
     return templates.TemplateResponse(
+        request,
         "labs/_status.html", {"request": request, "instance": instance}
     )
 

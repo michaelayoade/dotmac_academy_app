@@ -23,25 +23,13 @@ from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.models.tenant import Tenant
+from app.models.track import CohortTrack, Track
 from app.services import admissions as admissions_service
 from app.services import applicant_email, entrance_exam
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
-
-# Training tracks an applicant can choose. Stored on ``Applicant.program`` (free
-# text), so a rename here never strands existing rows — but only these values are
-# accepted from the public form.
-TRACKS: tuple[str, ...] = (
-    "Fiber Engineering",
-    "Wireless and Radio",
-    "Routing and Switching",
-    "Network Support",
-    "Technical Support",
-    "Power and Site Infrastructure",
-)
-_DEFAULT_PROGRAM = "Dotmac Academy"
 
 _THANKS = (
     '<div id="apply-result" class="mt-8 rounded-lg border border-brand-200 bg-brand-50 p-6">'
@@ -66,15 +54,35 @@ _RESULT = (
 )
 
 
-def _open_cohorts(db: Session, tenant_id: UUID) -> list[Cohort]:
-    """Cohorts open for intake. If the academy has a tenant-wide default entrance
-    bank, every active cohort is open (all applicants sit the exam); otherwise
-    only cohorts with their own entrance bank."""
-    stmt = select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.status == "active")
+def _open_track_choices(db: Session, tenant_id: UUID) -> list[dict[str, object]]:
+    """Canonical active cohort/track pairs available for public intake."""
+    stmt = (
+        select(Cohort, Track)
+        .join(
+            CohortTrack,
+            (CohortTrack.tenant_id == Cohort.tenant_id) & (CohortTrack.cohort_id == Cohort.id),
+        )
+        .join(
+            Track,
+            (Track.tenant_id == CohortTrack.tenant_id) & (Track.id == CohortTrack.track_id),
+        )
+        .where(Cohort.tenant_id == tenant_id)
+        .where(Cohort.status == "active")
+        .where(CohortTrack.status == "active")
+        .where(Track.status == "active")
+    )
     tenant = db.get(Tenant, tenant_id)
     if tenant is None or tenant.default_entrance_bank_id is None:
         stmt = stmt.where(Cohort.entrance_bank_id.isnot(None))
-    return list(db.scalars(stmt.order_by(Cohort.name)).all())
+    rows = db.execute(stmt.order_by(Track.name, Cohort.name)).all()
+    return [
+        {
+            "value": f"{cohort.id}:{track.id}",
+            "label": track.name,
+            "cohort": cohort.name,
+        }
+        for cohort, track in rows
+    ]
 
 
 def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list[Question]:
@@ -104,6 +112,7 @@ def _exam_view(applicant: Applicant, questions: list[Question]) -> list[dict]:
 
 def _notice(request: Request, title: str, body: str) -> HTMLResponse:
     return templates.TemplateResponse(
+        request,
         "apply_assessment.html",
         {"request": request, "notice": {"title": title, "body": body}, "questions": None},
     )
@@ -113,8 +122,9 @@ def _notice(request: Request, title: str, body: str) -> HTMLResponse:
 def apply_form(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     return templates.TemplateResponse(
+        request,
         "apply.html",
-        {"request": request, "cohorts": _open_cohorts(db, tenant.id), "tracks": TRACKS},
+        {"request": request, "track_choices": _open_track_choices(db, tenant.id)},
     )
 
 
@@ -143,8 +153,7 @@ def submit_apply(
     last_name: str = Form(...),
     email: str = Form(...),
     phone: str = Form(default=""),
-    program: str = Form(default=""),
-    cohort_id: str = Form(default=""),
+    track_choice: str = Form(...),
     # --- evaluable profile ---
     date_of_birth: str = Form(default=""),
     state: str = Form(default=""),
@@ -162,10 +171,11 @@ def submit_apply(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     tenant = require_tenant(request)
-    cid = UUID(cohort_id) if cohort_id else None
-    # Only a known track is stored; anything else (crafted POST, legacy client)
-    # falls back to the generic programme label.
-    track = program.strip() if program.strip() in TRACKS else _DEFAULT_PROGRAM
+    try:
+        cohort_raw, track_raw = track_choice.split(":", 1)
+        cid, track_id = UUID(cohort_raw), UUID(track_raw)
+    except (ValueError, AttributeError):
+        raise BadRequestError("Choose an available training track.") from None
     applicant = admissions_service.submit_application(
         db,
         tenant_id=tenant.id,
@@ -173,8 +183,8 @@ def submit_apply(
         first_name=first_name,
         last_name=last_name,
         phone=phone or None,
-        program=track,
         cohort_id=cid,
+        track_id=track_id,
         source="website",
         profile={
             "date_of_birth": _d(date_of_birth),
@@ -225,6 +235,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
         # Instruction screen first: the clock must start on an explicit choice,
         # never on a curious click of the emailed link.
         return templates.TemplateResponse(
+            request,
             "apply_assessment.html",
             {
                 "request": request,
@@ -237,7 +248,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
                 "token": token,
             },
         )
-    timing = entrance_exam.start_exam(db, applicant=applicant)
+    timing = entrance_exam.timing_info(db, applicant=applicant)
     if timing["expired"]:
         return _notice(
             request,
@@ -247,6 +258,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
         )
     questions = _exam_questions(db, tenant.id, applicant)
     return templates.TemplateResponse(
+        request,
         "apply_assessment.html",
         {
             "request": request,
@@ -265,7 +277,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
 def assessment_start(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
     """The explicit start: stamps the sitting and hands over to the questions."""
     tenant = require_tenant(request)
-    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token)
+    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token, lock=True)
     if applicant is None:
         return _notice(request, "Link not valid", "This assessment link is invalid or has expired.")
     if applicant.assessment_taken_at is not None:
@@ -294,13 +306,17 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
     """
     tenant = require_tenant(request)
     form = await request.form()
-    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=str(form.get("token") or ""))
+    applicant = entrance_exam.applicant_for_token(
+        db,
+        tenant_id=tenant.id,
+        raw=str(form.get("token") or ""),
+        lock=True,
+    )
     if applicant is None or applicant.assessment_taken_at is not None:
         return Response(status_code=204)
     questions = _exam_questions(db, tenant.id, applicant)
     answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
-    elapsed = form.get("assessment_elapsed_seconds")
-    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
+    entrance_exam.record_elapsed(db, applicant=applicant)
     entrance_exam.save_answers(db, applicant=applicant, answers=answers)
     return Response(status_code=204)
 
@@ -308,7 +324,7 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
 @router.post("/apply/assessment", response_class=HTMLResponse)
 async def assessment_submit(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
     tenant = require_tenant(request)
-    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token)
+    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token, lock=True)
     if applicant is None or applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "This assessment was already submitted, or the link is invalid.")
     questions = _exam_questions(db, tenant.id, applicant)
@@ -321,8 +337,6 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         posted = [v for v in form.getlist(q.ext_id) if isinstance(v, str)]
         if posted:
             answers[q.ext_id] = posted
-    elapsed = form.get("assessment_elapsed_seconds")
-    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
     try:
         entrance_exam.grade_and_record(db, tenant_id=tenant.id, applicant=applicant, answers=answers)
     except (BadRequestError, NotFoundError):

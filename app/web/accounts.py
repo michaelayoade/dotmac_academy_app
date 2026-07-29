@@ -38,10 +38,11 @@ from app.models.track import Track
 from app.services import tracks as track_svc
 from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
-from app.services.email import send_email
+from app.services.email_outbox import enqueue_email
 from app.services.exceptions import ConflictError
 from app.services.lifecycle import _issue_token, invite_user, request_password_reset, set_account_status
 from app.services.roles import role_slugs
+from app.services.security import hash_token
 from app.services.web_auth import require_web_user
 from app.web.responses import hx_redirect
 from app.web.templating import templates
@@ -208,6 +209,7 @@ def users_list(
         for row in people
     ]
     return templates.TemplateResponse(
+        request,
         "admin/users.html",
         {
             "request": request,
@@ -380,10 +382,14 @@ def users_invite(
         assignment_text = "\nAssignments: " + "; ".join(assignments) + "\n"
     sent = False
     if token:
-        sent = send_email(
-            invited.email,
-            "You're invited to Dotmac Academy",
-            (
+        sent = enqueue_email(
+            db,
+            tenant_id=tenant.id,
+            idempotency_key=f"account-invite:{invited.id}:{hash_token(token)}",
+            kind="account_invite",
+            recipient=invited.email,
+            subject="You're invited to Dotmac Academy",
+            html_body=(
                 f"<p>Hi {escape(invited.first_name)},</p>"
                 f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
                 f"{assignment_html}"
@@ -396,17 +402,16 @@ def users_invite(
                 f"{assignment_text}\n"
                 f"Set up your account: {link}\n"
             ),
-            db=db,
         )
     if existing_user and token:
         if sent:
-            status_text = "User already existed. Invite resent and assignments updated."
+            status_text = "User already existed. Invite queued and assignments updated."
         else:
-            status_text = "User already existed. Invite link created and assignments updated."
+            status_text = "User already existed. Assignments updated; invite could not be queued."
     elif existing_user:
         status_text = "User already exists. Assignments updated."
     else:
-        status_text = "Invite sent." if sent else "Invite created. Email was not sent; use this link."
+        status_text = "Invite queued." if sent else "Invite could not be queued."
     assignment_status = ""
     if assignments:
         items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
@@ -416,7 +421,6 @@ def users_invite(
         f'<p class="font-semibold">{status_text}</p>'
         f'<p>{escape(invited.email)} - {escape(role)}</p>'
         f'{assignment_status}'
-        f'{f'<p><a class="underline" href="{link}">{link}</a></p>' if link else ""}'
         f'</div>'
     )
 
@@ -445,23 +449,25 @@ def users_reset_link(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     link = str(request.url_for("reset_form").include_query_params(token=token))
-    sent = send_email(
-        target.email,
-        "Reset your Dotmac Academy password",
-        (
+    sent = enqueue_email(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=f"password-reset:{target.id}:{hash_token(token)}",
+        kind="password_reset",
+        recipient=target.email,
+        subject="Reset your Dotmac Academy password",
+        html_body=(
             f"<p>Hi {target.first_name},</p>"
             f"<p>Use this link to reset your password:</p>"
             f'<p><a href="{link}">Reset password</a></p>'
             f"<p>If the button does not work, open this link: {link}</p>"
         ),
         text_body=f"Reset your Dotmac Academy password: {link}\n",
-        db=db,
     )
-    status_text = "Reset email sent." if sent else "Reset link created. Email was not sent; use this link."
+    status_text = "Reset email queued." if sent else "Reset email could not be queued."
     return HTMLResponse(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
-        f'<p><a class="underline" href="{link}">{link}</a></p>'
         f"</div>"
     )
 
@@ -494,23 +500,25 @@ def users_invite_link(
         )
     token = _issue_token(db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC))
     link = str(request.url_for("accept_form").include_query_params(token=token))
-    sent = send_email(
-        target.email,
-        "Activate your Dotmac Academy account",
-        (
+    sent = enqueue_email(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=f"account-invite:{target.id}:{hash_token(token)}",
+        kind="account_invite",
+        recipient=target.email,
+        subject="Activate your Dotmac Academy account",
+        html_body=(
             f"<p>Hi {escape(target.first_name)},</p>"
             "<p>Use this link to activate your Dotmac Academy account:</p>"
             f'<p><a href="{link}">Set up your account</a></p>'
             f"<p>If the button does not work, open this link: {link}</p>"
         ),
         text_body=f"Set up your Dotmac Academy account: {link}\n",
-        db=db,
     )
-    status_text = "Invite email sent." if sent else "Invite link created. Email was not sent; use this link."
+    status_text = "Invite email queued." if sent else "Invite email could not be queued."
     return HTMLResponse(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
-        f'<p><a class="underline" href="{link}">{link}</a></p>'
         f"</div>"
     )
 

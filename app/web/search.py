@@ -30,6 +30,7 @@ def search_page(
     is_staff = bool(_STAFF_ROLES & slugs)
     results = svc_search(db, tenant_id=tenant.id, person_id=person.id, q=q, is_staff=is_staff)
     return templates.TemplateResponse(
+        request,
         "search.html",
         {
             "request": request,

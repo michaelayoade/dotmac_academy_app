@@ -5,11 +5,8 @@ day; this report is the visibility that replaces them. One email per admin
 per tenant summarising the reporting window (applications, sittings, auto
 decisions, enrolments, learning activity) plus the current pipeline state.
 
-Window metrics use the timestamps we actually have: applications by
-``created_at``, sittings by ``assessment_taken_at``, auto decisions by the
-policy's notes + ``updated_at``, enrolments/completions/submissions by their
-rows' ``created_at``/``completed_at``. There is no per-transition history
-table, so "auto-accepted this window" is an honest approximation.
+Window metrics use authoritative record timestamps. Automated admissions
+decisions come from the audit transition ledger rather than mutable notes.
 """
 
 from __future__ import annotations
@@ -25,8 +22,8 @@ from app.models.assessment import Submission
 from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
 from app.models.person import Person
-from app.models.rbac import PersonRole, Role
-from app.services.email import send_email
+from app.models.rbac import AuditEvent, PersonRole, Role
+from app.services.email_outbox import enqueue_email
 
 
 def _count(db: Session, stmt) -> int:
@@ -47,15 +44,21 @@ def activity_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
         .where(A.assessment_taken_at >= since)
         .where(A.assessment_valid.is_(True))
     )
+    decision_events = (
+        select(func.count())
+        .select_from(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant_id)
+        .where(AuditEvent.action == "applicant.transition")
+        .where(AuditEvent.created_at >= since)
+        .where(AuditEvent.details["source"].astext == "assessment_policy")
+    )
     auto_accepted = _count(
         db,
-        base.where(A.updated_at >= since)
-        .where(A.notes.like("auto-accepted%"))
-        .where(A.status.in_(("onboarding", "enrolled"))),
+        decision_events.where(AuditEvent.details["to_status"].astext == "onboarding"),
     )
     auto_waitlisted = _count(
         db,
-        base.where(A.updated_at >= since).where(A.notes.like("auto-waitlisted%")).where(A.status == "waitlisted"),
+        decision_events.where(AuditEvent.details["to_status"].astext == "waitlisted"),
     )
     invalid_awaiting = _count(
         db,
@@ -159,13 +162,22 @@ def _render(snapshot: dict) -> tuple[str, str]:
 
 
 def send_activity_report(db: Session, *, tenant_id: UUID, hours: int = 24) -> int:
-    """Email the activity report to every tenant admin. Returns emails sent."""
+    """Queue the activity report for every Academy admin."""
     since = datetime.now(UTC) - timedelta(hours=hours)
     snapshot = activity_snapshot(db, tenant_id=tenant_id, since=since)
     html, text = _render(snapshot)
     subject = f"Academy activity report — {datetime.now(UTC):%d %b %Y}"
     sent = 0
     for admin in admin_recipients(db, tenant_id=tenant_id):
-        if send_email(admin.email, subject, html, text_body=text, db=db):
+        if enqueue_email(
+            db,
+            tenant_id=tenant_id,
+            idempotency_key=f"admin-report:{admin.id}:{datetime.now(UTC):%Y-%m-%d}:{hours}",
+            kind="admin_report",
+            recipient=admin.email,
+            subject=subject,
+            html_body=html,
+            text_body=text,
+        ):
             sent += 1
     return sent

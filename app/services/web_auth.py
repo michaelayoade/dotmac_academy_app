@@ -6,7 +6,7 @@ require_web_role() for server-rendered (Jinja2) routes.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -20,17 +20,37 @@ from app.models.rbac import PersonRole, Role
 from app.services.security import hash_token, issue_access_token, verify_password
 
 COOKIE = "session"
+MAX_FAILED_LOGINS = 5
+LOCKOUT_MINUTES = 15
 
 
 def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Person | None:
-    """Return the Person if email+password match for the tenant, else None."""
+    """Authenticate and own the durable account lockout policy.
+
+    The credential row is locked so concurrent failures cannot race below the
+    threshold. Callers must return an error response rather than raise after a
+    failed attempt, allowing the request transaction to commit the counter.
+    """
+    now = datetime.now(UTC)
     cred = db.scalars(
         select(UserCredential)
         .where(UserCredential.tenant_id == tenant_id)
         .where(UserCredential.email == email)
+        .with_for_update()
     ).first()
-    if cred is None or not verify_password(password, cred.password_hash):
+    if cred is None:
         return None
+    if cred.locked_until is not None and cred.locked_until > now:
+        return None
+    if not verify_password(password, cred.password_hash):
+        cred.failed_login_attempts += 1
+        if cred.failed_login_attempts >= MAX_FAILED_LOGINS:
+            cred.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
+        db.flush()
+        return None
+    cred.failed_login_attempts = 0
+    cred.locked_until = None
+    db.flush()
     person = db.scalars(select(Person).where(Person.id == cred.person_id)
                         .where(Person.tenant_id == tenant_id)).first()
     if person is None or person.status != "active":

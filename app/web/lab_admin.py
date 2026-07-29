@@ -57,6 +57,7 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         .order_by(LabInstance.last_active_at.desc().nullslast())
     ).all()
     return templates.TemplateResponse(
+        request,
         "labs/admin_monitor.html", {"request": request, "rows": rows}
     )
 

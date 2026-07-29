@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -117,3 +118,41 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     """Wrap a TestClient so every request carries Host: {slug}.localhost."""
     client.headers.update({"Host": f"{tenant_slug}.localhost"})
     return client
+
+
+@pytest.fixture
+def api_actor(admin_session):
+    """Create a real tenant account and return its authenticated API context."""
+
+    def _create(client: TestClient, tenant, *, role: str = "admin", email: str | None = None):
+        from app.services.accounts import create_user
+
+        password = "correct horse battery staple"
+        email = email or f"{role}-{uuid4().hex[:10]}@test.example"
+        admin_session.rollback()
+        person = create_user(
+            admin_session,
+            tenant_id=tenant.id,
+            email=email,
+            first_name=role.title(),
+            last_name="Tester",
+            password=password,
+            role=role,
+        )
+        admin_session.commit()
+        admin_session.refresh(person)
+
+        scoped = client_for(client, tenant.slug)
+        response = scoped.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert response.status_code == 200, response.text
+        token = response.json()["access_token"]
+        return {
+            "headers": {"Authorization": f"Bearer {token}"},
+            "person": person,
+            "token": token,
+        }
+
+    return _create

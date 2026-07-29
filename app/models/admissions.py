@@ -19,6 +19,8 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -49,9 +51,15 @@ class Applicant(Base, TimestampMixin):
     __tablename__ = "applicants"
     __table_args__ = (
         UniqueConstraint("tenant_id", "email", name="uq_applicants_tenant_email"),
+        Index("ix_applicants_status", "tenant_id", "status"),
         # Parallels the other tables' (tenant_id, id) unique so future children
         # can reference an applicant via a tenant-consistent composite FK.
         UniqueConstraint("tenant_id", "id", name="uq_applicants_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "cohort_id", "track_id"],
+            ["cohort_tracks.tenant_id", "cohort_tracks.cohort_id", "cohort_tracks.track_id"],
+            name="fk_applicants_tenant_cohort_track",
+        ),
     )
 
     id: Mapped[UUID] = uuid_pk()
@@ -67,7 +75,7 @@ class Applicant(Base, TimestampMixin):
     last_name: Mapped[str] = mapped_column(String(80), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
-    # What they applied for (e.g. "Fiber Academy"); free text for now.
+    # Display snapshot of the canonical Track name at application time.
     program: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     # applied|screened|accepted|onboarding|enrolled|rejected|waitlisted
@@ -86,8 +94,9 @@ class Applicant(Base, TimestampMixin):
     # Set when the applicant is converted to an enrolled learner (P2).
     person_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 
-    # Which cohort/intake they applied to (FK-less, matching the person_id convention).
+    # Canonical cohort/track placement selected at intake.
     cohort_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    track_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
 
     # Entrance-assessment result — a competency profile, stored once taken:
     #   assessment_score   overall fraction 0..1
@@ -99,11 +108,11 @@ class Applicant(Base, TimestampMixin):
     assessment_taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # HMAC of the self-serve entrance-exam access token (the raw is emailed once).
     assessment_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Timed sitting: stamped when the exam is first opened; flagged if a submit
-    # arrives past the cohort's time limit (+grace).
+    # Timed sitting: server-stamped when explicitly started. All duration and
+    # expiry decisions derive from this server timestamp, never browser input.
     assessment_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Active timed seconds consumed. Updated by the assessment page heartbeat so
-    # disconnected/offline time does not keep draining the candidate's clock.
+    # Server-derived elapsed snapshot retained for reporting and migration
+    # compatibility. It is never accepted from a client.
     assessment_elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     assessment_time_exceeded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # Autosaved progress {ext_id: [chosen option, ...]}. Persisted as the candidate
@@ -121,8 +130,8 @@ class Applicant(Base, TimestampMixin):
     # Deadline model: the exam link stays valid until this moment, so a candidate
     # can pick their own good-connectivity time rather than being pinned to a slot.
     assessment_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # When the tokenised invitation was emailed (the exam link used to be shown
-    # once on-screen and then lost forever — this is the durable copy).
+    # When the tokenised invitation was queued in the transactional outbox. The
+    # outbox row owns actual delivery status and retry evidence.
     invite_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # HMAC of the self-serve onboarding-portal access token (raw emailed once).

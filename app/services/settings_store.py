@@ -1,12 +1,13 @@
-"""Platform settings store — DB-over-env effective configuration.
+"""Single-Academy settings store — DB-over-env effective configuration.
 
 Reads/writes the ``platform_settings`` key/value table and merges stored values
 over the env/config defaults from :data:`app.config.settings`. Everything is
 best-effort and safe: if the table is missing or empty (fresh DB, pre-migration),
 :func:`effective` simply returns the env defaults so nothing breaks.
 
-Writes require a platform/admin session (``platform_api``); ``app_user`` may only
-SELECT. The caller owns the transaction boundary — these helpers ``flush`` only.
+Writes require the restricted settings-writer session (the historical database
+role is named ``platform_api``); ``app_user`` may only SELECT. The caller owns
+the transaction boundary — these helpers ``flush`` only.
 """
 
 from __future__ import annotations

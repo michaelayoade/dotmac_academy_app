@@ -30,7 +30,7 @@
           <li><strong class="text-ink">No time limit.</strong> Take the time you need.</li>
           {% endif %}
           <li><strong class="text-ink">One attempt.</strong> Start only when you can finish uninterrupted.</li>
-          <li><strong class="text-ink">Your answers save as you go.</strong> If your connection drops, reopen your link and continue — the clock pauses while you're offline.</li>
+          <li><strong class="text-ink">Your answers save as you go.</strong> Once started, the server clock keeps running. If a serious outage interrupts you, an administrator can reopen the sitting.</li>
           <li><strong class="text-ink">It tests general aptitude</strong> — numeracy, reading, reasoning, and safety sense. You are not expected to have prior technical knowledge.</li>
         </ul>
         <div id="start-panel">
@@ -55,7 +55,6 @@
       <div id="exam-result">
         <form hx-post="/apply/assessment" hx-target="#exam-result" hx-swap="outerHTML" class="mt-6 space-y-6">
           <input type="hidden" name="token" value="{{ token }}">
-          <input id="assessment-elapsed" type="hidden" name="assessment_elapsed_seconds" value="{{ elapsed_seconds or 0 }}">
           {% for q in questions %}
           <fieldset class="card p-5">
             <legend class="text-sm font-semibold text-ink">{{ loop.index }}. {{ q.stem }}</legend>
@@ -109,8 +108,8 @@
         clearTimeout(pending);
         pending = setTimeout(save, 800);   // debounce rapid clicking
       });
-      // Heartbeat while connected; once the network drops, no more time is
-      // persisted, so the timer resumes from the last heartbeat.
+      // Heartbeat while connected. The server derives elapsed time from its own
+      // start timestamp; no browser-provided duration is trusted.
       setInterval(save, 10000);
       // Best-effort flush if they navigate away or lose the tab.
       window.addEventListener('pagehide', save);
@@ -124,8 +123,6 @@
       var remaining = parseInt(el.getAttribute('data-remaining'), 10) || 0;
       var display = document.getElementById('timer-display');
       var form = document.querySelector('#exam-result form');
-      var elapsedInput = document.getElementById('assessment-elapsed');
-      var elapsed = elapsedInput ? (parseInt(elapsedInput.value, 10) || 0) : 0;
       function render() {
         var m = Math.floor(remaining / 60), s = remaining % 60;
         display.textContent = m + ':' + (s < 10 ? '0' : '') + s;
@@ -133,8 +130,6 @@
       render();
       var iv = setInterval(function () {
         remaining -= 1;
-        elapsed += 1;
-        if (elapsedInput) { elapsedInput.value = String(elapsed); }
         if (remaining <= 0) {
           clearInterval(iv);
           display.textContent = '0:00';

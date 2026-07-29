@@ -25,10 +25,11 @@ def _mk_applicant(admin_session, tenant, email, **kw):
 
 
 def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
+    from app.models.rbac import AuditEvent
     from app.services.admin_reports import activity_snapshot
 
     now = datetime.now(UTC)
-    _mk_applicant(
+    accepted = _mk_applicant(
         admin_session,
         tenant_a,
         "rep1@a.ex",
@@ -36,9 +37,8 @@ def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
         assessment_taken_at=now,
         assessment_score=0.9,
         assessment_valid=True,
-        notes="auto-accepted: entrance score 90% >= threshold 60%",
     )
-    _mk_applicant(
+    waitlisted = _mk_applicant(
         admin_session,
         tenant_a,
         "rep2@a.ex",
@@ -46,7 +46,6 @@ def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
         assessment_taken_at=now,
         assessment_score=0.3,
         assessment_valid=True,
-        notes="auto-waitlisted: entrance score 30% below threshold 60%",
     )
     _mk_applicant(
         admin_session,
@@ -57,6 +56,33 @@ def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
         assessment_score=0.9,
         assessment_valid=False,
     )
+    admin_session.add_all(
+        [
+            AuditEvent(
+                tenant_id=tenant_a.id,
+                action="applicant.transition",
+                entity_type="applicant",
+                entity_id=str(accepted.id),
+                details={
+                    "from_status": "applied",
+                    "to_status": "onboarding",
+                    "source": "assessment_policy",
+                },
+            ),
+            AuditEvent(
+                tenant_id=tenant_a.id,
+                action="applicant.transition",
+                entity_type="applicant",
+                entity_id=str(waitlisted.id),
+                details={
+                    "from_status": "applied",
+                    "to_status": "waitlisted",
+                    "source": "assessment_policy",
+                },
+            ),
+        ]
+    )
+    admin_session.commit()
 
     snap = activity_snapshot(admin_session, tenant_id=tenant_a.id, since=now - timedelta(hours=24))
     assert snap["new_applications"] == 3

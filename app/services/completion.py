@@ -8,6 +8,7 @@ score write; ``completed_at`` is stamped once, the first time pct reaches 1.0.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Activity
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.person import Person
 from app.services.assessment import best_scores_for
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,12 @@ def recompute_completion(
     now: datetime | None = None,
 ) -> CourseCompletion:
     """Upsert the person's completion record for the course and return it."""
+    db.execute(
+        select(Person.id)
+        .where(Person.tenant_id == tenant_id)
+        .where(Person.id == person_id)
+        .with_for_update()
+    )
     total = (
         db.scalar(
             select(func.count())
@@ -93,16 +101,15 @@ def recompute_completion(
 
 
 def _email_certificate(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID, course_title: str) -> bool:
-    """Email the freshly-completed course's certificate PDF to the student.
+    """Queue the freshly-completed course's certificate email.
 
-    Best-effort milestone email: issues (or reuses) the certificate, renders the
-    PDF, and attaches it. Honours the student's results-email opt-out. The
-    in-app notification and the pull download at /certificates/{course_id}
-    remain regardless.
+    The certificate and outbox intent commit atomically. The delivery worker
+    renders the PDF after commit and retries SMTP independently.
     """
     from app.models.person import Person
-    from app.services.certificates import issue_certificate, render_certificate_pdf
-    from app.services.email import recipient_allows, send_email
+    from app.services.certificates import issue_certificate
+    from app.services.email import recipient_allows
+    from app.services.email_outbox import enqueue_email
 
     person = db.get(Person, person_id)
     if person is None or not person.email:
@@ -111,32 +118,31 @@ def _email_certificate(db: Session, *, tenant_id: UUID, person_id: UUID, course_
         return False
 
     cert = issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-    pdf = render_certificate_pdf(
-        recipient_name=f"{person.first_name} {person.last_name}".strip(),
-        course_title=course_title,
-        serial=cert.serial,
-        issued_at=cert.issued_at,
-    )
-    name = person.first_name or "there"
-    html = (
+    name_text = person.first_name or "there"
+    name = html.escape(name_text)
+    safe_title = html.escape(course_title)
+    html_body = (
         "<div style=\"font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0D1F16;"
         'max-width:560px;margin:0 auto;padding:24px;">'
         "<p style='font-size:12px;letter-spacing:.14em;text-transform:uppercase;"
         "color:#0B4F31;font-weight:600;margin:0 0 4px;'>Dotmac Academy</p>"
         f"<h1 style='font-size:22px;margin:0 0 16px;'>Congratulations, {name}!</h1>"
-        f"<p>You've completed <strong>{course_title}</strong>. Your certificate is attached.</p>"
+        f"<p>You've completed <strong>{safe_title}</strong>. Your certificate is attached.</p>"
         f"<p style='font-size:13px;color:#5B6B62;'>Certificate serial: {cert.serial}. You can also "
         "download it any time from your course page.</p></div>"
     )
     text = (
-        f"Congratulations, {name}!\n\nYou've completed {course_title}. "
+        f"Congratulations, {name_text}!\n\nYou've completed {course_title}. "
         f"Your certificate is attached (serial {cert.serial}).\n"
     )
-    return send_email(
-        person.email,
-        f"Your certificate — {course_title}",
-        html,
+    return enqueue_email(
+        db,
+        tenant_id=tenant_id,
+        idempotency_key=f"certificate:{cert.id}",
+        kind="certificate",
+        recipient=person.email,
+        subject=f"Your certificate — {course_title}",
+        html_body=html_body,
         text_body=text,
-        db=db,
-        attachments=[("certificate.pdf", pdf, "application/pdf")],
+        payload={"person_id": str(person_id), "course_id": str(course_id)},
     )

@@ -35,12 +35,13 @@ from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
 from app.services.dashboards import cohort_overview
-from app.services.email import send_email
+from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lifecycle import invite_user, set_account_status
 from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
+from app.services.security import hash_token
 from app.services.web_auth import require_web_role, require_web_user
 from app.web.responses import hx_redirect
 from app.web.templating import templates
@@ -123,6 +124,7 @@ def cohorts_list(
         for cohort in rows
     ]
     return templates.TemplateResponse(
+        request,
         "instructor/cohorts.html",
         {
             "request": request,
@@ -326,7 +328,7 @@ def invite_to_cohort(
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
-    where unknown emails were silently dropped. Returns the activation link."""
+    where unknown emails were silently dropped. Queues the activation email."""
     tenant = require_tenant(request)
     person, token = invite_user(
         db, tenant_id=tenant.id, email=email, first_name=first_name, last_name=last_name, role="student"
@@ -335,10 +337,14 @@ def invite_to_cohort(
     bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email], track_id=track_uuid)
     link = str(request.url_for("accept_form").include_query_params(token=token))
     link_e = _e(link)
-    sent = send_email(
-        person.email,
-        "You're invited to Dotmac Academy",
-        (
+    sent = enqueue_email(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=f"account-invite:{person.id}:{hash_token(token)}",
+        kind="account_invite",
+        recipient=person.email,
+        subject="You're invited to Dotmac Academy",
+        html_body=(
             f"<p>Hi {_e(person.first_name)},</p>"
             f"<p>You have been invited to Dotmac Academy.</p>"
             f'<p><a href="{link_e}">Set up your account</a></p>'
@@ -349,14 +355,12 @@ def invite_to_cohort(
             f"You have been invited to Dotmac Academy.\n\n"
             f"Set up your account: {link}\n"
         ),
-        db=db,
     )
-    status = "Invite email sent." if sent else "Invite created. Email was not sent; use the activation link below."
+    status = "Invite email queued." if sent else "Invite email could not be queued."
     return HTMLResponse(
         f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{_e(status)}</p>'
         f"<p>Student: {_e(person.email)}</p>"
-        f'<p>Activation link: <a class="underline" href="{link_e}">{link_e}</a></p>'
         f"</div>"
     )
 
@@ -379,6 +383,7 @@ def cohort_timetable(cohort_id: UUID, request: Request, db: Session = Depends(ge
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     sessions = scheduling.list_for_cohort(db, cohort_id=cohort_id)
     return templates.TemplateResponse(
+        request,
         "instructor/timetable.html",
         {
             "request": request,
@@ -485,6 +490,7 @@ def author_courses_list(
     is_admin = _is_admin(db, tenant.id, person.id)
     courses = _authorable_courses(db, tenant_id=tenant.id, person_id=person.id)
     return templates.TemplateResponse(
+        request,
         "instructor/courses.html",
         {"request": request, "courses": courses, "is_admin": is_admin},
     )
@@ -526,6 +532,7 @@ def author_course_page(
     ).all()
     chapter_rows = [{"chapter": chapter, "source": editable_chapter_source(chapter)} for chapter in chapters]
     return templates.TemplateResponse(
+        request,
         "instructor/authoring.html",
         {"request": request, "course": course, "chapters": chapter_rows},
     )
@@ -598,6 +605,7 @@ def _preview_course_response(
         previous_chapter = next((row for row in reversed(chapters) if row.number < chapter.number), None)
         next_chapter = next((row for row in chapters if row.number > chapter.number), None)
     return templates.TemplateResponse(
+        request,
         "instructor/course_preview.html",
         {
             "request": request,
@@ -684,7 +692,7 @@ def results(request: Request, db: Session = Depends(get_db)):
         )
         .where(Person.tenant_id == tenant.id)
     ).all()
-    return templates.TemplateResponse("instructor/results.html", {"request": request, "rows": rows})
+    return templates.TemplateResponse(request, "instructor/results.html", {"request": request, "rows": rows})
 
 
 @router.get("/grading", response_class=HTMLResponse)
@@ -695,7 +703,7 @@ def grading_queue(request: Request, db: Session = Depends(get_db)):
         {"submission_id": sub.id, "activity_title": act.title, "email": email, "attempt_no": sub.attempt_no}
         for sub, act, email in pending_grading(db, tenant_id=tenant.id)
     ]
-    return templates.TemplateResponse("instructor/grading.html", {"request": request, "rows": rows})
+    return templates.TemplateResponse(request, "instructor/grading.html", {"request": request, "rows": rows})
 
 
 @router.get("/dashboard/cohort/{cohort_id}", response_class=HTMLResponse)
@@ -704,6 +712,7 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
     tenant = require_tenant(request)
     ov = cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
+        request,
         "instructor/dashboard_cohort.html",
         {"request": request, "cohort": ov["cohort"], "rows": ov["rows"]},
     )
@@ -718,6 +727,7 @@ def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=404)
     items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
     return templates.TemplateResponse(
+        request,
         "instructor/item_analytics.html",
         {"request": request, "activity": act, "items": items},
     )
@@ -751,6 +761,7 @@ def announcements_list(request: Request, db: Session = Depends(get_db)):
     cohorts = list(db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all())
     cohort_map = {c.id: c.name for c in cohorts}
     return templates.TemplateResponse(
+        request,
         "instructor/announcements.html",
         {"request": request, "announcements": anns, "cohorts": cohorts, "cohort_map": cohort_map},
     )

@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -40,6 +41,7 @@ class OnboardingTask(Base, TimestampMixin):
             ondelete="CASCADE",
             name="fk_onboarding_tasks_tenant_applicant",
         ),
+        Index("ix_onboarding_tasks_applicant", "tenant_id", "applicant_id"),
     )
 
     id: Mapped[UUID] = uuid_pk()
@@ -49,7 +51,7 @@ class OnboardingTask(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    applicant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    applicant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
 
     # Stable machine key (e.g. "entrance_assessment") + human label.
     key: Mapped[str] = mapped_column(String(40), nullable=False)

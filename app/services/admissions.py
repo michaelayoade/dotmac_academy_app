@@ -22,12 +22,22 @@ from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
 from app.models.rbac import PersonRole
+from app.models.track import CohortTrack, Track
 from app.services import lifecycle, onboarding
+from app.services.audit import write_audit_event
 from app.services.bootstrap import ensure_roles
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.services.security import hash_token
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)
+
+ADMIN_ACTION_LABELS = {
+    "accept": "Accept and invite to onboarding",
+    "waitlist": "Move to waitlist",
+    "reject": "Reject application",
+    "reinvite_assessment": "Send a new assessment invitation",
+    "reset_assessment": "Reset sitting and send a new invitation",
+}
 
 # Allowed forward/off-ramp transitions. Accept routes into ``onboarding`` (the
 # onboarding workflow lands in P2); ``enrolled`` and ``rejected`` are terminal.
@@ -85,6 +95,7 @@ def submit_application(
     phone: str | None = None,
     program: str | None = None,
     cohort_id: UUID | None = None,
+    track_id: UUID | None = None,
     source: str = "website",
     external_ref: str | None = None,
     applied_on: date | None = None,
@@ -96,6 +107,31 @@ def submit_application(
     in-flight applicant's pipeline status.
     """
     email = email.strip().lower()
+    selected_track: Track | None = None
+    if track_id is not None:
+        if cohort_id is None:
+            raise BadRequestError("A cohort is required when selecting a track.")
+        selected_track = db.scalars(
+            select(Track)
+            .join(
+                CohortTrack,
+                (CohortTrack.tenant_id == Track.tenant_id) & (CohortTrack.track_id == Track.id),
+            )
+            .join(
+                Cohort,
+                (Cohort.tenant_id == CohortTrack.tenant_id)
+                & (Cohort.id == CohortTrack.cohort_id),
+            )
+            .where(Track.tenant_id == tenant_id)
+            .where(Track.id == track_id)
+            .where(Track.status == "active")
+            .where(CohortTrack.cohort_id == cohort_id)
+            .where(CohortTrack.status == "active")
+            .where(Cohort.status == "active")
+        ).first()
+        if selected_track is None:
+            raise BadRequestError("That training track is not open for the selected cohort.")
+        program = selected_track.name
     existing = db.scalar(
         select(Applicant).where(Applicant.email == email)  # RLS scopes to tenant
     )
@@ -108,6 +144,8 @@ def submit_application(
             existing.program = program.strip()
         if cohort_id is not None:
             existing.cohort_id = cohort_id
+        if selected_track is not None:
+            existing.track_id = selected_track.id
         if external_ref and not existing.external_ref:
             existing.external_ref = external_ref
         _apply_profile(existing, profile)
@@ -122,6 +160,7 @@ def submit_application(
         phone=phone.strip() if phone else None,
         program=program.strip() if program else None,
         cohort_id=cohort_id,
+        track_id=selected_track.id if selected_track is not None else None,
         status="applied",
         source=source,
         external_ref=external_ref,
@@ -195,28 +234,325 @@ def get_applicant(db: Session, *, applicant_id: UUID) -> Applicant:
     return applicant
 
 
+def active_intake_choices(db: Session, *, tenant_id: UUID) -> list[dict[str, object]]:
+    """Active cohort/track placements an Academy admin may assign."""
+    rows = db.execute(
+        select(Cohort, Track)
+        .join(
+            CohortTrack,
+            (CohortTrack.tenant_id == Cohort.tenant_id)
+            & (CohortTrack.cohort_id == Cohort.id),
+        )
+        .join(
+            Track,
+            (Track.tenant_id == CohortTrack.tenant_id)
+            & (Track.id == CohortTrack.track_id),
+        )
+        .where(Cohort.tenant_id == tenant_id)
+        .where(Cohort.status == "active")
+        .where(CohortTrack.status == "active")
+        .where(Track.status == "active")
+        .order_by(Track.name, Cohort.name)
+    ).all()
+    return [
+        {
+            "value": f"{cohort.id}:{track.id}",
+            "cohort_id": cohort.id,
+            "track_id": track.id,
+            "cohort": cohort.name,
+            "track": track.name,
+        }
+        for cohort, track in rows
+    ]
+
+
+def _active_intake_track(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    cohort_id: UUID | None,
+    track_id: UUID | None,
+) -> Track | None:
+    if cohort_id is None or track_id is None:
+        return None
+    return db.scalars(
+        select(Track)
+        .join(
+            CohortTrack,
+            (CohortTrack.tenant_id == Track.tenant_id)
+            & (CohortTrack.track_id == Track.id),
+        )
+        .join(
+            Cohort,
+            (Cohort.tenant_id == CohortTrack.tenant_id)
+            & (Cohort.id == CohortTrack.cohort_id),
+        )
+        .where(Track.tenant_id == tenant_id)
+        .where(Track.id == track_id)
+        .where(Track.status == "active")
+        .where(CohortTrack.cohort_id == cohort_id)
+        .where(CohortTrack.status == "active")
+        .where(Cohort.status == "active")
+    ).first()
+
+
+def has_active_intake(db: Session, *, applicant: Applicant) -> bool:
+    return (
+        _active_intake_track(
+            db,
+            tenant_id=applicant.tenant_id,
+            cohort_id=applicant.cohort_id,
+            track_id=applicant.track_id,
+        )
+        is not None
+    )
+
+
+def assign_applicant_intake(
+    db: Session,
+    *,
+    applicant_id: UUID,
+    cohort_id: UUID,
+    track_id: UUID,
+    actor_person_id: UUID,
+    reason: str | None = None,
+) -> Applicant:
+    """Assign the canonical cohort/track pair and audit the correction."""
+    applicant = db.scalars(
+        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
+    ).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
+    track = _active_intake_track(
+        db,
+        tenant_id=applicant.tenant_id,
+        cohort_id=cohort_id,
+        track_id=track_id,
+    )
+    if track is None:
+        raise BadRequestError("That cohort and training track are not active.")
+    previous_cohort_id = applicant.cohort_id
+    previous_track_id = applicant.track_id
+    applicant.cohort_id = cohort_id
+    applicant.track_id = track_id
+    applicant.program = track.name
+    db.flush()
+    write_audit_event(
+        db,
+        tenant_id=applicant.tenant_id,
+        actor_person_id=actor_person_id,
+        action="applicant.intake_assigned",
+        entity_type="applicant",
+        entity_id=str(applicant.id),
+        details={
+            "from_cohort_id": str(previous_cohort_id) if previous_cohort_id else "",
+            "from_track_id": str(previous_track_id) if previous_track_id else "",
+            "to_cohort_id": str(cohort_id),
+            "to_track_id": str(track_id),
+            "track_name": track.name,
+            "reason": reason or "",
+            "source": "admin_web",
+        },
+    )
+    return applicant
+
+
+def admin_review_actions(
+    applicant: Applicant,
+    *,
+    placement_ready: bool | None = None,
+) -> list[dict[str, object]]:
+    """Backend-owned eligibility for the applicant detail action panel."""
+    actions: list[str] = []
+    if placement_ready is None:
+        placement_ready = applicant.cohort_id is not None and applicant.track_id is not None
+    if placement_ready and applicant.status in {"applied", "screened", "waitlisted", "accepted"}:
+        actions.append("accept")
+    if "waitlisted" in ALLOWED_TRANSITIONS.get(applicant.status, frozenset()):
+        actions.append("waitlist")
+    if "rejected" in ALLOWED_TRANSITIONS.get(applicant.status, frozenset()):
+        actions.append("reject")
+    if applicant.assessment_taken_at is not None or applicant.assessment_started_at is not None:
+        actions.append("reset_assessment")
+    elif applicant.assessment_token_hash is not None:
+        actions.append("reinvite_assessment")
+    return [
+        {
+            "key": action,
+            "label": ADMIN_ACTION_LABELS[action],
+            "destructive": action in {"reject", "reset_assessment"},
+        }
+        for action in actions
+    ]
+
+
+def applicant_transition_history(db: Session, *, applicant: Applicant) -> list:
+    """Authoritative transition/audit events for one applicant, newest first."""
+    from app.models.rbac import AuditEvent
+
+    return list(
+        db.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.tenant_id == applicant.tenant_id)
+            .where(AuditEvent.entity_type == "applicant")
+            .where(AuditEvent.entity_id == str(applicant.id))
+            .where(
+                AuditEvent.action.in_(
+                    (
+                        "applicant.transition",
+                        "applicant.transition_baseline",
+                        "applicant.assessment_reset",
+                        "applicant.assessment_reinvite",
+                        "applicant.intake_assigned",
+                    )
+                )
+            )
+            .order_by(AuditEvent.created_at.desc())
+        ).all()
+    )
+
+
+def apply_admin_review_action(
+    db: Session,
+    *,
+    applicant_id: UUID,
+    action: str,
+    actor_person_id: UUID,
+    base_url: str,
+    reason: str | None = None,
+) -> Applicant:
+    """Canonical writer for all applicant-detail actions."""
+    applicant = db.scalars(
+        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
+    ).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
+    eligible = {
+        str(item["key"])
+        for item in admin_review_actions(
+            applicant,
+            placement_ready=has_active_intake(db, applicant=applicant),
+        )
+    }
+    if action not in eligible:
+        raise BadRequestError("That action is not available for the applicant's current state.")
+
+    if action == "reset_assessment":
+        from app.services import entrance_exam
+
+        entrance_exam.reset_and_invite(db, applicant=applicant, base_url=base_url)
+        write_audit_event(
+            db,
+            tenant_id=applicant.tenant_id,
+            actor_person_id=actor_person_id,
+            action="applicant.assessment_reset",
+            entity_type="applicant",
+            entity_id=str(applicant.id),
+            details={"reason": reason or "", "source": "admin_web"},
+        )
+        return applicant
+
+    if action == "reinvite_assessment":
+        from app.services import entrance_exam
+
+        entrance_exam.invite(db, applicant=applicant, base_url=base_url)
+        write_audit_event(
+            db,
+            tenant_id=applicant.tenant_id,
+            actor_person_id=actor_person_id,
+            action="applicant.assessment_reinvite",
+            entity_type="applicant",
+            entity_id=str(applicant.id),
+            details={"reason": reason or "", "source": "admin_web"},
+        )
+        return applicant
+
+    if action == "accept":
+        path = {
+            "applied": ("screened", "accepted", "onboarding"),
+            "screened": ("accepted", "onboarding"),
+            "waitlisted": ("accepted", "onboarding"),
+            "accepted": ("onboarding",),
+        }[applicant.status]
+        for next_status in path:
+            transition_applicant(
+                db,
+                applicant_id=applicant.id,
+                to_status=next_status,
+                notes=reason,
+                actor_person_id=actor_person_id,
+                source="admin_web",
+            )
+        raw = mint_onboarding_token(db, applicant=applicant)
+        from app.services import applicant_email
+
+        applicant_email.send_onboarding_invite(
+            db,
+            applicant=applicant,
+            url=f"{base_url.rstrip('/')}/onboarding?token={raw}",
+        )
+        return applicant
+
+    target = "waitlisted" if action == "waitlist" else "rejected"
+    return transition_applicant(
+        db,
+        applicant_id=applicant.id,
+        to_status=target,
+        notes=reason,
+        actor_person_id=actor_person_id,
+        source="admin_web",
+    )
+
+
 def transition_applicant(
     db: Session,
     *,
     applicant_id: UUID,
     to_status: str,
     notes: str | None = None,
+    actor_person_id: UUID | None = None,
+    source: str = "admin",
 ) -> Applicant:
     """Move an applicant to ``to_status`` if the transition is allowed."""
     if to_status not in VALID_STATUSES:
         raise BadRequestError(f"Unknown status: {to_status}")
 
-    applicant = get_applicant(db, applicant_id=applicant_id)
+    applicant = db.scalars(
+        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
+    ).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
     current = applicant.status
     if to_status == current:
         return applicant
     if to_status not in ALLOWED_TRANSITIONS.get(current, frozenset()):
         raise BadRequestError(f"Cannot move applicant from '{current}' to '{to_status}'.")
+    if to_status in {"accepted", "onboarding", "enrolled"} and not has_active_intake(
+        db,
+        applicant=applicant,
+    ):
+        raise BadRequestError(
+            "Assign an active cohort and canonical training track before accepting this applicant."
+        )
 
     applicant.status = to_status
     if notes:
         applicant.notes = notes
     db.flush()
+    write_audit_event(
+        db,
+        tenant_id=applicant.tenant_id,
+        actor_person_id=actor_person_id,
+        action="applicant.transition",
+        entity_type="applicant",
+        entity_id=str(applicant.id),
+        details={
+            "from_status": current,
+            "to_status": to_status,
+            "reason": notes or "",
+            "source": source,
+        },
+    )
     # Entering onboarding seeds the checklist the applicant must clear to enrol.
     if to_status == "onboarding":
         onboarding.seed_tasks(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
@@ -253,7 +589,12 @@ def apply_assessment_policy(db: Session, *, applicant: Applicant) -> str | None:
     score, threshold = applicant.assessment_score, cohort.auto_accept_threshold
     if score >= threshold:
         for nxt in ("screened", "accepted", "onboarding"):
-            transition_applicant(db, applicant_id=applicant.id, to_status=nxt)
+            transition_applicant(
+                db,
+                applicant_id=applicant.id,
+                to_status=nxt,
+                source="assessment_policy",
+            )
         applicant.notes = f"auto-accepted: entrance score {score:.0%} >= threshold {threshold:.0%}"
         db.flush()
         return mint_onboarding_token(db, applicant=applicant)
@@ -263,6 +604,7 @@ def apply_assessment_policy(db: Session, *, applicant: Applicant) -> str | None:
         applicant_id=applicant.id,
         to_status="waitlisted",
         notes=f"auto-waitlisted: entrance score {score:.0%} below threshold {threshold:.0%}",
+        source="assessment_policy",
     )
     return None
 
@@ -343,6 +685,7 @@ def enroll_applicant(
     *,
     applicant_id: UUID,
     cohort_id: UUID,
+    actor_person_id: UUID | None = None,
 ) -> Applicant:
     """Convert an onboarding applicant into an enrolled learner.
 
@@ -358,9 +701,10 @@ def enroll_applicant(
     if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
         raise BadRequestError("Applicant has outstanding onboarding tasks and cannot enrol yet.")
 
-    cohort = db.get(Cohort, cohort_id)
-    if cohort is None:  # missing or hidden by RLS
-        raise NotFoundError("Cohort not found.")
+    if applicant.cohort_id != cohort_id:
+        raise BadRequestError("Applicant must be enrolled into their assigned cohort.")
+    if not has_active_intake(db, applicant=applicant):
+        raise BadRequestError("Applicant has no active canonical training track.")
 
     # Reuse an existing Person for this email (e.g. an employee already in the
     # tenant), otherwise create one. RLS scopes the lookup to this tenant.
@@ -386,14 +730,23 @@ def enroll_applicant(
             Enrollment(
                 tenant_id=applicant.tenant_id,
                 cohort_id=cohort_id,
+                track_id=applicant.track_id,
                 person_id=person.id,
                 role_in_cohort="student",
                 status="active",
             )
         )
         db.flush()
+    elif enrollment.track_id != applicant.track_id:
+        enrollment.track_id = applicant.track_id
+        db.flush()
 
     applicant.person_id = person.id
-    applicant.status = "enrolled"
-    db.flush()
+    transition_applicant(
+        db,
+        applicant_id=applicant.id,
+        to_status="enrolled",
+        actor_person_id=actor_person_id,
+        source="admin" if actor_person_id is not None else "onboarding",
+    )
     return applicant

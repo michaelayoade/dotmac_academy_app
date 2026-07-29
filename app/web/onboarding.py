@@ -29,6 +29,7 @@ router = APIRouter(dependencies=[Depends(require_tenant)])
 
 def _notice(request: Request, title: str, body: str) -> HTMLResponse:
     return templates.TemplateResponse(
+        request,
         "onboarding.html",
         {"request": request, "notice": {"title": title, "body": body}, "applicant": None},
     )
@@ -67,6 +68,7 @@ def onboarding_page(request: Request, token: str = "", resent: str = "", db: Ses
     tasks = onboarding.list_tasks(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
     cohort = db.get(Cohort, applicant.cohort_id) if applicant.cohort_id else None
     return templates.TemplateResponse(
+        request,
         "onboarding.html",
         {
             "request": request,

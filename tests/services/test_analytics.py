@@ -8,9 +8,9 @@ from app.models.person import Person
 from app.services.analytics import item_analysis
 
 
-def _score(db, tid, activity_id, person_id, per_item, fraction):
+def _score(db, tid, activity_id, person_id, per_item, fraction, *, attempt_no=1):
     sub = Submission(tenant_id=tid, activity_id=activity_id, person_id=person_id,
-                     answers={}, attempt_no=1)
+                     answers={}, attempt_no=attempt_no)
     db.add(sub)
     db.flush()
     db.add(Score(tenant_id=tid, submission_id=sub.id, score=fraction * 10, max_score=10,
@@ -61,7 +61,15 @@ def test_item_analysis_uses_best_attempt(admin_session, tenant_a):
     admin_session.flush()
 
     _score(admin_session, tid, act.id, p.id, [{"id": "q1", "correct": True}], 1.0)   # best
-    _score(admin_session, tid, act.id, p.id, [{"id": "q1", "correct": False}], 0.0)  # worse later
+    _score(
+        admin_session,
+        tid,
+        act.id,
+        p.id,
+        [{"id": "q1", "correct": False}],
+        0.0,
+        attempt_no=2,
+    )  # worse later
 
     items = {i["id"]: i for i in item_analysis(admin_session, tenant_id=tid, activity_id=act.id)}
     assert items["q1"]["responses"] == 1

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
 
 def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
     # Seed a Person + UserCredential for tenant_a directly.
@@ -81,16 +83,15 @@ def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a)
     r = app_client.post(
         "/logout",
         headers={**h, "x-csrf-token": csrf},
-        cookies={"session": old_session_token, "csrf_token": csrf},
         follow_redirects=False,
     )
     assert r.status_code in (302, 303)
 
     # Re-issue GET /account with the OLD session cookie — must redirect (session revoked).
+    app_client.cookies.set("session", old_session_token)
     r = app_client.get(
         "/account",
         headers={**h},
-        cookies={"session": old_session_token},
         follow_redirects=False,
     )
     assert r.status_code in (302, 303), "Revoked session must not authenticate"
@@ -133,10 +134,11 @@ def test_cross_tenant_cookie_rejected(app_client, admin_session, tenant_a, tenan
 
     # Present that session cookie against tenant_b — must be rejected.
     h_b = {"Host": "beta.localhost"}
-    r = app_client.get(
+    replay = TestClient(app_client.app)
+    replay.cookies.set("session", session_token)
+    r = replay.get(
         "/account",
         headers=h_b,
-        cookies={"session": session_token},
         follow_redirects=False,
     )
     assert r.status_code in (302, 303), "Cross-tenant session must not authenticate"

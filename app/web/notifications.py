@@ -26,6 +26,7 @@ def notifications_list(
     tenant = require_tenant(request)
     items = notif_svc.recent(db, tenant_id=tenant.id, person_id=person.id)
     return templates.TemplateResponse(
+        request,
         "notifications.html",
         {
             "request": request,

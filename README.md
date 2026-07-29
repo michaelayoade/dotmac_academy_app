@@ -1,106 +1,109 @@
-# dotmac_starter_mt
+# Dotmac Academy
 
-Multi-tenant FastAPI starter. Tenant isolation enforced at three layers:
+Dotmac Academy is Dotmac's single-instance admissions and learning application.
+It covers public applications, entrance assessment, audited admissions review,
+onboarding, courses, grading, labs, completion, certificates, and instructor
+reporting.
 
-1. **Routing** — subdomain resolves to a tenant before any request handler runs.
-2. **Application** — every service receives `tenant_id` via request state.
-3. **Database** — PostgreSQL Row-Level Security policies fail closed if app code forgets to filter.
+Production accepts one configured Academy tenant. The inherited tenant-aware
+schema and PostgreSQL Row-Level Security remain defence in depth; the product
+does not expose public tenant provisioning or public account registration.
 
-See [`docs/adr/0001-multi-tenant-architecture.md`](docs/adr/0001-multi-tenant-architecture.md)
-for the full design.
+Architecture:
 
-## What's in this skeleton
+- [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
+- [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
+- [ADR 0001 — historical multi-tenant foundation](docs/adr/0001-multi-tenant-architecture.md)
 
-- `Tenant` model + `tenant_domains` for custom domain support.
-- `Person` model with `tenant_id` and per-tenant unique email.
-- Minimal JWT auth with tenant-bound credentials and sessions.
-- Minimal RBAC with tenant-scoped roles, role grants, and audit events.
-- CSRF middleware, tenant-aware in-memory rate limiting, and request IDs.
-- `TenantResolverMiddleware` that parses host header → `request.state.tenant`.
-- `get_db` dependency that runs `SET LOCAL app.current_tenant` for RLS.
-- Initial Alembic migration that creates `app_user`, `platform_api`, and `app_admin`
-  Postgres roles, applies RLS policies, and seeds the schema.
-- Cross-tenant isolation tests as canaries.
+## Security and ownership
 
-## What's NOT here yet
+- Academy management APIs require tenant-bound admin authentication.
+- Accounts are created through admin invitations or accepted-applicant
+  activation; `/auth/register` does not exist.
+- Production host resolution is restricted by `ACADEMY_TENANT_SLUG`.
+- Applicant placement references an active cohort/track pair. Free-text
+  `program` is display-only.
+- Entrance-assessment time is derived from an explicit server-stamped start.
+- Assessment writers use row locks and database uniqueness constraints.
+- Domain transactions persist email intent to `email_outbox`; a timer handles
+  SMTP retries after commit.
+- Admissions transitions, placement corrections, resets, and reinvitations are
+  recorded in the audit ledger.
+- Browser responses carry CSP, clickjacking, MIME, referrer, permissions,
+  cross-origin, and production HSTS headers.
+- Repeated login failures produce a durable account lockout.
 
-This is intentionally minimal. To productionize, port from `dotmac_starter`:
+## Local development
 
-- MFA, password reset, account lockout, and production auth hardening
-- Billing, file uploads, notifications, scheduler
-- Security headers
-- Frontend (Tailwind, Alpine CSP build, templates)
-- CI workflows
-- Production Dockerfile / compose
-
-Each port follows the same pattern: add `tenant_id`, write the cross-tenant isolation test
-first, port the code, watch the test go green.
-
-## Quickstart (dev)
+Requirements: Python 3.12 or 3.13, Poetry, Docker, and PostgreSQL client tools.
 
 ```bash
 poetry install
 docker compose up -d db
 poetry run alembic upgrade head
+```
+
+Bootstrap the one local Academy tenant and initial admin through the offline
+command. Supply credentials through your shell or approved secret tooling; do
+not write them into tracked files.
+
+```bash
+poetry run python -m app.cli bootstrap-tenant \
+  --slug academy \
+  --name "Dotmac Academy" \
+  --admin-email admin@example.com \
+  --admin-password '<local-password>'
+```
+
+Run the application:
+
+```bash
 poetry run uvicorn app.main:app --reload --port 8001 \
-    --forwarded-allow-ips "127.0.0.1"
+  --forwarded-allow-ips "127.0.0.1"
 ```
 
-In dev, browsers resolve `*.localhost` automatically:
+Use `http://academy.localhost:8001`. Browsers resolve `*.localhost`
+automatically.
+
+## Email delivery
+
+Application requests queue email in the same transaction as the business
+change. Drain committed intents with:
 
 ```bash
-# Provision two tenants (as platform admin)
-curl -X POST http://localhost:8001/platform/tenants \
-    -H "Content-Type: application/json" \
-    -d '{"slug":"acme","name":"ACME"}'
-curl -X POST http://localhost:8001/platform/tenants \
-    -H "Content-Type: application/json" \
-    -d '{"slug":"widgets","name":"Widgets Inc"}'
-
-# Same Person endpoint, different tenants
-curl -X POST http://acme.localhost:8001/people \
-    -H "Content-Type: application/json" \
-    -d '{"email":"alice@acme.com","first_name":"Alice","last_name":"A"}'
-curl http://acme.localhost:8001/people     # sees Alice
-curl http://widgets.localhost:8001/people  # sees nothing
+poetry run python -m app.cli email-outbox
 ```
 
-## Run the cross-tenant tests
+Production should enable `deploy/academy-email-outbox.timer`. The worker uses
+idempotency keys, stable message IDs, exponential retry, terminal failure
+records, and a manual `--requeue-failed` repair path. CLI output reports counts
+only and never prints tokenized links.
+
+The settings page can send an immediate test email because that action is an
+explicit transport diagnostic, not a domain consequence.
+
+## Database roles
+
+- `app_user`: request role with RLS enforced.
+- `platform_api`: restricted settings-writer role retained under its historical
+  name; it does not expose a tenant-provisioning API.
+- `app_admin`: migration and offline maintenance role with `BYPASSRLS`; never
+  used by request handlers.
+
+`DATABASE_URL` uses `app_user`, `PLATFORM_DATABASE_URL` uses the restricted
+settings writer, and `MIGRATION_DATABASE_URL` uses the offline migration role.
+
+## Validation
+
+Tests require a migrated disposable PostgreSQL database because SQLite cannot
+exercise RLS or the concurrency constraints.
 
 ```bash
-poetry run pytest \
-    tests/test_cross_tenant_isolation.py \
-    tests/test_auth_tenant_claim.py \
-    tests/test_rbac_audit_isolation.py \
-    tests/test_security_middleware.py \
-    -v
+poetry run ruff check .
+poetry run mypy --no-incremental
+poetry run pip-audit
+poetry run pytest -q
 ```
 
-These tests require a migrated disposable Postgres database because SQLite cannot enforce
-RLS.
-
-## DB roles
-
-```
-app_user      — Tenant request role. RLS-enforced. Sets app.current_tenant per request.
-platform_api  — Online platform routes. Explicit grants, no RLS bypass.
-app_admin     — Alembic migrations and offline maintenance only. Bypasses RLS.
-```
-
-The `DATABASE_URL` env var should use `app_user`. `PLATFORM_DATABASE_URL` should use
-`platform_api`. Migrations use `MIGRATION_DATABASE_URL` connecting as `app_admin`.
-Settings are loaded from the environment and from a local `.env` file.
-
-## Middleware Notes
-
-- Rate limiting is process-local in this skeleton. It is keyed by
-  `tenant_id/client_ip/path`, but it does not aggregate across Gunicorn workers and keys live for the
-  process lifetime. Port the same key shape to Redis with TTLs for production.
-- Inbound `X-Request-ID` is ignored by default to prevent log poisoning. Set
-  `TRUST_INBOUND_REQUEST_ID=true` only behind a trusted proxy that normalizes that header.
-- CSRF uses a double-submit cookie/header check. Origin/Referer validation is deferred; add it before
-  relying on browser-cookie auth in production.
-
-## License
-
-TBD.
+CI runs all four gates. The cross-tenant tests are deliberate RLS isolation
+canaries even though production accepts only one Academy tenant.

@@ -17,6 +17,7 @@ never ``commit`` (the caller owns the transaction boundary).
 
 from __future__ import annotations
 
+import html as html_lib
 import logging
 import smtplib
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ def send_email_detailed(
     text_body: str | None = None,
     db: Session | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
+    message_id: str | None = None,
 ) -> EmailResult:
     """Send an email and return operator-facing delivery diagnostics.
 
@@ -65,6 +67,8 @@ def send_email_detailed(
         email_msg["From"] = cfg.smtp_from
         email_msg["To"] = to
         email_msg["Subject"] = subject
+        if message_id:
+            email_msg["Message-ID"] = message_id
         email_msg.set_content(text_body or "This message requires an HTML-capable email client.")
         email_msg.add_alternative(html_body, subtype="html")
         for filename, data, mimetype in attachments or []:
@@ -82,8 +86,9 @@ def send_email_detailed(
         logger.info("sent email to %s: %s", to, subject)
         return EmailResult(True)
     except Exception as exc:  # never let an email failure propagate
-        logger.warning("failed to send email to %s (%s): %s", to, subject, exc)
-        return EmailResult(False, str(exc))
+        error_class = type(exc).__name__
+        logger.warning("failed to send email to %s (%s): %s", to, subject, error_class)
+        return EmailResult(False, error_class)
 
 
 def send_email(
@@ -93,6 +98,7 @@ def send_email(
     text_body: str | None = None,
     db: Session | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
+    message_id: str | None = None,
 ) -> bool:
     """Send an HTML email (with optional plain-text alternative + attachments).
 
@@ -110,6 +116,7 @@ def send_email(
         text_body=text_body,
         db=db,
         attachments=attachments,
+        message_id=message_id,
     ).sent
 
 
@@ -126,12 +133,12 @@ def recipient_allows(person, kind: str) -> bool:
 
 
 def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
-    """Email the student a congratulations IFF this is their FIRST passing score.
+    """Queue congratulations IFF this is the student's FIRST passing score.
 
     Fires only when ``score.passed`` is true AND there is no other passing
-    :class:`Score` for the same (tenant, activity, person). Returns whether an
-    email was actually sent. Wrapped in try/except — any failure (DB or SMTP) is
-    swallowed and returns ``False`` so grading always succeeds.
+    :class:`Score` for the same (tenant, activity, person). Returns whether a
+    transactional delivery intent was accepted. Wrapped in try/except so an
+    unexpected notification failure never rolls back grading.
     """
     try:
         if not getattr(score, "passed", False):
@@ -164,17 +171,19 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
             return False
 
         subject = f"You passed {activity.title}"
-        name = (getattr(person, "first_name", "") or "there").strip()
+        name_text = (getattr(person, "first_name", "") or "there").strip()
+        name = html_lib.escape(name_text)
+        activity_title = html_lib.escape(activity.title)
         pct = f"{score.fraction * 100:.0f}%"
         html = (
             f"<p>Hi {name},</p>"
-            f"<p>Congratulations — you passed <strong>{activity.title}</strong> "
+            f"<p>Congratulations — you passed <strong>{activity_title}</strong> "
             f"with a score of {pct}.</p>"
             f"<p>Keep up the great work!</p>"
             f"<p>— Dotmac Academy</p>"
         )
         text = (
-            f"Hi {name},\n\n"
+            f"Hi {name_text},\n\n"
             f"Congratulations — you passed {activity.title} with a score of {pct}.\n\n"
             f"Keep up the great work!\n\n— Dotmac Academy\n"
         )
@@ -191,7 +200,18 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
             )
         except Exception as _exc:
             logger.warning("in-app notify (result) failed: %s", _exc)
-        return send_email(person.email, subject, html, text_body=text)
+        from app.services.email_outbox import enqueue_email
+
+        return enqueue_email(
+            db,
+            tenant_id=score.tenant_id,
+            idempotency_key=f"score-pass:{score.id}",
+            kind="score_pass",
+            recipient=person.email,
+            subject=subject,
+            html_body=html,
+            text_body=text,
+        )
     except Exception as exc:  # non-fatal: grading must still succeed
         logger.warning("notify_score_if_first_pass failed: %s", exc)
         return False

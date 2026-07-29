@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,7 @@ class AccountToken(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_account_tokens_tenant_id_id"),
         UniqueConstraint("tenant_id", "token_hash", name="uq_account_tokens_tenant_token_hash"),
+        Index("ix_account_tokens_token_hash", "token_hash"),
         ForeignKeyConstraint(["tenant_id", "person_id"], ["people.tenant_id", "people.id"],
                              ondelete="CASCADE", name="fk_account_tokens_tenant_person"),
     )

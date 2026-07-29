@@ -26,7 +26,7 @@ router = APIRouter(dependencies=[Depends(require_tenant)])
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
 
 
 @router.post("/login")
@@ -43,6 +43,7 @@ def login(
         if hx:
             return PlainTextResponse("Invalid credentials", status_code=200)
         return templates.TemplateResponse(
+            request,
             "login.html",
             {"request": request, "error": "Invalid credentials"},
             status_code=401,

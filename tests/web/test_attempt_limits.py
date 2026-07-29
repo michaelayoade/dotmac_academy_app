@@ -68,7 +68,7 @@ def test_attempts_capped(app_client, admin_session, tenant_a):
         assert _submit(app_client, act).status_code == 200
         assert _submit(app_client, act).status_code == 200
         # Third attempt exceeds the cap.
-        assert _submit(app_client, act).status_code == 403
+        assert _submit(app_client, act).status_code == 409
         n = admin_session.query(Submission).filter(Submission.activity_id == act.id).count()
         assert n == 2
     finally:

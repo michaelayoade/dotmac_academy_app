@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,6 +24,14 @@ class ActivityAttempt(Base, TimestampMixin):
     __tablename__ = "activity_attempts"
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_activity_attempts_tenant_id_id"),
+        Index(
+            "uq_activity_attempts_open",
+            "tenant_id",
+            "activity_id",
+            "person_id",
+            unique=True,
+            postgresql_where=text("submitted_at IS NULL"),
+        ),
         ForeignKeyConstraint(["tenant_id", "activity_id"], ["activities.tenant_id", "activities.id"],
                              ondelete="CASCADE", name="fk_activity_attempts_tenant_activity"),
     )
