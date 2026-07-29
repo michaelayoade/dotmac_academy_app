@@ -1,0 +1,176 @@
+"""Assessment communications: intro screen, outcome emails, certificate email.
+
+Requires a migrated disposable Postgres (skipped otherwise by the fixtures).
+"""
+
+from __future__ import annotations
+
+import re
+
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.models.admissions import Applicant
+from tests.conftest import client_for
+from tests.test_apply_assessment import _cohort_with_exam
+
+
+def _apply(app_client, tenant, cohort, email):
+    a = client_for(TestClient(app_client.app), tenant.slug)
+    r = a.post(
+        "/apply",
+        data={"first_name": "Com", "last_name": "Ms", "email": email, "cohort_id": str(cohort.id)},
+    )
+    token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
+    return a, token
+
+
+def _start(client, token):
+    csrf = client.cookies.get("csrf_token", "")
+    return client.post(
+        "/apply/assessment/start",
+        data={"token": token},
+        headers={"x-csrf-token": csrf},
+        follow_redirects=True,
+    )
+
+
+def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_session):
+    cohort = _cohort_with_exam(admin_session, tenant_a)
+    a, token = _apply(app_client, tenant_a, cohort, "intro@a.ex")
+
+    page = a.get(f"/apply/assessment?token={token}")
+    assert "Before you begin" in page.text
+    assert "Start my assessment" in page.text
+    assert "Pick A" not in page.text
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "intro@a.ex")).first()
+    assert applicant.assessment_started_at is None  # curious click costs nothing
+
+    started = _start(a, token)
+    assert "Pick A" in started.text
+    admin_session.rollback()
+    admin_session.refresh(applicant)
+    assert applicant.assessment_started_at is not None
+
+    # Reopening after start resumes the questions, not the intro.
+    again = a.get(f"/apply/assessment?token={token}")
+    assert "Pick A" in again.text
+    assert "Before you begin" not in again.text
+
+
+def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch):
+    import app.services.applicant_email as ae
+
+    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort.auto_accept_threshold = 0.9
+    admin_session.commit()
+    a, token = _apply(app_client, tenant_a, cohort, "wl@a.ex")
+    _start(a, token)
+
+    sent: list[str] = []
+    monkeypatch.setattr(ae, "send_waitlist_notice", lambda db, *, applicant: sent.append("waitlist") or True)
+    monkeypatch.setattr(ae, "send_results_received", lambda db, *, applicant: sent.append("received") or True)
+
+    csrf = a.cookies.get("csrf_token", "")
+    # Enough active seconds that the sitting passes the too-fast validity gate.
+    a.post(
+        "/apply/assessment/save",
+        data={"token": token, "assessment_elapsed_seconds": "600"},
+        headers={"x-csrf-token": csrf},
+    )
+    r = a.post(
+        "/apply/assessment",
+        data={"token": token, "q1": "A", "q2": "B", "assessment_elapsed_seconds": "600"},
+        headers={"x-csrf-token": csrf},
+    )
+    assert r.status_code == 200
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "wl@a.ex")).first()
+    assert applicant.status == "waitlisted"  # 0.5 valid, below 0.9
+    assert sent == ["waitlist"]
+
+
+def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session, monkeypatch):
+    import app.services.applicant_email as ae
+
+    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort.auto_accept_threshold = 0.4
+    admin_session.commit()
+    a, token = _apply(app_client, tenant_a, cohort, "inv2@a.ex")
+    _start(a, token)
+
+    sent: list[str] = []
+    monkeypatch.setattr(ae, "send_waitlist_notice", lambda db, *, applicant: sent.append("waitlist") or True)
+    monkeypatch.setattr(ae, "send_results_received", lambda db, *, applicant: sent.append("received") or True)
+
+    csrf = a.cookies.get("csrf_token", "")
+    # Submit with ~zero elapsed: score 0.5 clears 0.4 but the sitting is too
+    # fast to be valid, so the policy holds it and the neutral email goes out.
+    r = a.post(
+        "/apply/assessment",
+        data={"token": token, "q1": "A", "q2": "B"},
+        headers={"x-csrf-token": csrf},
+    )
+    assert r.status_code == 200
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "inv2@a.ex")).first()
+    assert applicant.status == "applied"
+    assert applicant.assessment_valid is False
+    assert sent == ["received"]
+
+
+def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, monkeypatch):
+    from app.models.completion import CourseCompletion
+    from app.models.course import Course
+    from app.models.person import Person
+    from app.services import completion as completion_svc
+    from app.services import email as email_svc
+
+    admin_session.rollback()
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="cert-course",
+        title="Cert Course",
+        discipline="fiber",
+        source_ref="x",
+        version=1,
+    )
+    person = Person(tenant_id=tenant_a.id, email="grad@a.ex", first_name="Gra", last_name="Duate")
+    admin_session.add_all([course, person])
+    admin_session.commit()
+    rec = CourseCompletion(
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        course_id=course.id,
+        status="completed",
+        pct=1.0,
+    )
+    admin_session.add(rec)
+    admin_session.commit()
+
+    captured: dict = {}
+
+    def fake_send(to, subject, html_body, text_body=None, db=None, attachments=None):
+        captured.update(to=to, subject=subject, attachments=attachments)
+        return True
+
+    monkeypatch.setattr(email_svc, "send_email", fake_send)
+
+    ok = completion_svc._email_certificate(
+        admin_session,
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        course_id=course.id,
+        course_title="Cert Course",
+    )
+    assert ok
+    assert captured["to"] == "grad@a.ex"
+    assert "Cert Course" in captured["subject"]
+    filename, data, mime = captured["attachments"][0]
+    assert filename == "certificate.pdf"
+    assert mime == "application/pdf"
+    assert data[:4] == b"%PDF"
