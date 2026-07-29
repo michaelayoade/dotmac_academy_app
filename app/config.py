@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     platform_database_url: str = ""
     migration_database_url: str = ""
     platform_root_domain: str = "localhost"
+    # IANA zone for instructor-entered wall-clock times (sessions/timetables).
+    academy_timezone: str = "Africa/Lagos"
     # Academy is deployed as one product tenant. The tenant-aware schema and RLS
     # remain defence-in-depth, but production host resolution must resolve only
     # this slug unless a future ADR explicitly re-enables multi-tenancy.
