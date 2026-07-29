@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from app.models.account_token import AccountToken
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort
@@ -77,19 +79,27 @@ def test_forgot_email_uses_stored_smtp_settings(app_client, admin_session, tenan
 
 
 def test_reset_flow_changes_password(app_client, admin_session, tenant_a):
-    _account(admin_session, tenant_a.id, email="rp@a.edu", pw="origpass1")
-    raw = request_password_reset(admin_session, tenant_id=tenant_a.id, email="rp@a.edu")
+    email = f"rp-{uuid4().hex}@a.edu"
+    old_password = f"old-{uuid4().hex}"
+    new_password = f"new-{uuid4().hex}"
+    _account(admin_session, tenant_a.id, email=email, pw=old_password)
+    raw = request_password_reset(admin_session, tenant_id=tenant_a.id, email=email)
     admin_session.commit()
 
     csrf = _csrf(app_client, f"/reset?token={raw}")
     r = app_client.post("/reset", headers={**H, "x-csrf-token": csrf},
-                        data={"token": raw, "password": "brandnew9"})
+                        data={"token": raw, "password": new_password})
     assert r.status_code == 200
     assert "Password updated" in r.text
 
+    old = app_client.post("/login", headers={**H, "x-csrf-token": csrf},
+                          data={"email": email, "password": old_password})
+    assert old.status_code in (200, 401)
+    assert "session" not in app_client.cookies
+
     # New password logs in (csrf cookie now present, so the header is required).
     ok = app_client.post("/login", headers={**H, "x-csrf-token": csrf},
-                         data={"email": "rp@a.edu", "password": "brandnew9"})
+                         data={"email": email, "password": new_password})
     assert ok.status_code in (200, 204, 303)
     assert "session" in app_client.cookies
 

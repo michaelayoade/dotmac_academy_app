@@ -83,17 +83,19 @@ def reset_password(db: Session, *, tenant_id: UUID, raw: str, new_password: str,
     if not new_password or len(new_password) < 8:
         raise BadRequestError("password must be at least 8 characters")
     tok = _consume_token(db, tenant_id=tenant_id, kind="password_reset", raw=raw, now=now)
-    cred = db.scalars(
+    creds = db.scalars(
         select(UserCredential)
         .where(UserCredential.tenant_id == tenant_id)
         .where(UserCredential.person_id == tok.person_id)
-    ).first()
-    if cred is None:
+    ).all()
+    if not creds:
         raise BadRequestError("no credential for this account")
     person = db.get(Person, tok.person_id)
     if person is None:
         raise BadRequestError("account no longer exists")
-    cred.password_hash = hash_password(new_password)
+    password_hash = hash_password(new_password)
+    for cred in creds:
+        cred.password_hash = password_hash
     db.flush()
     return person
 

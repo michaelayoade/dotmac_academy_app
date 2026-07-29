@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -53,6 +54,38 @@ def test_password_reset_round_trip(admin_session, tenant_a):
 def test_password_reset_unknown_email_returns_none(admin_session, tenant_a):
     raw = request_password_reset(admin_session, tenant_id=tenant_a.id, email="nobody@a.edu")
     assert raw is None
+    admin_session.rollback()
+
+
+def test_password_reset_updates_all_credentials_for_person(admin_session, tenant_a):
+    tid = tenant_a.id
+    email = f"u-{uuid4().hex}@a.edu"
+    old_password = f"old-{uuid4().hex}"
+    new_password = f"new-{uuid4().hex}"
+    stale_password = f"stale-{uuid4().hex}"
+    person = _account(admin_session, tid, email=email, pw=old_password)
+    stale = UserCredential(
+        tenant_id=tid,
+        person_id=person.id,
+        email=f"stale-{uuid4().hex}@a.edu",
+        password_hash=hash_password(stale_password),
+    )
+    admin_session.add(stale)
+    admin_session.flush()
+
+    raw = request_password_reset(admin_session, tenant_id=tid, email=email)
+    assert raw is not None
+    reset_password(admin_session, tenant_id=tid, raw=raw, new_password=new_password)
+
+    credentials = admin_session.scalars(
+        __import__("sqlalchemy").select(UserCredential)
+        .where(UserCredential.tenant_id == tid)
+        .where(UserCredential.person_id == person.id)
+    ).all()
+    assert len(credentials) == 2
+    assert all(verify_password(new_password, cred.password_hash) for cred in credentials)
+    assert all(not verify_password(old_password, cred.password_hash) for cred in credentials)
+    assert all(not verify_password(stale_password, cred.password_hash) for cred in credentials)
     admin_session.rollback()
 
 
