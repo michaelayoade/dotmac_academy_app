@@ -23,7 +23,7 @@ from app.services.catalog import (
     course_structure,
     my_courses,
 )
-from app.services.entitlements import require_course_access
+from app.services.entitlements import course_access_states, require_course_open
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -49,15 +49,18 @@ def courses_list(
     staff = _is_staff(db, tenant.id, person.id)
 
     enrolled = my_courses(db, tenant_id=tenant.id, person_id=person.id)
-    my: list[dict] = [
-        {
-            "course": c,
-            "pct": course_completion(
-                db, tenant_id=tenant.id, person_id=person.id, course_id=c.id
-            ),
-        }
-        for c in enrolled
-    ]
+    access_states = course_access_states(db, tenant_id=tenant.id, person_id=person.id)
+    my: list[dict] = []
+    for c in enrolled:
+        state = access_states.get(c.id)
+        my.append(
+            {
+                "course": c,
+                "pct": course_completion(db, tenant_id=tenant.id, person_id=person.id, course_id=c.id),
+                "locked": state.locked if state else False,
+                "locked_reason": state.locked_reason if state else None,
+            }
+        )
 
     all_: list[Course] | None = None
     if staff:
@@ -98,10 +101,8 @@ def course_landing(
 
     staff = _is_staff(db, tenant.id, person.id)
     if not staff:
-        # Raises 403 for non-enrolled students.
-        require_course_access(
-            db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
-        )
+        # Raises 403 for non-enrolled students, closed windows, or locked sequential courses.
+        require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
 
     structure = course_structure(
         db, tenant_id=tenant.id, person_id=person.id, course=course

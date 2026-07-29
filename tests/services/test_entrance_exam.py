@@ -196,16 +196,39 @@ def _timed(admin_session, tenant, minutes=30):
     return _applicant(admin_session, tenant, cohort)
 
 
-def test_start_exam_stamps_once_and_counts_down(admin_session, tenant_a):
+def test_start_exam_stamps_once_and_pauses_without_heartbeat(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     info = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
     assert info["limit_minutes"] == 30 and info["remaining_seconds"] == 1800
+    assert info["elapsed_seconds"] == 0
     assert applicant.assessment_started_at == t0
-    # re-opening 5 min later keeps counting from t0 (no reset)
+
+    # Re-opening later does not burn disconnected/offline wall-clock time.
     info2 = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0 + timedelta(minutes=5))
     assert applicant.assessment_started_at == t0
-    assert info2["remaining_seconds"] == 1500
+    assert info2["remaining_seconds"] == 1800
+    admin_session.rollback()
+
+
+def test_heartbeat_elapsed_time_counts_down(admin_session, tenant_a):
+    applicant = _timed(admin_session, tenant_a, minutes=30)
+    t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+    entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=300)
+
+    info = entrance_exam.start_exam(admin_session, applicant=applicant, now=t0 + timedelta(hours=1))
+    assert info["elapsed_seconds"] == 300
+    assert info["remaining_seconds"] == 1500
+    admin_session.rollback()
+
+
+def test_elapsed_time_never_moves_backwards(admin_session, tenant_a):
+    applicant = _timed(admin_session, tenant_a, minutes=30)
+    entrance_exam.start_exam(admin_session, applicant=applicant)
+    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=300)
+    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=120)
+    assert applicant.assessment_elapsed_seconds == 300
     admin_session.rollback()
 
 
@@ -213,6 +236,7 @@ def test_grade_flags_time_exceeded(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=40 * 60)
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -228,6 +252,7 @@ def test_grade_within_limit_not_exceeded(admin_session, tenant_a):
     applicant = _timed(admin_session, tenant_a, minutes=30)
     t0 = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
     entrance_exam.start_exam(admin_session, applicant=applicant, now=t0)
+    entrance_exam.record_elapsed(admin_session, applicant=applicant, elapsed_seconds=20 * 60)
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -293,6 +318,7 @@ def test_near_chance_score_is_flagged_invalid(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=20)
+    applicant.assessment_elapsed_seconds = 20 * 60
     # 1 of 4 = 0.25, at the guessing baseline for a 4-option MCQ
     result = entrance_exam.grade_and_record(
         admin_session,
@@ -310,6 +336,7 @@ def test_too_fast_submission_is_flagged_invalid(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(seconds=30)  # click-through
+    applicant.assessment_elapsed_seconds = 30
     result = entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -325,6 +352,7 @@ def test_genuine_sitting_is_valid(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=18)
+    applicant.assessment_elapsed_seconds = 18 * 60
     result = entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -356,6 +384,7 @@ def test_autosave_is_ignored_after_grading(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
     applicant.assessment_started_at = datetime.now(UTC) - timedelta(minutes=15)
+    applicant.assessment_elapsed_seconds = 15 * 60
     entrance_exam.grade_and_record(
         admin_session,
         tenant_id=tenant_a.id,
@@ -378,6 +407,7 @@ def test_reset_reopens_a_lost_sitting(admin_session, tenant_a):
     raw = entrance_exam.reset_exam(admin_session, applicant=applicant)
 
     assert applicant.assessment_started_at is None  # clock reset
+    assert applicant.assessment_elapsed_seconds == 0
     assert applicant.assessment_answers is None
     assert applicant.assessment_taken_at is None  # they can sit it again
     assert applicant.assessment_reset_count == 1  # audited

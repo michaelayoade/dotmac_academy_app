@@ -79,6 +79,39 @@ def test_apply_offers_assessment_and_grades_profile(app_client, tenant_a, admin_
     assert applicant.assessment_profile == {"numeracy": 1.0, "safety": 0.0}
 
 
+def test_assessment_heartbeat_preserves_remaining_time(app_client, tenant_a, admin_session):
+    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort.entrance_time_limit_minutes = 30
+    admin_session.commit()
+    a = client_for(TestClient(app_client.app), tenant_a.slug)
+
+    r = a.post(
+        "/apply",
+        data={"first_name": "Timer", "last_name": "Case", "email": "timer@a.ex", "cohort_id": str(cohort.id)},
+    )
+    token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
+
+    page = a.get(f"/apply/assessment?token={token}")
+    assert 'data-remaining="1800"' in page.text
+
+    csrf = a.cookies.get("csrf_token", "")
+    save = a.post(
+        "/apply/assessment/save",
+        data={"token": token, "assessment_elapsed_seconds": "60", "q1": "A"},
+        headers={"x-csrf-token": csrf},
+    )
+    assert save.status_code == 204
+
+    resumed = a.get(f"/apply/assessment?token={token}")
+    assert 'data-remaining="1740"' in resumed.text
+    assert 'value="60"' in resumed.text
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "timer@a.ex")).first()
+    assert applicant.assessment_elapsed_seconds == 60
+    assert applicant.assessment_answers == {"q1": ["A"]}
+
+
 def test_bad_token_shows_notice(app_client, tenant_a):
     a = client_for(TestClient(app_client.app), tenant_a.slug)
     r = a.get("/apply/assessment?token=not-a-real-token")

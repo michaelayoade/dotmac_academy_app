@@ -20,7 +20,7 @@ from app.services import announcements as ann_svc
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
-from app.services.entitlements import accessible_course_ids, require_course_open
+from app.services.entitlements import course_access_states, require_course_open, visible_course_ids
 from app.services.pacing import require_activity_readable, require_activity_submittable
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
@@ -93,7 +93,7 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
     Access requires an explicit CourseOffering linking the person's cohort to the
     course; sharing a ``discipline`` string no longer grants access.
     """
-    course_ids = accessible_course_ids(db, tenant_id=tid, person_id=person_id)
+    course_ids = visible_course_ids(db, tenant_id=tid, person_id=person_id)
     if not course_ids:
         return []
     return list(
@@ -118,6 +118,7 @@ def home(
     if "instructor" in slugs and "admin" not in slugs:
         return RedirectResponse("/instructor", status_code=303)
     enrolled = _enrolled_courses(db, tenant.id, person.id)
+    access_states = course_access_states(db, tenant_id=tenant.id, person_id=person.id)
 
     # My courses: completion % = passed activities / total activities.
     my_courses: list[dict] = []
@@ -138,13 +139,24 @@ def home(
         best_by_course[course.id] = best
         passed = sum(1 for s in best.values() if s.passed)
         pct = round(100 * passed / total) if total else 0
+        state = access_states.get(course.id)
         my_courses.append(
-            {"course": course, "total": total, "passed": passed, "pct": pct}
+            {
+                "course": course,
+                "total": total,
+                "passed": passed,
+                "pct": pct,
+                "locked": state.locked if state else False,
+                "locked_reason": state.locked_reason if state else None,
+            }
         )
 
     # Continue: first incomplete chapter of the first enrolled course.
     continue_to = None
     for course in enrolled:
+        state = access_states.get(course.id)
+        if state is not None and state.locked:
+            continue
         passed_acts = {
             aid for aid, s in best_by_course.get(course.id, {}).items() if s.passed
         }
@@ -230,12 +242,14 @@ def chapter(
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
-    act = db.scalars(
+    activities = list(db.scalars(
         select(Activity)
         .where(Activity.tenant_id == tenant.id)
         .where(Activity.course_id == course.id)
         .where(Activity.chapter_number == n)
-    ).first()
+    ).all())
+    activities.sort(key=lambda a: (0 if a.type == "mcq_test" else 1 if a.type == "lab" else 2, a.title))
+    act = next((a for a in activities if a.type == "mcq_test"), activities[0] if activities else None)
     total_chapters = int(db.scalar(
         select(func.count()).select_from(Chapter)
         .where(Chapter.tenant_id == tenant.id).where(Chapter.course_id == course.id)
@@ -282,15 +296,29 @@ def chapter(
         .where(ChapterRead.person_id == person.id)
         .where(ChapterRead.chapter_id == ch.id)
     ) or 0
+    best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+    activity_items = []
+    for item in activities:
+        score = best.get(item.id)
+        used = attempts_used(db, tenant_id=tenant.id, person_id=person.id, activity_id=item.id)
+        activity_items.append(
+            {
+                "activity": item,
+                "href": f"/labs/{item.id}" if item.type == "lab" else f"/activities/{item.id}",
+                "attempts": used,
+                "passed": bool(score.passed) if score is not None else False,
+                "pct": round(100 * score.fraction) if score is not None else None,
+            }
+        )
     activity_taken = False
     if act is not None:
-        activity_taken = attempts_used(
-            db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
-        ) > 0
+        primary_item = next((item for item in activity_items if item["activity"].id == act.id), None)
+        activity_taken = bool(primary_item and primary_item["attempts"] > 0)
     return templates.TemplateResponse(
         "chapter.html",
         {
             "request": request, "course": course, "chapter": ch, "activity": act,
+            "activity_items": activity_items,
             "total_chapters": total_chapters, "previous_chapter": prev_ch,
             "next_chapter": next_ch, "reading_minutes": reading_minutes,
             "completed": bool(completed), "activity_taken": activity_taken,

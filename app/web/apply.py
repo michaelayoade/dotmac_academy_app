@@ -221,6 +221,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
             "questions": _exam_view(applicant, questions),
             # Autosaved progress, so a resumed sitting comes back with answers intact.
             "saved": applicant.assessment_answers or {},
+            "elapsed_seconds": timing["elapsed_seconds"],
             "remaining_seconds": timing["remaining_seconds"],
             "notice": None,
         },
@@ -242,6 +243,8 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
         return Response(status_code=204)
     questions = _exam_questions(db, tenant.id, applicant)
     answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
+    elapsed = form.get("assessment_elapsed_seconds")
+    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
     entrance_exam.save_answers(db, applicant=applicant, answers=answers)
     return Response(status_code=204)
 
@@ -262,6 +265,8 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         posted = [v for v in form.getlist(q.ext_id) if isinstance(v, str)]
         if posted:
             answers[q.ext_id] = posted
+    elapsed = form.get("assessment_elapsed_seconds")
+    entrance_exam.record_elapsed(db, applicant=applicant, elapsed_seconds=elapsed if isinstance(elapsed, str) else None)
     try:
         entrance_exam.grade_and_record(db, tenant_id=tenant.id, applicant=applicant, answers=answers)
     except (BadRequestError, NotFoundError):

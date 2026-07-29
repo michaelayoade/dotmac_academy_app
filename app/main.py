@@ -37,6 +37,7 @@ from app.services.exceptions import (
 from app.web.account import router as web_account_router
 from app.web.accounts import router as web_accounts_router
 from app.web.admin_home import router as web_admin_router
+from app.web.applications import router as web_applications_router
 from app.web.apply import router as web_apply_router
 from app.web.audit import router as web_audit_router
 from app.web.auth import router as web_auth_router
@@ -131,6 +132,7 @@ app.include_router(web_auth_router)
 app.include_router(web_lifecycle_router)
 app.include_router(web_instructor_router)
 app.include_router(web_accounts_router)
+app.include_router(web_applications_router)
 app.include_router(web_apply_router)
 app.include_router(web_lab_admin_router)
 app.include_router(web_labs_router)
