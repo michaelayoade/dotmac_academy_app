@@ -126,6 +126,27 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/metrics", include_in_schema=False)
+def metrics(request: Request):
+    """Prometheus scrape endpoint — bearer-gated, inert when METRICS_TOKEN unset.
+
+    404 (not 401) when disabled or unauthorized: the endpoint should be
+    indistinguishable from absent to anyone without the token.
+    """
+    import hmac as _hmac
+
+    from fastapi.responses import Response as _Response
+
+    token = settings.metrics_token
+    supplied = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    if not token or not supplied or not _hmac.compare_digest(supplied, token):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    from app.metrics import render
+
+    payload, content_type = render()
+    return _Response(content=payload, media_type=content_type)
+
+
 app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(admissions_router)
