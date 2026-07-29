@@ -22,8 +22,10 @@ from app.models.platform_settings import PlatformSetting
 logger = logging.getLogger(__name__)
 
 # Keys whose stored string value is coerced to a non-str type on read.
-_INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "lab_idle_minutes"})
-_BOOL_KEYS = frozenset({"smtp_starttls", "email_auto_on_pass", "email_digest_enabled"})
+_INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "lab_idle_minutes",
+                       "reminder_inactivity_days", "reminder_digest_hour", "reminder_digest_weekday"})
+_BOOL_KEYS = frozenset({"smtp_starttls", "email_auto_on_pass", "email_digest_enabled",
+                        "reminders_enabled"})
 
 # The full set of known keys, with their default sourced live from `settings`
 # (or a literal) so monkeypatching `settings.*` in tests is reflected here.
@@ -39,6 +41,10 @@ KNOWN_KEYS: tuple[str, ...] = (
     "branding_name",
     "max_concurrent_labs",
     "lab_idle_minutes",
+    "reminders_enabled",
+    "reminder_inactivity_days",
+    "reminder_digest_hour",
+    "reminder_digest_weekday",
 )
 
 
@@ -56,6 +62,10 @@ def _defaults() -> dict[str, object]:
         "branding_name": "Dotmac Academy",
         "max_concurrent_labs": settings.max_concurrent_labs,
         "lab_idle_minutes": settings.lab_idle_minutes,
+        "reminders_enabled": True,
+        "reminder_inactivity_days": 7,
+        "reminder_digest_hour": 7,
+        "reminder_digest_weekday": 0,
     }
 
 

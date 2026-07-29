@@ -242,6 +242,27 @@ def _import_labs(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _reminders_sweep(args: argparse.Namespace) -> None:
+    """Run one reminder policy sweep per tenant (timer entrypoint).
+
+    Uses an offline BYPASSRLS session because scheduled jobs have no request
+    tenant context. Decisions are owned by services.reminders.sweep; email
+    delivery stays with the outbox worker.
+    """
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs
+    from app.services.reminders import sweep
+
+    with lab_jobs.admin_session() as db:
+        tenants = db.scalars(select(Tenant)).all()
+        for tenant in tenants:
+            counts = sweep(db, tenant_id=tenant.id)
+            db.commit()
+            print(f"reminders-sweep[{tenant.slug}]: {counts}")
+
+
 def _email_digest(args: argparse.Namespace) -> None:
     """Queue each cohort instructor's weekly Academy summary.
 
@@ -802,6 +823,9 @@ def main() -> None:
         help="Requeue terminal failures before attempting delivery",
     )
     eo.set_defaults(func=_email_outbox)
+
+    rsw = sub.add_parser("reminders-sweep", help="Detect due student reminders and queue delivery")
+    rsw.set_defaults(func=_reminders_sweep)
 
     ar = sub.add_parser("at-risk-sweep", help="Nudge students who are behind/overdue")
     ar.set_defaults(func=_at_risk_sweep)

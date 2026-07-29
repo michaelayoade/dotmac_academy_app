@@ -54,6 +54,7 @@ from app.web.learn import router as web_learn_router
 from app.web.lifecycle import router as web_lifecycle_router
 from app.web.notifications import router as web_notifications_router
 from app.web.onboarding import router as web_onboarding_router
+from app.web.reminders_admin import router as web_reminders_admin_router
 from app.web.reports import router as web_reports_router
 from app.web.search import router as web_search_router
 from app.web.settings import router as web_settings_router
@@ -179,4 +180,5 @@ app.include_router(web_audit_router)
 app.include_router(web_admin_router)
 app.include_router(web_notifications_router)
 app.include_router(web_account_router)
+app.include_router(web_reminders_admin_router)  # reminders admin
 app.include_router(web_bookmarks_router)  # bookmarks
