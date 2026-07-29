@@ -23,7 +23,7 @@ from app.services.catalog import (
     course_structure,
     my_courses,
 )
-from app.services.entitlements import course_access_states, require_course_open
+from app.services.entitlements import course_access_states, open_course_ids
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -101,8 +101,11 @@ def course_landing(
 
     staff = _is_staff(db, tenant.id, person.id)
     if not staff:
-        # Raises 403 for non-enrolled students, closed windows, or locked sequential courses.
-        require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+        # 403 for non-enrolled students and closed windows — but an unmet
+        # prerequisite still gets the landing page: course_structure marks it
+        # locked and the template shows the banner (content routes still 403).
+        if course.id not in open_course_ids(db, tenant_id=tenant.id, person_id=person.id):
+            raise HTTPException(status_code=403)
 
     structure = course_structure(
         db, tenant_id=tenant.id, person_id=person.id, course=course

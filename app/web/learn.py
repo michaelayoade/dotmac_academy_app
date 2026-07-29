@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -297,7 +298,7 @@ def chapter(
         .where(ChapterRead.chapter_id == ch.id)
     ) or 0
     best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
-    activity_items = []
+    activity_items: list[dict[str, Any]] = []
     for item in activities:
         score = best.get(item.id)
         used = attempts_used(db, tenant_id=tenant.id, person_id=person.id, activity_id=item.id)
