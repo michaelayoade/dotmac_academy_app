@@ -26,7 +26,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
-from app.services import insights
+from app.services import csv_reports, insights
 from app.services.email import render_cohort_html, render_transcript_html
 from app.services.email_outbox import enqueue_email
 from app.services.reports import cohort_matrix, student_transcript
@@ -212,3 +212,63 @@ def reports_student(
         request,
         "instructor/reports_student.html", {"request": request, **transcript}
     )
+
+@router.get("/reports/cohort/{cohort_id}/roster.csv")
+def reports_roster_csv(
+    cohort_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    try:
+        name, text = csv_reports.cohort_roster_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    except ValueError:
+        raise HTTPException(status_code=404) from None
+    return Response(content=text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/reports/cohort/{cohort_id}/funnel.csv")
+def reports_funnel_csv(
+    cohort_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    try:
+        name, text = csv_reports.cohort_funnel_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    except ValueError:
+        raise HTTPException(status_code=404) from None
+    return Response(content=text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/reports/cohort/{cohort_id}/queue.csv")
+def reports_queue_csv(
+    cohort_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    name, text = csv_reports.queue_summary_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    return Response(content=text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/reports/academy-summary.csv")
+def reports_academy_csv(
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    name, text = csv_reports.academy_summary_csv(db, tenant_id=tenant.id)
+    return Response(content=text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})

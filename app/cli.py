@@ -254,6 +254,7 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
     from app.models.tenant import Tenant
     from app.services import lab_jobs
     from app.services.reminders import sweep
+    from app.services.success_queue import sweep as queue_sweep
 
     with lab_jobs.admin_session() as db:
         tenants = db.scalars(select(Tenant)).all()
@@ -261,6 +262,8 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
             counts = sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")
+            qcounts = queue_sweep(db, tenant_id=tenant.id)
+            print(f"success-queue[{tenant.slug}]: {qcounts}")
 
 
 def _email_digest(args: argparse.Namespace) -> None:
@@ -317,6 +320,7 @@ def _email_digest(args: argparse.Namespace) -> None:
                         recipient=instructor.email,
                         subject=f"Weekly progress digest — {cohort.name}",
                         html_body=render_cohort_html(matrix),
+                        payload={"cohort_id": str(cohort.id)},
                     ):
                         queued += 1
         db.commit()
@@ -334,6 +338,7 @@ def _at_risk_sweep(args: argparse.Namespace) -> None:
     from app.models.tenant import Tenant
     from app.services import at_risk, lab_jobs
 
+    print("at-risk-sweep: DEPRECATED — the Success Queue (reminders-sweep) is the intervention owner")
     sent = 0
     with lab_jobs.admin_session() as db:
         for tenant in db.scalars(select(Tenant)).all():
@@ -400,6 +405,7 @@ def _admin_report(args: argparse.Namespace) -> None:
     from app.models.tenant import Tenant
     from app.services import admin_reports, lab_jobs
 
+    print("at-risk-sweep: DEPRECATED — the Success Queue (reminders-sweep) is the intervention owner")
     sent = 0
     with lab_jobs.admin_session() as db:
         for tenant in db.scalars(select(Tenant)).all():
@@ -827,7 +833,11 @@ def main() -> None:
     rsw = sub.add_parser("reminders-sweep", help="Detect due student reminders and queue delivery")
     rsw.set_defaults(func=_reminders_sweep)
 
-    ar = sub.add_parser("at-risk-sweep", help="Nudge students who are behind/overdue")
+    ar = sub.add_parser(
+        "at-risk-sweep",
+        help="DEPRECATED: superseded by the Success Queue (runs inside "
+             "reminders-sweep); now only sends legacy in-app nudges",
+    )
     ar.set_defaults(func=_at_risk_sweep)
 
     ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
