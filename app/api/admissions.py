@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.models.onboarding import OnboardingTask
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
+from app.services import applicant_email
 from app.services import onboarding as onboarding_service
 
 router = APIRouter(
@@ -151,16 +152,27 @@ def get_applicant(
 def transition_applicant(
     applicant_id: UUID,
     payload: ApplicantTransition,
+    request: Request,
     db: Session = Depends(get_db),
     _: Person = Depends(require_role("admin")),
 ) -> object:
-    """Advance an applicant through the pipeline (screen / accept / reject / etc.)."""
-    return admissions_service.transition_applicant(
+    """Advance an applicant through the pipeline (screen / accept / reject / etc.).
+
+    Entering ``onboarding`` also mints the applicant's self-serve portal token
+    and emails the onboarding invitation — from there the applicant can finish
+    enrolment without an admin.
+    """
+    applicant = admissions_service.transition_applicant(
         db,
         applicant_id=applicant_id,
         to_status=payload.to_status,
         notes=payload.notes,
     )
+    if payload.to_status == "onboarding":
+        raw = admissions_service.mint_onboarding_token(db, applicant=applicant)
+        base = str(request.base_url).rstrip("/")
+        applicant_email.send_onboarding_invite(db, applicant=applicant, url=f"{base}/onboarding?token={raw}")
+    return applicant
 
 
 @router.post("/{applicant_id}/enroll", response_model=ApplicantRead)

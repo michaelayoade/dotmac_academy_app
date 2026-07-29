@@ -9,6 +9,7 @@ Tenant scoping is enforced by RLS; we still pass ``tenant_id`` on writes so the
 
 from __future__ import annotations
 
+import secrets
 from datetime import date
 from uuid import UUID
 
@@ -17,10 +18,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.admissions import APPLICANT_STATUSES, Applicant
+from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
-from app.services import onboarding
+from app.models.rbac import PersonRole
+from app.services import lifecycle, onboarding
+from app.services.bootstrap import ensure_roles
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.services.security import hash_token
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)
 
@@ -40,9 +45,19 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 # Profile fields the application form may supply. Only these are accepted from a
 # public form, so a crafted POST cannot write arbitrary columns.
 PROFILE_FIELDS = (
-    "date_of_birth", "state", "city", "highest_qualification", "field_of_study",
-    "years_experience", "current_role", "has_device", "has_internet",
-    "can_work_at_height", "available_from", "heard_from", "cv_url",
+    "date_of_birth",
+    "state",
+    "city",
+    "highest_qualification",
+    "field_of_study",
+    "years_experience",
+    "current_role",
+    "has_device",
+    "has_internet",
+    "can_work_at_height",
+    "available_from",
+    "heard_from",
+    "cv_url",
 )
 
 
@@ -195,6 +210,77 @@ def transition_applicant(
                 db, tenant_id=applicant.tenant_id, applicant_id=applicant.id, key="entrance_assessment"
             )
     return applicant
+
+
+def mint_onboarding_token(db: Session, *, applicant: Applicant) -> str:
+    """Mint (or re-mint) the applicant's self-serve onboarding-portal token.
+
+    Returns the raw token — deliver once (email link); only its hash is stored.
+    Re-minting invalidates any older link, same as the entrance-exam invite.
+    """
+    raw = secrets.token_urlsafe(32)
+    applicant.onboarding_token_hash = hash_token(raw)
+    db.flush()
+    return raw
+
+
+def applicant_for_onboarding_token(db: Session, *, tenant_id: UUID, raw: str) -> Applicant | None:
+    """Resolve an onboarding-portal token to its applicant (None if unknown)."""
+    if not raw:
+        return None
+    return db.scalars(
+        select(Applicant)
+        .where(Applicant.tenant_id == tenant_id)
+        .where(Applicant.onboarding_token_hash == hash_token(raw))
+    ).first()
+
+
+def _ensure_student_role(db: Session, *, tenant_id: UUID, person_id: UUID) -> None:
+    roles = ensure_roles(db, tenant_id)
+    existing = db.scalars(
+        select(PersonRole)
+        .where(PersonRole.tenant_id == tenant_id)
+        .where(PersonRole.person_id == person_id)
+        .where(PersonRole.role_id == roles["student"].id)
+    ).first()
+    if existing is None:
+        db.add(PersonRole(tenant_id=tenant_id, person_id=person_id, role_id=roles["student"].id))
+        db.flush()
+
+
+def try_auto_enroll(db: Session, *, applicant: Applicant) -> tuple[bool, str | None]:
+    """Enrol an onboarding applicant the moment their checklist completes.
+
+    No-op unless the applicant is in ``onboarding``, every onboarding task is
+    done, and a target cohort is known. On enrolment the Person gets the
+    ``student`` role, and — if they have no login credential yet — an invite
+    token is issued so they can set their first password.
+
+    Returns ``(enrolled_now, invite_raw)``: ``enrolled_now`` is True only on the
+    call that performed the enrolment (so the caller emails the welcome exactly
+    once); ``invite_raw`` is the password-setup token to deliver, or None when
+    the person already had a credential. Idempotent: re-running never duplicates
+    enrolment, role, or credential.
+    """
+    if applicant.status != "onboarding" or applicant.cohort_id is None:
+        return (False, None)
+    if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
+        return (False, None)
+
+    enroll_applicant(db, applicant_id=applicant.id, cohort_id=applicant.cohort_id)
+    if applicant.person_id is None:  # defensive; enroll_applicant always links it
+        return (False, None)
+    _ensure_student_role(db, tenant_id=applicant.tenant_id, person_id=applicant.person_id)
+
+    credential = db.scalars(
+        select(UserCredential)
+        .where(UserCredential.tenant_id == applicant.tenant_id)
+        .where(UserCredential.person_id == applicant.person_id)
+    ).first()
+    if credential is not None:
+        return (True, None)
+    raw = lifecycle.issue_invite_for_person(db, tenant_id=applicant.tenant_id, person_id=applicant.person_id)
+    return (True, raw)
 
 
 def enroll_applicant(
