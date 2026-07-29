@@ -19,10 +19,11 @@ from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
 from app.services import catalog as catalog_service
+from app.services import learner_dashboard
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
-from app.services.entitlements import course_access_states, require_course_open, visible_course_ids
+from app.services.entitlements import require_course_open, visible_course_ids
 from app.services.pacing import require_activity_readable, require_activity_submittable
 from app.services.roles import role_slugs
 from app.services.web_auth import optional_web_user, require_web_user
@@ -136,67 +137,16 @@ def home(
     slugs = role_slugs(db, tenant.id, person.id)
     if "instructor" in slugs and "admin" not in slugs:
         return RedirectResponse("/instructor", status_code=303)
-    enrolled = _enrolled_courses(db, tenant.id, person.id)
-    access_states = course_access_states(db, tenant_id=tenant.id, person_id=person.id)
 
-    # My courses: completion % = passed activities / total activities.
-    my_courses: list[dict] = []
-    best_by_course: dict = {}
-    for course in enrolled:
-        total = (
-            db.scalar(
-                select(func.count())
-                .select_from(Activity)
-                .where(Activity.tenant_id == tenant.id)
-                .where(Activity.course_id == course.id)
-            )
-            or 0
-        )
-        best = best_scores_for(
-            db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
-        )
-        best_by_course[course.id] = best
-        passed = sum(1 for s in best.values() if s.passed)
-        pct = round(100 * passed / total) if total else 0
-        state = access_states.get(course.id)
-        my_courses.append(
-            {
-                "course": course,
-                "total": total,
-                "passed": passed,
-                "pct": pct,
-                "locked": state.locked if state else False,
-                "locked_reason": state.locked_reason if state else None,
-            }
-        )
+    # Dashboard projection (roadmap P1a): the service owns state derivation.
+    dashboard = learner_dashboard.course_cards(db, tenant_id=tenant.id, person_id=person.id)
+    state_filter = request.query_params.get("filter", "")
+    cards = dashboard["cards"]
+    if state_filter in dashboard["filters"]:
+        cards = [c for c in cards if c["state"] == state_filter]
 
-    # Continue: first incomplete chapter of the first enrolled course.
-    continue_to = None
-    for course in enrolled:
-        state = access_states.get(course.id)
-        if state is not None and state.locked:
-            continue
-        passed_acts = {
-            aid for aid, s in best_by_course.get(course.id, {}).items() if s.passed
-        }
-        chapters = db.scalars(
-            select(Chapter)
-            .where(Chapter.tenant_id == tenant.id)
-            .where(Chapter.course_id == course.id)
-            .order_by(Chapter.number)
-        ).all()
-        for ch in chapters:
-            act = db.scalars(
-                select(Activity)
-                .where(Activity.tenant_id == tenant.id)
-                .where(Activity.course_id == course.id)
-                .where(Activity.chapter_number == ch.number)
-            ).first()
-            if act is None or act.id not in passed_acts:
-                continue_to = {"course": course, "chapter": ch}
-                break
-        if continue_to is not None:
-            break
+    # Continue: the actual last meaningful activity, resolved server-side.
+    continue_to = learner_dashboard.continue_target(db, tenant_id=tenant.id, person_id=person.id)
 
     # Recent results: the person's latest few scores (title + pass/fail + %).
     recent_rows = db.execute(
@@ -229,7 +179,10 @@ def home(
         {
             "request": request,
             "person": person,
-            "my_courses": my_courses,
+            "cards": cards,
+            "counts": dashboard["counts"],
+            "total_cards": len(dashboard["cards"]),
+            "state_filter": state_filter,
             "continue_to": continue_to,
             "recent": recent,
             "announcements": latest_announcements,
@@ -535,16 +488,11 @@ def progress(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    best: dict = {}
-    for course in _enrolled_courses(db, tenant.id, person.id):
-        best.update(
-            best_scores_for(
-                db, tenant_id=tenant.id, person_id=person.id, course_id=course.id
-            )
-        )
+    overview = learner_dashboard.progress_overview(
+        db, tenant_id=tenant.id, person_id=person.id
+    )
     return templates.TemplateResponse(
-        request,
-        "progress.html", {"request": request, "best": list(best.values())}
+        request, "progress.html", {"request": request, "overview": overview}
     )
 
 
