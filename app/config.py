@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # lab worker runs on a separate KVM host, set this on BOTH sides to that
     # host's private/tunnel address (e.g. its WireGuard IP).
     lab_console_host: str = "127.0.0.1"
+    # Port probed on the lab host for the academy_lab_host_up health gauge.
+    lab_host_probe_port: int = 22
 
     # dotmac_erp training-report push (inert by default — empty URL disables it).
     # On course completion, a signed webhook records the result on the employee's
