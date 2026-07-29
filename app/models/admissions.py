@@ -125,6 +125,9 @@ class Applicant(Base, TimestampMixin):
     # once on-screen and then lost forever — this is the durable copy).
     invite_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # HMAC of the self-serve onboarding-portal access token (raw emailed once).
+    onboarding_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     # --- the evaluable application profile -------------------------------
     # Name/email/phone alone cannot be assessed. These are what an admissions
     # decision actually rests on, alongside the entrance-exam profile.
