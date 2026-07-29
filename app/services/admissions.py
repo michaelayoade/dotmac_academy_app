@@ -212,6 +212,45 @@ def transition_applicant(
     return applicant
 
 
+def apply_assessment_policy(db: Session, *, applicant: Applicant) -> str | None:
+    """Decide the pipeline consequence of a graded entrance sitting.
+
+    The single owner of the auto-progression decision. Acts only when the
+    applicant is still ``applied``, their cohort sets ``auto_accept_threshold``,
+    and the sitting passed the validity gate:
+
+    - score >= threshold → screened → accepted → onboarding (portal token
+      minted; the raw is returned so the caller can email the offer).
+    - score < threshold → waitlisted, for human review of the borderline.
+    - invalid sitting / no cohort / no threshold → untouched: a human decides.
+    """
+    if applicant.status != "applied":
+        return None
+    if applicant.cohort_id is None or applicant.assessment_score is None:
+        return None
+    if applicant.assessment_valid is not True:
+        return None  # no signal — never auto-decide on an invalid sitting
+    cohort = db.get(Cohort, applicant.cohort_id)
+    if cohort is None or cohort.auto_accept_threshold is None:
+        return None
+
+    score, threshold = applicant.assessment_score, cohort.auto_accept_threshold
+    if score >= threshold:
+        for nxt in ("screened", "accepted", "onboarding"):
+            transition_applicant(db, applicant_id=applicant.id, to_status=nxt)
+        applicant.notes = f"auto-accepted: entrance score {score:.0%} >= threshold {threshold:.0%}"
+        db.flush()
+        return mint_onboarding_token(db, applicant=applicant)
+
+    transition_applicant(
+        db,
+        applicant_id=applicant.id,
+        to_status="waitlisted",
+        notes=f"auto-waitlisted: entrance score {score:.0%} below threshold {threshold:.0%}",
+    )
+    return None
+
+
 def mint_onboarding_token(db: Session, *, applicant: Applicant) -> str:
     """Mint (or re-mint) the applicant's self-serve onboarding-portal token.
 
