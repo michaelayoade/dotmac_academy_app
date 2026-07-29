@@ -290,9 +290,16 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         return HTMLResponse(
             _RESULT.format(title="Could not submit", body="Something went wrong recording your assessment.")
         )
+    # Auto-progression: the admissions policy may accept (offer email with the
+    # onboarding link) or waitlist on the spot. The on-screen message stays
+    # neutral either way — decisions arrive by email.
+    raw = admissions_service.apply_assessment_policy(db, applicant=applicant)
+    if raw:
+        base = str(request.base_url).rstrip("/")
+        applicant_email.send_onboarding_invite(db, applicant=applicant, url=f"{base}/onboarding?token={raw}")
     return HTMLResponse(
         _RESULT.format(
             title="Assessment submitted",
-            body="Thank you — your entrance assessment has been recorded. We'll be in touch.",
+            body="Thank you — your entrance assessment has been recorded. " "Watch your email for the next step.",
         )
     )

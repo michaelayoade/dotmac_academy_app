@@ -346,6 +346,27 @@ def _set_entrance_bank(args: argparse.Namespace) -> None:
         )
 
 
+def _set_auto_accept(args: argparse.Namespace) -> None:
+    """Set (or clear) a cohort's auto-accept threshold for entrance sittings."""
+    import uuid
+
+    from app.models.cohort import Cohort
+    from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        cohort = db.get(Cohort, uuid.UUID(args.cohort_id))
+        if cohort is None:
+            raise SystemExit(f"Cohort {args.cohort_id} not found.")
+        if args.threshold is not None and not 0.0 <= args.threshold <= 1.0:
+            raise SystemExit("--threshold must be a fraction between 0 and 1 (e.g. 0.6)")
+        cohort.auto_accept_threshold = args.threshold
+        db.commit()
+        if args.threshold is None:
+            print(f"cohort '{cohort.name}': auto-accept OFF (human decisions only)")
+        else:
+            print(f"cohort '{cohort.name}': valid sittings scoring >= {args.threshold:.0%} auto-accept")
+
+
 def _set_default_entrance_bank(args: argparse.Namespace) -> None:
     """Set the academy-wide default entrance bank — every applicant sits it."""
     import uuid
@@ -741,6 +762,13 @@ def main() -> None:
         "--time-limit-minutes", type=int, default=None, help="Per-sitting time limit (0 or omit = untimed)"
     )
     seb.set_defaults(func=_set_entrance_bank)
+
+    saa = sub.add_parser("set-auto-accept", help="Auto-accept valid entrance sittings at/above a score threshold")
+    saa.add_argument("--cohort-id", required=True)
+    saa.add_argument(
+        "--threshold", type=float, default=None, help="Fraction 0..1 (e.g. 0.6); omit to turn auto-accept off"
+    )
+    saa.set_defaults(func=_set_auto_accept)
 
     sdb = sub.add_parser("set-default-entrance-bank", help="Academy-wide default entrance bank (all applicants sit it)")
     sdb.add_argument("--tenant-slug", required=True)
