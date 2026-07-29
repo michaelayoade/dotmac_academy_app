@@ -23,11 +23,11 @@ _WRAP = """\
 <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0D1F16;
             max-width:560px;margin:0 auto;padding:24px;">
   <p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;
-            color:#0B4F31;font-weight:600;margin:0 0 4px;">Fibre Academy</p>
+            color:#0B4F31;font-weight:600;margin:0 0 4px;">Dotmac Academy</p>
   <h1 style="font-size:22px;margin:0 0 16px;">{title}</h1>
   {body}
   <p style="margin-top:28px;font-size:12px;color:#5B6B62;">
-    Dotmac Fibre Academy — please do not reply to this address.
+    Dotmac Academy — please do not reply to this address.
   </p>
 </div>"""
 
@@ -49,16 +49,16 @@ def send_application_received(db: Session, *, applicant: Applicant) -> bool:
     name = html.escape((applicant.first_name or "there").strip())
     body = (
         f"<p>Hi {name},</p>"
-        "<p>We've received your application to the Fibre Academy. Thank you.</p>"
+        "<p>We've received your application to the Dotmac Academy. Thank you.</p>"
         "<p>The next step is a short online entrance assessment. We've sent it to you "
         "in a separate email — check your inbox (and your spam folder).</p>"
     )
     return send_email(
         applicant.email,
-        "We've received your Fibre Academy application",
+        "We've received your Dotmac Academy application",
         _WRAP.format(title="Application received", body=body),
         text_body=(
-            f"Hi {name},\n\nWe've received your application to the Fibre Academy.\n\n"
+            f"Hi {name},\n\nWe've received your application to the Dotmac Academy.\n\n"
             "The next step is a short online entrance assessment — we've sent it in a "
             "separate email. Check your inbox and spam folder.\n"
         ),
@@ -94,7 +94,7 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     )
     body = (
         f"<p>Hi {name},</p>"
-        "<p>Here is your Fibre Academy entrance assessment.</p>"
+        "<p>Here is your Dotmac Academy entrance assessment.</p>"
         + rules
         + (f"<p><strong>Complete it by {by}.</strong></p>" if by else "")
         + _BTN.format(url=html.escape(url, quote=True))
@@ -102,7 +102,7 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
         "Reply to the team and we can reopen your sitting.</p>"
     )
     text = (
-        f"Hi {name},\n\nYour Fibre Academy entrance assessment:\n{url}\n\n"
+        f"Hi {name},\n\nYour Dotmac Academy entrance assessment:\n{url}\n\n"
         "- 30 multiple-choice questions, one best answer each\n"
         + (f"- Timed: {minutes} minutes once you begin; it submits automatically at zero\n" if minutes else "")
         + "- One attempt — start when you can finish uninterrupted\n"
@@ -111,7 +111,7 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     )
     ok = send_email(
         applicant.email,
-        "Your Fibre Academy entrance assessment",
+        "Your Dotmac Academy entrance assessment",
         _WRAP.format(title="Your entrance assessment", body=body),
         text_body=text,
         db=db,

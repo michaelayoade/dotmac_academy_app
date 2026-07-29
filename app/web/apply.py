@@ -30,11 +30,24 @@ from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
+# Training tracks an applicant can choose. Stored on ``Applicant.program`` (free
+# text), so a rename here never strands existing rows — but only these values are
+# accepted from the public form.
+TRACKS: tuple[str, ...] = (
+    "Fiber Engineering",
+    "Wireless and Radio",
+    "Routing and Switching",
+    "Network Support",
+    "Technical Support",
+    "Power and Site Infrastructure",
+)
+_DEFAULT_PROGRAM = "Dotmac Academy"
+
 _THANKS = (
     '<div id="apply-result" class="mt-8 rounded-lg border border-brand-200 bg-brand-50 p-6">'
     '<h2 class="font-display text-xl font-[560] text-ink">Application received</h2>'
     '<p class="mt-2 text-sm text-ink-soft">Thanks, {name} — we\'ve got your application '
-    "for the Fiber Academy and will reach out by email.</p></div>"
+    "to the Dotmac Academy and will reach out by email.</p></div>"
 )
 
 _START_EXAM = (
@@ -99,7 +112,10 @@ def _notice(request: Request, title: str, body: str) -> HTMLResponse:
 @router.get("/apply")
 def apply_form(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
-    return templates.TemplateResponse("apply.html", {"request": request, "cohorts": _open_cohorts(db, tenant.id)})
+    return templates.TemplateResponse(
+        "apply.html",
+        {"request": request, "cohorts": _open_cohorts(db, tenant.id), "tracks": TRACKS},
+    )
 
 
 def _d(v: str) -> date | None:
@@ -127,7 +143,7 @@ def submit_apply(
     last_name: str = Form(...),
     email: str = Form(...),
     phone: str = Form(default=""),
-    program: str = Form(default="Fiber Academy"),
+    program: str = Form(default=""),
     cohort_id: str = Form(default=""),
     # --- evaluable profile ---
     date_of_birth: str = Form(default=""),
@@ -147,6 +163,9 @@ def submit_apply(
 ) -> HTMLResponse:
     tenant = require_tenant(request)
     cid = UUID(cohort_id) if cohort_id else None
+    # Only a known track is stored; anything else (crafted POST, legacy client)
+    # falls back to the generic programme label.
+    track = program.strip() if program.strip() in TRACKS else _DEFAULT_PROGRAM
     applicant = admissions_service.submit_application(
         db,
         tenant_id=tenant.id,
@@ -154,7 +173,7 @@ def submit_apply(
         first_name=first_name,
         last_name=last_name,
         phone=phone or None,
-        program=program or None,
+        program=track,
         cohort_id=cid,
         source="website",
         profile={
@@ -183,9 +202,7 @@ def submit_apply(
         # closing the tab no longer costs them the exam.
         base = str(request.base_url).rstrip("/")
         inv = entrance_exam.invite(db, applicant=applicant, base_url=base)
-        return HTMLResponse(
-            _START_EXAM.format(name=safe_name, token=html.escape(inv["token"], quote=True))
-        )
+        return HTMLResponse(_START_EXAM.format(name=safe_name, token=html.escape(inv["token"], quote=True)))
     return HTMLResponse(_THANKS.format(name=safe_name))
 
 
