@@ -3,67 +3,151 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ branding_name | default("Dotmac Academy") }} — Practical technical training</title>
-  <meta name="description" content="Hands-on technical training: fiber, networking, wireless and operations courses with labs, assessments and certificates.">
+  <title>{{ branding_name | default("Dotmac Academy") }} — Technical training that proves itself</title>
+  <meta name="description" content="Hands-on technical training across fiber, wireless, routing and support: chaptered courses, real labs, honest assessments, verifiable certificates.">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/app.css?v=2">
+  <link rel="stylesheet" href="/static/public.css?v=1">
 </head>
-<body class="min-h-screen bg-sand-100 text-ink antialiased">
-  <header class="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-6">
-    <span class="font-display text-lg font-[560] tracking-tight">{{ branding_name | default("Dotmac Academy") }}</span>
-    <nav class="flex items-center gap-4 text-sm">
-      <a href="/courses" class="text-ink-soft hover:text-ink">Courses</a>
-      <a href="/apply" class="text-ink-soft hover:text-ink">Apply</a>
-      <a href="/login" class="btn-primary px-4 py-2">Sign in</a>
-    </nav>
+<body class="pub">
+
+  <nav class="nav" aria-label="Main navigation">
+    <div class="wrap">
+      <a href="/" class="nav-logo"><span class="nav-dot"></span> {{ branding_name | default("Dotmac Technical Academy") }}</a>
+      <div class="nav-links">
+        <a href="/courses">Curriculum</a>
+        <a href="#tracks">Tracks</a>
+        <a href="#how">How it works</a>
+        <a href="/apply" class="btn btn-orange">Apply now</a>
+        <a href="/login" class="btn btn-ghost">Sign in</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="wrap">
+      <div class="hero-inner-l">
+        <span class="hero-badge">Admissions open — apply in minutes</span>
+        <h1>Train for the work.<br><em>Prove it</em> with results.</h1>
+        <p>
+          Chaptered courses, real lab environments, and assessments that mean
+          something. Built by the engineers who run the network, for the
+          people who will.
+        </p>
+        <div class="hero-ctas">
+          <a href="/courses" class="btn btn-orange">Browse the courses</a>
+          <a href="/apply" class="btn btn-mint">Start your application</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><b>{{ courses | length }}</b><span>Courses</span></div>
+          <div class="hero-stat"><b>{{ courses | sum(attribute="chapter_count") }}</b><span>Chapters</span></div>
+          <div class="hero-stat"><b>5</b><span>Career tracks</span></div>
+        </div>
+      </div>
+      <div class="hero-media">
+        <img src="/static/img/academy-hero.png" alt="Trainees working on live network equipment" width="900" height="491">
+      </div>
+    </div>
   </header>
 
-  <main>
-    <section class="mx-auto w-full max-w-5xl px-6 pb-10 pt-12 sm:pt-16">
-      <h1 class="font-display text-4xl font-[560] tracking-tight sm:text-5xl">
-        Learn the work.<br>Prove the work.
-      </h1>
-      <p class="mt-4 max-w-2xl text-lg text-ink-soft">
-        Practical training for people who build and run networks — structured
-        courses, real labs, honest assessments, and certificates you can verify.
-      </p>
-      <div class="mt-8 flex flex-wrap gap-3">
-        <a href="/courses" class="btn-primary px-5 py-2.5">Browse the courses</a>
-        <a href="/apply" class="rounded-lg border border-brand-200 bg-white px-5 py-2.5 text-sm font-semibold text-ink hover:bg-brand-50">Apply to the academy</a>
+  <section class="section" id="tracks">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Career tracks</span>
+        <h2>Five ways in. One standard.</h2>
+        <p>Every track starts from the same foundation and ends at the same bar: work you can do, proven under assessment.</p>
       </div>
-      {% if courses %}
-      <p class="mt-6 text-sm text-ink-soft">
-        {{ courses | length }} courses ·
-        {{ courses | sum(attribute="chapter_count") }} chapters of curriculum
-      </p>
-      {% endif %}
-    </section>
+      <div class="cards">
+        <article class="card"><img src="/static/img/track-fiber.png" alt="" loading="lazy"><div class="card-body"><h3>Fiber Engineering</h3><p class="card-meta">Splicing, OTDR, outside plant</p></div></article>
+        <article class="card"><img src="/static/img/track-wireless.png" alt="" loading="lazy"><div class="card-body"><h3>Wireless &amp; Radio</h3><p class="card-meta">Links, sectors, spectrum discipline</p></div></article>
+        <article class="card"><img src="/static/img/track-routing.png" alt="" loading="lazy"><div class="card-body"><h3>Routing &amp; Switching</h3><p class="card-meta">The packet's path, end to end</p></div></article>
+        <article class="card"><img src="/static/img/track-support.png" alt="" loading="lazy"><div class="card-body"><h3>Network Support</h3><p class="card-meta">Diagnose, resolve, prevent</p></div></article>
+        <article class="card"><img src="/static/img/track-noc.png" alt="" loading="lazy"><div class="card-body"><h3>Technical Support</h3><p class="card-meta">The customer's first engineer</p></div></article>
+      </div>
+    </div>
+  </section>
 
-    {% if courses %}
-    <section class="mx-auto w-full max-w-5xl px-6 pb-16">
-      <h2 class="font-display text-xl font-[560]">The curriculum</h2>
-      <div class="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+  {% if courses %}
+  <section class="section" id="courses" style="background:var(--g-xlight)">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Curriculum</span>
+        <h2>Chaptered, assessed, and current.</h2>
+        <p>The catalog below is live from the learning platform — when a course updates, this page already knows.</p>
+      </div>
+      <div class="cards">
         {% for item in courses %}
-        <article class="overflow-hidden rounded-xl border border-brand-200 bg-white">
-          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt=""
-               class="aspect-video w-full object-cover" loading="lazy"
-               onerror="this.style.display='none'">
-          <div class="p-4">
-            <h3 class="font-display text-base font-[560] leading-snug">{{ item.course.title }}</h3>
-            <p class="mt-1 text-sm text-ink-soft">{{ item.chapter_count }} chapters</p>
+        <article class="card">
+          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
+          <div class="card-body">
+            <h3>{{ item.course.title }}</h3>
+            <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
           </div>
         </article>
         {% endfor %}
       </div>
-      <div class="mt-8">
-        <a href="/apply" class="btn-primary px-5 py-2.5">Start your application</a>
-      </div>
-    </section>
-    {% endif %}
-  </main>
+    </div>
+  </section>
+  {% endif %}
 
-  <footer class="mx-auto w-full max-w-5xl px-6 pb-10 text-sm text-ink-soft">
-    <p>© {{ branding_name | default("Dotmac Academy") }} · <a href="/login" class="hover:text-ink">Student sign in</a></p>
+  <section class="section" id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">How it works</span>
+        <h2>Apply once. The rest is structured.</h2>
+      </div>
+      <div class="steps">
+        <div class="step"><span class="step-k">1</span><h3>Apply</h3><p>A few minutes online. Pick your track, tell us where you're starting from.</p></div>
+        <div class="step"><span class="step-k">2</span><h3>Sit the entrance assessment</h3><p>Taken from home, timed server-side, one sitting. It places you — it doesn't gatekeep effort.</p></div>
+        <div class="step"><span class="step-k">3</span><h3>Study, practice, certify</h3><p>Chapters, labs, and assessments to a final certificate that anyone can verify online.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Questions</span>
+        <h2>Before you apply</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>Do I need experience to apply?</summary>
+          <p>No. The entrance assessment measures where you are today — numeracy, reading, reasoning — and places you accordingly. Effort and consistency do the rest.</p>
+        </details>
+        <details>
+          <summary>How is the training delivered?</summary>
+          <p>Through the academy platform: structured chapters you read at pace, hands-on lab environments, chapter tests as practice, and final assessments that gate certification.</p>
+        </details>
+        <details>
+          <summary>Are the certificates real?</summary>
+          <p>Every certificate carries a verification ID that anyone — including an employer — can check on this site. If it can't be verified, we didn't issue it.</p>
+        </details>
+        <details>
+          <summary>What happens after I apply?</summary>
+          <p>You'll receive an email with your personal assessment link. Sit it when ready; results, offers, and onboarding follow automatically from your score.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="wrap">
+      <div class="cta">
+        <div>
+          <h2>The next cohort is forming.</h2>
+          <p>Application takes minutes. The assessment link arrives by email.</p>
+        </div>
+        <a href="/apply" class="btn btn-orange">Start your application</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span>© {{ branding_name | default("Dotmac Academy") }}</span>
+      <span><a href="/courses">Curriculum</a> · <a href="/apply">Apply</a> · <a href="/login">Student sign in</a></span>
+    </div>
   </footer>
+
 </body>
 </html>
