@@ -51,6 +51,7 @@ AREAS: list[dict] = [
             {"label": "Applications", "path": "/admin/applications"},
             {"label": "Users", "path": "/admin/users"},
             {"label": "Audit", "path": "/admin/audit"},
+            {"label": "Reminders", "path": "/admin/reminders"},
             {"label": "Settings", "path": "/admin/settings"},
         ],
     },

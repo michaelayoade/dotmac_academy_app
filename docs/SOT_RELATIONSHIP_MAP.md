@@ -20,6 +20,7 @@ and SMTP are adapters around these owners.
 | SMTP delivery | One outbox row | `email_outbox.deliver_pending` | `sent_at`, sanitized error class, invite delivery projection | `academy-email-outbox.timer`; SMTP is transport only |
 | Academy settings | Environment defaults plus `platform_settings` overrides | Academy admin settings route using restricted settings-writer role | Effective SMTP/branding/policy/lab config | DB-over-env resolver; blank secret fields preserve existing value |
 | Official operational history | Domain service facts | `write_audit_event` | Admin audit and applicant decision history | Migration baseline plus append-only application behavior |
+| Student reminder consequence | Canonical enrollment/deadline/session/grade/completion state + `ReminderPreference` | `reminders.sweep` (sole decision owner; ledger `ReminderLog` enforces once-per-occurrence) | In-app notification + outbox email (immediate/digest/quiet-hours pacing) | `academy-reminders.timer` re-sweeps idempotently; admin history + audited resend; outbox stays delivery owner |
 | Public catalog visibility | `Course.listed` + `status='published'` (ADR 0003) | Course import/authoring services | Anonymous landing and `/courses` projection | `catalog.public_catalog` is the only reader; routes add no extra filters; external marketing pages are 301 redirects, never copies |
 
 ## Adapter rules

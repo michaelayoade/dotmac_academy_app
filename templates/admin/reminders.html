@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Reminders — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Administration</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Reminder history</h1>
+<p class="mt-2 text-ink-soft">Every reminder decision the policy service has recorded, with email delivery evidence from the outbox.</p>
+
+<div class="card mt-8 overflow-x-auto">
+  {% if rows %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-sand-200 text-left text-ink-soft">
+        <th class="px-4 py-3">When</th>
+        <th class="px-4 py-3">Person</th>
+        <th class="px-4 py-3">Event</th>
+        <th class="px-4 py-3">Title</th>
+        <th class="px-4 py-3">Status</th>
+        <th class="px-4 py-3">Delivery</th>
+        <th class="px-4 py-3"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log, person in rows %}
+      <tr class="border-b border-sand-100 align-top">
+        <td class="whitespace-nowrap px-4 py-3">{{ log.created_at | localtime }}</td>
+        <td class="px-4 py-3">{{ person.email }}</td>
+        <td class="whitespace-nowrap px-4 py-3"><span class="rounded bg-sand-100 px-2 py-0.5 font-mono text-xs">{{ log.event_kind }}</span></td>
+        <td class="px-4 py-3">{{ log.title }}</td>
+        <td class="px-4 py-3 font-semibold
+            {% if log.status == 'sent' %}text-brand-700{% elif log.status == 'queued' %}text-amber-700{% else %}text-ink-soft{% endif %}">
+          {{ log.status }}</td>
+        <td class="px-4 py-3">
+          {% set ob = delivery.get(log.outbox_key) if log.outbox_key else none %}
+          {% if ob %}
+            {% if ob.sent_at %}delivered {{ ob.sent_at | localtime }}
+            {% elif ob.last_error %}<span class="text-red-700">retrying ({{ ob.attempts }}): {{ ob.last_error[:60] }}</span>
+            {% else %}pending in outbox{% endif %}
+          {% elif log.status == 'sent' %}—{% else %}not emailed{% endif %}
+        </td>
+        <td class="px-4 py-3">
+          {% if log.status != 'skipped' %}
+          <form hx-post="/admin/reminders/{{ log.id }}/resend" hx-target="this" hx-swap="innerHTML">
+            <button type="submit" class="btn-ghost text-xs">Resend</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="p-6 text-ink-soft">No reminders recorded yet — the sweep runs every few minutes once the timer is installed.</p>
+  {% endif %}
+</div>
+
+<div class="mt-6 flex gap-3">
+  {% if offset > 0 %}<a class="btn-ghost" href="/admin/reminders?offset={{ [offset - limit, 0] | max }}&limit={{ limit }}">Newer</a>{% endif %}
+  {% if rows | length == limit %}<a class="btn-ghost" href="/admin/reminders?offset={{ offset + limit }}&limit={{ limit }}">Older</a>{% endif %}
+</div>
+{% endblock %}
