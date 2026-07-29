@@ -4,17 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Courses — {{ branding_name | default("Dotmac Academy") }}</title>
-  <meta name="description" content="The full course catalog: fiber, networking, wireless, operations and support — chaptered, lab-backed, and assessed.">
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/public.css?v=1">
+  <meta name="description" content="The full Dotmac Academy catalog: technical training for network careers and management short courses for professionals — chaptered, assessed, certified.">
+  <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
+  <link rel="stylesheet" href="/static/public.css?v=2">
 </head>
 <body class="pub">
 
   <nav class="nav" aria-label="Main navigation">
     <div class="wrap">
-      <a href="/" class="nav-logo"><span class="nav-dot"></span> {{ branding_name | default("Dotmac Technical Academy") }}</a>
+      <a href="/" class="nav-logo"><img src="/static/img/dotmac-logo.png" alt="Dotmac" width="132" height="30"> <span>Academy</span></a>
       <div class="nav-links">
         <a href="/">Home</a>
+        <a href="#technical">Technical</a>
+        <a href="#management">Management</a>
         <a href="/apply" class="btn btn-orange">Apply now</a>
         <a href="/login" class="btn btn-ghost">Sign in</a>
       </div>
@@ -26,18 +28,28 @@
       <span class="eyebrow">Curriculum</span>
       <h1>Course catalog</h1>
       <p>
-        Live from the learning platform: every course below is chaptered,
-        practice-tested, and closed by a final assessment. Apply once — the
-        entrance assessment places you.
+        Live from the learning platform — every course is chaptered, practice-
+        tested, and closed by a final assessment that gates its certificate.
       </p>
     </div>
   </header>
 
   <main class="section">
     <div class="wrap">
-      {% if courses %}
+
+      <div class="group-head" id="technical">
+        <h2>Technical training</h2>
+        <span>{{ tech | length }} courses</span>
+      </div>
+      <p class="group-note">
+        The cohort-based academy: from foundation through fiber, wireless,
+        routing, operations and support. Join via
+        <a href="/apply" style="color:var(--g3);font-weight:700">application</a> —
+        the entrance assessment places you.
+      </p>
+      {% if tech %}
       <div class="cards">
-        {% for item in courses %}
+        {% for item in tech %}
         <article class="card">
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
           <div class="card-body">
@@ -48,22 +60,50 @@
         {% endfor %}
       </div>
       {% else %}
-      <p style="color:var(--muted)">The catalog is being prepared — check back shortly.</p>
+      <p class="group-note">The technical catalog is being prepared — check back shortly.</p>
       {% endif %}
 
-      <div class="cta" style="margin-top:56px">
+      <div class="group-head" id="management">
+        <h2>Management &amp; professional development</h2>
+        <span>{{ mgmt | length }} short courses</span>
+      </div>
+      <p class="group-note">
+        Short, self-paced courses for supervisors, managers and professionals —
+        industry-neutral, five to six chapters each. Enrolment for teams and
+        individuals: <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a>.
+      </p>
+      {% if mgmt %}
+      <div class="cards">
+        {% for item in mgmt %}
+        <article class="card">
+          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
+          <div class="card-body">
+            <h3>{{ item.course.title }}</h3>
+            <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="group-note">The management catalog is being prepared — check back shortly.</p>
+      {% endif %}
+
+      <div class="cta" style="margin-top:64px">
         <div>
           <h2>Found your starting point?</h2>
-          <p>Applications take a few minutes; your assessment link arrives by email.</p>
+          <p>Technical: apply and sit the placement assessment. Management: write to us and we'll set up enrolment.</p>
         </div>
-        <a href="/apply" class="btn btn-orange">Apply now</a>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <a href="/apply" class="btn btn-orange">Apply — Technical</a>
+          <a href="mailto:fiberacademy@dotmac.ng" class="btn btn-mint">Enrol — Management</a>
+        </div>
       </div>
     </div>
   </main>
 
   <footer>
     <div class="wrap">
-      <span>© {{ branding_name | default("Dotmac Academy") }}</span>
+      <span>© {{ branding_name | default("Dotmac Academy") }} · part of <a href="https://dotmac.ng/">Dotmac Technologies</a></span>
       <span><a href="/">Home</a> · <a href="/apply">Apply</a> · <a href="/login">Student sign in</a></span>
     </div>
   </footer>

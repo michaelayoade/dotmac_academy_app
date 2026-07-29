@@ -22,15 +22,19 @@ def _seed_courses(admin_session, tid):
         tenant_id=tid, slug="instructor-guide", title="Instructor Guide",
         discipline="teaching", source_ref="t@1", listed=False,
     )
-    unlisted_mgmt = Course(
+    listed_mgmt = Course(
         tenant_id=tid, slug="mgmt-team-leadership", title="Leading a Team",
+        discipline="management", source_ref="t@1", listed=True,
+    )
+    unlisted_mgmt = Course(
+        tenant_id=tid, slug="mgmt-vendor-procurement", title="Vendor Course Hidden",
         discipline="management", source_ref="t@1", listed=False,
     )
     draft_listed = Course(
         tenant_id=tid, slug="draft-course", title="Draft Course",
         discipline="networking", source_ref="t@1", listed=True, status="draft",
     )
-    admin_session.add_all([listed, unlisted_internal, unlisted_mgmt, draft_listed])
+    admin_session.add_all([listed, unlisted_internal, listed_mgmt, unlisted_mgmt, draft_listed])
     admin_session.commit()
 
 
@@ -45,10 +49,12 @@ def test_public_courses_shows_only_listed_published(app_client, admin_session, t
     _seed_courses(admin_session, tenant_a.id)
     r = app_client.get("/courses", headers=H)
     assert r.status_code == 200
-    assert "Fiber Basics" in r.text
-    assert "Instructor Guide" not in r.text     # unlisted internal
-    assert "Leading a Team" not in r.text       # internal discipline, unlisted
-    assert "Draft Course" not in r.text         # listed but not published
+    assert "Fiber Basics" in r.text                 # listed technical
+    assert "Leading a Team" in r.text               # listed management (grouped)
+    assert r.text.index("Fiber Basics") < r.text.index("Leading a Team")  # tech group first
+    assert "Instructor Guide" not in r.text         # unlisted internal
+    assert "Vendor Course Hidden" not in r.text     # unlisted management
+    assert "Draft Course" not in r.text             # listed but not published
 
 
 def test_signed_in_root_still_learn_home(app_client, admin_session, tenant_a):

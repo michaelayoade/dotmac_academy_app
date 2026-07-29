@@ -49,8 +49,11 @@ def courses_list(
     tenant = require_tenant(request)
     if person is None:
         listed = public_catalog(db, tenant_id=tenant.id)
+        mgmt = [i for i in listed if i["course"].discipline == "management"]
+        tech = [i for i in listed if i["course"].discipline != "management"]
         return templates.TemplateResponse(
-            request, "public/courses.html", {"courses": listed}
+            request, "public/courses.html",
+            {"courses": listed, "tech": tech, "mgmt": mgmt},
         )
     staff = _is_staff(db, tenant.id, person.id)
 

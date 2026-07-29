@@ -37,3 +37,14 @@ The academy application serves its own public presence:
 - Course visibility gains one more state dimension (`listed`) orthogonal to
   authoring `status`: drafts are never public regardless of `listed`;
   published-but-unlisted courses are for enrolled learners only.
+
+## Amendment — 2026-07-29 (same day)
+
+The management discipline is now **publicly listed**: the academy presents two
+program pillars (Technical Academy; Management & Professional Development) and
+the catalog groups courses accordingly. `listed` semantics are unchanged — it
+remains the single selector; this amendment changes the *data decision* for
+`discipline = 'management'` rows, not the mechanism. Public listing does not
+grant access: enrolment stays cohort/offering-gated, and management enrolment
+is arranged by contact. The landing page intentionally lists no individual
+courses — programs on the landing, courses in the catalog.
