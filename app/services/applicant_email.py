@@ -121,6 +121,53 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     return ok
 
 
+def send_waitlist_notice(db: Session, *, applicant: Applicant) -> bool:
+    """Result email for a valid sitting below the auto-accept bar."""
+    name = html.escape((applicant.first_name or "there").strip())
+    body = (
+        f"<p>Hi {name},</p>"
+        "<p>Thank you for completing your Dotmac Academy entrance assessment.</p>"
+        "<p>Based on your result you've been placed on our <strong>waitlist</strong>. That's not a "
+        "no — our admissions team reviews waitlisted applications individually, and we'll contact "
+        "you if a place opens in your chosen track.</p>"
+        "<p style='font-size:13px;color:#5B6B62;'>No action is needed from you right now.</p>"
+    )
+    text = (
+        f"Hi {name},\n\nThank you for completing your Dotmac Academy entrance assessment.\n\n"
+        "Based on your result you've been placed on our waitlist. That's not a no — our team "
+        "reviews waitlisted applications individually, and we'll contact you if a place opens.\n"
+    )
+    return send_email(
+        applicant.email,
+        "Your Dotmac Academy application — waitlisted",
+        _WRAP.format(title="You're on the waitlist", body=body),
+        text_body=text,
+        db=db,
+    )
+
+
+def send_results_received(db: Session, *, applicant: Applicant) -> bool:
+    """Result email when no automatic decision was made (held for human review)."""
+    name = html.escape((applicant.first_name or "there").strip())
+    body = (
+        f"<p>Hi {name},</p>"
+        "<p>Thank you — your Dotmac Academy entrance assessment has been received.</p>"
+        "<p>Our admissions team will review your application and be in touch by email "
+        "with the outcome.</p>"
+    )
+    text = (
+        f"Hi {name},\n\nThank you — your entrance assessment has been received. "
+        "Our admissions team will review your application and be in touch by email.\n"
+    )
+    return send_email(
+        applicant.email,
+        "We've received your Dotmac Academy assessment",
+        _WRAP.format(title="Assessment received", body=body),
+        text_body=text,
+        db=db,
+    )
+
+
 def send_onboarding_invite(db: Session, *, applicant: Applicant, url: str) -> bool:
     """The offer email: you're in — complete your onboarding online.
 

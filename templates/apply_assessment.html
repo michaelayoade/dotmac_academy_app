@@ -19,6 +19,28 @@
         <h2 class="font-display text-xl font-[560] text-ink">{{ notice.title }}</h2>
         <p class="mt-2 text-sm text-ink-soft">{{ notice.body }}</p>
       </div>
+      {% elif intro %}
+      <div class="mt-8 rounded-lg border border-brand-200 bg-brand-50 p-6">
+        <h2 class="font-display text-xl font-[560] text-ink">Before you begin</h2>
+        <ul class="mt-3 space-y-2 text-sm text-ink-soft">
+          <li><strong class="text-ink">{{ intro.question_count }} multiple-choice questions.</strong> Choose the single best answer for each.</li>
+          {% if intro.minutes %}
+          <li><strong class="text-ink">Timed: {{ intro.minutes }} minutes.</strong> The clock starts when you press Start below — not before — and the assessment submits automatically when time runs out. A countdown stays visible while you work.</li>
+          {% else %}
+          <li><strong class="text-ink">No time limit.</strong> Take the time you need.</li>
+          {% endif %}
+          <li><strong class="text-ink">One attempt.</strong> Start only when you can finish uninterrupted.</li>
+          <li><strong class="text-ink">Your answers save as you go.</strong> If your connection drops, reopen your link and continue — the clock pauses while you're offline.</li>
+          <li><strong class="text-ink">It tests general aptitude</strong> — numeracy, reading, reasoning, and safety sense. You are not expected to have prior technical knowledge.</li>
+        </ul>
+        <div id="start-panel">
+          <form method="post" action="/apply/assessment/start" hx-post="/apply/assessment/start" class="mt-5">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn-primary w-full py-2.5 text-[0.95rem]">Start my assessment</button>
+          </form>
+        </div>
+        <p class="mt-3 text-center text-xs text-ink-soft">Not ready? Just close this page — your link stays valid until your deadline.</p>
+      </div>
       {% else %}
       <p class="mt-2 text-sm text-ink-soft">
         Answer each question as best you can. You have one attempt — choose the single best answer.

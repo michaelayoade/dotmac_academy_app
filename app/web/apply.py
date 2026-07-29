@@ -14,7 +14,7 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -221,6 +221,22 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
             "The deadline for your entrance assessment has passed. If you were unable to "
             "sit it in time, contact us and we can reopen it for you.",
         )
+    if applicant.assessment_started_at is None:
+        # Instruction screen first: the clock must start on an explicit choice,
+        # never on a curious click of the emailed link.
+        return templates.TemplateResponse(
+            "apply_assessment.html",
+            {
+                "request": request,
+                "notice": None,
+                "questions": None,
+                "intro": {
+                    "minutes": entrance_exam.time_limit_minutes(db, applicant=applicant),
+                    "question_count": len(_exam_questions(db, tenant.id, applicant)),
+                },
+                "token": token,
+            },
+        )
     timing = entrance_exam.start_exam(db, applicant=applicant)
     if timing["expired"]:
         return _notice(
@@ -243,6 +259,29 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
             "notice": None,
         },
     )
+
+
+@router.post("/apply/assessment/start")
+def assessment_start(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
+    """The explicit start: stamps the sitting and hands over to the questions."""
+    tenant = require_tenant(request)
+    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token)
+    if applicant is None:
+        return _notice(request, "Link not valid", "This assessment link is invalid or has expired.")
+    if applicant.assessment_taken_at is not None:
+        return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
+    if entrance_exam.past_deadline(applicant):
+        return _notice(
+            request,
+            "This assessment has closed",
+            "The deadline for your entrance assessment has passed. If you were unable to "
+            "sit it in time, contact us and we can reopen it for you.",
+        )
+    entrance_exam.start_exam(db, applicant=applicant)
+    url = f"/apply/assessment?token={token}"
+    if request.headers.get("HX-Request"):
+        return Response(status_code=204, headers={"HX-Redirect": url})
+    return RedirectResponse(url, status_code=303)
 
 
 @router.post("/apply/assessment/save")
@@ -292,11 +331,15 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         )
     # Auto-progression: the admissions policy may accept (offer email with the
     # onboarding link) or waitlist on the spot. The on-screen message stays
-    # neutral either way — decisions arrive by email.
+    # neutral either way — every submitter gets an outcome email.
     raw = admissions_service.apply_assessment_policy(db, applicant=applicant)
     if raw:
         base = str(request.base_url).rstrip("/")
         applicant_email.send_onboarding_invite(db, applicant=applicant, url=f"{base}/onboarding?token={raw}")
+    elif applicant.status == "waitlisted":
+        applicant_email.send_waitlist_notice(db, applicant=applicant)
+    else:
+        applicant_email.send_results_received(db, applicant=applicant)
     return HTMLResponse(
         _RESULT.format(
             title="Assessment submitted",

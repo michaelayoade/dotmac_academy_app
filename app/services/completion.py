@@ -24,15 +24,23 @@ logger = logging.getLogger(__name__)
 
 
 def recompute_completion(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID,
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    course_id: UUID,
     now: datetime | None = None,
 ) -> CourseCompletion:
     """Upsert the person's completion record for the course and return it."""
-    total = db.scalar(
-        select(func.count()).select_from(Activity)
-        .where(Activity.tenant_id == tenant_id)
-        .where(Activity.course_id == course_id)
-    ) or 0
+    total = (
+        db.scalar(
+            select(func.count())
+            .select_from(Activity)
+            .where(Activity.tenant_id == tenant_id)
+            .where(Activity.course_id == course_id)
+        )
+        or 0
+    )
     best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
     passed = sum(1 for s in best.values() if s.passed)
     pct = (passed / total) if total else 0.0
@@ -59,13 +67,11 @@ def recompute_completion(
         rec.completed_at = None
     db.flush()
     if first_completion:
+        course = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)).first()
+        course_title = course.title if course is not None else "the course"
         try:
             from app.services.notifications import notify
 
-            course = db.scalars(
-                select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
-            ).first()
-            course_title = course.title if course is not None else "the course"
             notify(
                 db,
                 tenant_id=tenant_id,
@@ -77,4 +83,60 @@ def recompute_completion(
             )
         except Exception as exc:
             logger.warning("course completion notification failed: %s", exc)
+        try:
+            _email_certificate(
+                db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, course_title=course_title
+            )
+        except Exception as exc:
+            logger.warning("course completion certificate email failed: %s", exc)
     return rec
+
+
+def _email_certificate(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID, course_title: str) -> bool:
+    """Email the freshly-completed course's certificate PDF to the student.
+
+    Best-effort milestone email: issues (or reuses) the certificate, renders the
+    PDF, and attaches it. Honours the student's results-email opt-out. The
+    in-app notification and the pull download at /certificates/{course_id}
+    remain regardless.
+    """
+    from app.models.person import Person
+    from app.services.certificates import issue_certificate, render_certificate_pdf
+    from app.services.email import recipient_allows, send_email
+
+    person = db.get(Person, person_id)
+    if person is None or not person.email:
+        return False
+    if not recipient_allows(person, "email_results"):
+        return False
+
+    cert = issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    pdf = render_certificate_pdf(
+        recipient_name=f"{person.first_name} {person.last_name}".strip(),
+        course_title=course_title,
+        serial=cert.serial,
+        issued_at=cert.issued_at,
+    )
+    name = person.first_name or "there"
+    html = (
+        "<div style=\"font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0D1F16;"
+        'max-width:560px;margin:0 auto;padding:24px;">'
+        "<p style='font-size:12px;letter-spacing:.14em;text-transform:uppercase;"
+        "color:#0B4F31;font-weight:600;margin:0 0 4px;'>Dotmac Academy</p>"
+        f"<h1 style='font-size:22px;margin:0 0 16px;'>Congratulations, {name}!</h1>"
+        f"<p>You've completed <strong>{course_title}</strong>. Your certificate is attached.</p>"
+        f"<p style='font-size:13px;color:#5B6B62;'>Certificate serial: {cert.serial}. You can also "
+        "download it any time from your course page.</p></div>"
+    )
+    text = (
+        f"Congratulations, {name}!\n\nYou've completed {course_title}. "
+        f"Your certificate is attached (serial {cert.serial}).\n"
+    )
+    return send_email(
+        person.email,
+        f"Your certificate — {course_title}",
+        html,
+        text_body=text,
+        db=db,
+        attachments=[("certificate.pdf", pdf, "application/pdf")],
+    )

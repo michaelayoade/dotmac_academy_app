@@ -42,8 +42,13 @@ def send_email_detailed(
     html_body: str,
     text_body: str | None = None,
     db: Session | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> EmailResult:
-    """Send an email and return operator-facing delivery diagnostics."""
+    """Send an email and return operator-facing delivery diagnostics.
+
+    ``attachments`` is a list of ``(filename, data, mimetype)`` tuples, e.g.
+    ``("certificate.pdf", pdf_bytes, "application/pdf")``.
+    """
     from app.services.settings_store import effective
 
     cfg = effective(db)
@@ -62,6 +67,11 @@ def send_email_detailed(
         email_msg["Subject"] = subject
         email_msg.set_content(text_body or "This message requires an HTML-capable email client.")
         email_msg.add_alternative(html_body, subtype="html")
+        for filename, data, mimetype in attachments or []:
+            maintype, _, subtype = mimetype.partition("/")
+            email_msg.add_attachment(
+                data, maintype=maintype or "application", subtype=subtype or "octet-stream", filename=filename
+            )
 
         with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as smtp:
             if cfg.smtp_starttls:
@@ -82,8 +92,9 @@ def send_email(
     html_body: str,
     text_body: str | None = None,
     db: Session | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> bool:
-    """Send an HTML email (with optional plain-text alternative).
+    """Send an HTML email (with optional plain-text alternative + attachments).
 
     SMTP config is read from the platform settings store (DB-over-env) when a
     ``db`` session is supplied; otherwise the env/config defaults in
@@ -98,6 +109,7 @@ def send_email(
         html_body,
         text_body=text_body,
         db=db,
+        attachments=attachments,
     ).sent
 
 
@@ -140,8 +152,7 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
             .select_from(Score)
             .join(
                 Submission,
-                (Submission.id == Score.submission_id)
-                & (Submission.tenant_id == Score.tenant_id),
+                (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id),
             )
             .where(Score.tenant_id == score.tenant_id)
             .where(Submission.activity_id == activity.id)
@@ -169,6 +180,7 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
         )
         try:
             from app.services.notifications import notify as _notify
+
             _notify(
                 db,
                 tenant_id=score.tenant_id,
@@ -222,8 +234,7 @@ def render_cohort_html(matrix: dict) -> str:
         parts.append('<tr><td colspan="3">No enrolled students.</td></tr>')
     for row in rows:
         parts.append(
-            f"<tr><td>{row['name']}</td><td>{row['email']}</td>"
-            f"<td>{row['completion'] * 100:.0f}%</td></tr>"
+            f"<tr><td>{row['name']}</td><td>{row['email']}</td>" f"<td>{row['completion'] * 100:.0f}%</td></tr>"
         )
     parts.append("</table>")
     return "\n".join(parts)
