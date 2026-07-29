@@ -65,6 +65,10 @@ jobs:
         if: '!cancelled()'
         run: poetry run mypy
 
+      - name: Dependency audit
+        if: '!cancelled()'
+        run: poetry run pip-audit
+
       - name: Tests
         if: '!cancelled()'
         run: poetry run pytest -q

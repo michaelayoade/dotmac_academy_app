@@ -2,11 +2,12 @@
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import func, select
 
 from app.models.assessment import Activity, Question, QuestionBank
 from app.models.course import Course
+from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
-from app.services import email as email_mod
 from app.services.assessment import best_scores_for, override_score, submit_activity
 
 
@@ -41,25 +42,33 @@ def test_submit_and_best(admin_session, tenant_a):
     admin_session.rollback()
 
 
-def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a, monkeypatch):
-    """First passing submit emails the student exactly once; a later pass does not."""
-    calls = []
-    monkeypatch.setattr(email_mod, "send_email",
-                        lambda to, subject, html, text_body=None: calls.append(to) or True)
+def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a):
+    """First passing submit queues one durable email; a later pass does not duplicate it."""
     c, act = _seed(admin_session, tenant_a.id)
     p = Person(tenant_id=tenant_a.id, email="pass@stu.edu", first_name="Pa", last_name="Ss")
     admin_session.add(p)
     admin_session.flush()
 
-    # Fail first → no email (each attempt is now scored).
+    def queued() -> int:
+        return int(
+            admin_session.scalar(
+                select(func.count())
+                .select_from(EmailOutbox)
+                .where(EmailOutbox.tenant_id == tenant_a.id)
+                .where(EmailOutbox.kind == "score_pass")
+            )
+            or 0
+        )
+
+    # Fail first → no delivery intent (each attempt is now scored).
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["B"]})
-    assert calls == []
-    # First pass → one email.
+    assert queued() == 0
+    # First pass → one transactional delivery intent.
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
-    assert calls == ["pass@stu.edu"]
+    assert queued() == 1
     # Second pass → still just one (deduped on prior passing scores).
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id, activity=act, answers={"q1": ["A"]})
-    assert calls == ["pass@stu.edu"]
+    assert queued() == 1
     admin_session.rollback()
 
 
@@ -83,7 +92,15 @@ def test_best_is_highest_not_latest(admin_session, tenant_a):
 
 def test_override_score_threshold_and_tenant_validation(admin_session, tenant_a):
     """override_score computes passed vs real threshold and rejects foreign submission_ids."""
-    person_id = uuid4()
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="override@stu.edu",
+        first_name="Over",
+        last_name="Ride",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    person_id = person.id
     c, act = _seed(admin_session, tenant_a.id)  # act has pass_threshold=0.6
     # Create a real submission via submit_activity
     submit_activity(admin_session, tenant_id=tenant_a.id, person_id=person_id,

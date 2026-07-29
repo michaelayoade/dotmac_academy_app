@@ -17,6 +17,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.attempt import ActivityAttempt
+from app.models.person import Person
+
+
+def _lock_learner(db: Session, *, tenant_id: UUID, person_id: UUID) -> None:
+    db.execute(
+        select(Person.id)
+        .where(Person.tenant_id == tenant_id)
+        .where(Person.id == person_id)
+        .with_for_update()
+    )
 
 
 def _open_attempt(db: Session, *, tenant_id: UUID, person_id: UUID, activity_id: UUID):
@@ -35,6 +45,7 @@ def open_or_create_attempt(
     all_ext_ids: list[str], count: int, now: datetime | None = None,
 ) -> ActivityAttempt:
     """Return the learner's open attempt, creating one with a random subset if none."""
+    _lock_learner(db, tenant_id=tenant_id, person_id=person_id)
     existing = _open_attempt(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity_id)
     if existing is not None:
         return existing
@@ -54,6 +65,7 @@ def close_open_attempt(
     now: datetime | None = None,
 ) -> ActivityAttempt | None:
     """Mark the learner's open attempt submitted and return it (or None if none)."""
+    _lock_learner(db, tenant_id=tenant_id, person_id=person_id)
     attempt = _open_attempt(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity_id)
     if attempt is None:
         return None

@@ -56,6 +56,7 @@
           <th scope="col" class="px-4 py-3">Applied</th>
           <th scope="col" class="px-4 py-3">Assessment</th>
           <th scope="col" class="px-4 py-3">Profile</th>
+          <th scope="col" class="px-4 py-3">Next action</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-sand-200 bg-white">
@@ -68,7 +69,7 @@
             <p class="mt-1 text-xs text-ink-soft">{{ applicant.phone }}</p>
             {% endif %}
           </td>
-          <td class="px-4 py-4 text-ink-soft">{{ applicant.program or "Fiber Academy" }}</td>
+          <td class="px-4 py-4 text-ink-soft">{{ applicant.program or "Not assigned" }}</td>
           <td class="px-4 py-4">
             <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">{{ applicant.status }}</span>
           </td>
@@ -90,10 +91,18 @@
             <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Incomplete</span>
             {% endif %}
           </td>
+          <td class="px-4 py-4">
+            <a class="font-semibold text-brand-600 underline" href="/admin/applications/{{ applicant.id }}">Review</a>
+            {% if applicant.assessment_invalid_reason %}
+            <p class="mt-1 text-xs text-clay-600">Invalid sitting: {{ applicant.assessment_invalid_reason }}</p>
+            {% elif applicant.status == "waitlisted" %}
+            <p class="mt-1 text-xs text-ink-soft">Accept, reject, or retain</p>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" class="px-4 py-10 text-center text-ink-soft">{% if filter_error %}{{ filter_error }}{% else %}No applications found.{% endif %}</td>
+          <td colspan="7" class="px-4 py-10 text-center text-ink-soft">{% if filter_error %}{{ filter_error }}{% else %}No applications found.{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

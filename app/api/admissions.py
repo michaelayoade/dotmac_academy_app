@@ -1,8 +1,6 @@
-"""Admissions API — public application intake + admin pipeline management.
+"""Authenticated Academy administrator admissions API.
 
-``POST /admissions/apply`` is PUBLIC (no login): the tenant is resolved from the
-host by ``TenantResolverMiddleware`` and primed for RLS by ``get_db``, exactly
-like ``POST /auth/register``. Everything else is admin-only.
+Public intake has one canonical adapter: the complete ``/apply`` web flow.
 """
 
 from __future__ import annotations
@@ -10,7 +8,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -30,14 +28,6 @@ router = APIRouter(
 )
 
 
-class ApplicationSubmit(BaseModel):
-    email: EmailStr
-    first_name: str = Field(min_length=1, max_length=80)
-    last_name: str = Field(min_length=1, max_length=80)
-    phone: str | None = Field(default=None, max_length=40)
-    program: str | None = Field(default=None, max_length=120)
-
-
 class ApplicantRead(BaseModel):
     id: UUID
     email: EmailStr
@@ -51,6 +41,7 @@ class ApplicantRead(BaseModel):
     person_id: UUID | None = None
     # Entrance-assessment result (the candidate competency profile).
     cohort_id: UUID | None = None
+    track_id: UUID | None = None
     assessment_score: float | None = None
     assessment_level: str | None = None
     assessment_profile: dict | None = None
@@ -109,25 +100,6 @@ class OnboardingTaskUpdate(BaseModel):
     status: str = Field(min_length=1, max_length=10)
 
 
-@router.post("/apply", response_model=ApplicantRead, status_code=status.HTTP_201_CREATED)
-def apply(
-    payload: ApplicationSubmit,
-    db: Session = Depends(get_db),
-    tenant: Tenant = Depends(require_tenant),
-) -> object:
-    """Public application intake. Idempotent on email (a re-apply updates details)."""
-    return admissions_service.submit_application(
-        db,
-        tenant_id=tenant.id,  # from request state, never the payload
-        email=payload.email,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        phone=payload.phone,
-        program=payload.program,
-        source="website",
-    )
-
-
 @router.get("", response_model=list[ApplicantRead])
 def list_applicants(
     status: str | None = Query(default=None),
@@ -154,7 +126,7 @@ def transition_applicant(
     payload: ApplicantTransition,
     request: Request,
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
+    actor: Person = Depends(require_role("admin")),
 ) -> object:
     """Advance an applicant through the pipeline (screen / accept / reject / etc.).
 
@@ -167,6 +139,8 @@ def transition_applicant(
         applicant_id=applicant_id,
         to_status=payload.to_status,
         notes=payload.notes,
+        actor_person_id=actor.id,
+        source="admin_api",
     )
     if payload.to_status == "onboarding":
         raw = admissions_service.mint_onboarding_token(db, applicant=applicant)
@@ -180,10 +154,15 @@ def enroll_applicant(
     applicant_id: UUID,
     payload: ApplicantEnroll,
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
+    actor: Person = Depends(require_role("admin")),
 ) -> object:
     """Enrol an onboarding applicant: create/reuse a Person + Enrollment."""
-    return admissions_service.enroll_applicant(db, applicant_id=applicant_id, cohort_id=payload.cohort_id)
+    return admissions_service.enroll_applicant(
+        db,
+        applicant_id=applicant_id,
+        cohort_id=payload.cohort_id,
+        actor_person_id=actor.id,
+    )
 
 
 @router.get("/{applicant_id}/onboarding", response_model=list[OnboardingTaskRead])

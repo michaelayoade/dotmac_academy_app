@@ -1,9 +1,15 @@
-# ADR 0001 — Multi-Tenant Architecture
+# ADR 0001 — Multi-Tenant Architecture (historical foundation)
 
-**Status:** Accepted
+**Status:** Superseded for Academy deployment topology by ADR 0002; RLS isolation retained
 **Date:** 2026-05-04
 **Supersedes:** N/A
-**Successor of:** None — this is the founding decision for `dotmac_starter_mt`.
+**Superseded by:** [ADR 0002 — Single-Academy Deployment](0002-single-academy-deployment.md)
+
+> This document records the starter architecture from which the Academy app
+> evolved. It is not the current deployment contract. ADR 0002 removes public
+> tenant provisioning, public self-registration, and multi-customer routing.
+> Tenant-aware foreign keys and PostgreSQL RLS remain mandatory defence in
+> depth and as isolation canaries.
 
 ## Context
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,29 +26,19 @@ def require_tenant(request: Request) -> Tenant:
     return tenant
 
 
-def require_platform(request: Request) -> None:
-    """For routes that operate platform-wide (no tenant context).
-
-    Real implementations should additionally check a `platform_admin` role on the
-    actor — stubbed here.
-    """
-    if getattr(request.state, "tenant", None) is not None:
-        raise HTTPException(
-            status_code=404,
-            detail="Platform routes are not available on tenant subdomains",
-        )
+_bearer = HTTPBearer(auto_error=False)
 
 
 def require_user_auth(
     request: Request,
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
     db: Session = Depends(get_db),
 ) -> Person:
     """Validate JWT/session and return the tenant-local person."""
     tenant = require_tenant(request)
-    token = _bearer_token(authorization)
-    if token is None:
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    token = credentials.credentials
 
     payload = decode_access_token(token)
     if payload is None or payload.get("tenant_id") != str(tenant.id):
@@ -106,21 +97,10 @@ def require_role(role_slug: str):
 
     return _dependency
 
-
-def _bearer_token(authorization: str | None) -> str | None:
-    if not authorization:
-        return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        return None
-    return token
-
-
 __all__ = [
     "Depends",
     "get_db",
     "get_platform_db",
-    "require_platform",
     "require_role",
     "require_tenant",
     "require_user_auth",

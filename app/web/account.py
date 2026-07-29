@@ -43,6 +43,7 @@ MAX_AVATAR_BYTES = 1024 * 1024  # 1 MB
 
 def _flash(request: Request, ok: bool, message: str) -> HTMLResponse:
     return templates.TemplateResponse(
+        request,
         "account/_flash.html",
         {"request": request, "ok": ok, "message": message},
     )
@@ -81,6 +82,7 @@ def profile_form(
     db: Session = Depends(get_db),
 ):
     return templates.TemplateResponse(
+        request,
         "account/profile.html", _profile_context(request, db, person)
     )
 
@@ -99,6 +101,7 @@ def profile_save(
     db.flush()
     # No db.commit() here — get_db commits after the response is returned.
     return templates.TemplateResponse(
+        request,
         "account/_flash.html",
         {"request": request, "ok": True, "message": "Profile updated."},
     )
@@ -110,6 +113,7 @@ def password_form(
     person: Person = Depends(require_web_user),
 ):
     return templates.TemplateResponse(
+        request,
         "account/password.html", {"request": request, "person": person}
     )
 
@@ -193,6 +197,7 @@ def notifications_form(
     person: Person = Depends(require_web_user),
 ):
     return templates.TemplateResponse(
+        request,
         "account/notifications.html",
         {"request": request, "person": person, "prefs": person.prefs or {}},
     )

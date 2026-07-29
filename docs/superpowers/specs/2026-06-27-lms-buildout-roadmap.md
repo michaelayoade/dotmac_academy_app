@@ -3,6 +3,10 @@
 Date: 2026-06-27
 Branch: `feat/lms-buildout`
 
+> Historical implementation roadmap. Current deployment and ownership rules
+> are defined by `docs/adr/0002-single-academy-deployment.md` and
+> `docs/SOT_RELATIONSHIP_MAP.md`.
+
 Addresses the 10 findings from the LMS readiness review. The work is decomposed
 into 5 dependency-ordered slices. Each slice gets its own spec + plan + TDD
 implementation, committed incrementally on this branch.
@@ -58,9 +62,8 @@ implementation, committed incrementally on this branch.
   complete** (draft/publish + in-app editor + versioning). **Remaining:** #9
   engagement-event tracking, cohort trends over time, scheduled reporting.
 
-Migrations through `0014`. Test suite green except 7 pre-existing baseline
-failures (platform_admin_token config + email-CLI db url) that fail on pristine
-HEAD and are unrelated to this branch.
+This status snapshot predates the single-Academy security remediation and is
+retained only as implementation history.
 
 ## Conventions (from the codebase)
 

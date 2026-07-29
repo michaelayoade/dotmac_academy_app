@@ -52,5 +52,6 @@ def admin_console(request: Request, db: Session = Depends(get_db)):
         "labs": _count(LabInstance, LabInstance.status.in_(("active", "provisioning"))),
     }
     return templates.TemplateResponse(
+        request,
         "admin/console.html", {"request": request, "stats": stats}
     )

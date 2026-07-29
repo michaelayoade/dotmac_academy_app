@@ -8,11 +8,13 @@ from app.models.class_session import ClassSession  # noqa: F401
 from app.models.cohort import Cohort, Enrollment  # noqa: F401
 from app.models.completion import CourseCompletion  # noqa: F401
 from app.models.course import Chapter, Course  # noqa: F401
+from app.models.email_outbox import EmailOutbox  # noqa: F401
 from app.models.lab import LabInstance, LabTemplate  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.offering import CourseOffering  # noqa: F401
 from app.models.onboarding import OnboardingTask  # noqa: F401
 from app.models.pacing import OfferingActivity  # noqa: F401
+from app.models.platform_settings import PlatformSetting  # noqa: F401
 from app.models.prerequisite import CoursePrerequisite  # noqa: F401
 from app.models.reading import ChapterRead  # noqa: F401
 from app.models.tenant import Tenant, TenantDomain  # noqa: F401

@@ -10,45 +10,55 @@ from sqlalchemy import text
 
 from tests.conftest import client_for
 
-_PW = "correct horse battery staple"
-
-
-def _admin(client, slug):
-    c = client_for(client, slug)
-    c.post(
-        "/auth/register",
-        json={"email": f"adm@{slug}.ex", "password": _PW, "first_name": "Ad", "last_name": "Min"},
-    )
-    tok = c.post("/auth/login", json={"email": f"adm@{slug}.ex", "password": _PW}).json()["access_token"]
-    return {"Authorization": f"Bearer {tok}"}
-
 
 def _cohort(admin_session, tenant, name="Fiber intake"):
     from app.models.cohort import Cohort
+    from app.models.track import CohortTrack, Track
 
     admin_session.rollback()
     c = Cohort(tenant_id=tenant.id, name=name, discipline="fiber", status="active")
     admin_session.add(c)
+    admin_session.flush()
+    track = Track(
+        tenant_id=tenant.id,
+        slug=f"fiber-{c.id}",
+        name="Fiber",
+        status="active",
+    )
+    admin_session.add(track)
+    admin_session.flush()
+    admin_session.add(
+        CohortTrack(
+            tenant_id=tenant.id,
+            cohort_id=c.id,
+            track_id=track.id,
+            status="active",
+        )
+    )
     admin_session.commit()
     admin_session.refresh(c)
-    return c
+    admin_session.refresh(track)
+    return c, track
 
 
 def _applicant_in_onboarding(client, auth, admin_session, tenant, email):
     """Apply + advance to onboarding via the admin API; return (app_id, portal_token)."""
-    cohort = _cohort(admin_session, tenant)
+    from app.services import admissions as admissions_service
+
+    cohort, track = _cohort(admin_session, tenant)
     a = client_for(TestClient(client.app), tenant.slug)
-    app_id = a.post(
-        "/admissions/apply",
-        json={"email": email, "first_name": "On", "last_name": "Boarder"},
-    ).json()["id"]
-    # Attach the cohort so auto-enrol knows the target.
     admin_session.rollback()
-    admin_session.execute(
-        text("UPDATE applicants SET cohort_id=:c WHERE id=:a"),
-        {"c": str(cohort.id), "a": app_id},
+    applicant = admissions_service.submit_application(
+        admin_session,
+        tenant_id=tenant.id,
+        email=email,
+        first_name="On",
+        last_name="Boarder",
+        cohort_id=cohort.id,
+        track_id=track.id,
     )
     admin_session.commit()
+    app_id = str(applicant.id)
     for nxt in ("screened", "accepted", "onboarding"):
         r = a.post(f"/admissions/{app_id}/transition", json={"to_status": nxt}, headers=auth)
         assert r.status_code == 200, r.text
@@ -57,8 +67,6 @@ def _applicant_in_onboarding(client, auth, admin_session, tenant, email):
     from uuid import UUID
 
     from app.models.admissions import Applicant
-    from app.services import admissions as admissions_service
-
     admin_session.rollback()
     applicant = admin_session.get(Applicant, UUID(app_id))
     raw = admissions_service.mint_onboarding_token(admin_session, applicant=applicant)
@@ -73,13 +81,28 @@ def test_portal_requires_valid_token(app_client, tenant_a):
     assert "Link not valid" in r.text
 
 
-def test_transition_to_onboarding_mints_portal_token(app_client, tenant_a, admin_session):
-    auth = _admin(app_client, tenant_a.slug)
+def test_transition_to_onboarding_mints_portal_token(
+    app_client,
+    tenant_a,
+    admin_session,
+    api_actor,
+):
+    auth = api_actor(app_client, tenant_a)["headers"]
     a = client_for(TestClient(app_client.app), tenant_a.slug)
-    app_id = a.post(
-        "/admissions/apply",
-        json={"email": "mint@a.ex", "first_name": "Mi", "last_name": "Nt"},
-    ).json()["id"]
+    from app.services import admissions as admissions_service
+
+    cohort, track = _cohort(admin_session, tenant_a)
+    applicant = admissions_service.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="mint@a.ex",
+        first_name="Mi",
+        last_name="Nt",
+        cohort_id=cohort.id,
+        track_id=track.id,
+    )
+    admin_session.commit()
+    app_id = str(applicant.id)
     for nxt in ("screened", "accepted", "onboarding"):
         a.post(f"/admissions/{app_id}/transition", json={"to_status": nxt}, headers=auth)
     admin_session.rollback()
@@ -89,8 +112,8 @@ def test_transition_to_onboarding_mints_portal_token(app_client, tenant_a, admin
     assert got  # minted on entering onboarding
 
 
-def test_portal_renders_checklist(app_client, tenant_a, admin_session):
-    auth = _admin(app_client, tenant_a.slug)
+def test_portal_renders_checklist(app_client, tenant_a, admin_session, api_actor):
+    auth = api_actor(app_client, tenant_a)["headers"]
     app_id, token = _applicant_in_onboarding(app_client, auth, admin_session, tenant_a, "check@a.ex")
     a = client_for(TestClient(app_client.app), tenant_a.slug)
     r = a.get(f"/onboarding?token={token}")
@@ -100,8 +123,13 @@ def test_portal_renders_checklist(app_client, tenant_a, admin_session):
     assert "check@a.ex" in r.text
 
 
-def test_completing_checklist_auto_enrolls_and_invites(app_client, tenant_a, admin_session):
-    auth = _admin(app_client, tenant_a.slug)
+def test_completing_checklist_auto_enrolls_and_invites(
+    app_client,
+    tenant_a,
+    admin_session,
+    api_actor,
+):
+    auth = api_actor(app_client, tenant_a)["headers"]
     app_id, token = _applicant_in_onboarding(app_client, auth, admin_session, tenant_a, "auto@a.ex")
     a = client_for(TestClient(app_client.app), tenant_a.slug)
 
@@ -161,9 +189,14 @@ def test_completing_checklist_auto_enrolls_and_invites(app_client, tenant_a, adm
     assert "enrolled" in r.text.lower()
 
 
-def test_invite_token_activates_student_login(app_client, tenant_a, admin_session):
+def test_invite_token_activates_student_login(
+    app_client,
+    tenant_a,
+    admin_session,
+    api_actor,
+):
     """The set-password link from auto-enrolment actually opens the account."""
-    auth = _admin(app_client, tenant_a.slug)
+    auth = api_actor(app_client, tenant_a)["headers"]
     app_id, token = _applicant_in_onboarding(app_client, auth, admin_session, tenant_a, "login@a.ex")
     a = client_for(TestClient(app_client.app), tenant_a.slug)
     admin_session.rollback()

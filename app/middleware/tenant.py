@@ -1,13 +1,12 @@
 """Tenant resolver middleware.
 
 Resolves a Tenant from the incoming Host header and attaches it to `request.state.tenant`.
-Routes that require a tenant use `Depends(require_tenant)`; platform routes assert
-`request.state.tenant is None`.
+Routes that require a tenant use `Depends(require_tenant)`.
 
 Resolution order:
 1. Custom domain match in `tenant_domains.verified_at IS NOT NULL`
 2. Subdomain extraction against PLATFORM_ROOT_DOMAIN
-3. Host == PLATFORM_ROOT_DOMAIN → no tenant (platform routes only)
+3. Host == PLATFORM_ROOT_DOMAIN → no tenant (health checks only)
 4. Otherwise: 404
 """
 
@@ -32,17 +31,13 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._root = settings.platform_root_domain.lower().lstrip(".")
+        self._single_tenant_slug = settings.academy_tenant_slug.strip().lower()
 
     async def dispatch(self, request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
         request.state.tenant = self._resolve(host)
 
-        # Platform paths are allowed without a tenant.
-        if request.state.tenant is None and not _is_platform_path(
-            request.url.path,
-            host,
-            self._root,
-        ):
+        if request.state.tenant is None and request.url.path not in {"/health", "/health/ready"}:
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Tenant not found"},
@@ -64,20 +59,21 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
                 .limit(1)
             ).first()
             if tenant is not None:
-                return tenant
+                return self._allow_single_tenant(tenant)
 
             # 2. Subdomain on platform_root_domain
             suffix = "." + self._root
             if host.endswith(suffix):
                 slug = host[: -len(suffix)]
                 if slug and "." not in slug:  # reject nested subdomains
-                    return db.scalars(
+                    tenant = db.scalars(
                         select(Tenant)
                         .where(Tenant.slug == slug)
                         .where(Tenant.is_active.is_(True))
                         .where(Tenant.deleted_at.is_(None))
                         .limit(1)
                     ).first()
+                    return self._allow_single_tenant(tenant)
 
             # 3. Host == root domain → platform context
             if host == self._root:
@@ -86,9 +82,10 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
             # 4. Unknown host → caller decides (will 404)
             return None
 
-
-def _is_platform_path(path: str, host: str, root: str) -> bool:
-    """Routes that are valid without a resolved tenant."""
-    if host == root:
-        return True
-    return path.startswith("/platform/") or path in {"/health", "/health/ready", "/"}
+    def _allow_single_tenant(self, tenant: Tenant | None) -> Tenant | None:
+        if tenant is None:
+            return None
+        if self._single_tenant_slug and tenant.slug != self._single_tenant_slug:
+            logger.warning("rejected non-Academy tenant host for slug=%s", tenant.slug)
+            return None
+        return tenant

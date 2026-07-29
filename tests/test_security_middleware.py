@@ -10,6 +10,9 @@ from uuid import uuid4
 from app.middleware.csrf import CSRF_COOKIE, CSRFMiddleware
 from app.middleware.observability import ObservabilityMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.tenant import TenantResolverMiddleware
+from app.models.tenant import Tenant
 
 
 def test_csrf_sets_cookie_on_safe_request_and_blocks_cookie_post_without_header():
@@ -90,6 +93,32 @@ def test_observability_can_trust_inbound_request_id():
     )
     assert response["status"] == 200
     assert (b"x-request-id", b"req-123") in response["headers"]
+
+
+def test_security_headers_cover_browser_responses():
+    response = _run(
+        SecurityHeadersMiddleware(_ok_app, hsts=True),
+        method="GET",
+        path="/",
+    )
+    headers = dict(response["headers"])
+    assert b"default-src 'self'" in headers[b"content-security-policy"]
+    assert headers[b"x-content-type-options"] == b"nosniff"
+    assert headers[b"x-frame-options"] == b"DENY"
+    assert headers[b"referrer-policy"] == b"strict-origin-when-cross-origin"
+    assert headers[b"strict-transport-security"] == b"max-age=31536000; includeSubDomains"
+
+
+def test_single_academy_slug_rejects_other_tenant(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "academy_tenant_slug", "alpha")
+    middleware = TenantResolverMiddleware(_ok_app)
+    alpha = Tenant(slug="alpha", name="Alpha")
+    beta = Tenant(slug="beta", name="Beta")
+
+    assert middleware._allow_single_tenant(alpha) is alpha
+    assert middleware._allow_single_tenant(beta) is None
 
 
 async def _ok_app(scope, receive, send) -> None:

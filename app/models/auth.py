@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,8 @@ class UserCredential(Base, TimestampMixin):
     )
     email: Mapped[str] = mapped_column(String(254), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuthSession(Base, TimestampMixin):

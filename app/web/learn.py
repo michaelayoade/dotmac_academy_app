@@ -206,6 +206,7 @@ def home(
     latest_announcements = ann_svc.for_person(db, tenant_id=tenant.id, person_id=person.id, limit=3)
 
     return templates.TemplateResponse(
+        request,
         "learn/home.html",
         {
             "request": request,
@@ -316,6 +317,7 @@ def chapter(
         primary_item = next((item for item in activity_items if item["activity"].id == act.id), None)
         activity_taken = bool(primary_item and primary_item["attempts"] > 0)
     return templates.TemplateResponse(
+        request,
         "chapter.html",
         {
             "request": request, "course": course, "chapter": ch, "activity": act,
@@ -363,6 +365,7 @@ def chapter_complete(
         done = False
     db.flush()
     return templates.TemplateResponse(
+        request,
         "_mark_complete.html",
         {"request": request, "course": course, "chapter": ch, "completed": done},
     )
@@ -400,6 +403,7 @@ def activity(
         order = {eid: i for i, eid in enumerate(attempt.question_ext_ids)}
         qs = sorted((q for q in qs if q.ext_id in order), key=lambda q: order[q.ext_id])
     return templates.TemplateResponse(
+        request,
         "activity.html", {"request": request, "activity": act, "questions": qs}
     )
 
@@ -422,10 +426,6 @@ async def submit(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     require_activity_submittable(db, tenant_id=tenant.id, person_id=person.id,
                                  course_id=act.course_id, activity_id=act.id)
-    if act.max_attempts is not None and attempts_used(
-        db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
-    ) >= act.max_attempts:
-        raise HTTPException(status_code=403, detail="No attempts remaining")
     form = await request.form()
     # Random pool: grade exactly the subset this attempt was shown.
     only_ext_ids: list | None = None
@@ -488,6 +488,7 @@ async def submit(
             .where(CourseCompletion.course_id == course.id)
         ).first()
     return templates.TemplateResponse(
+        request,
         "_activity_result.html",
         {
             "request": request,
@@ -524,6 +525,7 @@ def progress(
             )
         )
     return templates.TemplateResponse(
+        request,
         "progress.html", {"request": request, "best": list(best.values())}
     )
 

@@ -4,6 +4,10 @@ Date: 2026-06-28
 Branch: `feat/lms-gaps` (off `feat/lms-buildout` @ `ad5ec4e`; merges back into the LMS line later)
 Repo: `dotmac_academy_app`
 
+> Historical feature-closure design. Current deployment and ownership rules
+> are defined by `docs/adr/0002-single-academy-deployment.md` and
+> `docs/SOT_RELATIONSHIP_MAP.md`.
+
 ## Goal
 
 Close the standard-LMS gaps identified in the readiness review that are **not**

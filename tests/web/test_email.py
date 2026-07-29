@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
@@ -68,12 +71,7 @@ def test_student_forbidden_on_email_route(app_client, admin_session, tenant_a):
     assert r.status_code == 403
 
 
-def test_instructor_email_student_invokes_send(app_client, admin_session, tenant_a, monkeypatch):
-    calls = []
-    import app.web.reports as reports_web
-    monkeypatch.setattr(reports_web, "send_email",
-                        lambda to, subject, html, text_body=None: calls.append(to) or True)
-
+def test_instructor_email_student_queues_delivery(app_client, admin_session, tenant_a):
     _seed_login(admin_session, tenant_a, "inst@a.edu", "instructor")
     coh, stu_a = _seed_cohort(admin_session, tenant_a.id)
     h = _login(app_client, "inst@a.edu")
@@ -83,16 +81,18 @@ def test_instructor_email_student_invokes_send(app_client, admin_session, tenant
         headers={**h, "x-csrf-token": csrf},
     )
     assert r.status_code == 200
-    assert calls == ["a@stu.edu"]
-    assert "Email sent" in r.text
+    admin_session.rollback()
+    queued = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "transcript")
+    ).one()
+    assert queued.recipient == "a@stu.edu"
+    assert queued.status == "pending"
+    assert "Email queued" in r.text
 
 
-def test_instructor_email_cohort_to_self(app_client, admin_session, tenant_a, monkeypatch):
-    calls = []
-    import app.web.reports as reports_web
-    monkeypatch.setattr(reports_web, "send_email",
-                        lambda to, subject, html, text_body=None: calls.append(to) or True)
-
+def test_instructor_email_cohort_to_self(app_client, admin_session, tenant_a):
     _seed_login(admin_session, tenant_a, "inst@a.edu", "instructor")
     coh, _ = _seed_cohort(admin_session, tenant_a.id)
     h = _login(app_client, "inst@a.edu")
@@ -102,4 +102,10 @@ def test_instructor_email_cohort_to_self(app_client, admin_session, tenant_a, mo
         headers={**h, "x-csrf-token": csrf},
     )
     assert r.status_code == 200
-    assert calls == ["inst@a.edu"]
+    admin_session.rollback()
+    queued = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "cohort_report")
+    ).one()
+    assert queued.recipient == "inst@a.edu"

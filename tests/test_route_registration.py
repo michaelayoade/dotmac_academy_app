@@ -12,7 +12,19 @@ from fastapi.routing import APIRoute
 
 from app.main import app
 
-_ROUTES = [r for r in app.routes if isinstance(r, APIRoute)]
+
+def _api_routes(routes):
+    """Flatten FastAPI's lazy included-router containers."""
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            yield from _api_routes(original_router.routes)
+
+
+_ROUTES = list(_api_routes(app.routes))
 
 
 def test_no_private_helper_is_registered_as_a_handler():

@@ -19,9 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_db, require_role, require_tenant
 from app.models.person import Person
 from app.models.tenant import Tenant
+from app.services.audit import write_audit_event
 
 router = APIRouter(
     prefix="/people",
@@ -49,6 +50,7 @@ def create_person(
     payload: PersonCreate,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
+    actor: Person = Depends(require_role("admin")),
 ) -> Person:
     person = Person(
         tenant_id=tenant.id,  # never from payload — always from request state
@@ -63,18 +65,34 @@ def create_person(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Email already registered") from exc
+    write_audit_event(
+        db,
+        tenant_id=tenant.id,
+        actor_person_id=actor.id,
+        action="person.create",
+        entity_type="person",
+        entity_id=str(person.id),
+        details={"email": person.email},
+    )
     return person
 
 
 @router.get("", response_model=list[PersonRead])
-def list_people(db: Session = Depends(get_db)) -> list[Person]:
+def list_people(
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_role("admin")),
+) -> list[Person]:
     # No explicit tenant filter — RLS does it. If RLS were misconfigured this would
     # leak; the cross-tenant test catches that.
     return list(db.scalars(select(Person).order_by(Person.created_at.desc())).all())
 
 
 @router.get("/{person_id}", response_model=PersonRead)
-def get_person(person_id: UUID, db: Session = Depends(get_db)) -> Person:
+def get_person(
+    person_id: UUID,
+    db: Session = Depends(get_db),
+    _: Person = Depends(require_role("admin")),
+) -> Person:
     person = db.get(Person, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -82,8 +100,22 @@ def get_person(person_id: UUID, db: Session = Depends(get_db)) -> Person:
 
 
 @router.delete("/{person_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-def delete_person(person_id: UUID, db: Session = Depends(get_db)) -> None:
+def delete_person(
+    person_id: UUID,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    actor: Person = Depends(require_role("admin")),
+) -> None:
     person = db.get(Person, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")
+    write_audit_event(
+        db,
+        tenant_id=tenant.id,
+        actor_person_id=actor.id,
+        action="person.delete",
+        entity_type="person",
+        entity_id=str(person.id),
+        details={"email": person.email},
+    )
     db.delete(person)

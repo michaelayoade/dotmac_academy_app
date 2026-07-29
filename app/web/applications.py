@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import date
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.admissions import APPLICANT_STATUSES
+from app.models.person import Person
 from app.services import admissions as admissions_service
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
@@ -55,6 +57,7 @@ def applications_page(
             rank_by_score=rank,
         )
     return templates.TemplateResponse(
+        request,
         "admin/applications.html",
         {
             "request": request,
@@ -68,3 +71,77 @@ def applications_page(
             "rank": rank,
         },
     )
+
+
+@router.get("/{applicant_id}", response_class=HTMLResponse)
+def application_detail(
+    applicant_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    applicant = admissions_service.get_applicant(db, applicant_id=applicant_id)
+    return templates.TemplateResponse(
+        request,
+        "admin/application_detail.html",
+        {
+            "request": request,
+            "applicant": applicant,
+            "actions": admissions_service.admin_review_actions(
+                applicant,
+                placement_ready=admissions_service.has_active_intake(
+                    db,
+                    applicant=applicant,
+                ),
+            ),
+            "intake_choices": admissions_service.active_intake_choices(
+                db,
+                tenant_id=applicant.tenant_id,
+            ),
+            "history": admissions_service.applicant_transition_history(db, applicant=applicant),
+        },
+    )
+
+
+@router.post("/{applicant_id}/intake")
+def application_intake(
+    applicant_id: UUID,
+    request: Request,
+    intake_choice: str = Form(...),
+    reason: str = Form(""),
+    actor: Person = Depends(require_web_role("admin")),
+    db: Session = Depends(get_db),
+):
+    try:
+        cohort_raw, track_raw = intake_choice.split(":", 1)
+        cohort_id, track_id = UUID(cohort_raw), UUID(track_raw)
+    except (AttributeError, ValueError):
+        raise HTTPException(status_code=400, detail="Choose an active cohort and track.") from None
+    admissions_service.assign_applicant_intake(
+        db,
+        applicant_id=applicant_id,
+        cohort_id=cohort_id,
+        track_id=track_id,
+        actor_person_id=actor.id,
+        reason=reason.strip() or None,
+    )
+    return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)
+
+
+@router.post("/{applicant_id}/action")
+def application_action(
+    applicant_id: UUID,
+    request: Request,
+    action: str = Form(...),
+    reason: str = Form(""),
+    actor: Person = Depends(require_web_role("admin")),
+    db: Session = Depends(get_db),
+):
+    admissions_service.apply_admin_review_action(
+        db,
+        applicant_id=applicant_id,
+        action=action,
+        actor_person_id=actor.id,
+        base_url=str(request.base_url).rstrip("/"),
+        reason=reason.strip() or None,
+    )
+    return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)

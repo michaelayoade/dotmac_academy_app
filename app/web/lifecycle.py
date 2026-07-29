@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.services import lifecycle
+from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, ConflictError
+from app.services.security import hash_token
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +77,20 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
     if raw is not None:
         # Best-effort email; never block on delivery and never reveal existence.
         try:
-            from app.services.email import send_email
             link = str(request.url_for("reset_form").include_query_params(token=raw))
             escaped_link = escape(link, quote=True)
-            send_email(
-                to=email.strip().lower(),
+            enqueue_email(
+                db,
+                tenant_id=tenant.id,
+                idempotency_key=f"password-reset:{hash_token(raw)}",
+                kind="password_reset",
+                recipient=email.strip().lower(),
                 subject="Reset your password",
                 html_body=(
                     "<p>Reset your password: "
                     f"<a href='{escaped_link}'>{escaped_link}</a></p>"
                 ),
                 text_body=f"Reset your password: {link}\n",
-                db=db,
             )
         except Exception as exc:
             logger.debug("password-reset email send failed: %s", exc)

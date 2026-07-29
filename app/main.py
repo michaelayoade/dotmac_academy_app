@@ -1,11 +1,12 @@
 """FastAPI app entrypoint.
 
 Middleware order (outermost → innermost):
-1. ObservabilityMiddleware — request id + structured request logs
-2. TrustedHostMiddleware — drops requests to unknown hosts (prod)
-3. TenantResolverMiddleware — sets request.state.tenant
-4. RateLimitMiddleware — tenant/ip/path keyed budget
-5. CSRFMiddleware — double-submit guard for browser-cookie flows
+1. SecurityHeadersMiddleware — browser response policy
+2. ObservabilityMiddleware — request id + structured request logs
+3. TrustedHostMiddleware — drops requests to unknown hosts (prod)
+4. TenantResolverMiddleware — sets request.state.tenant
+5. RateLimitMiddleware — tenant/ip/path keyed budget
+6. CSRFMiddleware — double-submit guard for browser-cookie flows
 """
 
 from __future__ import annotations
@@ -22,11 +23,11 @@ from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
-from app.api.tenants import router as tenants_router
 from app.config import settings, validate_settings
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.observability import ObservabilityMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.tenant import TenantResolverMiddleware
 from app.services.exceptions import (
     BadRequestError,
@@ -94,6 +95,7 @@ app.add_middleware(
     ObservabilityMiddleware,
     trust_inbound_request_id=settings.trust_inbound_request_id,
 )
+app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)
 
 
 # Domain exception handlers — same envelope shape as dotmac_starter.
@@ -124,7 +126,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-app.include_router(tenants_router)
 app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(admissions_router)

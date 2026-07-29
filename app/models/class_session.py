@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -44,6 +45,8 @@ class ClassSession(Base, TimestampMixin):
             ondelete="CASCADE",
             name="fk_class_sessions_tenant_cohort",
         ),
+        Index("ix_class_sessions_cohort_start", "tenant_id", "cohort_id", "starts_at"),
+        Index("ix_class_sessions_instructor", "tenant_id", "instructor_person_id"),
     )
 
     id: Mapped[UUID] = uuid_pk()
@@ -53,7 +56,7 @@ class ClassSession(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    cohort_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    cohort_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     # Optional link to a specific course run; NULL = a cohort-wide session
     # (orientation, review) not tied to one course.
     offering_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)

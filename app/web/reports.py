@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
@@ -26,7 +26,8 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
-from app.services.email import render_cohort_html, render_transcript_html, send_email
+from app.services.email import render_cohort_html, render_transcript_html
+from app.services.email_outbox import enqueue_email
 from app.services.reports import cohort_matrix, student_transcript
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -63,6 +64,7 @@ def reports_index(
     _require_instructor_or_admin(db, tenant.id, person.id)
     cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
     return templates.TemplateResponse(
+        request,
         "instructor/reports_index.html", {"request": request, "cohorts": cohorts}
     )
 
@@ -110,6 +112,7 @@ def reports_cohort(
     _require_instructor_or_admin(db, tenant.id, person.id)
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
+        request,
         "instructor/reports_cohort.html", {"request": request, **matrix}
     )
 
@@ -126,12 +129,17 @@ def reports_student_email(
     _require_instructor_or_admin(db, tenant.id, person.id)
     transcript = student_transcript(db, tenant_id=tenant.id, person_id=person_id)
     student = transcript["person"]
-    sent = send_email(
-        student.email,
-        f"Your Dotmac Academy transcript — {student.first_name} {student.last_name}".strip(),
-        render_transcript_html(transcript),
+    sent = enqueue_email(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=f"transcript:{student.id}:{uuid4()}",
+        kind="transcript",
+        recipient=student.email,
+        subject=f"Your Dotmac Academy transcript — {student.first_name} {student.last_name}".strip(),
+        html_body=render_transcript_html(transcript),
     )
     return templates.TemplateResponse(
+        request,
         "instructor/_email_result.html",
         {"request": request, "sent": sent, "to": student.email},
     )
@@ -148,12 +156,17 @@ def reports_cohort_email(
     tenant = require_tenant(request)
     _require_instructor_or_admin(db, tenant.id, person.id)
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
-    sent = send_email(
-        person.email,
-        f"Cohort progress — {matrix['cohort'].name}",
-        render_cohort_html(matrix),
+    sent = enqueue_email(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=f"cohort-report:{cohort_id}:{person.id}:{uuid4()}",
+        kind="cohort_report",
+        recipient=person.email,
+        subject=f"Cohort progress — {matrix['cohort'].name}",
+        html_body=render_cohort_html(matrix),
     )
     return templates.TemplateResponse(
+        request,
         "instructor/_email_result.html",
         {"request": request, "sent": sent, "to": person.email},
     )
@@ -170,5 +183,6 @@ def reports_student(
     _require_instructor_or_admin(db, tenant.id, person.id)
     transcript = student_transcript(db, tenant_id=tenant.id, person_id=person_id)
     return templates.TemplateResponse(
+        request,
         "instructor/reports_student.html", {"request": request, **transcript}
     )

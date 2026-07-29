@@ -9,28 +9,12 @@ Proves the shell wiring is internally consistent:
 
 from __future__ import annotations
 
-import pytest
-
 from app.models.auth import UserCredential
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 from app.web.nav import areas_for_roles
-
-PLATFORM_TOKEN = "test-platform-admin-token"
-
-
-@pytest.fixture(autouse=True)
-def _platform_token(monkeypatch):
-    """Configure the platform-admin secret so /admin/settings is reachable.
-
-    (That route is gated by a separate platform-admin token dependency; without a
-    configured secret it fails closed, which is unrelated to nav wiring.)
-    """
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "platform_admin_token", PLATFORM_TOKEN)
 
 
 def _seed_login(app_client, admin_session, tenant, email, role_slug):
@@ -46,7 +30,7 @@ def _seed_login(app_client, admin_session, tenant, email, role_slug):
         PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id)
     )
     admin_session.commit()
-    h = {"Host": "alpha.localhost", "x-platform-admin-token": PLATFORM_TOKEN}
+    h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return h
 

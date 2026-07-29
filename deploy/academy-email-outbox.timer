@@ -1,0 +1,11 @@
+[Unit]
+Description=Drain the Dotmac Academy durable email outbox every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+Persistent=true
+Unit=academy-email-outbox.service
+
+[Install]
+WantedBy=timers.target

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
+from app.services.exceptions import ConflictError
 from app.services.grading import grade_submission
 
 logger = logging.getLogger(__name__)
@@ -32,12 +33,23 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     gets its own Score, and the *score of record* is the best attempt (see
     ``best_scores_for``). A weak first attempt therefore no longer locks a
     learner out — retakes can improve the recorded score, bounded by
-    ``activity.max_attempts`` (enforced at the web layer). Manual-graded
+    ``activity.max_attempts`` (enforced by this canonical writer). Manual-graded
     activities record the Submission and await instructor grading (no auto Score).
 
     only_ext_ids (a randomized attempt's question subset) restricts grading to
     exactly those questions; None grades the whole bank.
     """
+    person = db.scalars(
+        select(Person)
+        .where(Person.tenant_id == tenant_id)
+        .where(Person.id == person_id)
+        .with_for_update()
+    ).first()
+    if person is None:
+        raise ConflictError("Learner account no longer exists.")
+    used = attempts_used(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity.id)
+    if activity.max_attempts is not None and used >= activity.max_attempts:
+        raise ConflictError("No attempts remaining.")
     qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
                      .where(Submission.tenant_id == tenant_id)
@@ -56,7 +68,6 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     # Auto-on-pass notification: best effort, must never break grading.
     try:
         from app.services.email import notify_score_if_first_pass
-        person = db.get(Person, person_id)
         notify_score_if_first_pass(db, score=score, activity=activity, person=person)
     except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)

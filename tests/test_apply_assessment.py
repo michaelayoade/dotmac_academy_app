@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
 from app.models.cohort import Cohort
 from app.models.course import Course
+from app.models.track import CohortTrack, Track
 from tests.conftest import client_for
 
 
@@ -54,18 +56,41 @@ def _cohort_with_exam(admin_session, tenant):
         entrance_bank_id=bank.id,
     )
     admin_session.add(cohort)
+    admin_session.flush()
+    track = Track(
+        tenant_id=tenant.id,
+        slug=f"fiber-{uuid.uuid4().hex[:6]}",
+        name="Fiber Installer",
+        status="active",
+    )
+    admin_session.add(track)
+    admin_session.flush()
+    admin_session.add(
+        CohortTrack(
+            tenant_id=tenant.id,
+            cohort_id=cohort.id,
+            track_id=track.id,
+            status="active",
+        )
+    )
     admin_session.commit()
     admin_session.refresh(cohort)
-    return cohort
+    admin_session.refresh(track)
+    return cohort, track
 
 
 def test_apply_offers_assessment_and_grades_profile(app_client, tenant_a, admin_session):
-    cohort = _cohort_with_exam(admin_session, tenant_a)
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
     a = client_for(TestClient(app_client.app), tenant_a.slug)
 
     r = a.post(
         "/apply",
-        data={"first_name": "Cand", "last_name": "Idate", "email": "cand@a.ex", "cohort_id": str(cohort.id)},
+        data={
+            "first_name": "Cand",
+            "last_name": "Idate",
+            "email": "cand@a.ex",
+            "track_choice": f"{cohort.id}:{track.id}",
+        },
     )
     assert r.status_code == 200, r.text
     assert "Start the assessment" in r.text
@@ -104,15 +129,20 @@ def test_apply_offers_assessment_and_grades_profile(app_client, tenant_a, admin_
     assert applicant.assessment_profile == {"numeracy": 1.0, "safety": 0.0}
 
 
-def test_assessment_heartbeat_preserves_remaining_time(app_client, tenant_a, admin_session):
-    cohort = _cohort_with_exam(admin_session, tenant_a)
+def test_assessment_heartbeat_uses_server_clock(app_client, tenant_a, admin_session):
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
     cohort.entrance_time_limit_minutes = 30
     admin_session.commit()
     a = client_for(TestClient(app_client.app), tenant_a.slug)
 
     r = a.post(
         "/apply",
-        data={"first_name": "Timer", "last_name": "Case", "email": "timer@a.ex", "cohort_id": str(cohort.id)},
+        data={
+            "first_name": "Timer",
+            "last_name": "Case",
+            "email": "timer@a.ex",
+            "track_choice": f"{cohort.id}:{track.id}",
+        },
     )
     token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
 
@@ -125,21 +155,31 @@ def test_assessment_heartbeat_preserves_remaining_time(app_client, tenant_a, adm
     )
     assert 'data-remaining="1800"' in page.text
 
+    # Move the authoritative server start back one minute; browser form fields
+    # cannot alter elapsed time.
+    admin_session.rollback()
+    applicant = admin_session.scalars(
+        select(Applicant).where(Applicant.email == "timer@a.ex")
+    ).one()
+    applicant.assessment_started_at = datetime.now(UTC) - timedelta(seconds=60)
+    admin_session.commit()
+
     csrf = a.cookies.get("csrf_token", "")
     save = a.post(
         "/apply/assessment/save",
-        data={"token": token, "assessment_elapsed_seconds": "60", "q1": "A"},
+        data={"token": token, "assessment_elapsed_seconds": "1", "q1": "A"},
         headers={"x-csrf-token": csrf},
     )
     assert save.status_code == 204
 
     resumed = a.get(f"/apply/assessment?token={token}")
-    assert 'data-remaining="1740"' in resumed.text
-    assert 'value="60"' in resumed.text
+    remaining = int(re.search(r'data-remaining="(\d+)"', resumed.text).group(1))
+    assert 1737 <= remaining <= 1740
+    assert re.search(r'value="A"[^>]*checked', resumed.text)
 
     admin_session.rollback()
     applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "timer@a.ex")).first()
-    assert applicant.assessment_elapsed_seconds == 60
+    assert 60 <= applicant.assessment_elapsed_seconds <= 63
     assert applicant.assessment_answers == {"q1": ["A"]}
 
 
@@ -150,12 +190,10 @@ def test_bad_token_shows_notice(app_client, tenant_a):
     assert "Link not valid" in r.text
 
 
-def test_apply_without_open_cohort_just_thanks(app_client, tenant_a):
+def test_apply_requires_an_open_canonical_track(app_client, tenant_a):
     a = client_for(TestClient(app_client.app), tenant_a.slug)
     r = a.post(
         "/apply",
         data={"first_name": "No", "last_name": "Exam", "email": "noexam@a.ex"},
     )
-    assert r.status_code == 200, r.text
-    assert "Application received" in r.text
-    assert "Start the assessment" not in r.text
+    assert r.status_code == 422

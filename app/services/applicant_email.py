@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from app.models.admissions import Applicant
-from app.services.email import send_email
+from app.services.email_outbox import enqueue_email
 
 _WRAP = """\
 <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0D1F16;
@@ -53,17 +53,21 @@ def send_application_received(db: Session, *, applicant: Applicant) -> bool:
         "<p>The next step is a short online entrance assessment. We've sent it to you "
         "in a separate email — check your inbox (and your spam folder).</p>"
     )
-    return send_email(
-        applicant.email,
-        "We've received your Dotmac Academy application",
-        _WRAP.format(title="Application received", body=body),
+    queued = enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"application-received:{applicant.id}",
+        kind="application_received",
+        recipient=applicant.email,
+        subject="We've received your Dotmac Academy application",
+        html_body=_WRAP.format(title="Application received", body=body),
         text_body=(
             f"Hi {name},\n\nWe've received your application to the Dotmac Academy.\n\n"
             "The next step is a short online entrance assessment — we've sent it in a "
             "separate email. Check your inbox and spam folder.\n"
         ),
-        db=db,
     )
+    return queued
 
 
 def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: int | None) -> bool:
@@ -109,16 +113,21 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
         "- Answers save as you go; if your connection drops, reopen the link and continue\n"
         "- It tests general aptitude, not fibre knowledge\n" + (f"\nComplete it by {by}.\n" if by else "")
     )
-    ok = send_email(
-        applicant.email,
-        "Your Dotmac Academy entrance assessment",
-        _WRAP.format(title="Your entrance assessment", body=body),
+    queued = enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"entrance-invite:{applicant.id}:{applicant.assessment_token_hash}",
+        kind="entrance_invite",
+        recipient=applicant.email,
+        subject="Your Dotmac Academy entrance assessment",
+        html_body=_WRAP.format(title="Your entrance assessment", body=body),
         text_body=text,
-        db=db,
+        payload={"applicant_id": str(applicant.id)},
     )
-    if ok:
+    if queued:
         applicant.invite_sent_at = datetime.now(UTC)
-    return ok
+        db.flush()
+    return queued
 
 
 def send_waitlist_notice(db: Session, *, applicant: Applicant) -> bool:
@@ -137,12 +146,15 @@ def send_waitlist_notice(db: Session, *, applicant: Applicant) -> bool:
         "Based on your result you've been placed on our waitlist. That's not a no — our team "
         "reviews waitlisted applications individually, and we'll contact you if a place opens.\n"
     )
-    return send_email(
-        applicant.email,
-        "Your Dotmac Academy application — waitlisted",
-        _WRAP.format(title="You're on the waitlist", body=body),
+    return enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"assessment-waitlist:{applicant.id}:{applicant.assessment_reset_count}",
+        kind="assessment_waitlist",
+        recipient=applicant.email,
+        subject="Your Dotmac Academy application — waitlisted",
+        html_body=_WRAP.format(title="You're on the waitlist", body=body),
         text_body=text,
-        db=db,
     )
 
 
@@ -159,12 +171,15 @@ def send_results_received(db: Session, *, applicant: Applicant) -> bool:
         f"Hi {name},\n\nThank you — your entrance assessment has been received. "
         "Our admissions team will review your application and be in touch by email.\n"
     )
-    return send_email(
-        applicant.email,
-        "We've received your Dotmac Academy assessment",
-        _WRAP.format(title="Assessment received", body=body),
+    return enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"assessment-review:{applicant.id}:{applicant.assessment_reset_count}",
+        kind="assessment_review",
+        recipient=applicant.email,
+        subject="We've received your Dotmac Academy assessment",
+        html_body=_WRAP.format(title="Assessment received", body=body),
         text_body=text,
-        db=db,
     )
 
 
@@ -189,12 +204,15 @@ def send_onboarding_invite(db: Session, *, applicant: Applicant, url: str) -> bo
         "Complete your onboarding (confirm your details and review the programme "
         f"orientation) here:\n{url}\n"
     )
-    return send_email(
-        applicant.email,
-        "You're in — complete your Dotmac Academy onboarding",
-        _WRAP.format(title="Application accepted", body=body),
+    return enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"onboarding-invite:{applicant.id}:{applicant.onboarding_token_hash}",
+        kind="onboarding_invite",
+        recipient=applicant.email,
+        subject="You're in — complete your Dotmac Academy onboarding",
+        html_body=_WRAP.format(title="Application accepted", body=body),
         text_body=text,
-        db=db,
     )
 
 
@@ -211,10 +229,13 @@ def send_enrollment_welcome(db: Session, *, applicant: Applicant, setup_url: str
         action = "<p>Your existing account now has student access — log in to start your courses.</p>"
         text_action = "Your existing account now has student access — log in to start your courses.\n"
     body = f"<p>Hi {name},</p>" "<p>You are enrolled. Welcome to the Dotmac Academy.</p>" + action
-    return send_email(
-        applicant.email,
-        "You're enrolled — welcome to the Dotmac Academy",
-        _WRAP.format(title="You're enrolled", body=body),
+    return enqueue_email(
+        db,
+        tenant_id=applicant.tenant_id,
+        idempotency_key=f"enrollment-welcome:{applicant.id}:{applicant.person_id}",
+        kind="enrollment_welcome",
+        recipient=applicant.email,
+        subject="You're enrolled — welcome to the Dotmac Academy",
+        html_body=_WRAP.format(title="You're enrolled", body=body),
         text_body=f"Hi {name},\n\nYou are enrolled. Welcome to the Dotmac Academy.\n\n" + text_action,
-        db=db,
     )

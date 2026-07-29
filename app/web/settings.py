@@ -1,14 +1,14 @@
-"""Platform admin Settings portal — configure SMTP / email toggles / branding /
+"""Academy admin Settings portal — configure SMTP / email toggles / branding /
 lab limits in the browser (DB-stored, overriding env defaults).
 
 ADMIN ONLY: every route is gated by ``require_web_role("admin")`` — instructors
 and students get 403.
 
-Settings are PLATFORM-wide, not per-tenant, and live in the ``platform_settings``
-table which only ``platform_api`` may write. Reads use the tenant-scoped
-``get_db`` session (``app_user`` may SELECT platform tables); WRITES use a
-separate ``get_platform_db`` session (``platform_api``) — the app_user role
-cannot write platform tables.
+Settings apply to the single Academy instance and live in the
+``platform_settings`` table, which only the restricted settings-writer DB role
+may change. Reads use the tenant-scoped ``get_db`` session; writes use the
+separate ``get_platform_db`` session so ordinary request code cannot mutate
+global configuration.
 
 The stored SMTP password is NEVER echoed back to the form; a blank password field
 on POST means "keep the existing value".
@@ -51,7 +51,7 @@ def settings_form(request: Request, db: Session = Depends(get_db)):
 
     The SMTP password is intentionally rendered BLANK (never echoed).
     """
-    return templates.TemplateResponse("admin/settings.html", _context(request, db))
+    return templates.TemplateResponse(request, "admin/settings.html", _context(request, db))
 
 
 @router.post("/settings")
@@ -92,11 +92,11 @@ def settings_save(
         values["smtp_password"] = smtp_password
 
     set_many(platform_db, values)
-    platform_db.commit()
     cfg = effective(platform_db)
 
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
+            request,
             "admin/_settings_save_result.html",
             {"request": request, "cfg": cfg, "saved": True},
         )
@@ -114,6 +114,7 @@ def settings_test_email(
     cfg = effective(db)
     if not cfg.smtp_host:
         return templates.TemplateResponse(
+            request,
             "admin/_test_email_result.html",
             {"request": request, "sent": False, "to": to, "unconfigured": True},
         )
@@ -125,6 +126,7 @@ def settings_test_email(
         db=db,
     )
     return templates.TemplateResponse(
+        request,
         "admin/_test_email_result.html",
         {
             "request": request,

@@ -47,6 +47,22 @@ def _bootstrap(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _email_outbox(args: argparse.Namespace) -> None:
+    """Deliver/reconcile committed email intents without exposing payloads."""
+    from app.services.email_outbox import deliver_pending, requeue_failed
+    from app.services.lab_jobs import admin_session
+
+    with admin_session() as db:
+        requeued = requeue_failed(db) if args.requeue_failed else 0
+        counts = deliver_pending(db, limit=args.limit)
+        db.commit()
+    print(
+        "email-outbox: "
+        f"sent={counts['sent']} retried={counts['retried']} "
+        f"failed={counts['failed']} requeued={requeued}"
+    )
+
+
 def _import_foundation(args: argparse.Namespace) -> None:
     from app.db import SessionLocal
     from app.models.tenant import Tenant
@@ -227,26 +243,29 @@ def _import_labs(args: argparse.Namespace) -> None:
 
 
 def _email_digest(args: argparse.Namespace) -> None:
-    """Cross-tenant weekly digest: email each cohort's instructor(s) a summary.
+    """Queue each cohort instructor's weekly Academy summary.
 
-    Uses a BYPASSRLS admin session (like the lab jobs) so it can sweep every
-    tenant. Email failures are non-fatal (send_email returns False), so one bad
-    address never aborts the run.
+    Uses an offline BYPASSRLS session because scheduled jobs do not have request
+    tenant context. Delivery is owned by the outbox worker.
     """
+    from datetime import UTC, datetime
+
     from sqlalchemy import select
 
     from app.models.cohort import Cohort, Enrollment
     from app.models.person import Person
     from app.models.tenant import Tenant
     from app.services import lab_jobs
-    from app.services.email import recipient_allows, render_cohort_html, send_email
+    from app.services.email import recipient_allows, render_cohort_html
+    from app.services.email_outbox import enqueue_email
     from app.services.reports import cohort_matrix
     from app.services.settings_store import effective
 
-    sent = 0
+    queued = 0
+    period = datetime.now(UTC).strftime("%G-W%V")
     with lab_jobs.admin_session() as db:
         if not effective(db).email_digest_enabled:
-            print("email-digest: disabled via platform settings; skipping")
+            print("email-digest: disabled via Academy settings; skipping")
             return
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
@@ -267,13 +286,20 @@ def _email_digest(args: argparse.Namespace) -> None:
                 for instructor in instructors:
                     if not recipient_allows(instructor, "email_digest"):
                         continue
-                    if send_email(
-                        instructor.email,
-                        f"Weekly progress digest — {cohort.name}",
-                        render_cohort_html(matrix),
+                    if enqueue_email(
+                        db,
+                        tenant_id=tenant.id,
+                        idempotency_key=(
+                            f"weekly-digest:{period}:{cohort.id}:{instructor.id}"
+                        ),
+                        kind="weekly_digest",
+                        recipient=instructor.email,
+                        subject=f"Weekly progress digest — {cohort.name}",
+                        html_body=render_cohort_html(matrix),
                     ):
-                        sent += 1
-    print(f"email-digest: sent {sent} message(s)")
+                        queued += 1
+        db.commit()
+    print(f"email-digest: queued {queued} message(s)")
 
 
 def _at_risk_sweep(args: argparse.Namespace) -> None:
@@ -448,27 +474,24 @@ def _invite_applicants(args: argparse.Namespace) -> None:
                 print(f"  DRY-RUN would email {a.email}")
             if len(targets) > 20:
                 print(f"  ... and {len(targets) - 20} more")
-            print("\nDRY RUN — no tokens minted, no email sent.")
+            print("\nDRY RUN — no tokens minted and no email queued.")
             return
 
-        sent = failed = skipped = 0
+        queued = failed = skipped = 0
         for a in targets:
             if not entrance_exam.has_entrance_exam(db, applicant=a):
                 skipped += 1
                 continue
             res = entrance_exam.invite(db, applicant=a, base_url=args.base_url, deadline_days=args.deadline_days)
             if res["emailed"]:
-                sent += 1
+                queued += 1
             else:
                 failed += 1
-                print(f"  !! email FAILED for {a.email} (token minted; link still valid)")
+                print(f"  !! invitation could not be queued for {a.email}")
         db.commit()
-        print(f"\ninvited: {sent}   email failed: {failed}   no exam configured: {skipped}")
+        print(f"\nqueued: {queued}   queue failures: {failed}   no exam configured: {skipped}")
         if failed:
-            print(
-                "NOTE: failures mean SMTP rejected/was unconfigured. The tokens ARE valid — "
-                "re-run once mail is working, or hand the link out another way."
-            )
+            print("NOTE: queue failures did not expose or print invitation tokens.")
 
 
 def _reset_entrance_exam(args: argparse.Namespace) -> None:
@@ -495,12 +518,16 @@ def _reset_entrance_exam(args: argparse.Namespace) -> None:
             raise SystemExit(f"No applicant with email '{args.email}' in '{args.tenant_slug}'.")
 
         had = applicant.assessment_taken_at is not None
-        raw = entrance_exam.reset_exam(db, applicant=applicant)
+        queued = entrance_exam.reset_and_invite(
+            db,
+            applicant=applicant,
+            base_url=args.base_url,
+        )
         db.commit()
         print(f"reset entrance sitting for {applicant.email} (reset #{applicant.assessment_reset_count})")
         if had:
             print("  note: a completed result was discarded — they now re-sit from scratch.")
-        print(f"  new exam link: /apply/assessment?token={raw}")
+        print(f"  replacement invitation queued={queued}")
 
 
 def _recompute_entrance_levels(args: argparse.Namespace) -> None:
@@ -764,6 +791,18 @@ def main() -> None:
     )
     ed.set_defaults(func=_email_digest)
 
+    eo = sub.add_parser(
+        "email-outbox",
+        help="Deliver committed email intents with durable retries.",
+    )
+    eo.add_argument("--limit", type=int, default=100, help="Maximum due messages to process")
+    eo.add_argument(
+        "--requeue-failed",
+        action="store_true",
+        help="Requeue terminal failures before attempting delivery",
+    )
+    eo.set_defaults(func=_email_outbox)
+
     ar = sub.add_parser("at-risk-sweep", help="Nudge students who are behind/overdue")
     ar.set_defaults(func=_at_risk_sweep)
 
@@ -822,6 +861,7 @@ def main() -> None:
     )
     rex.add_argument("--tenant-slug", required=True)
     rex.add_argument("--email", required=True, help="Applicant's email")
+    rex.add_argument("--base-url", default="https://academy.dotmac.io")
     rex.set_defaults(func=_reset_entrance_exam)
 
     rel = sub.add_parser(
