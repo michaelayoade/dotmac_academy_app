@@ -24,11 +24,7 @@ class ObservabilityMiddleware:
 
         request = Request(scope, receive)
         inbound_request_id = request.headers.get("x-request-id")
-        request_id = (
-            inbound_request_id
-            if self.trust_inbound_request_id and inbound_request_id
-            else str(uuid4())
-        )
+        request_id = inbound_request_id if self.trust_inbound_request_id and inbound_request_id else str(uuid4())
         scope.setdefault("state", {})["request_id"] = request_id
         started = time.perf_counter()
         status_code = 500
@@ -58,3 +54,16 @@ class ObservabilityMiddleware:
                     "tenant_id": str(tenant.id) if tenant is not None else None,
                 },
             )
+            try:
+                from app.metrics import observe_request
+
+                # The MATCHED route template, so scanners can't mint labels.
+                route = getattr(scope.get("route"), "path", None) or "(unmatched)"
+                observe_request(
+                    method=request.method,
+                    route=route,
+                    status_code=status_code,
+                    duration_seconds=duration_ms / 1000.0,
+                )
+            except Exception:  # metrics must never break a request
+                logger.debug("metrics observation failed", exc_info=True)
