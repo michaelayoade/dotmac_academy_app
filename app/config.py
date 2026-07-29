@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     smtp_from: str = "Dotmac Academy <academy@localhost>"
     smtp_starttls: bool = True
 
+    # Prometheus /metrics bearer token. Empty (default) = endpoint disabled.
+    metrics_token: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"prod", "production"}

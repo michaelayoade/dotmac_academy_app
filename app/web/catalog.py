@@ -22,10 +22,11 @@ from app.services.catalog import (
     course_completion,
     course_structure,
     my_courses,
+    public_catalog,
 )
 from app.services.entitlements import course_access_states, open_course_ids
 from app.services.roles import role_slugs
-from app.services.web_auth import require_web_user
+from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -40,12 +41,17 @@ def _is_staff(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
 @router.get("/courses", response_class=HTMLResponse)
 def courses_list(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: Person | None = Depends(optional_web_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Catalog index — 'My courses' cards (with completion %) for everyone;
-    'All courses' section additionally shown to staff."""
+    """Signed-in: 'My courses' (+ 'All courses' for staff). Anonymous: the
+    public catalog projection (ADR 0003 — ``Course.listed`` is the selector)."""
     tenant = require_tenant(request)
+    if person is None:
+        listed = public_catalog(db, tenant_id=tenant.id)
+        return templates.TemplateResponse(
+            request, "public/courses.html", {"courses": listed}
+        )
     staff = _is_staff(db, tenant.id, person.id)
 
     enrolled = my_courses(db, tenant_id=tenant.id, person_id=person.id)
