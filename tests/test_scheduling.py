@@ -120,7 +120,14 @@ def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
 
     agenda = upcoming_for_person(admin_session, tenant_id=tenant_a.id, person_id=p.id)
     sessions = [i for i in agenda if i["kind"] == "session"]
-    assert any(i["title"] == "Live class" and i["link"] == "https://meet" for i in sessions)
+    # ADR: agenda links to the session detail page; the raw join_url rides along
+    # for the calendar's imminent-Join button.
+    assert any(
+        i["title"] == "Live class"
+        and i["link"].startswith("/timetable/sessions/")
+        and i["join_url"] == "https://meet"
+        for i in sessions
+    )
 
 
 def test_session_isolated_between_tenants(admin_session, tenant_a, tenant_b):

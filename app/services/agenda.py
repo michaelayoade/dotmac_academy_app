@@ -15,6 +15,7 @@ from app.models.cohort import Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
+from app.services import scheduling
 from app.services.entitlements import accessible_course_ids
 
 
@@ -135,7 +136,11 @@ def upcoming_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, limit:
                     "kind": "session",
                     "title": s.title + suffix,
                     "course": s.location or "",
-                    "link": s.join_url or "/timetable",
+                    # Detail page owns the Join decision; join_url + joinable
+                    # let the calendar offer a direct Join when imminent.
+                    "link": f"/timetable/sessions/{s.id}",
+                    "join_url": s.join_url,
+                    "joinable": scheduling.join_is_open(s, now=now),
                 }
             )
 

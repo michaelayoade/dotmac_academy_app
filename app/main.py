@@ -56,6 +56,7 @@ from app.web.reports import router as web_reports_router
 from app.web.search import router as web_search_router
 from app.web.settings import router as web_settings_router
 from app.web.teaching import router as web_teaching_router
+from app.web.timetable import router as web_timetable_router
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,7 @@ app.include_router(web_reports_router)
 app.include_router(web_gradebook_router)
 app.include_router(web_settings_router)
 app.include_router(web_teaching_router)
+app.include_router(web_timetable_router)
 app.include_router(web_audit_router)
 app.include_router(web_admin_router)
 app.include_router(web_notifications_router)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from html import escape
 from uuid import UUID
 
@@ -38,6 +38,7 @@ from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lifecycle import invite_user, set_account_status
+from app.services.localtime import local_to_utc
 from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
@@ -366,14 +367,19 @@ def invite_to_cohort(
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    """Parse a datetime-local form value (naive) into a UTC-aware datetime."""
+    """Parse a datetime-local form value into a UTC-aware datetime.
+
+    Instructors type wall-clock time in the academy's timezone
+    (settings.academy_timezone, default Africa/Lagos); the localtime service
+    owns the conversion and storage stays UTC.
+    """
     if not value:
         return None
     try:
         dt = datetime.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid date/time.") from exc
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+    return local_to_utc(dt)
 
 
 @router.get("/cohorts/{cohort_id}/timetable", response_class=HTMLResponse)
