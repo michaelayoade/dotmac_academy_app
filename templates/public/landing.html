@@ -43,8 +43,11 @@
           <div class="hero-stat"><b>{{ chapter_count }}</b><span>Chapters of curriculum</span></div>
         </div>
       </div>
-      <div class="hero-media">
-        <img src="/static/img/academy-hero.png" alt="Trainees working on live network equipment" width="900" height="491">
+      <div class="hero-media hero-carousel" id="heroCarousel">
+        <div class="slide on"><img src="/static/img/academy-hero.png" alt="Trainees working on live network equipment" width="900" height="491"><span class="slide-tag">Technical Academy</span></div>
+        <div class="slide"><img src="/static/img/scene-management.png" alt="A management training session in progress" width="900" height="514" loading="lazy"><span class="slide-tag">Management &amp; Professional Development</span></div>
+        <div class="slide"><img src="/static/img/scene-labs.png" alt="Trainees practising in the hands-on lab" width="900" height="514" loading="lazy"><span class="slide-tag">Labs &amp; Certification</span></div>
+        <div class="dots" role="tablist" aria-label="Hero slides"></div>
       </div>
     </div>
   </header>
@@ -157,5 +160,22 @@
     </div>
   </footer>
 
+<script>
+(function(){
+  var c=document.getElementById('heroCarousel');if(!c)return;
+  var slides=c.querySelectorAll('.slide'),dots=c.querySelector('.dots'),i=0,t;
+  slides.forEach(function(_,n){var b=document.createElement('button');
+    b.setAttribute('aria-label','Slide '+(n+1));if(!n)b.className='on';
+    b.onclick=function(){go(n);restart();};dots.appendChild(b);});
+  function go(n){slides[i].classList.remove('on');dots.children[i].classList.remove('on');
+    i=n%slides.length;slides[i].classList.add('on');dots.children[i].classList.add('on');}
+  function restart(){clearInterval(t);start();}
+  function start(){if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    t=setInterval(function(){go(i+1);},5000);}
+  c.addEventListener('mouseenter',function(){clearInterval(t);});
+  c.addEventListener('mouseleave',restart);
+  start();
+})();
+</script>
 </body>
 </html>
