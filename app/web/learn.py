@@ -121,9 +121,17 @@ def home(
     """
     tenant = require_tenant(request)
     if person is None:
-        highlights = catalog_service.public_catalog(db, tenant_id=tenant.id)
+        listed = catalog_service.public_catalog(db, tenant_id=tenant.id)
+        mgmt = [i for i in listed if i["course"].discipline == "management"]
+        tech = [i for i in listed if i["course"].discipline != "management"]
         return templates.TemplateResponse(
-            request, "public/landing.html", {"courses": highlights}
+            request,
+            "public/landing.html",
+            {
+                "tech_count": len(tech),
+                "mgmt_count": len(mgmt),
+                "chapter_count": sum(i["chapter_count"] for i in listed),
+            },
         )
     slugs = role_slugs(db, tenant.id, person.id)
     if "instructor" in slugs and "admin" not in slugs:
