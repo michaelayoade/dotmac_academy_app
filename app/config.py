@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     max_concurrent_labs: int = 20
     lab_workdir: str = "/home/dotmac/labs"
     lab_idle_minutes: int = 60
+    # Address the ttyd consoles bind to on the LAB host, and the address the app
+    # reaches them at. Same-host deployments keep the loopback default; when the
+    # lab worker runs on a separate KVM host, set this on BOTH sides to that
+    # host's private/tunnel address (e.g. its WireGuard IP).
+    lab_console_host: str = "127.0.0.1"
 
     # dotmac_erp training-report push (inert by default — empty URL disables it).
     # On course completion, a signed webhook records the result on the employee's
