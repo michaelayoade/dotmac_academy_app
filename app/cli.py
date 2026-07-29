@@ -346,6 +346,21 @@ def _set_entrance_bank(args: argparse.Namespace) -> None:
         )
 
 
+def _admin_report(args: argparse.Namespace) -> None:
+    """Cross-tenant: email each tenant's admins the activity report."""
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import admin_reports, lab_jobs
+
+    sent = 0
+    with lab_jobs.admin_session() as db:
+        for tenant in db.scalars(select(Tenant)).all():
+            sent += admin_reports.send_activity_report(db, tenant_id=tenant.id, hours=args.hours)
+        db.commit()
+    print(f"admin-report: sent {sent} email(s)")
+
+
 def _set_auto_accept(args: argparse.Namespace) -> None:
     """Set (or clear) a cohort's auto-accept threshold for entrance sittings."""
     import uuid
@@ -762,6 +777,10 @@ def main() -> None:
         "--time-limit-minutes", type=int, default=None, help="Per-sitting time limit (0 or omit = untimed)"
     )
     seb.set_defaults(func=_set_entrance_bank)
+
+    arp = sub.add_parser("admin-report", help="Email tenant admins the admissions/learning activity report")
+    arp.add_argument("--hours", type=int, default=24, help="Reporting window in hours (default 24)")
+    arp.set_defaults(func=_admin_report)
 
     saa = sub.add_parser("set-auto-accept", help="Auto-accept valid entrance sittings at/above a score threshold")
     saa.add_argument("--cohort-id", required=True)

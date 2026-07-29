@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Dotmac Academy admin activity report daily
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+Unit=academy-admin-report.service
+
+[Install]
+WantedBy=timers.target
