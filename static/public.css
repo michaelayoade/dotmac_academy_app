@@ -158,3 +158,28 @@
 .pub .group-head span{font-size:13.5px;font-weight:700;color:var(--g3)}
 .pub .group-note{color:var(--muted);font-size:14.5px;max-width:46rem}
 @media (max-width:900px){.pub .pillars{grid-template-columns:1fr}}
+
+/* Hero image carousel */
+.pub .hero-carousel{position:relative}
+.pub .hero-carousel .slide{display:none}
+.pub .hero-carousel .slide.on{display:block}
+.pub .hero-carousel .slide img{border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.14)}
+.pub .slide-tag{position:absolute;left:14px;bottom:46px;background:rgba(13,31,22,.72);backdrop-filter:blur(4px);color:#fff;font-size:12.5px;font-weight:700;letter-spacing:.4px;padding:7px 14px;border-radius:999px}
+.pub .dots{position:absolute;left:14px;bottom:14px;display:flex;gap:7px}
+.pub .dots button{width:9px;height:9px;border-radius:50%;border:0;background:rgba(255,255,255,.4);cursor:pointer;padding:0}
+.pub .dots button.on{background:var(--mint);width:22px;border-radius:999px}
+@media (prefers-reduced-motion:no-preference){
+  .pub .hero-carousel .slide.on img{animation:pubfade .5s ease}
+  @keyframes pubfade{from{opacity:.35}to{opacity:1}}
+}
+
+/* Course row carousels (catalog) */
+.pub .row-wrap{position:relative}
+.pub .row-scroll{display:grid;grid-auto-flow:column;grid-auto-columns:calc(33.33% - 15px);gap:22px;margin-top:30px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding-bottom:6px}
+.pub .row-scroll::-webkit-scrollbar{display:none}
+.pub .row-scroll .card{scroll-snap-align:start}
+.pub .row-nav{position:absolute;right:0;top:-46px;display:flex;gap:8px}
+.pub .row-nav button{width:38px;height:38px;border-radius:50%;border:1.5px solid var(--border);background:var(--white);color:var(--g);font-size:1.05rem;font-weight:700;cursor:pointer;transition:background .15s ease}
+.pub .row-nav button:hover{background:var(--g-light)}
+@media (max-width:900px){.pub .row-scroll{grid-auto-columns:calc(50% - 11px)}}
+@media (max-width:620px){.pub .row-scroll{grid-auto-columns:82%}.pub .row-nav{display:none}}

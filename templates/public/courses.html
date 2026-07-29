@@ -48,7 +48,8 @@
         the entrance assessment places you.
       </p>
       {% if tech %}
-      <div class="cards">
+      <div class="row-wrap"><div class="row-nav"><button type="button" data-dir="-1" aria-label="Scroll back">&#8592;</button><button type="button" data-dir="1" aria-label="Scroll forward">&#8594;</button></div>
+      <div class="cards row-scroll">
         {% for item in tech %}
         <article class="card">
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
@@ -58,7 +59,7 @@
           </div>
         </article>
         {% endfor %}
-      </div>
+      </div></div>
       {% else %}
       <p class="group-note">The technical catalog is being prepared — check back shortly.</p>
       {% endif %}
@@ -73,7 +74,8 @@
         individuals: <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a>.
       </p>
       {% if mgmt %}
-      <div class="cards">
+      <div class="row-wrap"><div class="row-nav"><button type="button" data-dir="-1" aria-label="Scroll back">&#8592;</button><button type="button" data-dir="1" aria-label="Scroll forward">&#8594;</button></div>
+      <div class="cards row-scroll">
         {% for item in mgmt %}
         <article class="card">
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
@@ -83,7 +85,7 @@
           </div>
         </article>
         {% endfor %}
-      </div>
+      </div></div>
       {% else %}
       <p class="group-note">The management catalog is being prepared — check back shortly.</p>
       {% endif %}
@@ -108,5 +110,15 @@
     </div>
   </footer>
 
+<script>
+(function(){
+  document.querySelectorAll('.row-wrap').forEach(function(w){
+    var row=w.querySelector('.row-scroll');
+    w.querySelectorAll('.row-nav button').forEach(function(b){
+      b.onclick=function(){row.scrollBy({left:(row.clientWidth*0.9)*parseInt(b.dataset.dir),behavior:'smooth'});};
+    });
+  });
+})();
+</script>
 </body>
 </html>
