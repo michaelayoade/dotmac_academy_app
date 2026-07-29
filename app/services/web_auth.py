@@ -129,6 +129,19 @@ def require_web_user(
     return person
 
 
+def optional_web_user(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Person | None:
+    """Dependency: the session's Person, or None when anonymous.
+
+    For routes that render differently for visitors and signed-in users
+    (e.g. the public landing at ``/``) instead of redirecting to /login.
+    """
+    tenant = require_tenant(request)
+    return _current_person(db, tenant.id, request.cookies.get(COOKIE))
+
+
 def require_web_role(role_slug: str):
     """Return a dependency that ensures the current person holds role_slug.
 

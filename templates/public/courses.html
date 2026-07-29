@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courses — {{ branding_name | default("Dotmac Academy") }}</title>
+  <meta name="description" content="The full course catalog: fiber, networking, wireless, operations and support tracks with chapter-by-chapter curriculum.">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css?v=2">
+</head>
+<body class="min-h-screen bg-sand-100 text-ink antialiased">
+  <header class="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-6">
+    <a href="/" class="font-display text-lg font-[560] tracking-tight">{{ branding_name | default("Dotmac Academy") }}</a>
+    <nav class="flex items-center gap-4 text-sm">
+      <a href="/apply" class="text-ink-soft hover:text-ink">Apply</a>
+      <a href="/login" class="btn-primary px-4 py-2">Sign in</a>
+    </nav>
+  </header>
+
+  <main class="mx-auto w-full max-w-5xl px-6 pb-16">
+    <h1 class="font-display text-3xl font-[560] tracking-tight">Course catalog</h1>
+    <p class="mt-2 max-w-2xl text-ink-soft">
+      Every course is chaptered, assessed, and taught for the field — not the
+      brochure. Apply once; your entrance assessment places you.
+    </p>
+
+    {% if courses %}
+    <div class="mt-8 grid gap-5 sm:grid-cols-2">
+      {% for item in courses %}
+      <article class="flex gap-4 rounded-xl border border-brand-200 bg-white p-4">
+        <img src="/static/img/cover-{{ item.course.slug }}.webp" alt=""
+             class="h-20 w-32 flex-none rounded-lg object-cover" loading="lazy"
+             onerror="this.style.display='none'">
+        <div class="min-w-0">
+          <h2 class="font-display text-base font-[560] leading-snug">{{ item.course.title }}</h2>
+          <p class="mt-1 text-sm text-ink-soft">{{ item.chapter_count }} chapters · chapter tests and a final assessment</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="mt-8 text-ink-soft">The catalog is being prepared — check back shortly.</p>
+    {% endif %}
+
+    <div class="mt-10 rounded-xl border border-brand-200 bg-brand-50 p-6">
+      <h2 class="font-display text-lg font-[560]">Ready to start?</h2>
+      <p class="mt-1 text-sm text-ink-soft">Applications take a few minutes; the entrance assessment can be sat from home.</p>
+      <a href="/apply" class="btn-primary mt-4 inline-block px-5 py-2.5">Apply now</a>
+    </div>
+  </main>
+
+  <footer class="mx-auto w-full max-w-5xl px-6 pb-10 text-sm text-ink-soft">
+    <p>© {{ branding_name | default("Dotmac Academy") }} · <a href="/" class="hover:text-ink">Home</a></p>
+  </footer>
+</body>
+</html>

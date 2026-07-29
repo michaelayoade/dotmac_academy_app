@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,10 @@ class Course(Base, TimestampMixin):
     # Authoring lifecycle (Slice 5/#8). Draft courses are hidden from learners
     # even when offered+entitled; instructors publish them when ready.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="published")
+    # Public-catalog visibility: the one canonical selector for the anonymous
+    # catalog projection. Internal material (instructor guide, entrance shells,
+    # internal disciplines) stays unlisted regardless of publish status.
+    listed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 class Chapter(Base, TimestampMixin):
     __tablename__ = "chapters"

@@ -30,6 +30,30 @@ def my_courses(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[Course]
     )
 
 
+def public_catalog(db: Session, *, tenant_id: UUID) -> list[dict]:
+    """The anonymous public-catalog projection: listed published courses.
+
+    ``Course.listed`` is the single canonical selector — routes must not add
+    their own slug/discipline filters on top. Returns one dict per course with
+    the chapter count so the template renders without further queries.
+    """
+    rows = db.execute(
+        select(Course, func.count(Chapter.id))
+        .outerjoin(
+            Chapter,
+            (Chapter.tenant_id == Course.tenant_id) & (Chapter.course_id == Course.id),
+        )
+        .where(Course.tenant_id == tenant_id)
+        .where(Course.status == "published")
+        .where(Course.listed.is_(True))
+        .group_by(Course.id)
+        .order_by(Course.title)
+    ).all()
+    return [
+        {"course": course, "chapter_count": int(chapters)} for course, chapters in rows
+    ]
+
+
 def all_courses(db: Session, *, tenant_id: UUID) -> list[Course]:
     """Every course belonging to the tenant, ordered by title."""
     return list(

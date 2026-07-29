@@ -18,13 +18,14 @@ from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
+from app.services import catalog as catalog_service
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import course_access_states, require_course_open, visible_course_ids
 from app.services.pacing import require_activity_readable, require_activity_submittable
 from app.services.roles import role_slugs
-from app.services.web_auth import require_web_user
+from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -110,11 +111,20 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
 @router.get("/", response_class=HTMLResponse)
 def home(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: Person | None = Depends(optional_web_user),
     db: Session = Depends(get_db),
 ):
-    """Student Learn Home — my courses (completion %), continue, recent results."""
+    """Signed-in: Learn Home. Anonymous: the public landing page.
+
+    The landing (and /courses) is the academy's public web presence — the
+    catalog projection replaces the hand-maintained marketing-site copy.
+    """
     tenant = require_tenant(request)
+    if person is None:
+        highlights = catalog_service.public_catalog(db, tenant_id=tenant.id)
+        return templates.TemplateResponse(
+            request, "public/landing.html", {"courses": highlights}
+        )
     slugs = role_slugs(db, tenant.id, person.id)
     if "instructor" in slugs and "admin" not in slugs:
         return RedirectResponse("/instructor", status_code=303)
