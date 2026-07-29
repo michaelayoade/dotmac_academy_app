@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Cohort analytics — Dotmac Academy{% endblock %}
 {% block content %}
+<div class="float-right mt-2 flex flex-wrap gap-2 text-xs">
+  <a class="rounded-lg border border-sand-300 px-3 py-1.5 font-semibold hover:bg-sand-100" href="/instructor/reports/cohort/{{ cohort.id }}/roster.csv">Roster CSV</a>
+  <a class="rounded-lg border border-sand-300 px-3 py-1.5 font-semibold hover:bg-sand-100" href="/instructor/reports/cohort/{{ cohort.id }}/funnel.csv">Funnel CSV</a>
+  <a class="rounded-lg border border-sand-300 px-3 py-1.5 font-semibold hover:bg-sand-100" href="/instructor/reports/cohort/{{ cohort.id }}/queue.csv">Queue CSV</a>
+  <a class="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 font-semibold text-brand-700 hover:bg-brand-100" href="/success-queue/message?cohort={{ cohort.id }}">Message learners…</a>
+</div>
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Instructor</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">{{ cohort.name }} — analytics</h1>
 <p class="mt-2 text-ink-soft">Deterministic projections of the learning-event ledger and score records. {{ ov.active_rule | capitalize }}.</p>

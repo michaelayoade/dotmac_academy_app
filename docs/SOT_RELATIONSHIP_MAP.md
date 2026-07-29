@@ -23,6 +23,8 @@ and SMTP are adapters around these owners.
 | Student reminder consequence | Canonical enrollment/deadline/session/grade/completion state + `ReminderPreference` | `reminders.sweep` (sole decision owner; ledger `ReminderLog` enforces once-per-occurrence) | In-app notification + outbox email (immediate/digest/quiet-hours pacing) | `academy-reminders.timer` re-sweeps idempotently; admin history + audited resend; outbox stays delivery owner |
 | Public catalog visibility | `Course.listed` + `status='published'` (ADR 0003) | Course import/authoring services | Anonymous landing and `/courses` projection | `catalog.public_catalog` is the only reader; routes add no extra filters; external marketing pages are 301 redirects, never copies |
 | Learning observations | Meaningful learner actions at their owning services' commit points | `learning_events.record` (append-only; INSERT-only grants) | Learner activity + cohort insight projections (`insights.py`) | Savepoint-isolated `emit` — ledger failure never breaks the owner; consequences stay with reminders/queue owners |
+| Learner intervention state | Deterministic rules over ledger + canonical records | `success_queue.sweep` / `success_queue.transition` | Success Queue page, queue CSVs, weekly digest attachments | Idempotent sweep refresh + auto-resolve when a rule stops firing; audited lifecycle |
+| Segment messaging consequence | Instructor action on a deterministic segment | `success_queue.message_segment` | In-app notifications + outbox rows | Audited action id; outbox idempotency per action+person; delivery stays with the outbox worker |
 
 ## Adapter rules
 

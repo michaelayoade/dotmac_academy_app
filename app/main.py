@@ -58,6 +58,7 @@ from app.web.reminders_admin import router as web_reminders_admin_router
 from app.web.reports import router as web_reports_router
 from app.web.search import router as web_search_router
 from app.web.settings import router as web_settings_router
+from app.web.success_queue import router as web_success_queue_router
 from app.web.teaching import router as web_teaching_router
 from app.web.timetable import router as web_timetable_router
 from app.web.todo import router as web_todo_router
@@ -183,3 +184,4 @@ app.include_router(web_notifications_router)
 app.include_router(web_account_router)
 app.include_router(web_reminders_admin_router)  # reminders admin
 app.include_router(web_bookmarks_router)  # bookmarks
+app.include_router(web_success_queue_router)  # success queue (P3b)

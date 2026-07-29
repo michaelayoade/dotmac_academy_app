@@ -20,5 +20,6 @@ from app.models.platform_settings import PlatformSetting  # noqa: F401
 from app.models.prerequisite import CoursePrerequisite  # noqa: F401
 from app.models.reading import ChapterRead  # noqa: F401
 from app.models.reminder import ReminderLog, ReminderPreference  # noqa: F401
+from app.models.success_queue import SuccessQueueEntry  # noqa: F401
 from app.models.tenant import Tenant, TenantDomain  # noqa: F401
 from app.models.track import CohortTrack, Track, TrackCourse  # noqa: F401

@@ -135,6 +135,14 @@ def requeue_failed(db: Session, *, tenant_id: UUID | None = None) -> int:
 
 
 def _attachments(db: Session, row: EmailOutbox) -> list[tuple[str, bytes, str]]:
+    if row.kind == "weekly_digest":
+        try:
+            cohort_id = UUID(str(row.payload["cohort_id"]))
+        except (KeyError, ValueError):
+            return []  # pre-P3b digest rows carry no cohort payload
+        from app.services.csv_reports import weekly_report_attachments
+
+        return weekly_report_attachments(db, tenant_id=row.tenant_id, cohort_id=cohort_id)
     if row.kind != "certificate":
         return []
     try:
