@@ -45,8 +45,8 @@
         <tr class="{% if s.status == 'cancelled' %}opacity-60{% endif %}">
           <td class="px-3 py-2 font-semibold text-ink">{{ s.title }}</td>
           <td class="px-3 py-2 text-ink-soft">{{ s.session_type }}</td>
-          <td class="px-3 py-2">{{ s.starts_at.strftime('%a %d %b %Y, %H:%M') }}</td>
-          <td class="px-3 py-2 text-ink-soft">{% if s.ends_at %}{{ s.ends_at.strftime('%H:%M') }}{% else %}—{% endif %}</td>
+          <td class="px-3 py-2">{{ (s.starts_at | localtime).strftime('%a %d %b %Y, %H:%M') }}</td>
+          <td class="px-3 py-2 text-ink-soft">{% if s.ends_at %}{{ (s.ends_at | localtime).strftime('%H:%M') }}{% else %}—{% endif %}</td>
           <td class="px-3 py-2">
             {% if s.join_url %}<a class="underline" href="{{ s.join_url }}">Join link</a>{% endif %}
             {% if s.location %}<span class="text-ink-soft">{{ s.location }}</span>{% endif %}
@@ -96,7 +96,7 @@
              class="w-full px-3.5 py-2.5 text-[0.95rem]">
     </div>
     <div>
-      <label for="s-starts" class="mb-1.5 block text-sm font-semibold text-ink">Starts</label>
+      <label for="s-starts" class="mb-1.5 block text-sm font-semibold text-ink">Starts <span class="font-normal text-ink-soft">(West Africa Time)</span></label>
       <input id="s-starts" name="starts_at" type="datetime-local"
              class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
     </div>

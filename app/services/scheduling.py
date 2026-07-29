@@ -133,3 +133,75 @@ def cancel_session(db: Session, *, session_id: UUID) -> ClassSession:
     session.status = "cancelled"
     db.flush()
     return session
+
+
+def list_for_person(
+    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
+) -> dict[str, list[tuple[ClassSession, str]]]:
+    """A learner's timetable: (session, cohort name) pairs, split
+    upcoming/past.
+
+    Upcoming = scheduled sessions that have not yet ended (an in-progress
+    session still belongs on the learner's "now" list). Past = everything
+    else that wasn't cancelled, most recent first.
+    """
+    from app.models.cohort import Enrollment  # local import avoids cycle
+
+    rows = db.execute(
+        select(ClassSession, Cohort.name)
+        .join(Cohort, (Cohort.id == ClassSession.cohort_id) & (Cohort.tenant_id == ClassSession.tenant_id))
+        .join(
+            Enrollment,
+            (Enrollment.cohort_id == ClassSession.cohort_id)
+            & (Enrollment.tenant_id == ClassSession.tenant_id),
+        )
+        .where(ClassSession.tenant_id == tenant_id)
+        .where(Enrollment.person_id == person_id)
+        .where(Enrollment.status == "active")
+        .order_by(ClassSession.starts_at)
+    ).all()
+
+    upcoming: list[tuple[ClassSession, str]] = []
+    past: list[tuple[ClassSession, str]] = []
+    for s, cohort_name in rows:
+        end = s.ends_at or s.starts_at
+        if s.status == "scheduled" and end >= now:
+            upcoming.append((s, cohort_name))
+        elif s.status != "cancelled":
+            past.append((s, cohort_name))
+    past.reverse()
+    return {"upcoming": upcoming, "past": past}
+
+
+def get_session_for_person(
+    db: Session, *, tenant_id: UUID, person_id: UUID, session_id: UUID
+) -> tuple[ClassSession, str]:
+    """A single session, only if it belongs to one of the person's cohorts."""
+    from app.models.cohort import Enrollment  # local import avoids cycle
+
+    row = db.execute(
+        select(ClassSession, Cohort.name)
+        .join(Cohort, (Cohort.id == ClassSession.cohort_id) & (Cohort.tenant_id == ClassSession.tenant_id))
+        .join(
+            Enrollment,
+            (Enrollment.cohort_id == ClassSession.cohort_id)
+            & (Enrollment.tenant_id == ClassSession.tenant_id),
+        )
+        .where(ClassSession.tenant_id == tenant_id)
+        .where(ClassSession.id == session_id)
+        .where(Enrollment.person_id == person_id)
+        .where(Enrollment.status == "active")
+    ).first()
+    if row is None:
+        raise NotFoundError("Session not found.")
+    return row[0], row[1]
+
+
+def join_is_open(session: ClassSession, *, now: datetime, lead_minutes: int = 60) -> bool:
+    """Whether the Join action should be offered: session has a link and is
+    imminent (within ``lead_minutes``) or currently in progress."""
+    if not session.join_url or session.status != "scheduled":
+        return False
+    end = session.ends_at or session.starts_at
+    seconds_to_start = (session.starts_at - now).total_seconds()
+    return seconds_to_start <= lead_minutes * 60 and end >= now
