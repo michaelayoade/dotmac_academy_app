@@ -42,6 +42,7 @@ from app.web.applications import router as web_applications_router
 from app.web.apply import router as web_apply_router
 from app.web.audit import router as web_audit_router
 from app.web.auth import router as web_auth_router
+from app.web.bookmarks import router as web_bookmarks_router
 from app.web.calendar_feed import router as web_calendar_feed_router
 from app.web.catalog import router as web_catalog_router
 from app.web.gradebook import router as web_gradebook_router
@@ -178,3 +179,4 @@ app.include_router(web_audit_router)
 app.include_router(web_admin_router)
 app.include_router(web_notifications_router)
 app.include_router(web_account_router)
+app.include_router(web_bookmarks_router)  # bookmarks

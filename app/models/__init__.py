@@ -3,6 +3,7 @@ from app.models.admissions import Applicant  # noqa: F401
 from app.models.announcement import Announcement  # noqa: F401
 from app.models.assessment import Activity, Question, QuestionBank, Score, Submission  # noqa: F401
 from app.models.attempt import ActivityAttempt  # noqa: F401
+from app.models.bookmark import ChapterBookmark, ChapterNote  # noqa: F401
 from app.models.certificate import Certificate  # noqa: F401
 from app.models.class_session import ClassSession  # noqa: F401
 from app.models.cohort import Cohort, Enrollment  # noqa: F401
