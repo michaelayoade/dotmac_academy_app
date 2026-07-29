@@ -12,15 +12,45 @@
       <span class="font-medium text-ink">{{ c.name }}
         <span class="ml-1 text-sm font-normal text-ink-soft">{{ c.discipline }}</span>
       </span>
-      <a class="group inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
-         href="/instructor/reports/cohort/{{ c.id }}">
-        View matrix
-        <span class="transition-transform group-hover:translate-x-0.5" aria-hidden="true">&rarr;</span>
-      </a>
+      <span class="flex items-center gap-4">
+        <a class="text-sm font-semibold text-brand-700 hover:text-brand-800"
+           href="/instructor/reports/cohort/{{ c.id }}/analytics">Analytics</a>
+        <a class="group inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
+           href="/instructor/reports/cohort/{{ c.id }}">
+          View matrix
+          <span class="transition-transform group-hover:translate-x-0.5" aria-hidden="true">&rarr;</span>
+        </a>
+      </span>
     </li>
     {% else %}
     <li class="p-8 text-center text-ink-soft">No cohorts yet.</li>
     {% endfor %}
   </ul>
 </div>
+
+{% if comparison %}
+<h2 class="mt-10 text-xl font-medium text-ink">Cohort comparison</h2>
+<p class="mt-1 text-sm text-ink-soft">Active = any learning event in the last 7 days.</p>
+<div class="card mt-4 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-sand-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-soft">
+        <th class="p-3">Cohort</th><th class="p-3">Learners</th><th class="p-3">Active (7d)</th>
+        <th class="p-3">Completed</th><th class="p-3">Completion</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-sand-200">
+      {% for row in comparison %}
+      <tr>
+        <td class="p-3 font-medium text-ink">{{ row.cohort.name }}</td>
+        <td class="p-3 tabular-nums">{{ row.learners }}</td>
+        <td class="p-3 tabular-nums">{{ row.active }}</td>
+        <td class="p-3 tabular-nums">{{ row.completed }}</td>
+        <td class="p-3 tabular-nums">{{ row.completion_pct }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

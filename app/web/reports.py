@@ -26,6 +26,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
+from app.services import insights
 from app.services.email import render_cohort_html, render_transcript_html
 from app.services.email_outbox import enqueue_email
 from app.services.reports import cohort_matrix, student_transcript
@@ -63,9 +64,34 @@ def reports_index(
     tenant = require_tenant(request)
     _require_instructor_or_admin(db, tenant.id, person.id)
     cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
+    comparison = insights.cohorts_comparison(db, tenant_id=tenant.id)
     return templates.TemplateResponse(
         request,
-        "instructor/reports_index.html", {"request": request, "cohorts": cohorts}
+        "instructor/reports_index.html",
+        {"request": request, "cohorts": cohorts, "comparison": comparison},
+    )
+
+
+@router.get("/reports/cohort/{cohort_id}/analytics", response_class=HTMLResponse)
+def cohort_analytics(
+    cohort_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Cohort insight projection (roadmap P3a): ledger + score derivations."""
+    tenant = require_tenant(request)
+    _require_instructor_or_admin(db, tenant.id, person.id)
+    cohort = db.scalars(
+        select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cohort_id)
+    ).first()
+    if cohort is None:
+        raise HTTPException(status_code=404)
+    ov = insights.cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    return templates.TemplateResponse(
+        request,
+        "instructor/cohort_analytics.html",
+        {"request": request, "cohort": cohort, "ov": ov},
     )
 
 

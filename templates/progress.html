@@ -2,6 +2,56 @@
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Track record</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">Your progress</h1>
 
+{% if activity %}
+<section class="card mt-8 p-6" id="learning-activity">
+  <h2 class="text-xl font-medium text-ink">My learning activity</h2>
+  <div class="mt-4 grid gap-4 sm:grid-cols-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Last 8 weeks</p>
+      <div class="mt-2 flex h-14 items-end gap-1" aria-label="Weekly activity">
+        {% for b in activity.weekly %}
+        <div class="w-4 rounded-t bg-brand-400" title="{{ b.week_start }}: {{ b.count }} events"
+             style="height: {{ (100 * b.count / activity.max_week) | round | int if activity.max_week else 4 }}%; min-height: 4px"></div>
+        {% endfor %}
+      </div>
+    </div>
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Completion velocity</p>
+      <p class="mt-2 text-2xl font-medium text-ink">{{ activity.velocity_per_week }}</p>
+      <p class="text-xs text-ink-soft">completions per week (4-week average)</p>
+    </div>
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Grade trend</p>
+      <p class="mt-2 text-2xl font-medium text-ink">
+        {% if activity.grade_trend.direction == 'up' %}&#8599; Improving
+        {% elif activity.grade_trend.direction == 'down' %}&#8600; Slipping
+        {% else %}&#8594; Steady{% endif %}
+      </p>
+      <p class="text-xs text-ink-soft">last {{ activity.grade_trend.points | length }} scores</p>
+    </div>
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Last activity</p>
+      <p class="mt-2 text-2xl font-medium text-ink">
+        {% if activity.days_since_last is none %}&mdash;{% elif activity.days_since_last == 0 %}Today{% else %}{{ activity.days_since_last }}d ago{% endif %}
+      </p>
+    </div>
+  </div>
+  {% if activity.disciplines.strong %}
+  <p class="mt-4 text-sm text-ink-soft">
+    Strongest area: <span class="font-semibold text-ink">{{ activity.disciplines.strong }}</span>
+    {% if activity.disciplines.weak %} &middot; needs attention: <span class="font-semibold text-ink">{{ activity.disciplines.weak }}</span>{% endif %}
+    <span class="text-xs">(by average best score per discipline)</span>
+  </p>
+  {% endif %}
+  <div class="mt-4 rounded-lg {% if activity.blocker %}bg-clay-500/10{% else %}bg-brand-50{% endif %} p-4">
+    <p class="text-sm font-semibold text-ink">Next step</p>
+    <p class="mt-1 text-sm text-ink-soft">{{ activity.recommendation }}
+      {% if activity.blocker %}<span class="text-xs">(rule: {{ activity.blocker.rule }})</span>{% endif %}
+    </p>
+  </div>
+</section>
+{% endif %}
+
 {% if not overview %}
 <div class="card mt-8 p-8 text-center text-ink-soft">Nothing to show yet — progress appears here once you're enrolled.</div>
 {% endif %}

@@ -174,6 +174,13 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     )
     db.add(inst)
     db.flush()
+    from app.services import learning_events
+
+    learning_events.emit(
+        db, tenant_id=tenant_id, person_id=person_id, kind="lab_launched",
+        course_id=activity.course_id, subject_id=activity.id,
+        detail={"instance": str(inst.id)},
+    )
     return inst
 
 
@@ -253,6 +260,33 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     db.add(score)
     instance.last_active_at = _now()
     db.flush()
+    from app.services import learning_events
+
+    _course_id = None
+    _act_for_event = db.scalars(
+        select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
+    ).first()
+    if _act_for_event is not None:
+        _course_id = _act_for_event.course_id
+    learning_events.emit(
+        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
+        kind="submission_made", course_id=_course_id, subject_id=sub.id,
+        detail={"activity_id": str(instance.activity_id), "lab": True,
+                "attempt_no": sub.attempt_no},
+    )
+    learning_events.emit(
+        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
+        kind="work_graded", course_id=_course_id, subject_id=sub.id,
+        detail={"activity_id": str(instance.activity_id), "lab": True,
+                "passed": score.passed, "fraction": float(fraction)},
+    )
+    learning_events.emit(
+        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
+        kind="lab_check_passed" if score.passed else "lab_check_failed",
+        course_id=_course_id, subject_id=instance.activity_id,
+        detail={"instance": str(instance.id),
+                "checks": len(result.get("per_check") or [])},
+    )
     # Auto-on-pass notification — best effort, must never break grading.
     try:
         from app.models.person import Person
