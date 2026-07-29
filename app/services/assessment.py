@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
+from app.services import learning_events
 from app.services.exceptions import ConflictError
 from app.services.grading import grade_submission
 
@@ -58,12 +59,23 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
     sub = Submission(tenant_id=tenant_id, activity_id=activity.id, person_id=person_id,
                      answers=answers, attempt_no=int(prev or 0) + 1)
     db.add(sub); db.flush()
+    learning_events.emit(
+        db, tenant_id=tenant_id, person_id=person_id, kind="submission_made",
+        course_id=activity.course_id, subject_id=sub.id,
+        detail={"activity_id": str(activity.id), "attempt_no": sub.attempt_no},
+    )
     if activity.grading == "manual":
         return None  # awaits instructor grading (no auto Score)
     r = grade_submission(answers, qs, activity.pass_threshold)
     score = Score(tenant_id=tenant_id, submission_id=sub.id, score=r.score, max_score=r.max_score,
                   fraction=r.fraction, passed=r.passed, per_item=r.per_item, source="auto")
     db.add(score); db.flush()
+    learning_events.emit(
+        db, tenant_id=tenant_id, person_id=person_id, kind="work_graded",
+        course_id=activity.course_id, subject_id=sub.id,
+        detail={"activity_id": str(activity.id), "passed": r.passed,
+                "fraction": float(r.fraction)},
+    )
     _recompute_completion(db, tenant_id, person_id, activity.course_id)
     # Auto-on-pass notification: best effort, must never break grading.
     try:

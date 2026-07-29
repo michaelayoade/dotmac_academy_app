@@ -16,6 +16,7 @@ from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.person import Person
 from app.services import announcements as ann_svc
+from app.services import learning_events
 from app.services.agenda import upcoming_for_person
 from app.services.catalog import (
     all_courses,
@@ -117,6 +118,10 @@ def course_landing(
         if course.id not in open_course_ids(db, tenant_id=tenant.id, person_id=person.id):
             raise HTTPException(status_code=403)
 
+    learning_events.emit(
+        db, tenant_id=tenant.id, person_id=person.id, kind="course_viewed",
+        course_id=course.id, subject_id=course.id,
+    )
     structure = course_structure(
         db, tenant_id=tenant.id, person_id=person.id, course=course
     )

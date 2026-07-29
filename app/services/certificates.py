@@ -61,6 +61,13 @@ def issue_certificate(
                        serial=_serial(), issued_at=now or datetime.now(UTC))
     db.add(cert)
     db.flush()
+    from app.services import learning_events
+
+    learning_events.emit(
+        db, tenant_id=tenant_id, person_id=person_id, kind="certificate_earned",
+        course_id=course_id, subject_id=course_id,
+        detail={"serial": cert.serial},
+    )
     try:
         from app.services.notifications import notify as _notify
         _notify(

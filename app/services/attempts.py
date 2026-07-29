@@ -57,6 +57,13 @@ def open_or_create_attempt(
     )
     db.add(attempt)
     db.flush()
+    from app.services import learning_events
+
+    learning_events.emit(
+        db, tenant_id=tenant_id, person_id=person_id,
+        kind="activity_started", subject_id=activity_id,
+        detail={"attempt": len(chosen)},
+    )
     return attempt
 
 

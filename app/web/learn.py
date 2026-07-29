@@ -19,7 +19,7 @@ from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
 from app.services import catalog as catalog_service
-from app.services import learner_dashboard
+from app.services import insights, learner_dashboard, learning_events
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
@@ -215,6 +215,14 @@ def chapter(
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
+    learning_events.emit(
+        db, tenant_id=tenant.id, person_id=person.id, kind="course_viewed",
+        course_id=course.id, subject_id=course.id,
+    )
+    learning_events.emit(
+        db, tenant_id=tenant.id, person_id=person.id, kind="chapter_viewed",
+        course_id=course.id, subject_id=ch.id,
+    )
     activities = list(db.scalars(
         select(Activity)
         .where(Activity.tenant_id == tenant.id)
@@ -331,6 +339,10 @@ def chapter_complete(
     if existing is None:
         db.add(ChapterRead(tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id))
         done = True
+        learning_events.emit(
+            db, tenant_id=tenant.id, person_id=person.id, kind="chapter_completed",
+            course_id=course.id, subject_id=ch.id,
+        )
     else:
         db.delete(existing)
         done = False
@@ -491,8 +503,10 @@ def progress(
     overview = learner_dashboard.progress_overview(
         db, tenant_id=tenant.id, person_id=person.id
     )
+    activity = insights.learner_activity(db, tenant_id=tenant.id, person_id=person.id)
     return templates.TemplateResponse(
-        request, "progress.html", {"request": request, "overview": overview}
+        request, "progress.html",
+        {"request": request, "overview": overview, "activity": activity},
     )
 
 
