@@ -73,6 +73,9 @@ async def lifespan(_: FastAPI):
         if settings.is_production:
             raise RuntimeError(f"Configuration error: {err}")
         logger.warning("Config: %s", err)
+    from app.error_tracking import init_error_tracking
+
+    init_error_tracking()
     yield
 
 

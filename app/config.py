@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Port probed on the lab host for the academy_lab_host_up health gauge.
     lab_host_probe_port: int = 22
 
+    # GlitchTip (Sentry protocol) error tracking — inert unless BOTH are set.
+    glitchtip_dsn: str = ""
+    glitchtip_enabled: bool = False
+    glitchtip_traces_sample_rate: float = 0.1
+
     # dotmac_erp training-report push (inert by default — empty URL disables it).
     # On course completion, a signed webhook records the result on the employee's
     # HR record; ERP matches by work email and ignores non-employees.
