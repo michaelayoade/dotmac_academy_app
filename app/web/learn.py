@@ -139,14 +139,15 @@ def home(
         return RedirectResponse("/instructor", status_code=303)
 
     # Dashboard projection (roadmap P1a): the service owns state derivation.
-    dashboard = learner_dashboard.course_cards(db, tenant_id=tenant.id, person_id=person.id)
+    # learner_home fans out once and returns cards + cross-course continue.
+    dashboard = learner_dashboard.learner_home(db, tenant_id=tenant.id, person_id=person.id)
     state_filter = request.query_params.get("filter", "")
     cards = dashboard["cards"]
     if state_filter in dashboard["filters"]:
         cards = [c for c in cards if c["state"] == state_filter]
 
     # Continue: the actual last meaningful activity, resolved server-side.
-    continue_to = learner_dashboard.continue_target(db, tenant_id=tenant.id, person_id=person.id)
+    continue_to = dashboard["continue_to"]
 
     # Recent results: the person's latest few scores (title + pass/fail + %).
     recent_rows = db.execute(

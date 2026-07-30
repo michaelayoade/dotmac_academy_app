@@ -19,24 +19,16 @@ from app.services.lookups import cohort_or_404
 from app.services.reports import _best_for_person, _cohort_activities
 
 
-def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> dict:
-    """Weighted grade for one student across one course.
+def grade_from(activities: list[Activity], best: dict) -> dict:
+    """Pure weighted-grade computation from already-fetched activities + best
+    scores (no queries). Callers with batched data use this directly; see
+    :func:`course_grade` for the single-course query wrapper.
 
-    Returns {"pct": int 0-100, "per_activity": [{activity, fraction, weight}...]}.
-    Missing submission → fraction 0 but weight still in denominator.
+    Returns {"pct": int 0-100, "per_activity": [{activity, fraction, weight,
+    graded}...]}. Missing submission → fraction 0 but weight still counted.
     """
-    activities = list(
-        db.scalars(
-            select(Activity)
-            .where(Activity.tenant_id == tenant_id)
-            .where(Activity.course_id == course_id)
-            .order_by(Activity.chapter_number, Activity.type)
-        ).all()
-    )
     if not activities:
         return {"pct": 0, "per_activity": []}
-
-    best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
     per_activity = [
         {
             "activity": a,
@@ -52,13 +44,30 @@ def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UU
     total_weight = sum(a.weight for a in activities)
     if total_weight == 0:
         return {"pct": 0, "per_activity": per_activity}
-
     weighted_sum = sum(
         (best[a.id].fraction if a.id in best else 0.0) * a.weight
         for a in activities
     )
     pct = int(round(weighted_sum / total_weight * 100))
     return {"pct": pct, "per_activity": per_activity}
+
+
+def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> dict:
+    """Weighted grade for one student across one course.
+
+    Returns {"pct": int 0-100, "per_activity": [{activity, fraction, weight}...]}.
+    Missing submission → fraction 0 but weight still in denominator.
+    """
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant_id)
+            .where(Activity.course_id == course_id)
+            .order_by(Activity.chapter_number, Activity.type)
+        ).all()
+    )
+    best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    return grade_from(activities, best)
 
 
 def attempted_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> dict:

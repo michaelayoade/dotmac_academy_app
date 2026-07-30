@@ -31,7 +31,11 @@ from app.models.learning_event import (
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.services import learning_events
-from app.services.assessment import attempts_used, best_scores_for
+from app.services.assessment import (
+    attempts_used,
+    best_scores_by_course_for_person,
+    best_scores_for,
+)
 from app.services.entitlements import visible_course_ids
 
 ACTIVE_WINDOW_DAYS = 7  # rule: any ledger event in the last 7 days = active
@@ -70,17 +74,27 @@ def _grade_trend(db: Session, tenant_id: UUID, person_id: UUID) -> dict:
 def _discipline_strengths(db: Session, tenant_id: UUID, person_id: UUID) -> dict:
     """Average best-score fraction per course discipline. Competency-level
     areas arrive with roadmap P5; discipline is the honest available grain."""
-    course_ids = visible_course_ids(db, tenant_id=tenant_id, person_id=person_id)
+    course_ids = list(visible_course_ids(db, tenant_id=tenant_id, person_id=person_id))
     per_discipline: dict[str, list[float]] = {}
-    for course_id in course_ids:
-        course = db.get(Course, course_id)
-        if course is None:
-            continue
-        best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-        if not best:
+    if not course_ids:
+        return {"strong": None, "weak": None, "all": {}}
+    disciplines = {
+        cid: disc
+        for cid, disc in db.execute(
+            select(Course.id, Course.discipline)
+            .where(Course.tenant_id == tenant_id)
+            .where(Course.id.in_(course_ids))
+        ).all()
+    }
+    best_by_course = best_scores_by_course_for_person(
+        db, tenant_id=tenant_id, person_id=person_id, course_ids=course_ids
+    )
+    for course_id, best in best_by_course.items():
+        discipline = disciplines.get(course_id)
+        if discipline is None or not best:
             continue
         avg = sum(float(s.fraction) for s in best.values()) / len(best)
-        per_discipline.setdefault(course.discipline, []).append(avg)
+        per_discipline.setdefault(discipline, []).append(avg)
     scored = {d: round(100 * sum(v) / len(v)) for d, v in per_discipline.items() if v}
     if not scored:
         return {"strong": None, "weak": None, "all": {}}
