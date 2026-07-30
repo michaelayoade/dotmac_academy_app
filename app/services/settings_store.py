@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 # Keys whose stored string value is coerced to a non-str type on read.
 _INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "lab_idle_minutes",
                        "reminder_inactivity_days", "reminder_digest_hour", "reminder_digest_weekday",
-                       "success_inactive_days", "success_min_grade_pct"})
+                       "success_inactive_days", "success_min_grade_pct",
+                       "success_certificate_grace_hours"})
 _BOOL_KEYS = frozenset({"smtp_starttls", "email_auto_on_pass", "email_digest_enabled",
                         "reminders_enabled"})
 
@@ -48,6 +49,7 @@ KNOWN_KEYS: tuple[str, ...] = (
     "reminder_digest_weekday",
     "success_inactive_days",
     "success_min_grade_pct",
+    "success_certificate_grace_hours",
 )
 
 
@@ -63,6 +65,7 @@ def _defaults() -> dict[str, object]:
         "email_auto_on_pass": True,
         "success_inactive_days": 7,
         "success_min_grade_pct": 60,
+        "success_certificate_grace_hours": 6,
         "email_digest_enabled": True,
         "branding_name": "Dotmac Academy",
         "max_concurrent_labs": settings.max_concurrent_labs,

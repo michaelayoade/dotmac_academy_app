@@ -67,15 +67,21 @@ def test_below_passing_counts_a_genuine_zero(admin_session, tenant_a):
     admin_session.add(person)
     course = _course(admin_session, tenant_a, "zero-course")
     _enrol(admin_session, tenant_a, person, course)
-    act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1,
-                   type="mcq_test", title="Q", pass_threshold=0.6)
-    admin_session.add(act)
+    # Two graded activities (both a genuine 0%) — clears the below-passing volume
+    # gate (>=2 graded, >=20% weight) so the rule fires on real zeros, not >0.
+    acts = []
+    for i in range(2):
+        a = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=i + 1,
+                     type="mcq_test", title=f"Q{i}", pass_threshold=0.6)
+        admin_session.add(a)
+        acts.append(a)
     admin_session.flush()
-    sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=person.id, answers={})
-    admin_session.add(sub)
-    admin_session.flush()
-    admin_session.add(Score(tenant_id=tenant_a.id, submission_id=sub.id, score=0, max_score=10,
-                            fraction=0.0, passed=False, per_item=[], source="auto"))
+    for a in acts:
+        sub = Submission(tenant_id=tenant_a.id, activity_id=a.id, person_id=person.id, answers={})
+        admin_session.add(sub)
+        admin_session.flush()
+        admin_session.add(Score(tenant_id=tenant_a.id, submission_id=sub.id, score=0, max_score=10,
+                                fraction=0.0, passed=False, per_item=[], source="auto"))
     admin_session.commit()
 
     grade = course_grade(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
