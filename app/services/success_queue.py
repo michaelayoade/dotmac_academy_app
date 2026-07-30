@@ -17,7 +17,7 @@ canonical state and the learning-event ledger.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID, uuid4
 
@@ -48,7 +48,7 @@ from app.services.assessment import attempts_used, best_scores_for
 from app.services.audit import write_audit_event
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
-from app.services.gradebook import course_grade
+from app.services.gradebook import attempted_grade
 from app.services.settings_store import effective
 
 # Deterministic severity thresholds (multipliers on the configured base).
@@ -142,22 +142,32 @@ def _rule_overdue(db: Session, *, tenant_id: UUID, person_id: UUID,
     return facts, severity, action
 
 
+# Volume gate for the below-passing rule: only fire once enough of the course
+# has actually been graded, so a learner one activity into a ten-activity course
+# is not flagged failing. Missing due work is the overdue rule's job.
+_BELOW_PASSING_MIN_GRADED = 2
+_BELOW_PASSING_MIN_WEIGHT_FRACTION = 0.20
+
+
 def _rule_below_passing(db: Session, *, tenant_id: UUID, person_id: UUID,
                         course_ids: list[UUID], min_grade_pct: int) -> tuple[dict, str, str] | None:
     worst: dict | None = None
     for course_id in course_ids:
-        grade = course_grade(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-        if not grade["per_activity"]:
+        # Graded-only weighted grade: score the learner on submitted work, not
+        # on not-yet-due activities counted as 0.
+        g = attempted_grade(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+        if g["graded_count"] < _BELOW_PASSING_MIN_GRADED:
             continue
-        attempted = any(a["graded"] for a in grade["per_activity"])
-        if not attempted:
+        if g["graded_weight_fraction"] < _BELOW_PASSING_MIN_WEIGHT_FRACTION:
             continue
-        if grade["pct"] < min_grade_pct and (worst is None or grade["pct"] < worst["grade_pct"]):
+        if g["pct"] < min_grade_pct and (worst is None or g["pct"] < worst["grade_pct"]):
             course = db.get(Course, course_id)
             worst = {
                 "course_id": str(course_id),
                 "course_title": course.title if course else "",
-                "grade_pct": grade["pct"],
+                "grade_pct": g["pct"],
+                "graded_count": g["graded_count"],
+                "graded_weight_pct": round(g["graded_weight_fraction"] * 100),
                 "required_pct": min_grade_pct,
             }
     if worst is None:
@@ -203,13 +213,21 @@ def _rule_failed_final(db: Session, *, tenant_id: UUID, person_id: UUID,
     return None
 
 
-def _rule_certificate_blocked(db: Session, *, tenant_id: UUID, person_id: UUID
+def _rule_certificate_blocked(db: Session, *, tenant_id: UUID, person_id: UUID,
+                              now: datetime, grace_hours: int
                               ) -> tuple[dict, str, str] | None:
+    # Certificates now auto-issue when a course completes (completion owner).
+    # A missing certificate therefore means issuance genuinely failed — but only
+    # flag it once past a reconciliation grace window, so a just-completed course
+    # mid-transaction isn't reported as blocked.
+    cutoff = now - timedelta(hours=grace_hours)
     completions = db.scalars(
         select(CourseCompletion)
         .where(CourseCompletion.tenant_id == tenant_id)
         .where(CourseCompletion.person_id == person_id)
         .where(CourseCompletion.status == "completed")
+        .where(CourseCompletion.completed_at.is_not(None))
+        .where(CourseCompletion.completed_at <= cutoff)
     ).all()
     for comp in completions:
         cert = db.scalars(
@@ -225,10 +243,12 @@ def _rule_certificate_blocked(db: Session, *, tenant_id: UUID, person_id: UUID
             "course_id": str(comp.course_id),
             "course_title": course.title if course else "",
             "completion_pct": int(round(comp.pct * 100)),
+            "completed_at": comp.completed_at.isoformat() if comp.completed_at else None,
+            "grace_hours": grace_hours,
             "missing": "certificate",
         }
-        action = "Course is complete but no certificate exists — issue it or clear the blocker."
-        return facts, "low", action
+        action = "Certificate issuance failed for a completed course — re-issue it or clear the blocker."
+        return facts, "medium", action
     return None
 
 
@@ -273,6 +293,7 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     cfg = effective(db)
     threshold_days = int(getattr(cfg, "success_inactive_days", 7) or 7)
     min_grade = int(getattr(cfg, "success_min_grade_pct", 60) or 60)
+    cert_grace_hours = int(getattr(cfg, "success_certificate_grace_hours", 6) or 6)
 
     counts = {"opened": 0, "refreshed": 0, "auto_resolved": 0}
     rows = db.execute(
@@ -310,7 +331,8 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
             REASON_FAILED_FINAL: _rule_failed_final(
                 db, tenant_id=tenant_id, person_id=person_id, course_ids=course_ids),
             REASON_CERTIFICATE_BLOCKED: _rule_certificate_blocked(
-                db, tenant_id=tenant_id, person_id=person_id),
+                db, tenant_id=tenant_id, person_id=person_id,
+                now=now, grace_hours=cert_grace_hours),
         }
         for reason, result in results.items():
             if result is not None:

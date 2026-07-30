@@ -61,6 +61,34 @@ def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UU
     return {"pct": pct, "per_activity": per_activity}
 
 
+def attempted_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID) -> dict:
+    """Weighted grade computed over GRADED activities only.
+
+    Unlike ``course_grade`` (which weights never-attempted work as 0 in the
+    denominator), this scores a learner purely on what they have actually
+    submitted, so partial early progress is not read as failing. Used by the
+    below-passing intervention rule, which also gates on how much of the course
+    has been graded.
+
+    Returns ``{"pct", "graded_count", "graded_weight_fraction"}`` where
+    ``graded_weight_fraction`` is graded weight over total course weight
+    (0.0 when the course has no weighted activities).
+    """
+    grade = course_grade(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    per_activity = grade["per_activity"]
+    total_weight = sum(a["weight"] for a in per_activity)
+    graded = [a for a in per_activity if a["graded"]]
+    graded_weight = sum(a["weight"] for a in graded)
+    if graded_weight == 0:
+        return {"pct": 0, "graded_count": len(graded), "graded_weight_fraction": 0.0}
+    weighted_sum = sum(a["fraction"] * a["weight"] for a in graded)
+    return {
+        "pct": int(round(weighted_sum / graded_weight * 100)),
+        "graded_count": len(graded),
+        "graded_weight_fraction": (graded_weight / total_weight) if total_weight else 0.0,
+    }
+
+
 def cohort_gradebook(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> dict:
     """Student x activity weighted gradebook for a cohort.
 

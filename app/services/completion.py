@@ -77,6 +77,16 @@ def recompute_completion(
     if first_completion:
         course = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)).first()
         course_title = course.title if course is not None else "the course"
+        # Issue the certificate RECORD + serial immediately on completion,
+        # independent of the email path (which is skipped for opted-out or
+        # email-less learners). The PDF still renders lazily on download.
+        # Without this, a completed course shows a permanent certificate_blocked.
+        try:
+            from app.services.certificates import issue_certificate
+
+            issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now)
+        except Exception as exc:
+            logger.warning("certificate issuance on completion failed: %s", exc)
         try:
             from app.services.notifications import notify
 
