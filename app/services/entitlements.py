@@ -124,6 +124,29 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
             current = states.get(course_id)
             if current is None or current.locked:
                 states[course_id] = state
+
+    # Explicit CoursePrerequisite rules apply on top of track order: a course
+    # with an uncompleted required course is locked even when track order (or a
+    # null track) would otherwise open it. Without this, the dashboard shows
+    # Start and the chapter route then 403s (require_course_open checks these).
+    entitled_ids = [course_id for course_id, _t, _o, _title in rows]
+    prereq_rows = db.execute(
+        select(CoursePrerequisite.course_id, CoursePrerequisite.requires_course_id)
+        .where(CoursePrerequisite.tenant_id == tenant_id)
+        .where(CoursePrerequisite.course_id.in_(entitled_ids))
+    ).all()
+    for course_id, requires_course_id in prereq_rows:
+        if requires_course_id in completed:
+            continue
+        current = states.get(course_id)
+        if current is not None and current.locked:
+            continue  # already locked (track order); keep the first reason
+        states[course_id] = CourseAccessState(
+            course_id=course_id,
+            locked=True,
+            locked_reason="Complete the prerequisite course to unlock this course.",
+            locked_until_course_id=requires_course_id,
+        )
     return states
 
 

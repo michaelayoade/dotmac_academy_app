@@ -26,6 +26,7 @@ from app.services.catalog import (
     public_catalog,
 )
 from app.services.entitlements import course_access_states, open_course_ids
+from app.services.localtime import to_local
 from app.services.roles import role_slugs
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
@@ -177,9 +178,16 @@ def calendar(
     """Learner agenda — upcoming offering windows and activity deadlines."""
     tenant = require_tenant(request)
     items = upcoming_for_person(db, tenant_id=tenant.id, person_id=person.id)
+    # Group by the academy-local calendar day, not the stored UTC day — a
+    # 00:30 WAT session is 23:30 UTC the day before and would otherwise file
+    # under the wrong heading. Every rendered time already goes through localtime.
+    def _local_day(item: dict):
+        local = to_local(item["when"])
+        return local.date() if local is not None else None
+
     grouped = [
         {"day": day, "events": list(day_items)}
-        for day, day_items in groupby(items, key=lambda x: x["when"].date())
+        for day, day_items in groupby(items, key=_local_day)
     ]
     return templates.TemplateResponse(
         request,

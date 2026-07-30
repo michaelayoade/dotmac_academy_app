@@ -18,9 +18,10 @@ canonical state and the learning-event ledger.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from html import escape
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity
@@ -53,6 +54,16 @@ from app.services.settings_store import effective
 # Deterministic severity thresholds (multipliers on the configured base).
 _INACTIVITY_HIGH_FACTOR = 2  # inactive >= 2x threshold days -> high
 _OVERDUE_HIGH_COUNT = 3
+
+# Severity is stored as text but must sort highest-risk first, not alphabetically
+# ("high" < "medium" < "low" as strings would surface medium ahead of high).
+_SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
+
+
+def severity_order():
+    """Descending severity ordering for ``SuccessQueueEntry`` queries — the one
+    place the text-vs-rank mapping lives, shared by the queue view and the CSV."""
+    return case(_SEVERITY_RANK, value=SuccessQueueEntry.severity, else_=0).desc()
 
 SEGMENT_KEYS = (
     "inactive",
@@ -138,7 +149,7 @@ def _rule_below_passing(db: Session, *, tenant_id: UUID, person_id: UUID,
         grade = course_grade(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
         if not grade["per_activity"]:
             continue
-        attempted = any(a["fraction"] > 0 for a in grade["per_activity"])
+        attempted = any(a["graded"] for a in grade["per_activity"])
         if not attempted:
             continue
         if grade["pct"] < min_grade_pct and (worst is None or grade["pct"] < worst["grade_pct"]):
@@ -266,9 +277,14 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     counts = {"opened": 0, "refreshed": 0, "auto_resolved": 0}
     rows = db.execute(
         select(Enrollment.person_id, Enrollment.cohort_id, Enrollment.created_at)
+        .join(Person, (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id))
         .where(Enrollment.tenant_id == tenant_id)
         .where(Enrollment.role_in_cohort == "student")
         .where(Enrollment.status == "active")
+        # Suspended/offboarded people keep their enrolment rows; without this a
+        # rule (e.g. inactivity) would hold an unresolvable entry for them
+        # forever and segment messaging would email them.
+        .where(Person.status == "active")
     ).all()
     primary_cohort: dict[UUID, UUID] = {}
     enrolled_since: dict[UUID, datetime] = {}
@@ -371,7 +387,7 @@ def list_entries(db: Session, *, tenant_id: UUID, status: str | None = None,
         .join(Cohort, (Cohort.id == SuccessQueueEntry.cohort_id)
               & (Cohort.tenant_id == SuccessQueueEntry.tenant_id), isouter=True)
         .where(SuccessQueueEntry.tenant_id == tenant_id)
-        .order_by(SuccessQueueEntry.severity.desc(), SuccessQueueEntry.detected_at.desc())
+        .order_by(severity_order(), SuccessQueueEntry.detected_at.desc())
     )
     if status:
         q = q.where(SuccessQueueEntry.status == status)
@@ -408,6 +424,7 @@ def segment_members(db: Session, *, tenant_id: UUID, cohort_id: UUID,
         .where(Enrollment.cohort_id == cohort_id)
         .where(Enrollment.role_in_cohort == "student")
         .where(Enrollment.status == "active")
+        .where(Person.status == "active")
         .order_by(Person.last_name)
     ).all()
 
@@ -461,7 +478,9 @@ def message_segment(db: Session, *, tenant_id: UUID, cohort_id: UUID, segment: s
     members = segment_members(db, tenant_id=tenant_id, cohort_id=cohort_id,
                               segment=segment, now=now)
     action_id = uuid4().hex[:12]
-    html = f"<p>{body}</p>".replace("\n", "<br>")
+    # Free-form instructor input goes into email HTML — escape it so a stray
+    # "<" can't break rendering or inject markup.
+    html = "<p>" + escape(body).replace("\n", "<br>") + "</p>"
     for person in members:
         notifications.notify(db, tenant_id=tenant_id, person_id=person.id,
                              kind="instructor_message", title=subject, body=body, link="/")

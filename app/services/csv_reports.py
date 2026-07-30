@@ -19,7 +19,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.person import Person
 from app.models.success_queue import STATUS_RESOLVED, SuccessQueueEntry
-from app.services import insights, learning_events
+from app.services import insights, learning_events, success_queue
 from app.services.gradebook import course_grade
 
 
@@ -72,10 +72,16 @@ def cohort_roster_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
             round(100 * sum(c.pct for c in completions) / len(completions))
             if completions else 0
         )
-        grades = [course_grade(db, tenant_id=tenant_id, person_id=person.id,
-                               course_id=cid)["pct"] for cid in course_ids]
-        graded = [g for g in grades if g > 0]
-        avg_grade = round(sum(graded) / len(graded)) if graded else 0
+        # Average over courses the learner has actually attempted (any graded
+        # activity), not courses with pct>0 — a genuine 0% must count, and only
+        # never-started courses should be excluded.
+        grade_docs = [course_grade(db, tenant_id=tenant_id, person_id=person.id, course_id=cid)
+                      for cid in course_ids]
+        attempted_pcts = [
+            g["pct"] for g in grade_docs
+            if any(a["graded"] for a in g["per_activity"])
+        ]
+        avg_grade = round(sum(attempted_pcts) / len(attempted_pcts)) if attempted_pcts else 0
         last = learning_events.last_activity_at(db, tenant_id=tenant_id, person_id=person.id)
         reasons = list(db.scalars(
             select(SuccessQueueEntry.reason_kind)
@@ -131,7 +137,7 @@ def queue_summary_csv(db: Session, *, tenant_id: UUID,
               & (Cohort.tenant_id == SuccessQueueEntry.tenant_id), isouter=True)
         .where(SuccessQueueEntry.tenant_id == tenant_id)
         .where(SuccessQueueEntry.status != STATUS_RESOLVED)
-        .order_by(SuccessQueueEntry.severity.desc(), SuccessQueueEntry.detected_at.desc())
+        .order_by(success_queue.severity_order(), SuccessQueueEntry.detected_at.desc())
     )
     if cohort_id is not None:
         q = q.where(SuccessQueueEntry.cohort_id == cohort_id)

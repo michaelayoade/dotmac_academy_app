@@ -105,14 +105,23 @@ def _current_blocker(db: Session, tenant_id: UUID, person_id: UUID, now: datetim
             best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
         )
 
+    # Scope deadlines to the offerings this person is actually enrolled in.
+    # Filtering only by Activity.course_id would let another cohort's offering
+    # of the same course contribute a due_at that this learner never had.
     overdue_rows = db.execute(
         select(OfferingActivity.due_at, Activity)
         .join(Activity, (Activity.id == OfferingActivity.activity_id)
               & (Activity.tenant_id == OfferingActivity.tenant_id))
+        .join(CourseOffering, (CourseOffering.id == OfferingActivity.offering_id)
+              & (CourseOffering.tenant_id == OfferingActivity.tenant_id))
+        .join(Enrollment, (Enrollment.cohort_id == CourseOffering.cohort_id)
+              & (Enrollment.tenant_id == CourseOffering.tenant_id))
         .where(OfferingActivity.tenant_id == tenant_id)
         .where(OfferingActivity.due_at.is_not(None))
         .where(OfferingActivity.due_at < now)
-        .where(Activity.course_id.in_(course_ids))
+        .where(CourseOffering.status == "active")
+        .where(Enrollment.person_id == person_id)
+        .where(Enrollment.status == "active")
         .order_by(OfferingActivity.due_at)
     ).all()
     for due_at, activity in overdue_rows:
@@ -192,12 +201,16 @@ def learner_activity(
 
 
 def _cohort_people(db: Session, tenant_id: UUID, cohort_id: UUID) -> list[UUID]:
+    """Active *students* in the cohort. Instructors must not inflate learner
+    counts, deflate active-% and completion, or land in the not-attempted
+    bucket (they never 'start' coursework)."""
     return list(
         db.scalars(
             select(Enrollment.person_id)
             .where(Enrollment.tenant_id == tenant_id)
             .where(Enrollment.cohort_id == cohort_id)
             .where(Enrollment.status == "active")
+            .where(Enrollment.role_in_cohort == "student")
         ).all()
     )
 
@@ -301,9 +314,15 @@ def cohort_overview(
             ) or 0
         )
 
-    lab_failures_raw = learning_events.kind_counts(
-        db, tenant_id=tenant_id, kinds=(KIND_LAB_CHECK_FAILED,),
-        course_ids=course_ids or None,
+    # Scope lab failures to this cohort's students and courses. Without the
+    # person filter an empty course list would fall back to tenant-wide counts.
+    lab_failures_raw = (
+        learning_events.kind_counts(
+            db, tenant_id=tenant_id, kinds=(KIND_LAB_CHECK_FAILED,),
+            course_ids=course_ids, person_ids=people,
+        )
+        if course_ids and people
+        else {}
     )
     course_titles = {
         c.id: c.title

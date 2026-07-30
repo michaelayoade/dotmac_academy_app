@@ -326,6 +326,11 @@ def chapter_complete(
     ).first()
     if course is None:
         raise HTTPException(status_code=404)
+    # Gate this state-changing route like its GET sibling (:209): without it a
+    # learner can mark chapters complete in a course they can't access, writing
+    # ChapterRead rows and chapter_completed ledger events that then feed
+    # analytics, inactivity, and the Success Queue.
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     ch = db.scalars(
         select(Chapter).where(Chapter.tenant_id == tenant.id)
         .where(Chapter.course_id == course.id).where(Chapter.number == n)

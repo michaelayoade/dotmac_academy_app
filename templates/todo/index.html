@@ -11,7 +11,7 @@
       <p class="font-medium text-ink">{{ row.activity.title }}</p>
       <p class="mt-0.5 text-sm text-ink-soft">{{ row.course_title }} · due {{ (row.due_at | localtime).strftime('%a %-d %b %Y, %H:%M') }}</p>
     </div>
-    <a href="/courses" class="btn-primary shrink-0 px-4 py-2 text-sm">Open course</a>
+    <a href="/courses/{{ row.course_slug }}/chapters/{{ row.activity.chapter_number }}" class="btn-primary shrink-0 px-4 py-2 text-sm">Open activity</a>
   </div>
   {% endfor %}
 </div>

@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity
@@ -127,7 +127,11 @@ def upcoming_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, limit:
             .where(ClassSession.tenant_id == tenant_id)
             .where(ClassSession.cohort_id.in_(cohort_ids))
             .where(ClassSession.status == "scheduled")
-            .where(ClassSession.starts_at > now)
+            # Keep a session visible until it ends, not until it starts —
+            # otherwise a live class vanishes from the calendar at the exact
+            # moment the learner needs the Join affordance (join_is_open and
+            # scheduling.list_for_person both treat in-progress as current).
+            .where(func.coalesce(ClassSession.ends_at, ClassSession.starts_at) >= now)
         ).all():
             suffix = "" if s.session_type == "live_class" else f" ({s.session_type})"
             items.append(

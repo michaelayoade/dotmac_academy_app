@@ -42,6 +42,10 @@ def course_grade(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UU
             "activity": a,
             "fraction": best[a.id].fraction if a.id in best else 0.0,
             "weight": a.weight,
+            # A genuine 0% (graded=True, fraction=0.0) is distinct from never
+            # submitting (graded=False); downstream "attempted" checks must key
+            # off graded, not fraction.
+            "graded": a.id in best,
         }
         for a in activities
     ]
