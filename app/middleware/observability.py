@@ -26,6 +26,12 @@ class ObservabilityMiddleware:
         inbound_request_id = request.headers.get("x-request-id")
         request_id = inbound_request_id if self.trust_inbound_request_id and inbound_request_id else str(uuid4())
         scope.setdefault("state", {})["request_id"] = request_id
+        try:
+            from app.error_tracking import tag_request
+
+            tag_request(request_id)
+        except Exception:  # telemetry must never break a request
+            logger.debug("request-id tagging failed", exc_info=True)
         started = time.perf_counter()
         status_code = 500
 

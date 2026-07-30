@@ -31,6 +31,7 @@ jsonpath-ng = "^1.8.0"
 websockets = "^16.0"
 fpdf2 = "^2.8.7"
 prometheus-client = "^0.26.0"
+sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
