@@ -48,7 +48,7 @@
       <p class="mt-1 text-sm text-ink-soft">In-app notifications always arrive as things happen; this paces the emails.</p>
     </div>
     <div>
-      <span class="block font-semibold text-ink">Quiet hours <span class="font-normal text-ink-soft">(no emails between, West Africa Time)</span></span>
+      <span class="block font-semibold text-ink">Quiet hours <span class="font-normal text-ink-soft">(no emails between, {{ academy_tz_label }})</span></span>
       <div class="mt-1.5 flex items-center gap-2">
         <input type="number" min="0" max="23" name="quiet_start_hour" placeholder="22"
                value="{{ reminder_pref.quiet_start_hour if reminder_pref.quiet_start_hour is not none }}"

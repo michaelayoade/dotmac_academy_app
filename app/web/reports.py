@@ -112,13 +112,15 @@ def reports_cohort_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["name", "email", *[a.title for a in activities], "completion_pct"])
+    writer.writerow([csv_reports.sanitize_cell(c)
+                     for c in ["name", "email", *[a.title for a in activities], "completion_pct"]])
     for row in matrix["rows"]:
         cells = []
         for a in activities:
             score = row["cells"].get(a.id)
             cells.append(f"{score.fraction:.2f}" if score is not None else "")
-        writer.writerow([row["name"], row["email"], *cells, f"{row['completion'] * 100:.0f}"])
+        writer.writerow([csv_reports.sanitize_cell(c)
+                         for c in [row["name"], row["email"], *cells, f"{row['completion'] * 100:.0f}"]])
 
     return Response(
         content=buf.getvalue(),

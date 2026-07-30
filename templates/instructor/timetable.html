@@ -58,6 +58,7 @@
           </td>
           <td class="px-3 py-2 text-right">
             {% if s.status != 'cancelled' %}
+            <a class="btn-secondary text-xs" href="/instructor/sessions/{{ s.id }}/edit">Edit</a>
             <button class="btn-secondary text-xs"
                     hx-post="/instructor/sessions/{{ s.id }}/cancel"
                     hx-confirm="Cancel this session? Learners will see it as cancelled.">Cancel</button>
@@ -96,7 +97,7 @@
              class="w-full px-3.5 py-2.5 text-[0.95rem]">
     </div>
     <div>
-      <label for="s-starts" class="mb-1.5 block text-sm font-semibold text-ink">Starts <span class="font-normal text-ink-soft">(West Africa Time)</span></label>
+      <label for="s-starts" class="mb-1.5 block text-sm font-semibold text-ink">Starts <span class="font-normal text-ink-soft">({{ academy_tz_label }})</span></label>
       <input id="s-starts" name="starts_at" type="datetime-local"
              class="w-full px-3.5 py-2.5 text-[0.95rem]" required>
     </div>

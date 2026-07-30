@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">My timetable</h1>
-<p class="mt-2 text-sm text-ink-soft">All times are West Africa Time (WAT).</p>
+<p class="mt-2 text-sm text-ink-soft">All times are {{ academy_tz_label }}.</p>
 
 <h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Upcoming</h2>
 {% if sessions.upcoming %}

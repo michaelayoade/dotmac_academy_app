@@ -213,22 +213,26 @@ def _detect_events(
                 "link": link,
             })
 
-    # Live sessions -> session_24h / session_1h.
+    # Live sessions -> session_24h / session_1h. The occurrence key is versioned
+    # by the scheduled start time, so rescheduling a session issues a FRESH
+    # reminder (the old key stays consumed for the old time); a same-schedule
+    # re-sweep still dedupes. Opt-out suppression is unchanged and intentional.
     upcoming = list_for_person(db, tenant_id=tenant_id, person_id=person_id, now=now)["upcoming"]
     for session, _cohort_name in upcoming:
         delta = session.starts_at - now
         link = f"/timetable/sessions/{session.id}"
+        sched = session.starts_at.astimezone(UTC).strftime("%Y%m%dT%H%M")
         if timedelta(0) < delta <= timedelta(hours=1):
             events.append({
                 "kind": "session_1h",
-                "key": f"session_1h:{session.id}",
+                "key": f"session_1h:{session.id}:{sched}",
                 "title": f"Starting soon: {session.title}",
                 "link": link,
             })
         elif timedelta(0) < delta <= timedelta(hours=24):
             events.append({
                 "kind": "session_24h",
-                "key": f"session_24h:{session.id}",
+                "key": f"session_24h:{session.id}:{sched}",
                 "title": f"Tomorrow: {session.title}",
                 "link": link,
             })

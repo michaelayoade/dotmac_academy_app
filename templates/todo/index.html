@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
 <h1 class="mt-1.5 text-3xl tracking-tight">To-Do</h1>
-<p class="mt-2 text-sm text-ink-soft">Everything with a date, in one place. All times are West Africa Time (WAT).</p>
+<p class="mt-2 text-sm text-ink-soft">Everything with a date, in one place. All times are {{ academy_tz_label }}.</p>
 
 {% macro deadline_list(rows) %}
 <div class="mt-3 space-y-3">
@@ -57,7 +57,7 @@
   <div class="card flex flex-wrap items-center gap-4 p-5">
     <div class="min-w-0 flex-1">
       <p class="font-medium text-ink">{{ g.activity.title }}</p>
-      <p class="mt-0.5 text-sm text-ink-soft">{{ g.course_title }} · {{ '%d'|format(g.score.fraction * 100) }}% · {{ 'passed' if g.score.passed else 'not yet' }}</p>
+      <p class="mt-0.5 text-sm text-ink-soft">{{ g.course_title }} · {{ (g.score.fraction * 100) | round | int }}% · {{ 'passed' if g.score.passed else 'not yet' }}</p>
     </div>
     {% if g.feedback_available %}
     <span class="shrink-0 rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-medium text-brand-800">feedback available</span>
@@ -66,6 +66,21 @@
   {% endfor %}
 </div>
 {% else %}<div class="card mt-3 p-5 text-ink-soft">No recent results.</div>{% endif %}
+
+<h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Feedback to read</h2>
+{% if timeline.feedback %}
+<div class="mt-3 space-y-3">
+  {% for g in timeline.feedback %}
+  <div class="card flex flex-wrap items-center gap-4 p-5">
+    <div class="min-w-0 flex-1">
+      <p class="font-medium text-ink">{{ g.activity.title }}</p>
+      <p class="mt-0.5 text-sm text-ink-soft">{{ g.course_title }} · feedback is available to review</p>
+    </div>
+    <a href="/courses/{{ g.course_slug }}/chapters/{{ g.activity.chapter_number }}" class="btn-primary shrink-0 px-4 py-2 text-sm">Review feedback</a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}<div class="card mt-3 p-5 text-ink-soft">No feedback waiting.</div>{% endif %}
 
 <h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Course dates</h2>
 {% if timeline.course_windows %}

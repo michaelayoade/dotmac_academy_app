@@ -99,7 +99,7 @@ def _local_day_end(now: datetime) -> datetime:
 def _graded_rows(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime) -> list[dict]:
     since = now - timedelta(days=GRADED_LOOKBACK_DAYS)
     rows = db.execute(
-        select(Score, Activity, Course.title)
+        select(Score, Activity, Course.title, Course.slug)
         .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
         .join(Activity, (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id))
         .join(Course, (Course.id == Activity.course_id) & (Course.tenant_id == Activity.tenant_id))
@@ -110,13 +110,14 @@ def _graded_rows(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
         .limit(10)
     ).all()
     out = []
-    for score, activity, course_title in rows:
+    for score, activity, course_title, course_slug in rows:
         used = attempts_used(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity.id)
         out.append(
             {
                 "score": score,
                 "activity": activity,
                 "course_title": course_title,
+                "course_slug": course_slug,
                 "feedback_available": reveal_feedback(activity, passed=score.passed, attempts_used=used),
             }
         )
