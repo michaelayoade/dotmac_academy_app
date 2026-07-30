@@ -174,6 +174,77 @@ def best_scores_for(db: Session, *, tenant_id, person_id, course_id) -> dict[UUI
     return best
 
 
+def _best_rank(score: Score) -> tuple:
+    """Shared ranking for best-of selection (see :func:`best_scores_for`)."""
+    return (score.fraction, score.passed, score.source == "override", score.created_at)
+
+
+def best_scores_for_person(
+    db: Session, *, tenant_id, person_id, course_ids=None
+) -> dict[UUID, Score]:
+    """Best score per activity across many courses in ONE query.
+
+    Same best-of semantics as :func:`best_scores_for` (activity ids are unique
+    across courses, so a flat activity_id->Score map is unambiguous). Pass
+    ``course_ids`` to restrict; ``None`` covers every course. Returns ``{}`` for
+    an empty ``course_ids`` list without touching the database.
+    """
+    if course_ids is not None and not course_ids:
+        return {}
+    q = (
+        select(Activity.id, Score)
+        .join(Submission, (Submission.activity_id == Activity.id) & (Submission.tenant_id == Activity.tenant_id))
+        .join(Score, (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id))
+        .where(Activity.tenant_id == tenant_id)
+        .where(Submission.person_id == person_id)
+        .order_by(Activity.id, Submission.attempt_no, Score.created_at)
+    )
+    if course_ids is not None:
+        q = q.where(Activity.course_id.in_(course_ids))
+    best: dict[UUID, Score] = {}
+    for activity_id, score in db.execute(q).all():
+        current = best.get(activity_id)
+        if current is None or _best_rank(score) > _best_rank(current):
+            best[activity_id] = score
+    return best
+
+
+def best_scores_by_course_for_person(
+    db: Session, *, tenant_id, person_id, course_ids=None
+) -> dict[UUID, dict[UUID, Score]]:
+    """Best score per activity, grouped by course, in ONE query."""
+    if course_ids is not None and not course_ids:
+        return {}
+    q = (
+        select(Activity.course_id, Activity.id, Score)
+        .join(Submission, (Submission.activity_id == Activity.id) & (Submission.tenant_id == Activity.tenant_id))
+        .join(Score, (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id))
+        .where(Activity.tenant_id == tenant_id)
+        .where(Submission.person_id == person_id)
+        .order_by(Activity.id, Submission.attempt_no, Score.created_at)
+    )
+    if course_ids is not None:
+        q = q.where(Activity.course_id.in_(course_ids))
+    out: dict[UUID, dict[UUID, Score]] = {}
+    for course_id, activity_id, score in db.execute(q).all():
+        per_course = out.setdefault(course_id, {})
+        current = per_course.get(activity_id)
+        if current is None or _best_rank(score) > _best_rank(current):
+            per_course[activity_id] = score
+    return out
+
+
+def attempts_used_by_person(db: Session, *, tenant_id, person_id) -> dict[UUID, int]:
+    """Submission count per activity for the person, in ONE grouped query."""
+    rows = db.execute(
+        select(Submission.activity_id, func.count())
+        .where(Submission.tenant_id == tenant_id)
+        .where(Submission.person_id == person_id)
+        .group_by(Submission.activity_id)
+    ).all()
+    return {activity_id: int(n) for activity_id, n in rows}
+
+
 def override_score(db: Session, *, tenant_id, submission_id, score_value, max_score, reason) -> Score:
     sub = db.get(Submission, submission_id)
     if sub is None or sub.tenant_id != tenant_id:
