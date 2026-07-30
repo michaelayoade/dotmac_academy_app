@@ -38,3 +38,15 @@ def to_local(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:  # legacy naive rows are stored-UTC by convention
         dt = dt.replace(tzinfo=ZoneInfo("UTC"))
     return dt.astimezone(academy_zone())
+
+
+def academy_tz_label(dt: datetime | None = None) -> str:
+    """Short wall-clock zone label for UI copy (e.g. 'WAT' for Africa/Lagos).
+
+    Derived from the configured zone at the given instant (falls back to the
+    IANA name if the platform yields no abbreviation), so hardcoded "WAT"
+    strings never drift when the academy timezone is reconfigured.
+    """
+    zone = academy_zone()
+    ref = (dt or datetime.now(zone)).astimezone(zone)
+    return ref.tzname() or settings.academy_timezone

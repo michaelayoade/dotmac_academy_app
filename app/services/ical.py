@@ -93,6 +93,27 @@ def _esc(value: str) -> str:
     )
 
 
+def _uri(value: str) -> str:
+    """URI-typed property value (URL:) — RFC 5545 forbids TEXT backslash-escaping
+    here, so a URL containing ',' or ';' must be emitted verbatim. Only strip
+    CR/LF, which would otherwise inject extra content lines."""
+    return (value or "").replace("\r", "").replace("\n", "")
+
+
+def _fold(line: str) -> str:
+    """RFC 5545 content-line folding: no line may exceed 75 octets; a fold is
+    CRLF + a single leading space. Fold on octet boundaries (UTF-8 safe)."""
+    raw = line.encode("utf-8")
+    if len(raw) <= 75:
+        return line
+    chunks = [raw[:75]]
+    rest = raw[75:]
+    while rest:
+        chunks.append(rest[:74])  # 74 + the leading space = 75 octets
+        rest = rest[74:]
+    return "\r\n ".join(c.decode("utf-8", "ignore") for c in chunks)
+
+
 def _stamp(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
@@ -124,13 +145,13 @@ def render_feed(events: list[dict], *, calname: str, now: datetime) -> str:
         ]
         if e.get("description"):
             lines.append(f"DESCRIPTION:{_esc(e['description'])}")
-        if e.get("location"):
+        if e.get("location"):  # LOCATION is TEXT-typed → escaped
             lines.append(f"LOCATION:{_esc(e['location'])}")
-        if e.get("url"):
-            lines.append(f"URL:{_esc(e['url'])}")
+        if e.get("url"):  # URL is URI-typed → NOT backslash-escaped (RFC 5545)
+            lines.append(f"URL:{_uri(e['url'])}")
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
-    return "\r\n".join(lines) + "\r\n"
+    return "\r\n".join(_fold(line) for line in lines) + "\r\n"
 
 
 def events_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime) -> list[dict]:

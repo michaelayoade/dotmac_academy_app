@@ -17,7 +17,7 @@
   <p><span class="font-semibold text-ink">When:</span>
     {{ (s.starts_at | localtime).strftime('%A %-d %B %Y, %H:%M') }}
     {%- if s.ends_at %} – {{ (s.ends_at | localtime).strftime('%H:%M') }}{% endif %}
-    <span class="text-ink-soft">(West Africa Time)</span></p>
+    <span class="text-ink-soft">({{ academy_tz_label }})</span></p>
   {% if s.location %}<p><span class="font-semibold text-ink">Location:</span> {{ s.location }}</p>{% endif %}
   {% if s.notes %}<p><span class="font-semibold text-ink">Notes:</span> {{ s.notes }}</p>{% endif %}
   {% if s.join_url %}

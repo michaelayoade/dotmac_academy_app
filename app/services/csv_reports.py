@@ -22,11 +22,22 @@ from app.models.success_queue import STATUS_RESOLVED, SuccessQueueEntry
 from app.services import insights, learning_events, success_queue
 from app.services.gradebook import course_grade
 
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sanitize_cell(value: object) -> object:
+    """Neutralise CSV formula injection: a text cell starting with =, +, -, @,
+    tab or CR is prefixed with a single quote so spreadsheet apps treat it as
+    text, never a formula. Non-string cells pass through unchanged."""
+    if isinstance(value, str) and value.startswith(_CSV_INJECTION_PREFIXES):
+        return "'" + value
+    return value
+
 
 def _csv(rows: list[list]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\r\n")
-    writer.writerows(rows)
+    writer.writerows([sanitize_cell(c) for c in row] for row in rows)
     return buf.getvalue()
 
 

@@ -20,6 +20,20 @@ DELIVERY_MODES = frozenset({"self_paced", "live", "blended"})
 _TYPES = frozenset(SESSION_TYPES)
 _STATUSES = frozenset(SESSION_STATUSES)
 
+_UNSET = object()  # sentinel: "field not provided" vs. None ("clear this field")
+
+
+def _clean_join_url(value: str | None) -> str | None:
+    """Accept only http(s) join URLs. Rejects javascript:, data:, etc. — the
+    value is rendered into an href, so a bad scheme is a stored-XSS vector."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    lowered = v.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        raise BadRequestError("Join URL must start with http:// or https://.")
+    return v
+
 
 def _cohort(db: Session, cohort_id: UUID) -> Cohort:
     cohort = db.get(Cohort, cohort_id)
@@ -56,6 +70,7 @@ def create_session(
         raise BadRequestError(f"Unknown session type: {session_type}")
     if ends_at is not None and ends_at <= starts_at:
         raise BadRequestError("ends_at must be after starts_at.")
+    join_url = _clean_join_url(join_url)
     cohort = _cohort(db, cohort_id)  # existence + RLS
     # Scheduling a session implies the cohort is not purely self-paced.
     if cohort.delivery_mode == "self_paced":
@@ -100,32 +115,65 @@ def list_for_cohort(
     return list(db.scalars(stmt.order_by(ClassSession.starts_at)).all())
 
 
-def update_session(db: Session, *, session_id: UUID, **fields) -> ClassSession:
+def update_session(
+    db: Session,
+    *,
+    session_id: UUID,
+    title=_UNSET,
+    starts_at=_UNSET,
+    ends_at=_UNSET,
+    session_type=_UNSET,
+    location=_UNSET,
+    join_url=_UNSET,
+    notes=_UNSET,
+    status=_UNSET,
+) -> tuple[ClassSession, dict[str, dict[str, object]]]:
+    """Edit an existing session and return (session, changes).
+
+    Only fields passed as something other than ``_UNSET`` are touched, so a
+    caller can clear a nullable field by passing ``None`` — the old
+    ``if value is None: continue`` guard made fields permanently unclearable.
+    ``changes`` maps each changed field to ``{"from": old, "to": new}`` for the
+    caller's audit record.
+    """
     session = get_session(db, session_id=session_id)
-    allowed = {
-        "title",
-        "starts_at",
-        "ends_at",
-        "session_type",
-        "offering_id",
-        "instructor_person_id",
-        "location",
-        "join_url",
-        "notes",
-        "status",
-    }
-    for key, value in fields.items():
-        if value is None or key not in allowed:
-            continue
-        if key == "session_type" and value not in _TYPES:
-            raise BadRequestError(f"Unknown session type: {value}")
-        if key == "status" and value not in _STATUSES:
-            raise BadRequestError(f"Unknown status: {value}")
-        setattr(session, key, value)
+    if session_type is not _UNSET and session_type not in _TYPES:
+        raise BadRequestError(f"Unknown session type: {session_type}")
+    if status is not _UNSET and status not in _STATUSES:
+        raise BadRequestError(f"Unknown status: {status}")
+
+    updates: dict[str, object] = {}
+    if title is not _UNSET:
+        updates["title"] = (title or "").strip()
+    if starts_at is not _UNSET:
+        updates["starts_at"] = starts_at
+    if ends_at is not _UNSET:
+        updates["ends_at"] = ends_at
+    if session_type is not _UNSET:
+        updates["session_type"] = session_type
+    if location is not _UNSET:
+        updates["location"] = (location or None)
+    if join_url is not _UNSET:
+        updates["join_url"] = _clean_join_url(join_url)
+    if notes is not _UNSET:
+        updates["notes"] = (notes or None)
+    if status is not _UNSET:
+        updates["status"] = status
+
+    changes: dict[str, dict[str, object]] = {}
+    for key, new in updates.items():
+        old = getattr(session, key)
+        if old != new:
+            changes[key] = {
+                "from": old.isoformat() if isinstance(old, datetime) else old,
+                "to": new.isoformat() if isinstance(new, datetime) else new,
+            }
+            setattr(session, key, new)
+
     if session.ends_at is not None and session.ends_at <= session.starts_at:
         raise BadRequestError("ends_at must be after starts_at.")
     db.flush()
-    return session
+    return session, changes
 
 
 def cancel_session(db: Session, *, session_id: UUID) -> ClassSession:

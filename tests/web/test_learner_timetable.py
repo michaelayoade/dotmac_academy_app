@@ -66,7 +66,8 @@ def test_timetable_lists_only_my_cohort_sessions(app_client, admin_session, tena
     assert r.status_code == 200
     assert "Live for Mine" in r.text
     assert "Live for Other" not in r.text
-    assert "West Africa Time" in r.text
+    # Timezone label is derived from the configured academy zone (Africa/Lagos → WAT).
+    assert "WAT" in r.text
 
 
 def test_session_detail_own_and_foreign(app_client, admin_session, tenant_a):

@@ -33,6 +33,7 @@ from app.services import scheduling
 from app.services import tracks as track_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
+from app.services.audit import write_audit_event
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
 from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
@@ -444,6 +445,69 @@ def cancel_class_session(session_id: UUID, request: Request, db: Session = Depen
         session = scheduling.cancel_session(db, session_id=session_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404) from exc
+    return _timetable_redirect(request, session.cohort_id)
+
+
+@router.get("/sessions/{session_id}/edit", response_class=HTMLResponse)
+def edit_class_session_form(session_id: UUID, request: Request, db: Session = Depends(get_db)):
+    """Edit form for a single session (start time shown/edited in academy time)."""
+    tenant = require_tenant(request)
+    try:
+        session = scheduling.get_session(db, session_id=session_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404) from exc
+    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=session.cohort_id)
+    return templates.TemplateResponse(
+        request,
+        "instructor/session_edit.html",
+        {
+            "request": request,
+            "cohort": cohort,
+            "session": session,
+            "session_types": list(scheduling.SESSION_TYPES),
+        },
+    )
+
+
+@router.post("/sessions/{session_id}/edit")
+def edit_class_session(
+    session_id: UUID,
+    request: Request,
+    title: str = Form(...),
+    starts_at: str = Form(...),
+    session_type: str = Form("live_class"),
+    ends_at: str = Form(""),
+    location: str = Form(""),
+    join_url: str = Form(""),
+    notes: str = Form(""),
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    starts = _parse_dt(starts_at)
+    if starts is None:
+        raise HTTPException(status_code=400, detail="A start time is required.")
+    try:
+        session, changes = scheduling.update_session(
+            db,
+            session_id=session_id,
+            title=title,
+            starts_at=starts,
+            ends_at=_parse_dt(ends_at),
+            session_type=session_type,
+            location=location,
+            join_url=join_url,
+            notes=notes,
+        )
+    except (BadRequestError, NotFoundError) as exc:
+        code = 404 if isinstance(exc, NotFoundError) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if changes:
+        write_audit_event(
+            db, tenant_id=tenant.id, actor_person_id=person.id,
+            action="scheduling.update_session", entity_type="class_session",
+            entity_id=str(session.id), details={"changes": changes},
+        )
     return _timetable_redirect(request, session.cohort_id)
 
 

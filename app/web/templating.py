@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
-from app.services.localtime import to_local
+from app.services.localtime import academy_tz_label, to_local
 from app.web.context import nav_context
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
@@ -23,3 +23,5 @@ def _datefmt(dt):
 
 
 templates.env.filters["datefmt"] = _datefmt
+# Dynamic wall-clock zone label (e.g. "WAT") for UI copy — no hardcoded strings.
+templates.env.globals["academy_tz_label"] = academy_tz_label()
