@@ -150,9 +150,10 @@ def metrics(request: Request):
     supplied = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
     if not token or not supplied or not _hmac.compare_digest(supplied, token):
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
-    from app.metrics import refresh_lab_host_probe, render
+    from app.metrics import refresh_lab_host_probe, refresh_pipeline_metrics, render
 
     refresh_lab_host_probe(settings.lab_console_host, settings.lab_host_probe_port)
+    refresh_pipeline_metrics()
     payload, content_type = render()
     return _Response(content=payload, media_type=content_type)
 

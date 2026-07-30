@@ -59,9 +59,44 @@ LAB_HOST_UP = Gauge(
     multiprocess_mode="max",
 )
 
+# Pipeline state, as bounded snapshots. Labels are closed enumerations from the
+# models (7 applicant statuses, 5 lab statuses), so cardinality cannot grow with
+# traffic or data volume — per the Dotmac metrics-scrape safety rule. Refreshed
+# from ONE cheap grouped COUNT per family, cached, so scrapes carry a fixed
+# query budget rather than scaling with scrape frequency.
+APPLICANTS_BY_STATUS = Gauge(
+    "academy_applicants",
+    "Applicants by admissions pipeline status.",
+    ("status",),
+    multiprocess_mode="max",
+)
+
+LAB_INSTANCES_BY_STATUS = Gauge(
+    "academy_lab_instances",
+    "Lab instances by lifecycle status.",
+    ("status",),
+    multiprocess_mode="max",
+)
+
+LAB_CAPACITY = Gauge(
+    "academy_lab_capacity",
+    "Configured maximum concurrent lab instances.",
+    multiprocess_mode="max",
+)
+
+ENTRANCE_SITTINGS = Gauge(
+    "academy_entrance_sittings",
+    "Graded entrance sittings by validity ('valid', 'invalid').",
+    ("validity",),
+    multiprocess_mode="max",
+)
+
 _PROBE_TTL_SECONDS = 30.0
 _PROBE_TIMEOUT_SECONDS = 2.0
 _last_probe: tuple[float, float] = (0.0, 0.0)  # (checked_at, value)
+
+_PIPELINE_TTL_SECONDS = 60.0
+_last_pipeline_refresh = 0.0
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +131,61 @@ def refresh_lab_host_probe(host: str, port: int) -> None:
         value = 0.0
     _last_probe = (now, value)
     LAB_HOST_UP.set(value)
+
+
+def refresh_pipeline_metrics() -> None:
+    """Refresh the admissions/lab snapshot gauges from the database.
+
+    Cached for ``_PIPELINE_TTL_SECONDS``; three grouped COUNTs per refresh, so
+    the query cost is fixed regardless of how often Prometheus scrapes. Failures
+    are swallowed — stale gauges are far better than a broken scrape (and the
+    scrape target going down would mask everything else).
+    """
+    global _last_pipeline_refresh
+    now = time.monotonic()
+    if _last_pipeline_refresh and (now - _last_pipeline_refresh) < _PIPELINE_TTL_SECONDS:
+        return
+    _last_pipeline_refresh = now
+    try:
+        from sqlalchemy import func, select
+
+        from app.models.admissions import APPLICANT_STATUSES, Applicant
+        from app.models.lab import LabInstance
+        from app.services import lab_jobs
+
+        with lab_jobs.admin_session() as db:
+            counts: dict[str, int] = {
+                str(k): int(v)
+                for k, v in db.execute(select(Applicant.status, func.count()).group_by(Applicant.status)).all()
+            }
+            # Emit every known status, including zeros: a status that vanishes
+            # from the query would otherwise keep its last value forever.
+            for status in APPLICANT_STATUSES:
+                APPLICANTS_BY_STATUS.labels(status=status).set(counts.get(status, 0))
+
+            lab_counts: dict[str, int] = {
+                str(k): int(v)
+                for k, v in db.execute(select(LabInstance.status, func.count()).group_by(LabInstance.status)).all()
+            }
+            for status in ("queued", "provisioning", "active", "error", "reaped"):
+                LAB_INSTANCES_BY_STATUS.labels(status=status).set(lab_counts.get(status, 0))
+
+            sittings: dict[bool | None, int] = {
+                k: int(v)
+                for k, v in db.execute(
+                    select(Applicant.assessment_valid, func.count())
+                    .where(Applicant.assessment_taken_at.is_not(None))
+                    .group_by(Applicant.assessment_valid)
+                ).all()
+            }
+            ENTRANCE_SITTINGS.labels(validity="valid").set(sittings.get(True, 0))
+            ENTRANCE_SITTINGS.labels(validity="invalid").set(sittings.get(False, 0) + sittings.get(None, 0))
+
+            from app.services.settings_store import effective
+
+            LAB_CAPACITY.set(effective(db).max_concurrent_labs)
+    except Exception:  # never let a metrics query break a scrape
+        logger.debug("pipeline metrics refresh failed", exc_info=True)
 
 
 def render() -> tuple[bytes, str]:
