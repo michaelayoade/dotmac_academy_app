@@ -47,7 +47,7 @@ def _passed_activity_ids(db: Session, *, tenant_id: UUID, person_id: UUID) -> se
 def _deadline_rows(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[dict]:
     """Every dated, not-yet-passed activity deadline across active offerings."""
     rows = db.execute(
-        select(OfferingActivity.due_at, Activity, Course.title)
+        select(OfferingActivity.due_at, Activity, Course.title, Course.slug)
         .join(
             Activity,
             (Activity.id == OfferingActivity.activity_id)
@@ -72,14 +72,20 @@ def _deadline_rows(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[dic
         .where(CourseOffering.status == "active")
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
+        .where(Enrollment.role_in_cohort == "student")
         .order_by(OfferingActivity.due_at)
     ).all()
     passed = _passed_activity_ids(db, tenant_id=tenant_id, person_id=person_id)
     out = []
-    for due_at, activity, course_title in rows:
+    for due_at, activity, course_title, course_slug in rows:
         if activity.id in passed:
             continue
-        out.append({"due_at": due_at, "activity": activity, "course_title": course_title})
+        out.append({
+            "due_at": due_at,
+            "activity": activity,
+            "course_title": course_title,
+            "course_slug": course_slug,
+        })
     return out
 
 

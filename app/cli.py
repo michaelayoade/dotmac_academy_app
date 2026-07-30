@@ -263,6 +263,7 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")
             qcounts = queue_sweep(db, tenant_id=tenant.id)
+            db.commit()
             print(f"success-queue[{tenant.slug}]: {qcounts}")
 
 

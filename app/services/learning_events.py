@@ -15,6 +15,7 @@ from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.learning_event import (
@@ -57,28 +58,50 @@ def record(
         raise ValueError(f"unknown learning-event kind {kind!r}")
     now = occurred_at or datetime.now(UTC)
 
-    if kind in _ONCE_PER_SUBJECT or kind in _ONCE_PER_LOCAL_DAY:
+    if kind in _ONCE_PER_LOCAL_DAY:
+        # Day-throttled: no static unique index fits a per-local-day bucket, so
+        # the SELECT pre-check stands. A concurrent race costs at most one extra
+        # view row per day — harmless to analytics.
         dupe = (
             select(LearningEvent.id)
             .where(LearningEvent.tenant_id == tenant_id)
             .where(LearningEvent.person_id == person_id)
             .where(LearningEvent.kind == kind)
             .where(LearningEvent.subject_id == subject_id)
+            .where(LearningEvent.occurred_at >= _local_day_start_utc(now))
         )
-        if kind in _ONCE_PER_LOCAL_DAY:
-            dupe = dupe.where(LearningEvent.occurred_at >= _local_day_start_utc(now))
         if db.scalars(dupe.limit(1)).first() is not None:
             return None
 
-    event = LearningEvent(
-        tenant_id=tenant_id,
-        person_id=person_id,
-        kind=kind,
-        course_id=course_id,
-        subject_id=subject_id,
-        detail=detail or {},
-        occurred_at=now,
-    )
+    values = {
+        "tenant_id": tenant_id,
+        "person_id": person_id,
+        "kind": kind,
+        "course_id": course_id,
+        "subject_id": subject_id,
+        "detail": detail or {},
+        "occurred_at": now,
+    }
+
+    if kind in _ONCE_PER_SUBJECT:
+        # The partial unique index (migration 0047) is the real guard; ON
+        # CONFLICT DO NOTHING makes once-per-subject hold under concurrency.
+        stmt = (
+            pg_insert(LearningEvent)
+            .values(**values)
+            .on_conflict_do_nothing(
+                index_elements=["tenant_id", "person_id", "kind", "subject_id"],
+                index_where=LearningEvent.kind.in_(tuple(_ONCE_PER_SUBJECT)),
+            )
+            .returning(LearningEvent.id)
+        )
+        inserted_id = db.execute(stmt).scalar()
+        if inserted_id is None:
+            return None
+        db.flush()
+        return db.get(LearningEvent, inserted_id)
+
+    event = LearningEvent(**values)
     db.add(event)
     db.flush()
     return event
@@ -151,9 +174,14 @@ def active_person_ids(
 
 def kind_counts(
     db: Session, *, tenant_id: UUID, kinds: tuple[str, ...],
-    course_ids: list[UUID] | None = None, since: datetime | None = None,
+    course_ids: list[UUID] | None = None, person_ids: list[UUID] | None = None,
+    since: datetime | None = None,
 ) -> dict[UUID | None, dict[str, int]]:
-    """Counts per (course_id, kind) — the instructor-analytics primitive."""
+    """Counts per (course_id, kind) — the instructor-analytics primitive.
+
+    Pass ``person_ids`` to scope to a cohort roster; without it the counts span
+    every learner in the tenant for the given courses.
+    """
     q = (
         select(LearningEvent.course_id, LearningEvent.kind, func.count())
         .where(LearningEvent.tenant_id == tenant_id)
@@ -162,6 +190,8 @@ def kind_counts(
     )
     if course_ids:
         q = q.where(LearningEvent.course_id.in_(course_ids))
+    if person_ids is not None:
+        q = q.where(LearningEvent.person_id.in_(person_ids))
     if since is not None:
         q = q.where(LearningEvent.occurred_at >= since)
     out: dict[UUID | None, dict[str, int]] = {}

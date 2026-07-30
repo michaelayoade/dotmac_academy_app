@@ -15,8 +15,10 @@ land at detection time (they are the passive record).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
+from html import escape
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -30,7 +32,6 @@ from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
-from app.models.reading import ChapterRead
 from app.models.reminder import (
     EVENT_KINDS,
     STATUS_QUEUED,
@@ -39,7 +40,7 @@ from app.models.reminder import (
     ReminderLog,
     ReminderPreference,
 )
-from app.services import notifications
+from app.services import learning_events, notifications
 from app.services import todo as todo_service
 from app.services.audit import write_audit_event
 from app.services.email_outbox import enqueue_email
@@ -200,14 +201,14 @@ def _detect_events(
         elif due <= now + timedelta(hours=24):
             events.append({
                 "kind": "due_24h",
-                "key": f"due_24h:{activity.id}",
+                "key": f"due_24h:{activity.id}:{due.date().isoformat()}",
                 "title": f"Due tomorrow: {activity.title} ({row['course_title']})",
                 "link": link,
             })
         elif due <= now + timedelta(hours=72):
             events.append({
                 "kind": "due_72h",
-                "key": f"due_72h:{activity.id}",
+                "key": f"due_72h:{activity.id}:{due.date().isoformat()}",
                 "title": f"Due in 3 days: {activity.title} ({row['course_title']})",
                 "link": link,
             })
@@ -232,13 +233,16 @@ def _detect_events(
                 "link": link,
             })
 
-    # Grades -> graded.
+    # Grades -> graded. Only non-auto scores: auto-graded quiz results are shown
+    # on screen the instant the learner submits, so emailing them is pure noise
+    # (one message per practice attempt). Manual/override grading is the news.
     rows = db.execute(
         select(Score.id, Activity.title)
         .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
         .join(Activity, (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id))
         .where(Score.tenant_id == tenant_id)
         .where(Submission.person_id == person_id)
+        .where(Score.source != "auto")
         .where(Score.created_at >= lookback)
     ).all()
     for score_id, activity_title in rows:
@@ -284,24 +288,31 @@ def _detect_events(
             "link": "/progress",
         })
 
-    # Inactivity -> one reminder per inactive spell (keyed on last-touch date).
-    last_read = db.scalar(
-        select(func.max(ChapterRead.created_at))
-        .where(ChapterRead.tenant_id == tenant_id)
-        .where(ChapterRead.person_id == person_id)
-    )
-    last_sub = db.scalar(
-        select(func.max(Submission.created_at))
-        .where(Submission.tenant_id == tenant_id)
-        .where(Submission.person_id == person_id)
-    )
-    touches = [t for t in (last_read, last_sub) if t is not None]
-    last_touch = max(touches) if touches else None
-    if last_touch is not None and last_touch < now - timedelta(days=inactivity_days):
+    # Inactivity -> one reminder per inactive spell. The learning-event ledger
+    # is the canonical record of meaningful activity (chapter views, opened
+    # attempts, submissions, lab launches, ...), so use it rather than a partial
+    # ChapterRead/Submission pair. A learner who enrolled but never did anything
+    # has no ledger row at all; anchor them on their earliest active enrolment so
+    # the never-started case — the one most needing a nudge — still fires.
+    last_touch = learning_events.last_activity_at(db, tenant_id=tenant_id, person_id=person_id)
+    anchor = last_touch
+    if anchor is None:
+        anchor = db.scalar(
+            select(func.min(Enrollment.created_at))
+            .where(Enrollment.tenant_id == tenant_id)
+            .where(Enrollment.person_id == person_id)
+            .where(Enrollment.status == "active")
+        )
+    if anchor is not None and anchor < now - timedelta(days=inactivity_days):
+        never_started = last_touch is None
         events.append({
             "kind": "inactivity",
-            "key": f"inactivity:{last_touch.date().isoformat()}",
-            "title": "It's been a while — pick up where you left off",
+            "key": f"inactivity:{anchor.date().isoformat()}",
+            "title": (
+                "Ready to begin? Your course is waiting"
+                if never_started
+                else "It's been a while — pick up where you left off"
+            ),
             "link": "/",
         })
 
@@ -337,13 +348,16 @@ def _record(db: Session, *, tenant_id: UUID, person_id: UUID, event: dict,
     return result is not None
 
 
-def _email_for(event_title: str, link: str | None, branding: str) -> tuple[str, str, str]:
+def _email_for(event_title: str, link: str | None, branding: str, base_url: str) -> tuple[str, str, str]:
     subject = f"{event_title} — {branding}"
-    url = f"https://academy.dotmac.io{link}" if link and link.startswith("/") else (link or "")
+    url = f"{base_url}{link}" if link and link.startswith("/") else (link or "")
+    # Titles carry staff-authored activity/course/session names; escape before
+    # interpolating into email HTML.
+    safe_title = escape(event_title)
     html = (
-        f"<p>{event_title}.</p>"
-        + (f'<p><a href="{url}">Open the academy</a></p>' if url else "")
-        + f"<p>— {branding}</p>"
+        f"<p>{safe_title}.</p>"
+        + (f'<p><a href="{escape(url)}">Open the academy</a></p>' if url else "")
+        + f"<p>— {escape(branding)}</p>"
     )
     text = f"{event_title}.\n{url}\n— {branding}"
     return subject, html, text
@@ -359,13 +373,17 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     digest_hour = int(str(cfg.get("reminder_digest_hour", 7)))
     digest_weekday = int(str(cfg.get("reminder_digest_weekday", 0)))
     branding = str(cfg.get("branding_name", "Dotmac Academy"))
+    base_url = str(cfg.get("academy_base_url", "https://academy.dotmac.io")).rstrip("/")
 
+    # Student reminders are for students: an instructor enrolment must not draw
+    # due-date nags or inactivity chides for coursework that isn't theirs.
     person_rows = db.execute(
         select(Person)
         .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
         .where(Person.tenant_id == tenant_id)
         .where(Person.status == "active")
         .where(Enrollment.status == "active")
+        .where(Enrollment.role_in_cohort == "student")
         .distinct()
     ).scalars().all()
 
@@ -388,11 +406,16 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
             send_now = pref.frequency == "immediate" and not _in_quiet_hours(pref, now)
             if send_now:
                 outbox_key = f"reminder:{event['key']}:{person.id}"[:200]
+                # _record is the idempotency guard: it succeeds only for a
+                # genuinely new occurrence, which therefore has a fresh, unique
+                # outbox key — so the enqueue below cannot collide, and the
+                # recorded "sent" status is truthful (unlike the digest path,
+                # where batches can recur and the key is content-hashed).
                 if _record(db, tenant_id=tenant_id, person_id=person.id, event=event,
                            channel="email", status=STATUS_SENT, outbox_key=outbox_key, now=now):
                     counts["detected"] += 1
                     counts["sent"] += 1
-                    subject, html, text = _email_for(event["title"], event.get("link"), branding)
+                    subject, html, text = _email_for(event["title"], event.get("link"), branding, base_url)
                     enqueue_email(db, tenant_id=tenant_id, idempotency_key=outbox_key,
                                   kind=f"reminder_{event['kind']}", recipient=person.email,
                                   subject=subject, html_body=html, text_body=text)
@@ -413,13 +436,15 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
         )
         if flush:
             counts["flushed"] += _flush_queued(
-                db, tenant_id=tenant_id, person=person, branding=branding, now=now
+                db, tenant_id=tenant_id, person=person, branding=branding,
+                base_url=base_url, now=now,
             )
 
     return counts
 
 
-def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str, now: datetime) -> int:
+def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str,
+                  base_url: str, now: datetime) -> int:
     queued = db.scalars(
         select(ReminderLog)
         .where(ReminderLog.tenant_id == tenant_id)
@@ -429,18 +454,31 @@ def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str
     ).all()
     if not queued:
         return 0
-    outbox_key = f"reminder_digest:{person.id}:{now.strftime('%Y%m%d%H')}"
-    items_html = "".join(f"<li>{r.title}</li>" for r in queued)
+    # Key on the batch contents, not just the hour: the timer sweeps every few
+    # minutes, so two flushes can land in the same hour. An hour-granular key
+    # made the second digest collide on the outbox's idempotency guard — the
+    # email was silently dropped while these rows were still marked sent. The
+    # content hash gives each distinct batch its own email; only mark rows sent
+    # when the enqueue actually took.
+    digest_disc = hashlib.sha1(
+        ",".join(str(r.id) for r in queued).encode(), usedforsecurity=False
+    ).hexdigest()[:12]
+    outbox_key = f"reminder_digest:{person.id}:{digest_disc}"
+    items_html = "".join(f"<li>{escape(r.title)}</li>" for r in queued)
     items_text = "\n".join(f"- {r.title}" for r in queued)
-    enqueue_email(
+    enqueued = enqueue_email(
         db, tenant_id=tenant_id, idempotency_key=outbox_key, kind="reminder_digest",
         recipient=person.email,
         subject=f"Your learning reminders ({len(queued)}) — {branding}",
         html_body=f"<p>While you were away:</p><ul>{items_html}</ul>"
-                  f'<p><a href="https://academy.dotmac.io/todo">Open your To-Do list</a></p>'
+                  f'<p><a href="{base_url}/todo">Open your To-Do list</a></p>'
                   f"<p>— {branding}</p>",
         text_body=f"While you were away:\n{items_text}\n— {branding}",
     )
+    if not enqueued:
+        # Identical batch already enqueued (true idempotent retry): those rows
+        # are already in a delivered digest, so marking them sent is correct.
+        pass
     for r in queued:
         r.status = STATUS_SENT
         r.outbox_key = outbox_key
@@ -482,8 +520,9 @@ def resend(db: Session, *, tenant_id: UUID, log_id: UUID, actor_person_id: UUID)
         raise ValueError("person not found")
     cfg = effective(db)
     branding = str(cfg.get("branding_name", "Dotmac Academy"))
+    base_url = str(cfg.get("academy_base_url", "https://academy.dotmac.io")).rstrip("/")
     outbox_key = f"reminder_resend:{log.id}:{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    subject, html, text = _email_for(log.title, log.link, branding)
+    subject, html, text = _email_for(log.title, log.link, branding, base_url)
     enqueue_email(db, tenant_id=tenant_id, idempotency_key=outbox_key,
                   kind=f"reminder_{log.event_kind}", recipient=person.email,
                   subject=subject, html_body=html, text_body=text)

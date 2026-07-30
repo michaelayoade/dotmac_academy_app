@@ -13,10 +13,10 @@
          class="card flex items-start gap-4 p-5 transition-colors hover:border-brand-300">
         <div class="min-w-0 flex-1">
           <p class="font-medium text-ink">{{ item.title }}</p>
-          <p class="mt-0.5 text-sm text-ink-soft">{{ item.course }}</p>
+          <p class="mt-0.5 text-sm text-ink-soft">{{ (item.when | localtime).strftime('%H:%M') }} · {{ item.course }}</p>
         </div>
         {% if item.kind == 'session' and item.joinable and item.join_url %}
-        <span class="btn-primary shrink-0 px-3 py-1.5 text-xs">Join now</span>
+        <a href="{{ item.join_url }}" target="_blank" rel="noopener" class="btn-primary shrink-0 px-3 py-1.5 text-xs">Join now</a>
         {% endif %}
         <span class="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium
           {%- if item.kind == 'session' %} bg-brand-100 text-brand-800
