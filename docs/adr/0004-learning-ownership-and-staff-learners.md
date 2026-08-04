@@ -1,6 +1,6 @@
 # ADR 0004 — The Academy owns learning; ERP owns employment; staff learners are first-class
 
-Date: 2026-08-04 · Status: proposed
+Date: 2026-08-04 · Status: accepted (Michael, 2026-08-04)
 
 ## Context
 
@@ -89,7 +89,21 @@ listed for human review rather than guessed.
   is direct: 192 inactivity emails to this population produced no measurable
   change, and the reminder is structurally incapable of sending a second one.
 
-### 4. The integration contract is versioned and fails loudly
+### 4. Labs are part of a course; the certificate standard does not move
+
+Completion continues to require every activity passed, labs included. A Dotmac
+Academy certificate asserts that the holder configured the thing, not only that
+they answered questions about it — dropping the hands-on requirement to make the
+number go up would forfeit the only property that makes the credential worth
+holding.
+
+The consequence is accepted deliberately: no one completes a course until the
+lab path works for real learners. That is a reason to keep lab infrastructure
+healthy, not a reason to lower the bar. Nested virtualisation on the lab host is
+therefore load-bearing, not best-effort — a `vr-ros` node that cannot boot blocks
+every certificate in the technical programme.
+
+### 5. The integration contract is versioned and fails loudly
 
 - Event payloads carry an explicit `version`, and the receiver dispatches from
   an event registry rather than an `if event_type != "course_completed"` branch.
