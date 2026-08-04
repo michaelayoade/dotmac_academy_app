@@ -57,6 +57,12 @@ POINT_EVENT_LOOKBACK_HOURS = 48
 
 FREQUENCIES = ("immediate", "daily_digest", "weekly_digest")
 
+# How many inactivity nudges one dormant spell may draw before the Academy stops
+# asking. Bounded on purpose: an unbounded escalation is harassment, and a
+# learner who has ignored four is telling us something. Overridable via the
+# ``reminder_inactivity_max_nudges`` Academy setting.
+DEFAULT_INACTIVITY_MAX_NUDGES = 4
+
 _TITLES = {
     "course_assigned": "You've been enrolled",
     "course_starting": "A course opens soon",
@@ -141,8 +147,25 @@ def _digest_due(pref: ReminderPreference, now: datetime, *, hour: int, weekday: 
 # ---------------------------------------------------------------------------
 
 
+def _inactivity_title(*, never_started: bool, final: bool) -> str:
+    """Escalating copy. The last nudge says it is the last, so silence afterwards
+    reads as a decision rather than the Academy losing interest."""
+    if final:
+        return (
+            "Last reminder — your place is still open"
+            if never_started
+            else "Last reminder — your course is still waiting"
+        )
+    return (
+        "Ready to begin? Your course is waiting"
+        if never_started
+        else "It's been a while — pick up where you left off"
+    )
+
+
 def _detect_events(
-    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime, inactivity_days: int
+    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime, inactivity_days: int,
+    inactivity_max_nudges: int = DEFAULT_INACTIVITY_MAX_NUDGES,
 ) -> list[dict]:
     """Every reminder occurrence that exists for this person right now."""
     events: list[dict] = []
@@ -292,12 +315,20 @@ def _detect_events(
             "link": "/progress",
         })
 
-    # Inactivity -> one reminder per inactive spell. The learning-event ledger
-    # is the canonical record of meaningful activity (chapter views, opened
-    # attempts, submissions, lab launches, ...), so use it rather than a partial
-    # ChapterRead/Submission pair. A learner who enrolled but never did anything
-    # has no ledger row at all; anchor them on their earliest active enrolment so
-    # the never-started case — the one most needing a nudge — still fires.
+    # Inactivity -> one reminder per elapsed inactivity window, capped. The
+    # learning-event ledger is the canonical record of meaningful activity
+    # (chapter views, opened attempts, submissions, lab launches, ...), so use it
+    # rather than a partial ChapterRead/Submission pair. A learner who enrolled
+    # but never did anything has no ledger row at all; anchor them on their
+    # earliest active enrolment so the never-started case — the one most needing
+    # a nudge — still fires.
+    #
+    # The occurrence key used to be the bare anchor date. For a dormant learner
+    # the anchor never moves, so ReminderLog's once-per-occurrence guard
+    # permanently suppressed every later sweep: 192 nudges went out in July 2026
+    # and not one afterwards, while the Success Queue kept refreshing 157 open
+    # inactivity entries. Keying on the elapsed window instead lets the nudge
+    # escalate, and the cap stops it becoming harassment.
     last_touch = learning_events.last_activity_at(db, tenant_id=tenant_id, person_id=person_id)
     anchor = last_touch
     if anchor is None:
@@ -309,16 +340,30 @@ def _detect_events(
         )
     if anchor is not None and anchor < now - timedelta(days=inactivity_days):
         never_started = last_touch is None
-        events.append({
-            "kind": "inactivity",
-            "key": f"inactivity:{anchor.date().isoformat()}",
-            "title": (
-                "Ready to begin? Your course is waiting"
-                if never_started
-                else "It's been a while — pick up where you left off"
-            ),
-            "link": "/",
-        })
+        spell = anchor.date().isoformat()
+        window = max(1, (now - anchor).days // max(inactivity_days, 1))
+        # Count what this spell has already drawn, rather than deriving it from
+        # the window number: a learner dormant since before this change has a
+        # high window number but few nudges, and should still be reachable.
+        already = int(
+            db.scalar(
+                select(func.count())
+                .select_from(ReminderLog)
+                .where(ReminderLog.tenant_id == tenant_id)
+                .where(ReminderLog.person_id == person_id)
+                .where(ReminderLog.event_kind == "inactivity")
+                .where(ReminderLog.occurrence_key.like(f"inactivity:{spell}%"))
+            )
+            or 0
+        )
+        if already < inactivity_max_nudges:
+            final = already == inactivity_max_nudges - 1
+            events.append({
+                "kind": "inactivity",
+                "key": f"inactivity:{spell}:w{window}",
+                "title": _inactivity_title(never_started=never_started, final=final),
+                "link": "/",
+            })
 
     return events
 
@@ -374,6 +419,9 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     if not bool(cfg.get("reminders_enabled", True)):
         return {"detected": 0, "sent": 0, "queued": 0, "skipped": 0, "flushed": 0, "disabled": True}
     inactivity_days = int(str(cfg.get("reminder_inactivity_days", 7)))
+    inactivity_max_nudges = int(
+        str(cfg.get("reminder_inactivity_max_nudges", DEFAULT_INACTIVITY_MAX_NUDGES))
+    )
     digest_hour = int(str(cfg.get("reminder_digest_hour", 7)))
     digest_weekday = int(str(cfg.get("reminder_digest_weekday", 0)))
     branding = str(cfg.get("branding_name", "Dotmac Academy"))
@@ -397,7 +445,8 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
         pref = get_preference(db, tenant_id=tenant_id, person_id=person.id)
         optouts = set(pref.optouts or [])
         events = _detect_events(db, tenant_id=tenant_id, person_id=person.id,
-                                now=now, inactivity_days=inactivity_days)
+                                now=now, inactivity_days=inactivity_days,
+                                inactivity_max_nudges=inactivity_max_nudges)
 
         for event in events:
             if event["kind"] in optouts:
