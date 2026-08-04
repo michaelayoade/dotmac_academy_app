@@ -267,6 +267,45 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
             print(f"success-queue[{tenant.slug}]: {qcounts}")
 
 
+def _learner_digest(args: argparse.Namespace) -> None:
+    """Queue each learner's weekly progress email.
+
+    Distinct from ``email-digest``, which is the *instructor* cohort matrix.
+    Gated by its own ``learner_digest_enabled`` Academy setting, off by default:
+    this mails every active learner, so it must be switched on deliberately
+    rather than start sending the moment it deploys.
+    """
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs, learner_digest
+    from app.services.settings_store import effective
+
+    with lab_jobs.admin_session() as db:
+        cfg = effective(db)
+        if not bool(cfg.get("learner_digest_enabled", False)) and not args.force:
+            print("learner-digest: disabled via Academy settings; skipping (use --force to override)")
+            return
+        base_url = str(cfg.get("academy_base_url", args.base_url)).rstrip("/")
+        branding = str(cfg.get("branding_name", "Dotmac Academy"))
+        totals = {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
+        for tenant in db.scalars(select(Tenant)).all():
+            counts = learner_digest.send_weekly_digests(
+                db, tenant_id=tenant.id, base_url=base_url, branding=branding
+            )
+            for key, n in counts.items():
+                totals[key] += n
+        if args.dry_run:
+            db.rollback()
+            print(f"DRY RUN — nothing queued. Would be: {totals}")
+            return
+        db.commit()
+    print(
+        f"learner-digest: queued={totals['queued']} "
+        f"opted-out={totals['skipped_optout']} no-live-course={totals['skipped_no_courses']}"
+    )
+
+
 def _email_digest(args: argparse.Namespace) -> None:
     """Queue each cohort instructor's weekly Academy summary.
 
@@ -867,6 +906,30 @@ def main() -> None:
         ),
     )
     ed.set_defaults(func=_email_digest)
+
+    ld = sub.add_parser(
+        "learner-digest",
+        help="One-shot: email each learner their weekly progress summary.",
+        description=(
+            "Cross-tenant: open an app_admin (BYPASSRLS) session and queue one "
+            "weekly progress email per active student learner — what they did, "
+            "where they are, what is next. Distinct from email-digest, which is "
+            "the instructor cohort matrix. Idempotent per ISO week. Gated by the "
+            "learner_digest_enabled Academy setting, which is OFF by default."
+        ),
+    )
+    ld.add_argument(
+        "--base-url",
+        default="https://academy.dotmac.io",
+        help="Fallback public base URL when academy_base_url is unset",
+    )
+    ld.add_argument("--dry-run", action="store_true", help="Count recipients without queueing")
+    ld.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even when learner_digest_enabled is off (use with --dry-run to preview)",
+    )
+    ld.set_defaults(func=_learner_digest)
 
     eo = sub.add_parser(
         "email-outbox",
