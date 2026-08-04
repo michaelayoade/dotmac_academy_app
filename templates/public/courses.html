@@ -70,8 +70,8 @@
       </div>
       <p class="group-note">
         Short, self-paced courses for supervisors, managers and professionals —
-        industry-neutral, five to six chapters each. Enrolment for teams and
-        individuals: <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a>.
+        industry-neutral, five to six chapters each. Enrollment for teams and
+        individuals: <a href="mailto:{{ management_contact_email | default("fiberacademy@dotmac.ng") }}" style="color:var(--g3);font-weight:700">{{ management_contact_email | default("fiberacademy@dotmac.ng") }}</a>.
       </p>
       {% if mgmt %}
       <div class="row-wrap"><div class="row-nav"><button type="button" data-dir="-1" aria-label="Scroll back">&#8592;</button><button type="button" data-dir="1" aria-label="Scroll forward">&#8594;</button></div>
@@ -93,11 +93,11 @@
       <div class="cta" style="margin-top:64px">
         <div>
           <h2>Found your starting point?</h2>
-          <p>Technical: apply and sit the placement assessment. Management: write to us and we'll set up enrolment.</p>
+          <p>Technical: apply and sit the placement assessment. Management: write to us and we'll set up enrollment.</p>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <a href="/apply" class="btn btn-orange">Apply — Technical</a>
-          <a href="mailto:fiberacademy@dotmac.ng" class="btn btn-mint">Enrol — Management</a>
+          <a href="/management-enrollment" class="btn btn-mint">Enroll — Management</a>
         </div>
       </div>
     </div>

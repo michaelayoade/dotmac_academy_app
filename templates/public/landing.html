@@ -84,7 +84,7 @@
           <ul class="pillar-facts">
             <li>{{ mgmt_count }} short courses, from first-time management to finance</li>
             <li>Self-paced — built for people with a day job</li>
-            <li>Delivered to teams and individuals by enrolment</li>
+            <li>Delivered to teams and individuals by enrollment</li>
           </ul>
           <div class="chips">
             <span class="chip">Leadership</span><span class="chip">Decision Making</span><span class="chip">Sales</span><span class="chip">Customer Experience</span><span class="chip">Finance</span><span class="chip">Projects</span><span class="chip">Data &amp; KPIs</span>
@@ -104,7 +104,7 @@
         <h2>Structured from the first click.</h2>
       </div>
       <div class="steps">
-        <div class="step"><span class="step-k">1</span><h3>Join</h3><p>Technical academy: apply and sit the entrance assessment from home. Management courses: enrol directly — no entrance exam.</p></div>
+        <div class="step"><span class="step-k">1</span><h3>Join</h3><p>Technical academy: apply and sit the entrance assessment from home. Management courses: enroll directly — no entrance exam.</p></div>
         <div class="step"><span class="step-k">2</span><h3>Learn and practice</h3><p>Chaptered reading at your pace, labs where the work is technical, chapter tests as practice along the way.</p></div>
         <div class="step"><span class="step-k">3</span><h3>Certify</h3><p>A final assessment gates every certificate, and every certificate carries a verification ID anyone can check.</p></div>
       </div>
@@ -131,8 +131,8 @@
           <p>Every certificate carries a verification ID that anyone — including an employer — can check on this site. If it can't be verified, we didn't issue it.</p>
         </details>
         <details>
-          <summary>How do I enrol my team in the management courses?</summary>
-          <p>Write to <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a> — enrolment is set up per team or individual, and invitations arrive by email with everything needed to start.</p>
+          <summary>How do I enroll my team in the management courses?</summary>
+          <p>Write to <a href="mailto:{{ management_contact_email | default("fiberacademy@dotmac.ng") }}" style="color:var(--g3);font-weight:700">{{ management_contact_email | default("fiberacademy@dotmac.ng") }}</a> — enrollment is set up per team or individual, and invitations arrive by email with everything needed to start.</p>
         </details>
       </div>
     </div>
@@ -143,7 +143,7 @@
       <div class="cta">
         <div>
           <h2>Ready when you are.</h2>
-          <p>Technical cohorts are forming; management courses enrol year-round.</p>
+          <p>Technical cohorts are forming; management courses enroll year-round.</p>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <a href="/apply" class="btn btn-orange">Apply — Technical</a>
