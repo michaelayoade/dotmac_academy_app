@@ -26,6 +26,7 @@ from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import require_course_open, visible_course_ids
 from app.services.pacing import require_activity_readable, require_activity_submittable
 from app.services.roles import role_slugs
+from app.services.settings_store import effective
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
@@ -132,6 +133,7 @@ def home(
                 "tech_count": len(tech),
                 "mgmt_count": len(mgmt),
                 "chapter_count": sum(i["chapter_count"] for i in listed),
+                "management_contact_email": effective(db).management_inquiry_recipient,
             },
         )
     slugs = role_slugs(db, tenant.id, person.id)

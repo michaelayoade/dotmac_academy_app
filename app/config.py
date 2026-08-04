@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "Dotmac Academy <academy@localhost>"
     smtp_starttls: bool = True
+    management_inquiry_recipient: str = "fiberacademy@dotmac.ng"
 
     # Prometheus /metrics bearer token. Empty (default) = endpoint disabled.
     metrics_token: str = ""

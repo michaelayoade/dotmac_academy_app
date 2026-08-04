@@ -41,6 +41,7 @@ KNOWN_KEYS: tuple[str, ...] = (
     "email_auto_on_pass",
     "email_digest_enabled",
     "branding_name",
+    "management_inquiry_recipient",
     "max_concurrent_labs",
     "lab_idle_minutes",
     "reminders_enabled",
@@ -68,6 +69,7 @@ def _defaults() -> dict[str, object]:
         "success_certificate_grace_hours": 6,
         "email_digest_enabled": True,
         "branding_name": "Dotmac Academy",
+        "management_inquiry_recipient": settings.management_inquiry_recipient,
         "max_concurrent_labs": settings.max_concurrent_labs,
         "lab_idle_minutes": settings.lab_idle_minutes,
         "reminders_enabled": True,
@@ -138,6 +140,7 @@ class EffectiveSettings:
     email_auto_on_pass: bool
     email_digest_enabled: bool
     branding_name: str
+    management_inquiry_recipient: str
     max_concurrent_labs: int
     lab_idle_minutes: int
 

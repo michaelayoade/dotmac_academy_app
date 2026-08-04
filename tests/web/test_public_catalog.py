@@ -8,7 +8,10 @@ signed-in ``/`` behaviour is unchanged.
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from app.models.course import Course
+from app.models.email_outbox import EmailOutbox
 
 H = {"Host": "alpha.localhost"}
 
@@ -55,10 +58,47 @@ def test_public_courses_shows_only_listed_published(app_client, admin_session, t
     assert "Instructor Guide" not in r.text         # unlisted internal
     assert "Vendor Course Hidden" not in r.text     # unlisted management
     assert "Draft Course" not in r.text             # listed but not published
-    assert 'href="#management" class="btn btn-mint">Enroll — Management</a>' in r.text
+    assert 'href="/management-enrollment" class="btn btn-mint">Enroll — Management</a>' in r.text
     assert "Enrol — Management" not in r.text
     assert "Enrolment" not in r.text
     assert "enrolment" not in r.text
+
+
+def test_management_enrollment_form_renders_management_courses(app_client, admin_session, tenant_a):
+    _seed_courses(admin_session, tenant_a.id)
+    r = app_client.get("/management-enrollment", headers=H)
+    assert r.status_code == 200
+    assert 'hx-post="/management-enrollment"' in r.text
+    assert "Leading a Team" in r.text
+    assert "Fiber Basics" not in r.text
+
+
+def test_management_enrollment_post_queues_inquiry(app_client, admin_session, tenant_a):
+    r = app_client.post(
+        "/management-enrollment",
+        headers=H,
+        data={
+            "first_name": "Morgan",
+            "last_name": "Lee",
+            "email": "MORGAN@example.com",
+            "phone": "0800",
+            "learner_type": "Team",
+            "course_interest": "Leading a Team",
+            "message": "Need seats for supervisors.",
+        },
+    )
+    assert r.status_code == 200
+    assert "Inquiry received" in r.text
+
+    row = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == tenant_a.id)
+        .where(EmailOutbox.kind == "management_inquiry")
+    ).one()
+    assert row.recipient == "fiberacademy@dotmac.ng"
+    assert row.payload["email"] == "morgan@example.com"
+    assert row.payload["learner_type"] == "Team"
+    assert "Need seats for supervisors." in row.text_body
 
 
 def test_signed_in_root_still_learn_home(app_client, admin_session, tenant_a):

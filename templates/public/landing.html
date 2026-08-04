@@ -132,7 +132,7 @@
         </details>
         <details>
           <summary>How do I enroll my team in the management courses?</summary>
-          <p>Write to <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a> — enrollment is set up per team or individual, and invitations arrive by email with everything needed to start.</p>
+          <p>Write to <a href="mailto:{{ management_contact_email | default("fiberacademy@dotmac.ng") }}" style="color:var(--g3);font-weight:700">{{ management_contact_email | default("fiberacademy@dotmac.ng") }}</a> — enrollment is set up per team or individual, and invitations arrive by email with everything needed to start.</p>
         </details>
       </div>
     </div>
