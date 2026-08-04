@@ -27,6 +27,8 @@ and SMTP are adapters around these owners.
 | Segment messaging consequence | Instructor action on a deterministic segment | `success_queue.message_segment` | In-app notifications + outbox rows | Audited action id; outbox idempotency per action+person; delivery stays with the outbox worker |
 | Stranded-learner reactivation | Active student enrolment with no `UserCredential` and no `AuthSession` ever | `reengagement.reinvite_stranded` (owns *who is locked out*; token minting stays `lifecycle._issue_token`) | Fresh `AccountToken(kind='invite')` + `account_invite` outbox row | Re-runnable — a new token supersedes the stale link that stranded them; never an at-risk rule, which stays `success_queue.sweep` |
 | Admin activity reporting | Canonical pipeline records, learning-event ledger, open Success Queue | `admin_reports.send_activity_report` | Daily admin email (engagement rates, top movers, attention list) | Read-only projection — re-derives no threshold; a wrong queue is wrong here too, by design |
+| Learning state for staff and external learners (ADR 0004) | Academy curriculum, enrolment, activity, assessment, completion | This Academy — sole LMS; `dotmac_erp`'s `training_course`/`lesson`/`assessment` tree is non-authoritative | ERP `TrainingCourseAssignment` + `EmployeeCertification` projections | Webhook projection is idempotent and rebuildable from Academy state; unmatched identity must fail loudly, never record a false success |
+| Employment, training requirement and credential state (ADR 0004) | ERP `Employee`, department/manager, assigned training | `dotmac_erp` | Academy `Enrollment.audience` + `employee_ref` supplied at enrolment | Identity is the employee reference, never a lowercased email match |
 
 ## Adapter rules
 
