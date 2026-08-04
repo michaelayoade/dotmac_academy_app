@@ -12,9 +12,23 @@ _EVAL = {
 
 
 def eval_check(check, engine, handle, seed):
-    """Evaluate one check -> ``{id, weight, pass, actual, expected}``."""
+    """Evaluate one check -> ``{id, label, weight, pass, actual, expected, detail, hint}``.
+
+    ``label`` and ``hint`` are authored on the check and passed straight through:
+    the engine cannot know what "client-a-prefix" means to a learner or what to
+    do about it, but the person who wrote the lab can. Both are optional, so a
+    check without them still renders — just with less to go on.
+    """
     out = _EVAL[check["type"]](check, engine, handle, seed)
-    return {"id": check["id"], "weight": check.get("weight", 1), **out}
+    result = {
+        "id": check["id"],
+        "label": check.get("label", ""),
+        "weight": check.get("weight", 1),
+        **out,
+    }
+    if not result["pass"] and check.get("hint"):
+        result["hint"] = check["hint"]
+    return result
 
 
 def run_checks(checks, engine, handle, seed):
