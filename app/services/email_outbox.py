@@ -34,10 +34,16 @@ def enqueue_email(
 
     PostgreSQL's conflict handling makes retries/concurrent callers idempotent
     without rolling back the surrounding domain transaction.
+
+    Returns True when THIS call created the row. A duplicate returns False: the
+    consequence is still safely queued (the earlier row carries it), but the
+    caller has not caused a new send. Callers count sends with this, so the
+    previous unconditional True made every "queued" figure a count of attempts
+    — indistinguishable from a job that genuinely re-sent to everyone.
     """
     if not recipient:
         return False
-    db.execute(
+    inserted = db.execute(
         insert(EmailOutbox)
         .values(
             id=uuid4(),
@@ -53,9 +59,10 @@ def enqueue_email(
         .on_conflict_do_nothing(
             index_elements=[EmailOutbox.tenant_id, EmailOutbox.idempotency_key]
         )
-    )
+        .returning(EmailOutbox.id)
+    ).first()
     db.flush()
-    return True
+    return inserted is not None
 
 
 def deliver_pending(db: Session, *, limit: int = 100, now: datetime | None = None) -> dict[str, int]:
