@@ -304,6 +304,85 @@ def _learner_digest(args: argparse.Namespace) -> None:
         f"learner-digest: queued={totals['queued']} "
         f"opted-out={totals['skipped_optout']} no-live-course={totals['skipped_no_courses']}"
     )
+def _classify_audience(args: argparse.Namespace) -> None:
+    """Mark enrolments staff/external from an ERP roster export (ADR 0004).
+
+    The roster is CSV ``work_email,employee_ref`` — ERP's answer, not a guess.
+    Anything absent stays unclassified unless --assume-roster-complete says the
+    export covers every employee, which is a claim only an operator can make.
+    """
+    import csv
+
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import audience, lab_jobs
+
+    roster: dict[str, str] = {}
+    with open(args.roster_file, newline="", encoding="utf-8") as fh:
+        for row in csv.reader(fh):
+            if len(row) >= 2 and row[0].strip() and not row[0].lstrip().startswith("#"):
+                roster[row[0].strip()] = row[1].strip()
+    if not roster:
+        raise SystemExit(f"No usable rows in {args.roster_file} (expected: work_email,employee_ref)")
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+        counts = audience.classify_from_roster(
+            db, tenant_id=tenant.id, roster=roster,
+            mark_rest_external=args.assume_roster_complete,
+        )
+        split = audience.counts_by_audience(db, tenant_id=tenant.id)
+        pending = audience.unclassified(db, tenant_id=tenant.id)
+        if args.dry_run:
+            db.rollback()
+            print(f"DRY RUN — nothing written. Would be: {counts}")
+        else:
+            db.commit()
+            print(f"classify-audience: {counts}")
+        print(f"roster now: {split}")
+        if pending:
+            print(f"\n{len(pending)} learner(s) still unclassified — review rather than guess:")
+            for email, name in pending[:20]:
+                print(f"  {email}  {name}")
+            if len(pending) > 20:
+                print(f"  ... and {len(pending) - 20} more")
+
+
+def _hr_report(args: argparse.Namespace) -> None:
+    """Email HR the staff-only training roll-up."""
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import hr_digest, lab_jobs
+    from app.services.settings_store import effective
+
+    recipients = [r for r in (args.to or "").split(",") if r.strip()]
+    if not recipients:
+        raise SystemExit("No recipients: pass --to hr@dotmac.ng")
+
+    queued = 0
+    with lab_jobs.admin_session() as db:
+        branding = str(effective(db).get("branding_name", "Dotmac Academy"))
+        for tenant in db.scalars(select(Tenant)).all():
+            if args.dry_run:
+                from datetime import UTC, datetime, timedelta
+
+                snap = hr_digest.snapshot(
+                    db, tenant_id=tenant.id, since=datetime.now(UTC) - timedelta(days=args.days)
+                )
+                print(f"DRY RUN [{tenant.slug}] {hr_digest.render(snap, branding=branding)[1]}")
+                continue
+            queued += hr_digest.send_hr_report(
+                db, tenant_id=tenant.id, recipients=recipients, days=args.days, branding=branding
+            )
+        if args.dry_run:
+            db.rollback()
+            return
+        db.commit()
+    print(f"hr-report: queued {queued} message(s) to {', '.join(recipients)}")
 
 
 def _email_digest(args: argparse.Namespace) -> None:
@@ -930,6 +1009,39 @@ def main() -> None:
         help="Run even when learner_digest_enabled is off (use with --dry-run to preview)",
     )
     ld.set_defaults(func=_learner_digest)
+    ca = sub.add_parser(
+        "classify-audience",
+        help="Mark enrolments staff/external from an ERP roster export (ADR 0004)",
+        description=(
+            "Reads CSV 'work_email,employee_ref' — ERP's answer, not a guess. "
+            "Matches are marked staff and carry their employee reference; "
+            "anything absent stays unclassified and is listed for review, "
+            "because audience is never inferred from an email domain."
+        ),
+    )
+    ca.add_argument("--tenant-slug", required=True)
+    ca.add_argument("--roster-file", required=True, help="CSV: work_email,employee_ref")
+    ca.add_argument(
+        "--assume-roster-complete",
+        action="store_true",
+        help="Mark every non-match as external (only if the export covers ALL employees)",
+    )
+    ca.add_argument("--dry-run", action="store_true")
+    ca.set_defaults(func=_classify_audience)
+
+    hr = sub.add_parser(
+        "hr-report",
+        help="Email HR the staff-only training roll-up",
+        description=(
+            "Counts only enrolments explicitly marked staff. Unclassified "
+            "learners are excluded and the count of them is stated in the mail, "
+            "so a partial roster cannot be mistaken for a complete picture."
+        ),
+    )
+    hr.add_argument("--to", required=True, help="Comma-separated recipients, e.g. hr@dotmac.ng")
+    hr.add_argument("--days", type=int, default=7, help="Reporting window (default 7)")
+    hr.add_argument("--dry-run", action="store_true", help="Print the report without queueing")
+    hr.set_defaults(func=_hr_report)
 
     eo = sub.add_parser(
         "email-outbox",
