@@ -55,24 +55,47 @@ def build_payload(*, email: str, course_title: str, completed_on: datetime | Non
     }
 
 
-def _outcome(resp: httpx.Response) -> str:
-    """Classify an ERP reply into SYNCED / UNMATCHED / FAILED.
+# Reply bodies meaning "ERP understood us and wrote nothing".
+_NOT_RECORDED = frozenset({"ignored", "unsupported"})
 
-    A 2xx alone is not delivery. ERP answers an unmatched employee with HTTP 200
-    and ``{"status": "ignored"}``; treating that as success stamps
-    ``erp_synced_at`` on a completion HR never received, and the completion is
-    then never retried. The body decides, not the status line.
+
+def _reply_status(resp: httpx.Response) -> str | None:
+    """The ``status`` field of an ERP reply, or None if unreadable.
+
+    ERP returns this field on both success and refusal, at the top level of a
+    2xx body and under ``detail`` in a 4xx error body.
     """
-    if resp.status_code // 100 != 2:
-        return FAILED
     try:
         body = resp.json()
     except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("detail")
+    if isinstance(detail, dict) and "status" in detail:
+        body = detail
+    status = body.get("status")
+    return str(status).lower() if status is not None else None
+
+
+def _outcome(resp: httpx.Response) -> str:
+    """Classify an ERP reply into SYNCED / UNMATCHED / FAILED.
+
+    The body is read before the status line, deliberately. ERP historically
+    answered an unmatched employee with HTTP 200 and ``{"status": "ignored"}``,
+    and now answers 422 with the same status in ``detail`` — both mean the same
+    thing, and both must classify as UNMATCHED rather than one being mistaken
+    for delivery and the other for a transient failure worth retrying forever.
+    """
+    status = _reply_status(resp)
+    if status in _NOT_RECORDED:
+        return UNMATCHED
+    if resp.status_code // 100 != 2:
+        return FAILED
+    if status is None:
         # A 2xx we cannot read is not evidence of anything. Retry rather than
         # assume; a permanently unreadable endpoint is a visible backlog.
         return FAILED
-    if isinstance(body, dict) and str(body.get("status", "")).lower() == "ignored":
-        return UNMATCHED
     return SYNCED
 
 

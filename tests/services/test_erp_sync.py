@@ -200,3 +200,56 @@ def test_payload_carries_a_contract_version(admin_session, tenant_a, monkeypatch
 
     assert json.loads(captured["content"])["version"] == erp_sync.CONTRACT_VERSION
     admin_session.rollback()
+
+
+def test_422_with_ignored_detail_is_unmatched_not_retryable_failure(
+    admin_session, tenant_a, monkeypatch
+):
+    """ERP now refuses an unmatched employee with 422 and the status under
+    `detail`. Reading the body before the status line keeps both the old 200 and
+    the new 422 shape classified as UNMATCHED — otherwise the 422 would look
+    like a transient failure and retry forever."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post",
+        lambda *a, **k: _FakeResp(
+            422, {"detail": {"status": "ignored", "reason": "no matching employee"}}
+        ),
+    )
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+    assert outcome == erp_sync.UNMATCHED
+    assert comp.erp_synced_at is None
+    admin_session.rollback()
+
+
+def test_unsupported_event_is_unmatched_not_delivered(admin_session, tenant_a, monkeypatch):
+    """A version ERP cannot route is not delivery either."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post",
+        lambda *a, **k: _FakeResp(422, {"detail": {"status": "unsupported"}}),
+    )
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    assert erp_sync.push_completion(
+        admin_session, tenant_id=tenant_a.id, completion=comp
+    ) == erp_sync.UNMATCHED
+    assert comp.erp_synced_at is None
+    admin_session.rollback()
+
+
+def test_genuine_server_error_is_still_a_retryable_failure(admin_session, tenant_a, monkeypatch):
+    """A 503 with no status body must stay FAILED — it is worth retrying."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(503, {"detail": "boom"})
+    )
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    assert erp_sync.push_completion(
+        admin_session, tenant_id=tenant_a.id, completion=comp
+    ) == erp_sync.FAILED
+    assert comp.erp_synced_at is None
+    admin_session.rollback()
