@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 _INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "lab_idle_minutes",
                        "reminder_inactivity_days", "reminder_digest_hour", "reminder_digest_weekday",
                        "success_inactive_days", "success_min_grade_pct",
-                       "success_certificate_grace_hours"})
+                       "success_certificate_grace_hours", "reminder_inactivity_max_nudges"})
 _BOOL_KEYS = frozenset({"smtp_starttls", "email_auto_on_pass", "email_digest_enabled",
-                        "reminders_enabled"})
+                        "reminders_enabled", "learner_digest_enabled"})
 
 # The full set of known keys, with their default sourced live from `settings`
 # (or a literal) so monkeypatching `settings.*` in tests is reflected here.
@@ -48,6 +48,8 @@ KNOWN_KEYS: tuple[str, ...] = (
     "reminder_inactivity_days",
     "reminder_digest_hour",
     "reminder_digest_weekday",
+    "reminder_inactivity_max_nudges",
+    "learner_digest_enabled",
     "success_inactive_days",
     "success_min_grade_pct",
     "success_certificate_grace_hours",
@@ -76,6 +78,10 @@ def _defaults() -> dict[str, object]:
         "reminder_inactivity_days": 7,
         "reminder_digest_hour": 7,
         "reminder_digest_weekday": 0,
+        "reminder_inactivity_max_nudges": 4,
+        # Off by default: turning this on mails every active learner, so it
+        # must be a deliberate act rather than a consequence of deploying.
+        "learner_digest_enabled": False,
     }
 
 
