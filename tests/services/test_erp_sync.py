@@ -14,8 +14,18 @@ from app.services import erp_sync
 
 
 class _FakeResp:
-    def __init__(self, status_code):
+    def __init__(self, status_code, body=None):
         self.status_code = status_code
+        # ERP always answers with a status body; "recorded" is the happy path.
+        self._body = {"status": "recorded"} if body is None else body
+
+    def json(self):
+        if self._body is _UNREADABLE:
+            raise ValueError("not json")
+        return self._body
+
+
+_UNREADABLE = object()
 
 
 def _seed(admin_session, tenant, *, status="completed"):
@@ -64,8 +74,8 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
     monkeypatch.setattr(erp_sync.httpx, "post", fake_post)
 
     comp, person, _ = _seed(admin_session, tenant_a)
-    ok = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
-    assert ok is True
+    outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+    assert outcome == erp_sync.SYNCED
     assert comp.erp_synced_at is not None
     body = json.loads(captured["content"])
     assert body["event"] == "course_completed"
@@ -80,7 +90,9 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
 def test_inert_when_unconfigured(admin_session, tenant_a, monkeypatch):
     monkeypatch.setattr(settings, "erp_webhook_url", "", raising=False)
     comp, _, _ = _seed(admin_session, tenant_a)
-    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == 0
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == {
+        erp_sync.SYNCED: 0, erp_sync.UNMATCHED: 0, erp_sync.FAILED: 0
+    }
     assert comp.erp_synced_at is None
     admin_session.rollback()
 
@@ -89,9 +101,9 @@ def test_sync_pending_dedups(admin_session, tenant_a, monkeypatch):
     _configure(monkeypatch)
     monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200))
     _seed(admin_session, tenant_a)
-    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == 1
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 1
     # already synced → nothing to push
-    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == 0
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 0
     admin_session.rollback()
 
 
@@ -99,7 +111,92 @@ def test_failure_leaves_unsynced(admin_session, tenant_a, monkeypatch):
     _configure(monkeypatch)
     monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(503))
     comp, _, _ = _seed(admin_session, tenant_a)
-    ok = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
-    assert ok is False
+    outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+    assert outcome == erp_sync.FAILED
     assert comp.erp_synced_at is None
+    admin_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# A 2xx is not delivery
+# ---------------------------------------------------------------------------
+
+
+def test_ignored_reply_is_not_recorded_as_delivered(admin_session, tenant_a, monkeypatch):
+    """The defect: ERP answers an unmatched employee with HTTP 200 and
+    {"status": "ignored"}, and the old code stamped erp_synced_at on any 2xx —
+    recording as delivered a completion HR never received, and never retrying
+    it. Never fired in production only because there were no completions."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post",
+        lambda *a, **k: _FakeResp(200, {"status": "ignored", "reason": "no matching employee"}),
+    )
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+    assert outcome == erp_sync.UNMATCHED
+    assert comp.erp_synced_at is None  # stays in the backlog, visible
+
+    admin_session.rollback()
+
+
+def test_unmatched_is_counted_separately_from_failure(admin_session, tenant_a, monkeypatch):
+    """A silent zero and a silent hundred-unmatched used to look identical."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, {"status": "ignored"})
+    )
+    _seed(admin_session, tenant_a)
+
+    counts = erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)
+    assert counts[erp_sync.UNMATCHED] == 1
+    assert counts[erp_sync.SYNCED] == 0
+    assert counts[erp_sync.FAILED] == 0
+    admin_session.rollback()
+
+
+def test_unreadable_2xx_body_is_retried_not_assumed(admin_session, tenant_a, monkeypatch):
+    """A 2xx we cannot parse is not evidence of anything."""
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, _UNREADABLE)
+    )
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+    assert outcome == erp_sync.FAILED
+    assert comp.erp_synced_at is None
+    admin_session.rollback()
+
+
+def test_recorded_and_updated_replies_both_count_as_delivered(admin_session, tenant_a, monkeypatch):
+    """ERP answers "updated" when re-delivering the same certificate ref."""
+    _configure(monkeypatch)
+    for status in ("recorded", "updated"):
+        monkeypatch.setattr(
+            erp_sync.httpx, "post", lambda *a, s=status, **k: _FakeResp(200, {"status": s})
+        )
+        comp, _, _ = _seed(admin_session, tenant_a)
+        assert erp_sync.push_completion(
+            admin_session, tenant_id=tenant_a.id, completion=comp
+        ) == erp_sync.SYNCED
+    admin_session.rollback()
+
+
+def test_payload_carries_a_contract_version(admin_session, tenant_a, monkeypatch):
+    """ERP dispatches on it, so a breaking change ships as version 2 beside the
+    old handler rather than as a silent reshape."""
+    _configure(monkeypatch)
+    captured = {}
+
+    def fake_post(url, content=None, headers=None, timeout=None):
+        captured.update(content=content)
+        return _FakeResp(200)
+
+    monkeypatch.setattr(erp_sync.httpx, "post", fake_post)
+    comp, _, _ = _seed(admin_session, tenant_a)
+    erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+
+    assert json.loads(captured["content"])["version"] == erp_sync.CONTRACT_VERSION
     admin_session.rollback()

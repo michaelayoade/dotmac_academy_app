@@ -369,12 +369,23 @@ def _erp_training_sync(args: argparse.Namespace) -> None:
     from app.models.tenant import Tenant
     from app.services import erp_sync, lab_jobs
 
-    pushed = 0
+    totals = {erp_sync.SYNCED: 0, erp_sync.UNMATCHED: 0, erp_sync.FAILED: 0}
     with lab_jobs.admin_session() as db:
         for tenant in db.scalars(select(Tenant)).all():
-            pushed += erp_sync.sync_pending(db, tenant_id=tenant.id)
+            for outcome, n in erp_sync.sync_pending(db, tenant_id=tenant.id).items():
+                totals[outcome] += n
         db.commit()
-    print(f"erp-training-sync: pushed {pushed} completion(s)")
+    print(
+        f"erp-training-sync: synced={totals[erp_sync.SYNCED]} "
+        f"unmatched={totals[erp_sync.UNMATCHED]} failed={totals[erp_sync.FAILED]}"
+    )
+    if totals[erp_sync.UNMATCHED]:
+        # Unmatched will not clear by retrying — the learner's Academy email
+        # matches no ERP employee. Say so where an operator will see it.
+        print(
+            f"NOTE: {totals[erp_sync.UNMATCHED]} completion(s) reached ERP but were not recorded "
+            "(no matching employee). These stay unsynced until the identity link is fixed."
+        )
 
 
 def _set_entrance_bank(args: argparse.Namespace) -> None:

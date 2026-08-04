@@ -26,6 +26,16 @@ from app.models.person import Person
 
 logger = logging.getLogger(__name__)
 
+# Payload contract version. ERP dispatches on it, so a future breaking change
+# ships as version 2 alongside the old handler rather than as a silent reshape.
+CONTRACT_VERSION = 1
+
+# Push outcomes. UNMATCHED is deliberately not FAILED: retrying will not fix an
+# identity mismatch, but it must not be mistaken for delivery either.
+SYNCED = "synced"
+UNMATCHED = "unmatched"
+FAILED = "failed"
+
 
 def _sign(body: bytes) -> str:
     digest = hmac.new(settings.erp_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
@@ -35,6 +45,7 @@ def _sign(body: bytes) -> str:
 def build_payload(*, email: str, course_title: str, completed_on: datetime | None, certificate_ref: str) -> dict:
     """The `course_completed` event body ERP expects."""
     return {
+        "version": CONTRACT_VERSION,
         "event": "course_completed",
         "email": email,
         "course_title": course_title,
@@ -44,20 +55,42 @@ def build_payload(*, email: str, course_title: str, completed_on: datetime | Non
     }
 
 
+def _outcome(resp: httpx.Response) -> str:
+    """Classify an ERP reply into SYNCED / UNMATCHED / FAILED.
+
+    A 2xx alone is not delivery. ERP answers an unmatched employee with HTTP 200
+    and ``{"status": "ignored"}``; treating that as success stamps
+    ``erp_synced_at`` on a completion HR never received, and the completion is
+    then never retried. The body decides, not the status line.
+    """
+    if resp.status_code // 100 != 2:
+        return FAILED
+    try:
+        body = resp.json()
+    except Exception:
+        # A 2xx we cannot read is not evidence of anything. Retry rather than
+        # assume; a permanently unreadable endpoint is a visible backlog.
+        return FAILED
+    if isinstance(body, dict) and str(body.get("status", "")).lower() == "ignored":
+        return UNMATCHED
+    return SYNCED
+
+
 def push_completion(
     db: Session, *, tenant_id: UUID, completion: CourseCompletion, now: datetime | None = None
-) -> bool:
-    """Push one completion to ERP; stamp ``erp_synced_at`` on a 2xx. Returns success.
+) -> str:
+    """Push one completion to ERP. Returns SYNCED / UNMATCHED / FAILED.
 
-    Best-effort — never raises. On any failure the completion is left unsynced
-    for the next sweep.
+    ``erp_synced_at`` is stamped only on SYNCED — an event ERP declined to
+    record is not delivered, and leaving it unstamped keeps it in the backlog
+    where it is visible and retried. Best-effort: never raises.
     """
     if not settings.erp_webhook_url:
-        return False
+        return FAILED
     person = db.get(Person, completion.person_id)
     course = db.get(Course, completion.course_id)
     if person is None or course is None:
-        return False
+        return FAILED
 
     payload = build_payload(
         email=person.email,
@@ -75,28 +108,44 @@ def push_completion(
         )
     except Exception as exc:  # network / timeout — leave unsynced, retry next sweep
         logger.warning("erp training push failed for completion %s: %s", completion.id, exc)
-        return False
-    if resp.status_code // 100 != 2:
-        logger.warning("erp training push rejected (%s) for completion %s", resp.status_code, completion.id)
-        return False
+        return FAILED
+
+    outcome = _outcome(resp)
+    if outcome == UNMATCHED:
+        # Named explicitly rather than folded into "failed": this one will not
+        # fix itself by retrying, because the learner's Academy email does not
+        # match any ERP employee. It needs the identity link corrected.
+        logger.warning(
+            "erp training push not recorded for completion %s: ERP matched no employee for %s",
+            completion.id, person.email,
+        )
+        return UNMATCHED
+    if outcome == FAILED:
+        logger.warning(
+            "erp training push rejected (%s) for completion %s", resp.status_code, completion.id
+        )
+        return FAILED
 
     completion.erp_synced_at = now or datetime.now(UTC)
     db.flush()
-    return True
+    return SYNCED
 
 
-def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> int:
-    """Push every completed, not-yet-synced completion for a tenant. Returns count pushed."""
+def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict[str, int]:
+    """Push every completed, not-yet-synced completion. Returns per-outcome counts.
+
+    Counts are the point: a silent zero and a silent hundred-unmatched used to
+    look identical from the outside.
+    """
+    counts = {SYNCED: 0, UNMATCHED: 0, FAILED: 0}
     if not settings.erp_webhook_url:
-        return 0
+        return counts
     rows = db.scalars(
         select(CourseCompletion)
         .where(CourseCompletion.tenant_id == tenant_id)
         .where(CourseCompletion.status == "completed")
         .where(CourseCompletion.erp_synced_at.is_(None))
     ).all()
-    pushed = 0
     for completion in rows:
-        if push_completion(db, tenant_id=tenant_id, completion=completion, now=now):
-            pushed += 1
-    return pushed
+        counts[push_completion(db, tenant_id=tenant_id, completion=completion, now=now)] += 1
+    return counts
