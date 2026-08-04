@@ -25,6 +25,8 @@ and SMTP are adapters around these owners.
 | Learning observations | Meaningful learner actions at their owning services' commit points | `learning_events.record` (append-only; INSERT-only grants) | Learner activity + cohort insight projections (`insights.py`) | Savepoint-isolated `emit` — ledger failure never breaks the owner; consequences stay with reminders/queue owners |
 | Learner intervention state | Deterministic rules over ledger + canonical records | `success_queue.sweep` / `success_queue.transition` | Success Queue page, queue CSVs, weekly digest attachments | Idempotent sweep refresh + auto-resolve when a rule stops firing; audited lifecycle |
 | Segment messaging consequence | Instructor action on a deterministic segment | `success_queue.message_segment` | In-app notifications + outbox rows | Audited action id; outbox idempotency per action+person; delivery stays with the outbox worker |
+| Stranded-learner reactivation | Active student enrolment with no `UserCredential` and no `AuthSession` ever | `reengagement.reinvite_stranded` (owns *who is locked out*; token minting stays `lifecycle._issue_token`) | Fresh `AccountToken(kind='invite')` + `account_invite` outbox row | Re-runnable — a new token supersedes the stale link that stranded them; never an at-risk rule, which stays `success_queue.sweep` |
+| Admin activity reporting | Canonical pipeline records, learning-event ledger, open Success Queue | `admin_reports.send_activity_report` | Daily admin email (engagement rates, top movers, attention list) | Read-only projection — re-derives no threshold; a wrong queue is wrong here too, by design |
 
 ## Adapter rules
 
