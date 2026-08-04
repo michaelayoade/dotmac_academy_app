@@ -415,6 +415,44 @@ def _admin_report(args: argparse.Namespace) -> None:
     print(f"admin-report: sent {sent} email(s)")
 
 
+def _reinvite_stranded(args: argparse.Namespace) -> None:
+    """Re-issue activation links to enrolled learners who never set a password.
+
+    These learners cannot act on any other message we send them, so this is the
+    one wave that has to precede a re-engagement campaign, not follow it.
+    """
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs, reengagement
+
+    cohort_id = uuid.UUID(args.cohort_id) if args.cohort_id else None
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+
+        targets = reengagement.stranded_learners(db, tenant_id=tenant.id, cohort_id=cohort_id)
+        print(f"{len(targets)} stranded learner(s) — enrolled, no password, never signed in (base {args.base_url})")
+        if args.dry_run:
+            for p in targets[:20]:
+                print(f"  DRY-RUN would email {p.email}")
+            if len(targets) > 20:
+                print(f"  ... and {len(targets) - 20} more")
+            print("\nDRY RUN — no tokens minted and no email queued.")
+            return
+
+        res = reengagement.reinvite_stranded(
+            db, tenant_id=tenant.id, base_url=args.base_url, cohort_id=cohort_id
+        )
+        db.commit()
+        print(f"\nqueued: {res['queued']}   queue failures: {res['failed']}")
+        if res["failed"]:
+            print("NOTE: queue failures did not expose or print activation tokens.")
+
+
 def _set_auto_accept(args: argparse.Namespace) -> None:
     """Set (or clear) a cohort's auto-accept threshold for entrance sittings."""
     import uuid
@@ -889,6 +927,18 @@ def main() -> None:
     )
     inv.add_argument("--dry-run", action="store_true")
     inv.set_defaults(func=_invite_applicants)
+
+    ris = sub.add_parser(
+        "reinvite-stranded",
+        help="Re-issue activation links to enrolled learners who never set a password",
+    )
+    ris.add_argument("--tenant-slug", required=True)
+    ris.add_argument(
+        "--base-url", default="https://academy.dotmac.io", help="Public base URL used to build the activation link"
+    )
+    ris.add_argument("--cohort-id", default=None, help="Limit to one cohort")
+    ris.add_argument("--dry-run", action="store_true")
+    ris.set_defaults(func=_reinvite_stranded)
 
     rex = sub.add_parser(
         "reset-entrance-exam",
