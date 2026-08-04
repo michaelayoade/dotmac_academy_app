@@ -380,6 +380,11 @@ def activity(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     require_activity_readable(db, tenant_id=tenant.id, person_id=person.id,
                               course_id=act.course_id, activity_id=act.id)
+    if act.type == "lab":
+        # A lab has no question bank; rendering it here produced an empty form
+        # whose submission scored 0/0 and burned an attempt. Send the learner to
+        # the workspace that can actually grade it.
+        return RedirectResponse(f"/labs/{act.id}", status_code=303)
     qs = db.scalars(
         select(Question)
         .where(Question.tenant_id == tenant.id)

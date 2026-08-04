@@ -109,6 +109,9 @@ def course_structure(
                     ],
                 }
             ],
+            "course_activities": [               # course-level (no chapter): mid/final
+                {"activity": Activity, "passed": bool, "pct": int}
+            ],
             "continue_target": Chapter | None,  # first chapter with an unpassed activity
             "locked": bool,                     # True when unmet prerequisites exist
         }
@@ -170,8 +173,23 @@ def course_structure(
 
     parts = [{"part": pk, "chapters": parts_map[pk]} for pk in seen_parts]
 
+    # Course-level activities (mid/final assessments) carry no chapter_number, so
+    # they belong to no chapter card and were previously rendered nowhere at all —
+    # invisible to learners while still counting towards completion, which made
+    # every affected course impossible to finish. They surface as their own
+    # section after the chapters.
+    course_activities = [
+        {
+            "activity": act,
+            "passed": bool(best.get(act.id) and best[act.id].passed),
+            "pct": round(100 * best[act.id].fraction) if best.get(act.id) else 0,
+        }
+        for act in sorted(acts_by_chapter.get(None, []), key=lambda a: a.title)
+    ]
+
     return {
         "parts": parts,
+        "course_activities": course_activities,
         "continue_target": continue_target,
         "locked": locked,
     }
