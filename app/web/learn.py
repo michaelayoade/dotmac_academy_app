@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
 from app.services import catalog as catalog_service
-from app.services import insights, learner_dashboard, learning_events
+from app.services import insights, learner_dashboard, learning_events, reading_progress
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
@@ -244,11 +244,20 @@ def chapter(
         .where(Chapter.course_id == course.id)
         .order_by(Chapter.number)
     ).all()
+    chapter_ids = [chapter.id for chapter in chapters]
+    # Server-rendered subtopic state: the sidebar must arrive already unlocked
+    # for work the learner has done, on whatever device they opened it.
+    subtopics_done = reading_progress.completed_slugs_by_chapter(
+        db, tenant_id=tenant.id, person_id=person.id, chapter_ids=chapter_ids
+    )
     chapter_modules = [
-        {"chapter": course_chapter, "subtopics": _chapter_subtopics(course_chapter.body_html)}
+        {
+            "chapter": course_chapter,
+            "subtopics": _chapter_subtopics(course_chapter.body_html),
+            "done_slugs": subtopics_done.get(course_chapter.id, set()),
+        }
         for course_chapter in chapters
     ]
-    chapter_ids = [chapter.id for chapter in chapters]
     completed_chapter_ids = (
         {
             row[0]
@@ -298,6 +307,11 @@ def chapter(
     if act is not None:
         primary_item = next((item for item in activity_items if item["activity"].id == act.id), None)
         activity_taken = bool(primary_item and primary_item["attempts"] > 0)
+    this_chapter_subtopics = _chapter_subtopics(ch.body_html)
+    this_chapter_done = subtopics_done.get(ch.id, set())
+    # The gate the activity links honour, decided here rather than in the
+    # browser: every subtopic of THIS chapter recorded as read.
+    chapter_subtopics_complete = all(s["slug"] in this_chapter_done for s in this_chapter_subtopics)
     return templates.TemplateResponse(
         request,
         "chapter.html",
@@ -310,7 +324,52 @@ def chapter(
             "chapters": chapters, "chapter_modules": chapter_modules,
             "completed_chapter_ids": completed_chapter_ids,
             "completed_chapters": len(completed_chapter_ids),
+            "chapter_subtopics_complete": chapter_subtopics_complete,
         },
+    )
+
+
+@router.post("/courses/{slug}/chapters/{n}/subtopics/{subtopic_slug}/complete")
+def subtopic_complete(
+    slug: str,
+    n: int,
+    subtopic_slug: str,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Record one completed subtopic for the current learner.
+
+    Gated like its GET sibling: without ``require_course_open`` a learner could
+    write progress for a course they cannot access.
+    """
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+    require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+    ch = db.scalars(
+        select(Chapter).where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id).where(Chapter.number == n)
+    ).first()
+    if ch is None:
+        raise HTTPException(status_code=404)
+    # Only slugs this chapter actually has: the slug is content-derived and
+    # arrives from the client, so it is validated against the real headings
+    # rather than stored on trust.
+    known = {s["slug"] for s in _chapter_subtopics(ch.body_html)}
+    if subtopic_slug not in known:
+        raise HTTPException(status_code=404)
+    reading_progress.mark_complete(
+        db, tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id, subtopic_slug=subtopic_slug
+    )
+    done = reading_progress.completed_slugs(
+        db, tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id
+    )
+    return JSONResponse(
+        {"completed": sorted(done), "chapter_complete": known.issubset(done)}
     )
 
 

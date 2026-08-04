@@ -129,6 +129,126 @@ def test_eval_check_shape():
         "weight": 4,
     }
     res = eval_check(check, eng, MagicMock(nodes={"c": "cc"}), {})
-    assert set(res) == {"id", "weight", "pass", "actual", "expected"}
+    # ``label`` and ``detail`` are always present; ``hint`` only on a failure,
+    # and this check passes.
+    assert set(res) == {"id", "label", "weight", "pass", "actual", "expected", "detail"}
     assert res["id"] == "p"
     assert res["weight"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Learner-facing feedback: every check explains itself in words
+# ---------------------------------------------------------------------------
+
+
+def test_unreadable_value_says_so_instead_of_none():
+    """Regression: a failed jsonpath read rendered as "actual: None", which tells
+    a learner nothing about what to fix. It must distinguish "could not read"
+    from "read and wrong", and show what the command actually printed."""
+    eng = _engine(stdout="", code=0)
+    checks = [
+        {
+            "id": "client-a-prefix",
+            "type": "command",
+            "node": "client-a",
+            "command": "ip -j addr show eth1",
+            "assert": {"jsonpath": "$[0].addr_info[0].prefixlen", "equals": 30},
+            "weight": 1,
+        }
+    ]
+    item = run_checks(checks, eng, MagicMock(nodes={"client-a": "c"}), {})["per_check"][0]
+    assert item["pass"] is False
+    assert item["actual"] is None
+    detail = item["detail"]
+    assert "could not read" in detail
+    assert "client-a" in detail
+    assert "no output" in detail  # the command printed nothing
+
+
+def test_wrong_value_is_reported_as_read_not_unreadable():
+    eng = _engine(stdout='{"state":"Idle"}', code=0)
+    checks = [
+        {
+            "id": "bgp",
+            "type": "command",
+            "node": "r1",
+            "command": "vtysh -c 'show ip bgp json'",
+            "assert": {"jsonpath": "$.state", "equals": "Established"},
+        }
+    ]
+    detail = run_checks(checks, eng, MagicMock(nodes={"r1": "r1c"}), {})["per_check"][0]["detail"]
+    assert "read Idle" in detail
+    assert "Established" in detail
+    assert "could not read" not in detail
+
+
+def test_failed_ping_names_the_target_and_the_shortfall():
+    eng = _engine(stdout="3 packets transmitted, 0 received", code=1)
+    checks = [
+        {
+            "id": "ping-a-to-b",
+            "type": "probe",
+            "node": "client-a",
+            "probe": {"kind": "ping", "target": "10.{{t}}.0.6", "count": 3, "min_success": 2},
+            "weight": 2,
+        }
+    ]
+    item = run_checks(checks, eng, MagicMock(nodes={"client-a": "c"}), {"t": 11})["per_check"][0]
+    assert item["pass"] is False
+    assert "could not reach 10.11.0.6" in item["detail"]
+    assert "0 of 3" in item["detail"]
+
+
+def test_exit_code_failure_quotes_the_command_and_output():
+    eng = _engine(stdout="", code=1)
+    checks = [
+        {
+            "id": "client-a-subnet",
+            "type": "command",
+            "node": "client-a",
+            "command": "ip -4 -o addr show eth1 | grep -qF ' 10.11.0.2/30'",
+            "assert": {"exit_code": 0},
+        }
+    ]
+    detail = run_checks(checks, eng, MagicMock(nodes={"client-a": "c"}), {})["per_check"][0]["detail"]
+    assert "exited 1" in detail
+    assert "grep" in detail
+
+
+def test_label_and_hint_are_passed_through_on_failure_only():
+    eng = _engine(stdout="", code=1)
+    base = {
+        "id": "client-a-subnet",
+        "type": "command",
+        "node": "client-a",
+        "command": "true",
+        "assert": {"exit_code": 0},
+        "label": "client-a has a /30 address on eth1",
+        "hint": "Assign 10.11.0.2/30 to eth1 on client-a, then run the checks again.",
+    }
+    failed = run_checks([base], eng, MagicMock(nodes={"client-a": "c"}), {})["per_check"][0]
+    assert failed["label"] == "client-a has a /30 address on eth1"
+    assert failed["hint"].startswith("Assign 10.11.0.2/30")
+
+    # A passing check needs no corrective action, so the hint is not carried.
+    passed = run_checks([base], _engine(stdout="", code=0), MagicMock(nodes={"client-a": "c"}), {})["per_check"][0]
+    assert passed["pass"] is True
+    assert "hint" not in passed
+    assert passed["label"] == "client-a has a /30 address on eth1"
+
+
+def test_checks_without_label_or_hint_still_evaluate():
+    eng = _engine(stdout="", code=0)
+    checks = [{"id": "bare", "type": "command", "node": "n", "command": "true", "assert": {"exit_code": 0}}]
+    item = run_checks(checks, eng, MagicMock(nodes={"n": "c"}), {})["per_check"][0]
+    assert item["pass"] is True
+    assert item["label"] == ""
+    assert item["detail"]
+
+
+def test_long_command_output_is_truncated_in_the_detail():
+    eng = _engine(stdout="x" * 500, code=1)
+    checks = [{"id": "noisy", "type": "command", "node": "n", "command": "dump", "assert": {"exit_code": 0}}]
+    detail = run_checks(checks, eng, MagicMock(nodes={"n": "c"}), {})["per_check"][0]["detail"]
+    assert len(detail) < 400
+    assert "…" in detail

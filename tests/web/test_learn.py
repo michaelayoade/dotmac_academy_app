@@ -272,3 +272,107 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
     finally:
         admin_session.query(Course).filter(Course.tenant_id == tenant_a.id, Course.slug == slug).delete()
         admin_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Subtopic progress is server state, not browser state
+# ---------------------------------------------------------------------------
+
+
+def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
+    """A course the learner may study, with one chapter and one activity."""
+    c = Course(tenant_id=tenant.id, slug=slug, title="SP", discipline="networking",
+               source_ref="x", version=1)
+    admin_session.add(c)
+    admin_session.flush()
+    admin_session.add(
+        Chapter(tenant_id=tenant.id, course_id=c.id, number=1, title="One", part="I",
+                body_html=body_html, source_hash="sh", order_index=1)
+    )
+    bank = QuestionBank(tenant_id=tenant.id, course_id=c.id, chapter_number=1, kind="chapter", version=1)
+    admin_session.add(bank)
+    admin_session.flush()
+    admin_session.add(
+        Question(tenant_id=tenant.id, bank_id=bank.id, ext_id="q1", stem="Pick A", type="single",
+                 options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1)
+    )
+    admin_session.add(
+        Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="mcq_test",
+                 bank_id=bank.id, title="Ch1 test", pass_threshold=0.6)
+    )
+    coh = Cohort(tenant_id=tenant.id, name=f"C-{slug}", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person.id,
+                   role_in_cohort="student", status="active")
+    )
+    admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=c.id, status="active"))
+    admin_session.commit()
+    return c
+
+
+def test_subtopic_progress_survives_a_new_browser_session(app_client, admin_session, tenant_a):
+    """The bug this replaced: progress lived in window.localStorage, so a learner
+    who switched device found the chapter's activities re-locked with nothing on
+    the server to show the work was done. A fresh cookie jar is that new device."""
+    p, h = _login(app_client, admin_session, tenant_a)
+    _seed_entitled_chapter(
+        admin_session, tenant_a, p, slug="subtopics", body_html="<h2>Alpha</h2><h2>Beta</h2>"
+    )
+
+    r = app_client.get("/courses/subtopics/chapters/1", headers=h)
+    assert r.status_code == 200
+    # Nothing done yet: the activity link is rendered locked, server-side.
+    assert 'class="chapter-activity-link btn-ghost justify-between gap-3 action-disabled"' in r.text
+    assert 'data-subtopics-complete="false"' in r.text
+
+    csrf = app_client.cookies.get("csrf_token") or ""
+    hh = {**h, "x-csrf-token": csrf}
+    for slug in ("alpha", "beta"):
+        rp = app_client.post(f"/courses/subtopics/chapters/1/subtopics/{slug}/complete", headers=hh)
+        assert rp.status_code == 200, rp.text
+    assert rp.json()["chapter_complete"] is True
+
+    # A brand-new client — no cookies, no localStorage, a different device.
+    app_client.cookies.clear()
+    app_client.post("/login", headers=h, data={"email": "s@a.edu", "password": "password1"})
+    r2 = app_client.get("/courses/subtopics/chapters/1", headers=h)
+    assert r2.status_code == 200
+    assert 'data-subtopics-complete="true"' in r2.text
+    assert 'data-subtopic-done="true"' in r2.text
+    # ...and the activity link now arrives unlocked, without JavaScript running.
+    assert "chapter-activity-link" in r2.text
+    assert 'class="chapter-activity-link btn-ghost justify-between gap-3 action-disabled"' not in r2.text
+
+
+def test_unknown_subtopic_slug_is_rejected(app_client, admin_session, tenant_a):
+    """The slug is content-derived and arrives from the client, so it is checked
+    against the chapter's real headings rather than stored on trust."""
+    p, h = _login(app_client, admin_session, tenant_a)
+    _seed_entitled_chapter(admin_session, tenant_a, p, slug="subtopics2", body_html="<h2>Alpha</h2>")
+
+    app_client.get("/courses/subtopics2/chapters/1", headers=h)
+    hh = {**h, "x-csrf-token": app_client.cookies.get("csrf_token") or ""}
+    r = app_client.post("/courses/subtopics2/chapters/1/subtopics/not-a-heading/complete", headers=hh)
+    assert r.status_code == 404
+
+
+def test_subtopic_progress_requires_course_access(app_client, admin_session, tenant_a):
+    """Without the entitlement gate a learner could write progress — and feed the
+    activity gate — for a course they cannot open."""
+    p, h = _login(app_client, admin_session, tenant_a)
+    c = Course(tenant_id=tenant_a.id, slug="notmine", title="NM", discipline="networking",
+               source_ref="x", version=1)
+    admin_session.add(c)
+    admin_session.flush()
+    admin_session.add(
+        Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1, title="One", part="I",
+                body_html="<h2>Alpha</h2>", source_hash="sh2", order_index=1)
+    )
+    admin_session.commit()
+
+    app_client.get("/", headers=h)  # obtain a csrf cookie
+    hh = {**h, "x-csrf-token": app_client.cookies.get("csrf_token") or ""}
+    r = app_client.post("/courses/notmine/chapters/1/subtopics/alpha/complete", headers=hh)
+    assert r.status_code == 403

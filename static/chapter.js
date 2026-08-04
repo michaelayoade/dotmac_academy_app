@@ -12,7 +12,6 @@
       .replace(/[^\w\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 64) || "section";
   }
 
-  var storagePrefix = "dotmac:subtopic:";
   var courseSlug = article.dataset.courseSlug || "course";
   var chapterNumber = article.dataset.chapterNumber || "chapter";
   var groupedIntroSlugs = { "why-this-matters": true, "catch-up-sidebar": true };
@@ -33,14 +32,41 @@
   var hasActivity = article.dataset.hasActivity === "true";
 
   function subtopicKey(slug) { return courseSlug + ":" + chapterNumber + ":" + slug; }
-  function storageKey(key) { return storagePrefix + key; }
-  function isComplete(key) {
-    try { return window.localStorage.getItem(storageKey(key)) === "1"; }
-    catch (e) { return false; }
+
+  /* Completion is server state, seeded from what the page was rendered with.
+     It used to live in localStorage, which made progress per-browser: moving
+     from phone to laptop, or clearing site data, silently re-locked the
+     chapter's activities. The set below is a cache of the server's answer, not
+     the record itself. */
+  var completed = Object.create(null);
+  subtopicLinks.forEach(function (link) {
+    if (link.dataset.subtopicDone === "true") completed[link.dataset.subtopicKey] = true;
+  });
+
+  function isComplete(key) { return completed[key] === true; }
+
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    return m ? m[1] : null;
   }
-  function setComplete(key) {
-    try { window.localStorage.setItem(storageKey(key), "1"); }
-    catch (e) { /* storage can be disabled; navigation should still work */ }
+
+  function setComplete(key, slug) {
+    /* Optimistic: the learner sees the step complete immediately. A failed
+       write leaves the server unchanged, and the next page load shows the
+       truth rather than a local fiction. */
+    completed[key] = true;
+    var token = csrfToken();
+    try {
+      window.fetch(
+        "/courses/" + encodeURIComponent(courseSlug) + "/chapters/" +
+          encodeURIComponent(chapterNumber) + "/subtopics/" + encodeURIComponent(slug) + "/complete",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: token ? { "x-csrf-token": token } : {},
+        }
+      ).catch(function () { /* offline or transient: reading should not break */ });
+    } catch (e) { /* fetch unavailable: the UI still advances */ }
   }
   function targetHref(link) { return link ? (link.dataset.subtopicHref || link.getAttribute("href")) : null; }
   function nextSubtopicHref(key) {
@@ -209,7 +235,7 @@
     completeButton.addEventListener("click", function () {
       if (!activeSlug) return;
       var key = subtopicKey(activeSlug);
-      setComplete(key);
+      setComplete(key, activeSlug);
       paintSubtopicState(key);
       updateStepActions();
       updateChapterGates();
