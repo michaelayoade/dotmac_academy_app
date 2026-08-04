@@ -1,0 +1,12 @@
+[Unit]
+Description=Email each learner their weekly progress summary
+
+[Timer]
+# Monday morning rather than midnight: a learning nudge should land when
+# someone might act on it, not at the top of a queue they wake up to.
+OnCalendar=Mon *-*-* 07:00:00
+Persistent=true
+Unit=academy-learner-digest.service
+
+[Install]
+WantedBy=timers.target

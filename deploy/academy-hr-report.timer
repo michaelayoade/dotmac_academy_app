@@ -1,0 +1,12 @@
+[Unit]
+Description=Email HR the weekly staff training report
+
+[Timer]
+# After the learner digest, so a learner who acts on Monday's nudge is already
+# reflected in what HR reads.
+OnCalendar=Mon *-*-* 08:00:00
+Persistent=true
+Unit=academy-hr-report.service
+
+[Install]
+WantedBy=timers.target
