@@ -32,6 +32,7 @@
             Rank
           </label>
           <button type="submit" class="btn-primary shrink-0">Apply</button>
+          <a href="/admin/applications/export.csv{% if request.url.query %}?{{ request.url.query }}{% endif %}" class="btn-ghost shrink-0">Export CSV</a>
           {% if selected_status or search_query or applied_from or applied_to or rank %}
           <a href="/admin/applications" class="btn-ghost shrink-0">Clear</a>
           {% endif %}

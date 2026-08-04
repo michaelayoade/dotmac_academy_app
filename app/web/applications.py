@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.admissions import APPLICANT_STATUSES
+from app.models.admissions import APPLICANT_STATUSES, Applicant
 from app.models.person import Person
 from app.services import admissions as admissions_service
+from app.services import csv_reports
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
 
@@ -31,6 +34,34 @@ def _parse_optional_date(value: str | None, field: str) -> date | None:
         raise HTTPException(status_code=400, detail=f"Invalid {field} date.") from exc
 
 
+def _filtered_applicants(
+    db: Session,
+    *,
+    status: str | None,
+    q: str | None,
+    applied_from: str | None,
+    applied_to: str | None,
+    rank: bool,
+) -> tuple[list[Applicant], str | None, date | None, date | None]:
+    from_date = _parse_optional_date(applied_from, "from")
+    to_date = _parse_optional_date(applied_to, "to")
+    if from_date is not None and to_date is not None and from_date > to_date:
+        return [], "Start date must be before or the same as end date.", from_date, to_date
+    return (
+        admissions_service.list_applicants(
+            db,
+            status=status or None,
+            search=q or None,
+            applied_from=from_date,
+            applied_to=to_date,
+            rank_by_score=rank,
+        ),
+        None,
+        from_date,
+        to_date,
+    )
+
+
 @router.get("", response_class=HTMLResponse)
 def applications_page(
     request: Request,
@@ -41,21 +72,14 @@ def applications_page(
     rank: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
-    from_date = _parse_optional_date(applied_from, "from")
-    to_date = _parse_optional_date(applied_to, "to")
-    filter_error = None
-    if from_date is not None and to_date is not None and from_date > to_date:
-        filter_error = "Start date must be before or the same as end date."
-        applicants = []
-    else:
-        applicants = admissions_service.list_applicants(
-            db,
-            status=status or None,
-            search=q or None,
-            applied_from=from_date,
-            applied_to=to_date,
-            rank_by_score=rank,
-        )
+    applicants, filter_error, from_date, to_date = _filtered_applicants(
+        db,
+        status=status,
+        q=q,
+        applied_from=applied_from,
+        applied_to=applied_to,
+        rank=rank,
+    )
     return templates.TemplateResponse(
         request,
         "admin/applications.html",
@@ -73,7 +97,104 @@ def applications_page(
     )
 
 
-@router.get("/{applicant_id}", response_class=HTMLResponse)
+def _format_date(value: object) -> str:
+    return value.isoformat() if value else ""
+
+
+def _format_bool(value: bool | None) -> str:
+    if value is None:
+        return ""
+    return "true" if value else "false"
+
+
+def _applicants_csv(applicants: list[Applicant]) -> str:
+    headers = [
+        "name",
+        "email",
+        "phone",
+        "program",
+        "status",
+        "applied_on",
+        "assessment_score_pct",
+        "assessment_level",
+        "assessment_taken_at",
+        "assessment_valid",
+        "assessment_invalid_reason",
+        "profile_complete",
+        "missing_profile_fields",
+        "state",
+        "city",
+        "highest_qualification",
+        "years_experience",
+        "has_device",
+        "has_internet",
+        "available_from",
+        "heard_from",
+        "cv_url",
+    ]
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    writer.writerow([csv_reports.sanitize_cell(c) for c in headers])
+    for applicant in applicants:
+        score_pct = (
+            f"{applicant.assessment_score * 100:.0f}"
+            if applicant.assessment_score is not None
+            else ""
+        )
+        row = [
+            f"{applicant.first_name} {applicant.last_name}".strip(),
+            applicant.email,
+            applicant.phone or "",
+            applicant.program or "",
+            applicant.status,
+            _format_date(applicant.applied_on),
+            score_pct,
+            applicant.assessment_level or "",
+            _format_date(applicant.assessment_taken_at),
+            _format_bool(applicant.assessment_valid),
+            applicant.assessment_invalid_reason or "",
+            _format_bool(applicant.profile_complete),
+            ";".join(applicant.missing_profile_fields),
+            applicant.state or "",
+            applicant.city or "",
+            applicant.highest_qualification or "",
+            applicant.years_experience if applicant.years_experience is not None else "",
+            _format_bool(applicant.has_device),
+            _format_bool(applicant.has_internet),
+            _format_date(applicant.available_from),
+            applicant.heard_from or "",
+            applicant.cv_url or "",
+        ]
+        writer.writerow([csv_reports.sanitize_cell(c) for c in row])
+    return buf.getvalue()
+
+
+@router.get("/export.csv")
+def applications_export_csv(
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    applied_from: str | None = Query(default=None),
+    applied_to: str | None = Query(default=None),
+    rank: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    applicants, _, _, _ = _filtered_applicants(
+        db,
+        status=status,
+        q=q,
+        applied_from=applied_from,
+        applied_to=applied_to,
+        rank=rank,
+    )
+    filename = f"applicants_export_{date.today().isoformat()}.csv"
+    return Response(
+        content=_applicants_csv(applicants),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{applicant_id:uuid}", response_class=HTMLResponse)
 def application_detail(
     applicant_id: UUID,
     request: Request,
@@ -102,7 +223,7 @@ def application_detail(
     )
 
 
-@router.post("/{applicant_id}/intake")
+@router.post("/{applicant_id:uuid}/intake")
 def application_intake(
     applicant_id: UUID,
     request: Request,
@@ -127,7 +248,7 @@ def application_intake(
     return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)
 
 
-@router.post("/{applicant_id}/action")
+@router.post("/{applicant_id:uuid}/action")
 def application_action(
     applicant_id: UUID,
     request: Request,

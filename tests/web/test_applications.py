@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date
+import csv
+import io
+from datetime import date, datetime
 
 from sqlalchemy import select
 
@@ -116,6 +118,7 @@ def test_admin_can_search_applications_by_applicant_name(app_client, admin_sessi
     assert "amina@a.edu" in response.text
     assert "bala@a.edu" not in response.text
     assert 'value="amina"' in response.text
+    assert 'href="/admin/applications/export.csv?q=amina"' in response.text
 
 
 def test_admin_can_filter_applications_by_applied_date_range(app_client, admin_session, tenant_a):
@@ -157,6 +160,82 @@ def test_admin_can_filter_applications_by_applied_date_range(app_client, admin_s
     assert "late@a.edu" not in response.text
     assert 'value="2026-02-01"' in response.text
     assert 'value="2026-02-28"' in response.text
+
+
+def test_admin_can_export_filtered_applications_csv(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "apps-export-admin@a.edu", "admin")
+    exported = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="amina-export@a.edu",
+        first_name="Amina",
+        last_name="Yusuf",
+        phone="08011111111",
+        program="Fiber Academy",
+        applied_on=date(2026, 2, 15),
+        profile={
+            "state": "FCT",
+            "city": "Abuja",
+            "highest_qualification": "OND",
+            "years_experience": 2,
+            "has_device": True,
+            "has_internet": False,
+            "available_from": date(2026, 3, 1),
+            "heard_from": "Referral",
+            "cv_url": "=https://example.test/cv.csv",
+        },
+    )
+    exported.assessment_score = 0.82
+    exported.assessment_level = "ready"
+    exported.assessment_taken_at = datetime(2026, 2, 15, 9, 30, 45)
+    exported.assessment_valid = False
+    exported.assessment_invalid_reason = "too_fast"
+    admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="bala-export@a.edu",
+        first_name="Bala",
+        last_name="Okoro",
+        applied_on=date(2026, 2, 16),
+    )
+    admin_session.commit()
+
+    response = app_client.get(
+        "/admin/applications/export.csv?q=amina",
+        headers=_login(app_client, "apps-export-admin@a.edu"),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    disposition = response.headers.get("content-disposition", "")
+    assert "applicants_export_" in disposition
+    assert disposition.endswith('.csv"')
+
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["name"] == "Amina Yusuf"
+    assert row["email"] == "amina-export@a.edu"
+    assert row["phone"] == "08011111111"
+    assert row["program"] == "Fiber Academy"
+    assert row["status"] == "applied"
+    assert row["applied_on"] == "2026-02-15"
+    assert row["assessment_score_pct"] == "82"
+    assert row["assessment_level"] == "ready"
+    assert row["assessment_taken_at"] == "2026-02-15T09:30:45"
+    assert row["assessment_valid"] == "false"
+    assert row["assessment_invalid_reason"] == "too_fast"
+    assert row["profile_complete"] == "false"
+    assert row["missing_profile_fields"] == "date_of_birth"
+    assert row["state"] == "FCT"
+    assert row["city"] == "Abuja"
+    assert row["highest_qualification"] == "OND"
+    assert row["years_experience"] == "2"
+    assert row["has_device"] == "true"
+    assert row["has_internet"] == "false"
+    assert row["available_from"] == "2026-03-01"
+    assert row["heard_from"] == "Referral"
+    assert row["cv_url"] == "'=https://example.test/cv.csv"
 
 
 def test_reversed_application_date_range_shows_validation_message(app_client, admin_session, tenant_a):
