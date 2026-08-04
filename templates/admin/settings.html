@@ -5,6 +5,21 @@
 <h1 class="mt-1.5 text-3xl tracking-tight">Platform settings</h1>
 <p class="mt-2 text-ink-soft">Branding, outbound email, and lab capacity. These override environment defaults.</p>
 
+
+<section class="card mt-8 p-6" aria-labelledby="appearance-settings-heading">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 id="appearance-settings-heading" class="text-xl">Appearance</h2>
+      <p class="mt-1.5 text-sm text-ink-soft">Choose the color theme for this browser.</p>
+    </div>
+    <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-sand-300 bg-sand-50 px-4 py-3 text-sm font-semibold text-ink">
+      <input id="theme-toggle" type="checkbox" class="h-4 w-4 accent-[var(--brand)]">
+      <span>Dark mode</span>
+    </label>
+  </div>
+  <p id="theme-toggle-status" class="mt-3 text-xs text-ink-soft" role="status"></p>
+</section>
+
 <form hx-post="/admin/settings" hx-target="#settings-save-result" hx-swap="innerHTML" class="mt-10 space-y-6">
   <section class="card p-6">
     <h2 class="text-xl">Branding</h2>
@@ -59,17 +74,17 @@
     <div class="mt-6 space-y-3 border-t border-sand-200 pt-5">
       <label class="flex cursor-pointer items-start gap-3">
         <input type="checkbox" name="smtp_starttls" {% if cfg.smtp_starttls %}checked{% endif %}
-               class="mt-0.5 h-4 w-4 accent-[oklch(0.44_0.10_161)]">
+               class="mt-0.5 h-4 w-4 accent-[var(--brand)]">
         <span class="text-sm text-ink">Use STARTTLS</span>
       </label>
       <label class="flex cursor-pointer items-start gap-3">
         <input type="checkbox" name="email_auto_on_pass" {% if cfg.email_auto_on_pass %}checked{% endif %}
-               class="mt-0.5 h-4 w-4 accent-[oklch(0.44_0.10_161)]">
+               class="mt-0.5 h-4 w-4 accent-[var(--brand)]">
         <span class="text-sm text-ink">Email students on first pass</span>
       </label>
       <label class="flex cursor-pointer items-start gap-3">
         <input type="checkbox" name="email_digest_enabled" {% if cfg.email_digest_enabled %}checked{% endif %}
-               class="mt-0.5 h-4 w-4 accent-[oklch(0.44_0.10_161)]">
+               class="mt-0.5 h-4 w-4 accent-[var(--brand)]">
         <span class="text-sm text-ink">Weekly instructor digest enabled</span>
       </label>
     </div>
@@ -104,4 +119,26 @@
   </form>
   <span id="test-email-result"></span>
 </div>
+<script>
+  (function () {
+    var toggle = document.getElementById("theme-toggle");
+    if (!toggle) return;
+    var status = document.getElementById("theme-toggle-status");
+    var key = "dotmac:theme";
+    function currentTheme() {
+      return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    }
+    function paint(theme) {
+      toggle.checked = theme === "dark";
+      if (status) status.textContent = theme === "dark" ? "Dark mode enabled." : "Light mode enabled.";
+    }
+    paint(currentTheme());
+    toggle.addEventListener("change", function () {
+      var theme = toggle.checked ? "dark" : "light";
+      try { window.localStorage.setItem(key, theme); } catch (e) {}
+      document.documentElement.dataset.theme = theme;
+      paint(theme);
+    });
+  })();
+</script>
 {% endblock %}

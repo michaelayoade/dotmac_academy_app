@@ -15,7 +15,7 @@
     {% else %}
       {% for opt in q.options %}
       <label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-sand-200">
-        <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}" class="h-4 w-4 accent-[oklch(0.44_0.10_161)]">
+        <input type="{{ 'checkbox' if q.type == 'multi' else 'radio' }}" name="{{ q.ext_id }}" value="{{ opt }}" class="h-4 w-4 accent-[var(--brand)]">
         <span class="text-ink">{{ opt }}</span>
       </label>
       {% endfor %}
