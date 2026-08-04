@@ -55,6 +55,10 @@ def test_public_courses_shows_only_listed_published(app_client, admin_session, t
     assert "Instructor Guide" not in r.text         # unlisted internal
     assert "Vendor Course Hidden" not in r.text     # unlisted management
     assert "Draft Course" not in r.text             # listed but not published
+    assert 'href="#management" class="btn btn-mint">Enroll — Management</a>' in r.text
+    assert "Enrol — Management" not in r.text
+    assert "Enrolment" not in r.text
+    assert "enrolment" not in r.text
 
 
 def test_signed_in_root_still_learn_home(app_client, admin_session, tenant_a):
