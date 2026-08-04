@@ -86,3 +86,25 @@ def test_effective_falls_back_when_table_query_fails(admin_session, monkeypatch)
     cfg = effective(admin_session)
     assert cfg.branding_name == "Dotmac Academy"
     admin_session.rollback()
+
+
+def test_new_operational_keys_are_registered(admin_session):
+    """Regression: `effective` merges a stored value only when the key exists in
+    the defaults registry. `learner_digest_enabled` and
+    `reminder_inactivity_max_nudges` were read by their services but never
+    registered, so storing them did nothing — the digest switch would have been
+    flipped and silently kept sending nothing."""
+    from app.services import settings_store
+
+    assert "learner_digest_enabled" in settings_store.KNOWN_KEYS
+    assert "reminder_inactivity_max_nudges" in settings_store.KNOWN_KEYS
+
+    # Off by default: enabling it mails every active learner.
+    assert settings_store.effective(admin_session).get("learner_digest_enabled") is False
+
+    settings_store.set_many(admin_session, {"learner_digest_enabled": "true"})
+    settings_store.set_many(admin_session, {"reminder_inactivity_max_nudges": "6"})
+    eff = settings_store.effective(admin_session)
+    assert eff.get("learner_digest_enabled") is True  # coerced to bool, not "true"
+    assert eff.get("reminder_inactivity_max_nudges") == 6  # coerced to int
+    admin_session.rollback()
