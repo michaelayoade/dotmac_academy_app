@@ -122,3 +122,31 @@ def test_override_score_threshold_and_tenant_validation(admin_session, tenant_a)
         override_score(admin_session, tenant_id=tenant_a.id, submission_id=uuid4(),
                        score_value=5, max_score=10, reason="should fail")
     admin_session.rollback()
+
+
+def test_lab_activity_cannot_be_graded_as_a_quiz(admin_session, tenant_a):
+    """Regression: a lab has no question bank, so grading it here produced a
+    permanent 0/0 failed attempt with an empty per_item — no feedback, and it
+    counted against course completion. Labs are graded by lab_lifecycle.grade."""
+    from app.models.assessment import Submission
+    from app.services.exceptions import BadRequestError
+
+    p = Person(tenant_id=tenant_a.id, email="lab_guard@stu.edu", first_name="La", last_name="B")
+    admin_session.add(p)
+    c, _ = _seed(admin_session, tenant_a.id)
+    lab = Activity(tenant_id=tenant_a.id, course_id=c.id, chapter_number=14, type="lab",
+                   bank_id=None, title="Subnetting lab", pass_threshold=0.7)
+    admin_session.add(lab)
+    admin_session.flush()
+
+    with pytest.raises(BadRequestError):
+        submit_activity(admin_session, tenant_id=tenant_a.id, person_id=p.id,
+                        activity=lab, answers={})
+
+    # No attempt was burned and no bogus Score recorded.
+    attempts = admin_session.scalar(
+        select(func.count()).select_from(Submission)
+        .where(Submission.tenant_id == tenant_a.id).where(Submission.activity_id == lab.id)
+    )
+    admin_session.rollback()
+    assert attempts == 0

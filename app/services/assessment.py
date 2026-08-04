@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
 from app.services import learning_events
-from app.services.exceptions import ConflictError
+from app.services.exceptions import BadRequestError, ConflictError
 from app.services.grading import grade_submission
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,17 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
 
     only_ext_ids (a randomized attempt's question subset) restricts grading to
     exactly those questions; None grades the whole bank.
+
+    Question-graded activities only. A lab carries no question bank, so grading
+    one here yields an empty 0/0 fail with no per-item feedback — a permanent
+    failed attempt the learner cannot interpret or appeal. Labs are graded
+    against their live instance by ``lab_lifecycle.grade``, which is the sole
+    writer of a lab Score.
     """
+    if activity.type != "mcq_test":
+        raise BadRequestError(
+            f"{activity.type!r} activities are not graded here; use the lab workspace to submit this activity."
+        )
     person = db.scalars(
         select(Person)
         .where(Person.tenant_id == tenant_id)

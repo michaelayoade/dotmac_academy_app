@@ -69,4 +69,31 @@
 {% endfor %}
 </div>
 {% endfor %}
+
+{% if structure.course_activities %}
+<h2 class="mt-10 text-lg font-semibold tracking-wide text-ink">Course assessments</h2>
+<p class="mt-1 text-sm text-ink-soft">These cover the whole course and are required to complete it.</p>
+<div class="mt-4 space-y-3">
+{% for act_info in structure.course_activities %}
+  {% if structure.locked %}
+  <div class="card p-5 opacity-75">
+  {% else %}
+  <a class="card block p-5 transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-soft focus:outline-none focus:ring-2 focus:ring-brand-200"
+     href="{% if act_info.activity.type == 'lab' %}/labs/{{ act_info.activity.id }}{% else %}/activities/{{ act_info.activity.id }}{% endif %}">
+  {% endif %}
+    <p class="flex items-center gap-2 font-medium text-ink">
+      <span class="min-w-0 flex-1 truncate">{{ act_info.activity.title }}</span>
+      <span class="font-mono text-sm tabular-nums text-ink-soft">{{ act_info.pct }}%</span>
+      {% if act_info.passed %}
+      <span class="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-800">Pass</span>
+      {% endif %}
+    </p>
+  {% if structure.locked %}
+  </div>
+  {% else %}
+  </a>
+  {% endif %}
+{% endfor %}
+</div>
+{% endif %}
 {% endblock %}
