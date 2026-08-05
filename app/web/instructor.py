@@ -28,9 +28,11 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
+from app.models.track import Track
 from app.services import announcements as ann_svc
 from app.services import scheduling
 from app.services import tracks as track_svc
+from app.services.account_invitations import CohortAssignment, invite_and_enroll
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.audit import write_audit_event
@@ -38,7 +40,7 @@ from app.services.authoring import create_course, delete_chapter, editable_chapt
 from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
-from app.services.lifecycle import invite_user, set_account_status
+from app.services.lifecycle import set_account_status
 from app.services.localtime import local_to_utc
 from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
@@ -332,33 +334,56 @@ def invite_to_cohort(
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
     where unknown emails were silently dropped. Queues the activation email."""
     tenant = require_tenant(request)
-    person, token = invite_user(
-        db, tenant_id=tenant.id, email=email, first_name=first_name, last_name=last_name, role="student"
-    )
     track_uuid = UUID(track_id) if track_id else None
-    bulk_enroll(db, tenant_id=tenant.id, cohort_id=cohort_id, emails=[email], track_id=track_uuid)
-    link = str(request.url_for("accept_form").include_query_params(token=token))
-    link_e = _e(link)
-    sent = enqueue_email(
+    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    track = None
+    if track_uuid is not None:
+        cohort_track = track_svc.cohort_track_or_404(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            track_id=track_uuid,
+        )
+        track = db.scalars(
+            select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
+        ).first()
+    result = invite_and_enroll(
         db,
         tenant_id=tenant.id,
-        idempotency_key=f"account-invite:{person.id}:{hash_token(token)}",
-        kind="account_invite",
-        recipient=person.email,
-        subject="You're invited to Dotmac Academy",
-        html_body=(
-            f"<p>Hi {_e(person.first_name)},</p>"
-            f"<p>You have been invited to Dotmac Academy.</p>"
-            f'<p><a href="{link_e}">Set up your account</a></p>'
-            f"<p>If the button does not work, open this link: {link_e}</p>"
-        ),
-        text_body=(
-            f"Hi {person.first_name},\n\n"
-            f"You have been invited to Dotmac Academy.\n\n"
-            f"Set up your account: {link}\n"
-        ),
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        role="student",
+        assignments=(CohortAssignment(cohort=cohort, track=track),),
     )
-    status = "Invite email queued." if sent else "Invite email could not be queued."
+    person = result.person
+    sent = False
+    if result.token is not None:
+        link = str(request.url_for("accept_form").include_query_params(token=result.token))
+        link_e = _e(link)
+        sent = enqueue_email(
+            db,
+            tenant_id=tenant.id,
+            idempotency_key=f"account-invite:{person.id}:{hash_token(result.token)}",
+            kind="account_invite",
+            recipient=person.email,
+            subject="You're invited to Dotmac Academy",
+            html_body=(
+                f"<p>Hi {_e(person.first_name)},</p>"
+                f"<p>You have been invited to Dotmac Academy.</p>"
+                f'<p><a href="{link_e}">Set up your account</a></p>'
+                f"<p>If the button does not work, open this link: {link_e}</p>"
+            ),
+            text_body=(
+                f"Hi {person.first_name},\n\n"
+                f"You have been invited to Dotmac Academy.\n\n"
+                f"Set up your account: {link}\n"
+            ),
+        )
+    if result.token is None:
+        status = "Student enrolled. Existing account can sign in."
+    else:
+        status = "Invite email queued." if sent else "Invite email could not be queued."
     return HTMLResponse(
         f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{_e(status)}</p>'

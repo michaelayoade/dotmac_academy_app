@@ -17,6 +17,7 @@ from app.models.auth import UserCredential
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
 from app.models.tenant import Tenant
+from app.services.identity import normalize_email
 from app.services.security import hash_password
 
 ROLE_SLUGS: dict[str, str] = {
@@ -59,6 +60,7 @@ def bootstrap_tenant(
     Returns:
         The newly created :class:`Tenant` instance (flushed but not committed).
     """
+    admin_email = normalize_email(admin_email)
     tenant = Tenant(slug=slug, name=name)
     db.add(tenant)
     db.flush()

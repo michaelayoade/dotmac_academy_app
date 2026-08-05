@@ -16,10 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.account_token import AccountToken
-from app.models.auth import UserCredential
+from app.models.auth import AuthSession, UserCredential
 from app.models.person import Person
-from app.services.bootstrap import ensure_roles
 from app.services.exceptions import BadRequestError, ConflictError
+from app.services.identity import normalize_email, person_for_email, sync_credential_emails
 from app.services.security import hash_password, hash_token
 
 KINDS = frozenset({"password_reset", "invite", "email_verify"})
@@ -52,6 +52,7 @@ def _consume_token(db: Session, *, tenant_id: UUID, kind: str, raw: str, now: da
         .where(AccountToken.tenant_id == tenant_id)
         .where(AccountToken.kind == kind)
         .where(AccountToken.token_hash == hash_token(raw))
+        .with_for_update()
     ).first()
     if tok is None or tok.used_at is not None or tok.expires_at < now:
         raise BadRequestError("invalid or expired token")
@@ -63,16 +64,95 @@ def _consume_token(db: Session, *, tenant_id: UUID, kind: str, raw: str, now: da
 # ── Password reset ────────────────────────────────────────────────────────────
 
 
+def _invalidate_outstanding_tokens(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    kind: str,
+    now: datetime,
+) -> None:
+    tokens = db.scalars(
+        select(AccountToken)
+        .where(AccountToken.tenant_id == tenant_id)
+        .where(AccountToken.person_id == person_id)
+        .where(AccountToken.kind == kind)
+        .where(AccountToken.used_at.is_(None))
+        .with_for_update()
+    ).all()
+    for token in tokens:
+        token.used_at = now
+
+
+def _revoke_active_sessions(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    now: datetime,
+) -> None:
+    sessions = db.scalars(
+        select(AuthSession)
+        .where(AuthSession.tenant_id == tenant_id)
+        .where(AuthSession.person_id == person_id)
+        .where(AuthSession.revoked_at.is_(None))
+        .with_for_update()
+    ).all()
+    for session in sessions:
+        session.revoked_at = now
+
+
+def set_account_password(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    new_password: str,
+    now: datetime | None = None,
+) -> Person:
+    """Apply the complete password-change security transition."""
+    now = now or datetime.now(UTC)
+    if not new_password or len(new_password) < 8:
+        raise BadRequestError("password must be at least 8 characters")
+    person = db.scalars(
+        select(Person).where(Person.tenant_id == tenant_id).where(Person.id == person_id).with_for_update()
+    ).first()
+    if person is None:
+        raise BadRequestError("account no longer exists")
+    credentials = sync_credential_emails(db, person=person)
+    if not credentials:
+        raise BadRequestError("no credential for this account")
+
+    password_hash = hash_password(new_password)
+    for credential in credentials:
+        credential.password_hash = password_hash
+        credential.failed_login_attempts = 0
+        credential.locked_until = None
+    _revoke_active_sessions(db, tenant_id=tenant_id, person_id=person_id, now=now)
+    _invalidate_outstanding_tokens(
+        db,
+        tenant_id=tenant_id,
+        person_id=person_id,
+        kind="password_reset",
+        now=now,
+    )
+    db.flush()
+    return person
+
+
 def request_password_reset(db: Session, *, tenant_id: UUID, email: str, now: datetime | None = None) -> str | None:
     """Return a reset token for the email's account, or None if unknown.
 
     Callers MUST respond identically whether or not None is returned.
     """
     now = now or datetime.now(UTC)
-    person = db.scalars(
-        select(Person).where(Person.tenant_id == tenant_id).where(Person.email == (email or "").strip().lower())
-    ).first()
+    person = person_for_email(db, tenant_id=tenant_id, email=email)
     if person is None:
+        return None
+    credential = db.scalars(
+        select(UserCredential).where(UserCredential.tenant_id == tenant_id).where(UserCredential.person_id == person.id)
+    ).first()
+    if credential is None:
         return None
     return _issue_token(db, tenant_id=tenant_id, person_id=person.id, kind="password_reset", now=now)
 
@@ -83,21 +163,13 @@ def reset_password(db: Session, *, tenant_id: UUID, raw: str, new_password: str,
     if not new_password or len(new_password) < 8:
         raise BadRequestError("password must be at least 8 characters")
     tok = _consume_token(db, tenant_id=tenant_id, kind="password_reset", raw=raw, now=now)
-    creds = db.scalars(
-        select(UserCredential)
-        .where(UserCredential.tenant_id == tenant_id)
-        .where(UserCredential.person_id == tok.person_id)
-    ).all()
-    if not creds:
-        raise BadRequestError("no credential for this account")
-    person = db.get(Person, tok.person_id)
-    if person is None:
-        raise BadRequestError("account no longer exists")
-    password_hash = hash_password(new_password)
-    for cred in creds:
-        cred.password_hash = password_hash
-    db.flush()
-    return person
+    return set_account_password(
+        db,
+        tenant_id=tenant_id,
+        person_id=tok.person_id,
+        new_password=new_password,
+        now=now,
+    )
 
 
 # ── Invitations ───────────────────────────────────────────────────────────────
@@ -110,34 +182,38 @@ def issue_invite_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, no
     Returns the raw token — deliver once (email link) and never store it.
     """
     now = now or datetime.now(UTC)
+    _invalidate_outstanding_tokens(
+        db,
+        tenant_id=tenant_id,
+        person_id=person_id,
+        kind="invite",
+        now=now,
+    )
     return _issue_token(db, tenant_id=tenant_id, person_id=person_id, kind="invite", now=now)
 
 
 def invite_user(
     db: Session, *, tenant_id: UUID, email: str, first_name: str, last_name: str, role: str, now: datetime | None = None
 ) -> tuple[Person, str]:
-    """Create a credential-less Person with a role and return (person, invite_token).
+    """Create or reinvite a credential-less person and return its invite token.
 
-    The invitee sets their password via :func:`accept_invite`. Raises ConflictError
-    if a person with the email already exists.
+    Login-capable existing accounts still conflict because they do not need an
+    activation flow.
     """
-    now = now or datetime.now(UTC)
-    email = (email or "").strip().lower()
-    existing = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.email == email)).first()
-    if existing is not None:
-        raise ConflictError(f"a person with email {email!r} already exists")
-    roles = ensure_roles(db, tenant_id)
-    if role not in roles:
-        raise BadRequestError(f"invalid role: {role}")
-    person = Person(tenant_id=tenant_id, email=email, first_name=first_name, last_name=last_name)
-    db.add(person)
-    db.flush()
-    from app.models.rbac import PersonRole
+    from app.services.account_invitations import invite_and_enroll
 
-    db.add(PersonRole(tenant_id=tenant_id, person_id=person.id, role_id=roles[role].id))
-    db.flush()
-    token = _issue_token(db, tenant_id=tenant_id, person_id=person.id, kind="invite", now=now)
-    return person, token
+    result = invite_and_enroll(
+        db,
+        tenant_id=tenant_id,
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        role=role,
+        now=now,
+    )
+    if result.token is None:
+        raise ConflictError("account already has a credential")
+    return result.person, result.token
 
 
 def set_account_status(db: Session, *, tenant_id: UUID, person_id: UUID, status: str) -> Person:
@@ -150,15 +226,12 @@ def set_account_status(db: Session, *, tenant_id: UUID, person_id: UUID, status:
     person.status = status
     if status == "suspended":
         # Revoke all live sessions so the suspension takes effect immediately.
-        from app.models.auth import AuthSession
-
-        for s in db.scalars(
-            select(AuthSession)
-            .where(AuthSession.tenant_id == tenant_id)
-            .where(AuthSession.person_id == person_id)
-            .where(AuthSession.revoked_at.is_(None))
-        ).all():
-            s.revoked_at = now_utc()
+        _revoke_active_sessions(
+            db,
+            tenant_id=tenant_id,
+            person_id=person_id,
+            now=now_utc(),
+        )
     db.flush()
     return person
 
@@ -183,10 +256,17 @@ def accept_invite(db: Session, *, tenant_id: UUID, raw: str, password: str, now:
     ).first()
     if existing is not None:
         raise ConflictError("account already has a credential")
+    canonical = normalize_email(person.email)
+    person.email = canonical
     db.add(
-        UserCredential(
-            tenant_id=tenant_id, person_id=person.id, email=person.email, password_hash=hash_password(password)
-        )
+        UserCredential(tenant_id=tenant_id, person_id=person.id, email=canonical, password_hash=hash_password(password))
+    )
+    _invalidate_outstanding_tokens(
+        db,
+        tenant_id=tenant_id,
+        person_id=person.id,
+        kind="invite",
+        now=now,
     )
     db.flush()
     return person

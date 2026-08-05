@@ -46,7 +46,12 @@ def test_delivery_records_retry_then_terminal_failure(
     tenant_a,
     monkeypatch,
 ):
-    _enqueue(admin_session, tenant_a.id)
+    _enqueue(
+        admin_session,
+        tenant_a.id,
+        key="failed-account-invite",
+        kind="account_invite",
+    )
     row = admin_session.scalars(
         select(EmailOutbox).where(EmailOutbox.tenant_id == tenant_a.id)
     ).one()

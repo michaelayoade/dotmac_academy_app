@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.auth import UserCredential
+from app.models.account_token import AccountToken
+from app.models.auth import AuthSession, UserCredential
 from app.models.person import Person
 from app.services.exceptions import BadRequestError, ConflictError
 from app.services.lifecycle import (
@@ -18,7 +19,7 @@ from app.services.lifecycle import (
     set_account_status,
 )
 from app.services.security import hash_password, verify_password
-from app.services.web_auth import authenticate
+from app.services.web_auth import authenticate, start_session
 
 
 def _account(db, tid, email="u@a.edu", pw="origpass1"):
@@ -54,6 +55,27 @@ def test_password_reset_round_trip(admin_session, tenant_a):
 def test_password_reset_unknown_email_returns_none(admin_session, tenant_a):
     raw = request_password_reset(admin_session, tenant_id=tenant_a.id, email="nobody@a.edu")
     assert raw is None
+    admin_session.rollback()
+
+
+def test_password_reset_credentialless_invitee_returns_none(admin_session, tenant_a):
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="invited@a.edu",
+        first_name="Invited",
+        last_name="Learner",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+
+    assert (
+        request_password_reset(
+            admin_session,
+            tenant_id=tenant_a.id,
+            email=" invited@A.EDU ",
+        )
+        is None
+    )
     admin_session.rollback()
 
 
@@ -96,6 +118,45 @@ def test_reset_rejects_expired_token(admin_session, tenant_a):
     raw = request_password_reset(admin_session, tenant_id=tid, email="u@a.edu", now=past)
     with pytest.raises(BadRequestError):
         reset_password(admin_session, tenant_id=tid, raw=raw, new_password="brandnew9")
+    admin_session.rollback()
+
+
+def test_reset_clears_lockout_revokes_sessions_and_invalidates_other_tokens(admin_session, tenant_a):
+    tid = tenant_a.id
+    person = _account(admin_session, tid, email="locked-reset@a.edu")
+    credential = admin_session.scalars(
+        __import__("sqlalchemy").select(UserCredential).where(UserCredential.person_id == person.id)
+    ).one()
+    credential.failed_login_attempts = 5
+    credential.locked_until = datetime.now(UTC) + timedelta(minutes=15)
+    start_session(admin_session, tid, person.id)
+    stale_token = request_password_reset(
+        admin_session,
+        tenant_id=tid,
+        email=" LOCKED-RESET@A.EDU ",
+    )
+    current_token = request_password_reset(admin_session, tenant_id=tid, email="locked-reset@a.edu")
+    assert stale_token is not None
+    assert current_token is not None
+
+    reset_password(admin_session, tenant_id=tid, raw=current_token, new_password="unlocked-password")
+
+    assert credential.failed_login_attempts == 0
+    assert credential.locked_until is None
+    sessions = admin_session.scalars(
+        __import__("sqlalchemy").select(AuthSession).where(AuthSession.person_id == person.id)
+    ).all()
+    assert sessions and all(session.revoked_at is not None for session in sessions)
+    tokens = admin_session.scalars(
+        __import__("sqlalchemy")
+        .select(AccountToken)
+        .where(AccountToken.person_id == person.id)
+        .where(AccountToken.kind == "password_reset")
+    ).all()
+    assert len(tokens) == 2
+    assert all(token.used_at is not None for token in tokens)
+    with pytest.raises(BadRequestError):
+        reset_password(admin_session, tenant_id=tid, raw=stale_token, new_password="another-password")
     admin_session.rollback()
 
 

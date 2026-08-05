@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.models.account_token import AccountToken
 from app.models.auth import UserCredential
-from app.models.cohort import Cohort
+from app.models.cohort import Cohort, Enrollment
 from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
 from app.models.rbac import PersonRole
@@ -174,6 +174,7 @@ def test_instructor_invite_queues_activation_link_without_exposing_token(
     app_client,
     admin_session,
     tenant_a,
+    monkeypatch,
 ):
     roles = ensure_roles(admin_session, tenant_a.id)
     p = Person(tenant_id=tenant_a.id, email="adm@a.edu", first_name="Ad", last_name="Min")
@@ -205,6 +206,144 @@ def test_instructor_invite_queues_activation_link_without_exposing_token(
     assert "/accept-invite?token=" in queued.html_body
     assert admin_session.query(Person).filter(
         Person.tenant_id == tenant_a.id, Person.email == "newbie@a.edu").count() == 1
+
+    delivered_to = []
+
+    def _deliver(to, *args, **kwargs):
+        from app.services.email import EmailResult
+
+        delivered_to.append(to)
+        return EmailResult(True)
+
+    from app.services import email_outbox
+
+    monkeypatch.setattr(email_outbox, "send_email_detailed", _deliver)
+    result = email_outbox.deliver_pending(
+        admin_session,
+        now=queued.available_at + timedelta(seconds=1),
+    )
+    assert result == {"sent": 1, "retried": 0, "failed": 0}
+    assert delivered_to == ["newbie@a.edu"]
+
+
+def test_duplicate_cohort_invite_reuses_person_and_enrollment(
+    app_client,
+    admin_session,
+    tenant_a,
+):
+    roles = ensure_roles(admin_session, tenant_a.id)
+    admin = Person(tenant_id=tenant_a.id, email="duplicate-admin@a.edu", first_name="Ad", last_name="Min")
+    cohort = Cohort(tenant_id=tenant_a.id, name="Duplicate Invites", discipline="networking", status="active")
+    admin_session.add_all([admin, cohort])
+    admin_session.flush()
+    admin_session.add_all(
+        [
+            UserCredential(
+                tenant_id=tenant_a.id,
+                person_id=admin.id,
+                email=admin.email,
+                password_hash=hash_password("password1"),
+            ),
+            PersonRole(tenant_id=tenant_a.id, person_id=admin.id, role_id=roles["admin"].id),
+        ]
+    )
+    admin_session.commit()
+
+    app_client.post("/login", headers=H, data={"email": admin.email, "password": "password1"})
+    csrf = app_client.cookies.get("csrf_token", "")
+    url = f"/instructor/cohorts/{cohort.id}/invite"
+    data = {"email": " Repeat.Student@a.edu ", "first_name": "Repeat", "last_name": "Student"}
+    first = app_client.post(url, headers={**H, "x-csrf-token": csrf}, data=data)
+    second = app_client.post(url, headers={**H, "x-csrf-token": csrf}, data=data)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    admin_session.rollback()
+    students = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "repeat.student@a.edu")
+    ).all()
+    assert len(students) == 1
+    assert (
+        admin_session.query(Enrollment)
+        .filter(
+            Enrollment.tenant_id == tenant_a.id,
+            Enrollment.cohort_id == cohort.id,
+            Enrollment.person_id == students[0].id,
+        )
+        .count()
+        == 1
+    )
+    tokens = admin_session.scalars(
+        select(AccountToken)
+        .where(AccountToken.tenant_id == tenant_a.id)
+        .where(AccountToken.person_id == students[0].id)
+        .where(AccountToken.kind == "invite")
+    ).all()
+    assert len(tokens) == 2
+    assert sum(token.used_at is None for token in tokens) == 1
+
+
+def test_cohort_invite_enrolls_existing_login_without_activation_email(
+    app_client,
+    admin_session,
+    tenant_a,
+):
+    roles = ensure_roles(admin_session, tenant_a.id)
+    admin = Person(tenant_id=tenant_a.id, email="existing-admin@a.edu", first_name="Ad", last_name="Min")
+    student = Person(tenant_id=tenant_a.id, email="existing-student@a.edu", first_name="Existing", last_name="Student")
+    cohort = Cohort(tenant_id=tenant_a.id, name="Existing Users", discipline="networking", status="active")
+    admin_session.add_all([admin, student, cohort])
+    admin_session.flush()
+    admin_session.add_all(
+        [
+            UserCredential(
+                tenant_id=tenant_a.id,
+                person_id=admin.id,
+                email=admin.email,
+                password_hash=hash_password("password1"),
+            ),
+            UserCredential(
+                tenant_id=tenant_a.id,
+                person_id=student.id,
+                email=student.email,
+                password_hash=hash_password("password1"),
+            ),
+            PersonRole(tenant_id=tenant_a.id, person_id=admin.id, role_id=roles["admin"].id),
+        ]
+    )
+    admin_session.commit()
+
+    app_client.post("/login", headers=H, data={"email": admin.email, "password": "password1"})
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/instructor/cohorts/{cohort.id}/invite",
+        headers={**H, "x-csrf-token": csrf},
+        data={"email": " EXISTING-STUDENT@a.edu ", "first_name": "Existing", "last_name": "Student"},
+    )
+
+    assert response.status_code == 200
+    assert "Existing account can sign in" in response.text
+    admin_session.rollback()
+    assert (
+        admin_session.query(Enrollment)
+        .filter(
+            Enrollment.tenant_id == tenant_a.id,
+            Enrollment.cohort_id == cohort.id,
+            Enrollment.person_id == student.id,
+        )
+        .count()
+        == 1
+    )
+    assert (
+        admin_session.query(EmailOutbox)
+        .filter(
+            EmailOutbox.tenant_id == tenant_a.id,
+            EmailOutbox.kind == "account_invite",
+            EmailOutbox.recipient == student.email,
+        )
+        .count()
+        == 0
+    )
 
 
 def test_invalid_reset_token_shows_error(app_client, admin_session, tenant_a):
