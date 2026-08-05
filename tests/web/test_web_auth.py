@@ -44,6 +44,46 @@ def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
     assert r.status_code == 303 and "session" in r.cookies
 
 
+def test_login_canonicalizes_email_and_ignores_credential_email_drift(
+    app_client,
+    admin_session,
+    tenant_a,
+):
+    from app.models.auth import UserCredential
+    from app.models.person import Person
+    from app.services.security import hash_password
+
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="Mixed.Case@Alpha.EDU ",
+        first_name="Mixed",
+        last_name="Case",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    credential = UserCredential(
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        email="stale-login@alpha.edu",
+        password_hash=hash_password("password1"),
+    )
+    admin_session.add(credential)
+    admin_session.commit()
+
+    response = app_client.post(
+        "/login",
+        headers={"Host": "alpha.localhost"},
+        data={"email": "  MIXED.case@alpha.edu  ", "password": "password1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    admin_session.refresh(person)
+    admin_session.refresh(credential)
+    assert person.email == "mixed.case@alpha.edu"
+    assert credential.email == person.email
+
+
 def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a):
     """Logout must mark the AuthSession revoked; replaying the old cookie is rejected."""
     from app.models.auth import UserCredential

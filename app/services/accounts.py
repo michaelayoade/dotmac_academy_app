@@ -14,13 +14,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.auth import UserCredential
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ROLE_SLUGS, ensure_roles
+from app.services.identity import normalize_email, person_for_email
 from app.services.security import hash_password
 
 VALID_ROLES = frozenset(ROLE_SLUGS)  # {"student", "instructor", "admin"}
@@ -60,11 +60,8 @@ def create_user(
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role {role!r}; expected one of {sorted(VALID_ROLES)}")
 
-    existing = db.scalars(
-        select(Person)
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.email == email)
-    ).first()
+    email = normalize_email(email)
+    existing = person_for_email(db, tenant_id=tenant_id, email=email)
     if existing is not None:
         raise ValueError(f"A person with email {email!r} already exists in this tenant")
 

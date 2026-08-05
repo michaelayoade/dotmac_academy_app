@@ -18,7 +18,6 @@ commits after the response (a mid-handler commit clears the RLS tenant GUC).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from html import escape
 from uuid import UUID
 
@@ -29,18 +28,18 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.auth import UserCredential
-from app.models.cohort import Cohort, Enrollment
+from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.models.track import Track
 from app.services import tracks as track_svc
+from app.services.account_invitations import CohortAssignment, invite_and_enroll
 from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
 from app.services.email_outbox import enqueue_email
-from app.services.exceptions import ConflictError
-from app.services.lifecycle import _issue_token, invite_user, request_password_reset, set_account_status
+from app.services.lifecycle import issue_invite_for_person, request_password_reset, set_account_status
 from app.services.roles import role_slugs
 from app.services.security import hash_token
 from app.services.web_auth import require_web_user
@@ -64,91 +63,6 @@ def _html_error(message: str, status_code: int = status.HTTP_200_OK) -> HTMLResp
         f'<div class="rounded-lg bg-clay-500/15 p-3 text-sm font-semibold text-clay-600">' f"{escape(message)}</div>",
         status_code=status_code,
     )
-
-
-def _cohort_member_role(role: str) -> str:
-    return "instructor" if role in {"instructor", "admin"} else "student"
-
-
-def _ensure_person_role(db: Session, *, tenant_id: UUID, person_id: UUID, role: str) -> None:
-    roles = ensure_roles(db, tenant_id)
-    if role not in roles:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    existing = db.scalars(
-        select(PersonRole)
-        .where(PersonRole.tenant_id == tenant_id)
-        .where(PersonRole.person_id == person_id)
-        .where(PersonRole.role_id == roles[role].id)
-    ).first()
-    if existing is None:
-        db.add(PersonRole(tenant_id=tenant_id, person_id=person_id, role_id=roles[role].id))
-        db.flush()
-
-
-def _assign_invited_user(
-    db: Session,
-    *,
-    tenant_id: UUID,
-    invited: Person,
-    role: str,
-    cohorts: list[Cohort],
-    courses_by_cohort: dict[UUID, list[Course]],
-    tracks_by_cohort: dict[UUID, Track],
-) -> list[str]:
-    assignments: list[str] = []
-    if not cohorts:
-        return assignments
-
-    member_role = _cohort_member_role(role)
-    for cohort in cohorts:
-        enrollment = db.scalars(
-            select(Enrollment)
-            .where(Enrollment.tenant_id == tenant_id)
-            .where(Enrollment.cohort_id == cohort.id)
-            .where(Enrollment.person_id == invited.id)
-        ).first()
-        if enrollment is None:
-            enrollment = Enrollment(
-                tenant_id=tenant_id,
-                cohort_id=cohort.id,
-                person_id=invited.id,
-                role_in_cohort=member_role,
-                status="active",
-            )
-            db.add(enrollment)
-        else:
-            enrollment.role_in_cohort = member_role
-            enrollment.status = "active"
-        track = tracks_by_cohort.get(cohort.id)
-        if track is not None:
-            enrollment.track_id = track.id
-            track_svc.ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort.id, track_id=track.id)
-        assignments.append(f"{cohort.name} cohort as {member_role}")
-        if track is not None:
-            assignments.append(f"{track.name} track in {cohort.name}")
-
-        for course in courses_by_cohort.get(cohort.id, []):
-            offering = db.scalars(
-                select(CourseOffering)
-                .where(CourseOffering.tenant_id == tenant_id)
-                .where(CourseOffering.cohort_id == cohort.id)
-                .where(CourseOffering.course_id == course.id)
-            ).first()
-            if offering is None:
-                db.add(
-                    CourseOffering(
-                        tenant_id=tenant_id,
-                        cohort_id=cohort.id,
-                        course_id=course.id,
-                        status="active",
-                    )
-                )
-            else:
-                offering.status = "active"
-            assignments.append(f"{course.title} course for {cohort.name}")
-
-    db.flush()
-    return assignments
 
 
 @router.get("", response_class=HTMLResponse)
@@ -335,44 +249,26 @@ def users_invite(
                 seen_course_pairs.add(pair)
                 courses_by_cohort.setdefault(target_cohort_id, []).append(course)
 
-    normalized_email = (email or "").strip().lower()
-    existing_user = False
-    try:
-        invited, token = invite_user(
-            db,
-            tenant_id=tenant.id,
-            email=normalized_email,
-            first_name=first_name,
-            last_name=last_name,
-            role=role,
-        )
-    except ConflictError:
-        found = db.scalars(
-            select(Person).where(Person.tenant_id == tenant.id).where(Person.email == normalized_email)
-        ).first()
-        if found is None:
-            return _html_error("A user with this email already exists")
-        invited = found
-        existing_user = True
-        _ensure_person_role(db, tenant_id=tenant.id, person_id=invited.id, role=role)
-        credential = db.scalars(
-            select(UserCredential)
-            .where(UserCredential.tenant_id == tenant.id)
-            .where(UserCredential.person_id == invited.id)
-        ).first()
-        token = None
-        if credential is None:
-            token = _issue_token(db, tenant_id=tenant.id, person_id=invited.id, kind="invite", now=datetime.now(UTC))
-
-    assignments = _assign_invited_user(
+    result = invite_and_enroll(
         db,
         tenant_id=tenant.id,
-        invited=invited,
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
         role=role,
-        cohorts=cohorts,
-        courses_by_cohort=courses_by_cohort,
-        tracks_by_cohort=tracks_by_cohort,
+        assignments=tuple(
+            CohortAssignment(
+                cohort=cohort,
+                courses=tuple(courses_by_cohort.get(cohort.id, [])),
+                track=tracks_by_cohort.get(cohort.id),
+            )
+            for cohort in cohorts
+        ),
     )
+    invited = result.person
+    token = result.token
+    existing_user = not result.created_person
+    assignments = result.assignments
     link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
     assignment_html = ""
     assignment_text = ""
@@ -419,9 +315,9 @@ def users_invite(
     return HTMLResponse(
         f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{status_text}</p>'
-        f'<p>{escape(invited.email)} - {escape(role)}</p>'
-        f'{assignment_status}'
-        f'</div>'
+        f"<p>{escape(invited.email)} - {escape(role)}</p>"
+        f"{assignment_status}"
+        f"</div>"
     )
 
 
@@ -498,7 +394,7 @@ def users_invite_link(
                 "</div>"
             )
         )
-    token = _issue_token(db, tenant_id=tenant.id, person_id=target.id, kind="invite", now=datetime.now(UTC))
+    token = issue_invite_for_person(db, tenant_id=tenant.id, person_id=target.id)
     link = str(request.url_for("accept_form").include_query_params(token=token))
     sent = enqueue_email(
         db,

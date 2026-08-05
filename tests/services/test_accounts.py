@@ -82,6 +82,31 @@ def test_create_user_duplicate_email_raises(admin_session, tenant_a):
     _cleanup(admin_session, tenant_a.id)
 
 
+def test_create_user_normalizes_email_before_duplicate_check(admin_session, tenant_a):
+    person = create_user(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="  Canonical.User@Example.COM ",
+        first_name="Canonical",
+        last_name="User",
+        password="password1",
+        role="student",
+    )
+    assert person.email == "canonical.user@example.com"
+    with pytest.raises(ValueError):
+        create_user(
+            admin_session,
+            tenant_id=tenant_a.id,
+            email="CANONICAL.USER@example.com",
+            first_name="Duplicate",
+            last_name="User",
+            password="password2",
+            role="student",
+        )
+    admin_session.rollback()
+    _cleanup(admin_session, tenant_a.id)
+
+
 def test_create_user_invalid_role_raises(admin_session, tenant_a):
     with pytest.raises(ValueError):
         create_user(

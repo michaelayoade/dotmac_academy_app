@@ -14,8 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.cohort import Enrollment
-from app.models.person import Person
 from app.services.exceptions import NotFoundError
+from app.services.identity import person_for_email
 from app.services.lookups import cohort_or_404
 from app.services.tracks import assign_enrollment_track, ensure_track_offerings
 
@@ -47,7 +47,7 @@ def bulk_enroll(db: Session, *, tenant_id: UUID, cohort_id: UUID, emails, track_
         "not_found": [],
     }
     for email in _normalize_emails(emails):
-        person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.email == email)).first()
+        person = person_for_email(db, tenant_id=tenant_id, email=email)
         if person is None:
             result["not_found"].append(email)
             continue

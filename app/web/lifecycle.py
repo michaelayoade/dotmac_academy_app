@@ -93,7 +93,11 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
                 text_body=f"Reset your password: {link}\n",
             )
         except Exception as exc:
-            logger.debug("password-reset email send failed: %s", exc)
+            logger.warning(
+                "password-reset outbox enqueue failed for tenant %s (%s)",
+                tenant.id,
+                type(exc).__name__,
+            )
     # Identical response whether or not the email exists (anti-enumeration).
     return HTMLResponse(
         "<div class='rounded-lg bg-brand-100 p-4 text-brand-800'>"
