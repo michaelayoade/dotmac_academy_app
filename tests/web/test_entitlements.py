@@ -181,6 +181,38 @@ def test_past_offering_blocks_activity(app_client, admin_session, tenant_a):
         _cleanup(admin_session, tenant_a)
 
 
+
+def test_enrollment_access_extension_reopens_expired_offering_for_that_learner(app_client, admin_session, tenant_a):
+    p = _login(app_client, admin_session, tenant_a, email="extended@a.edu")
+    other = _login(app_client, admin_session, tenant_a, email="not-extended@a.edu")
+    course, act = _seed_course(admin_session, tenant_a, "extended-course")
+    coh = _enroll(admin_session, tenant_a, p)
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=other.id,
+            role_in_cohort="student",
+            status="active",
+        )
+    )
+    enrollment = admin_session.scalars(
+        select(Enrollment).where(Enrollment.person_id == p.id).where(Enrollment.cohort_id == coh.id)
+    ).one()
+    enrollment.access_ends_at = datetime.now(UTC) + timedelta(days=7)
+    _offer(admin_session, tenant_a, coh, course, ends_at=datetime.now(UTC) - timedelta(days=1))
+    admin_session.commit()
+    try:
+        app_client.cookies.clear()
+        app_client.post("/login", headers=H, data={"email": "extended@a.edu", "password": "password1"})
+        assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
+        app_client.cookies.clear()
+        app_client.post("/login", headers=H, data={"email": "not-extended@a.edu", "password": "password1"})
+        assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 403
+    finally:
+        _cleanup(admin_session, tenant_a)
+
+
 def test_open_window_allows_activity(app_client, admin_session, tenant_a):
     """Slice 2a: now within [starts_at, ends_at] → 200."""
     p = _login(app_client, admin_session, tenant_a)

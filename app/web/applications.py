@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.admissions import APPLICANT_STATUSES
+from app.models.admissions import APPLICANT_STATUSES, Applicant
+from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
+from app.models.rbac import AuditEvent
 from app.services import admissions as admissions_service
+from app.services.csv_reports import sanitize_cell
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
 
@@ -29,6 +34,98 @@ def _parse_optional_date(value: str | None, field: str) -> date | None:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid {field} date.") from exc
+
+
+def _invitation_export_info(db: Session, applicant: Applicant) -> dict[str, str]:
+    invite = db.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.tenant_id == applicant.tenant_id)
+        .where(EmailOutbox.recipient == applicant.email)
+        .where(EmailOutbox.kind.in_(("entrance_invite", "onboarding_invite", "enrollment_welcome")))
+        .order_by(EmailOutbox.created_at.desc())
+    ).first()
+    event = db.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == applicant.tenant_id)
+        .where(AuditEvent.entity_type == "applicant")
+        .where(AuditEvent.entity_id == str(applicant.id))
+        .where(
+            AuditEvent.action.in_(
+                (
+                    "applicant.invitation_resent",
+                    "applicant.assessment_reinvite",
+                    "applicant.assessment_reset",
+                    "applicant.transition",
+                    "applicant.transition_baseline",
+                )
+            )
+        )
+        .order_by(AuditEvent.created_at.desc())
+    ).first()
+    status = "not_sent"
+    sent_date = ""
+    method = ""
+    if invite is not None:
+        status = invite.status
+        sent_date = (invite.sent_at or invite.created_at).isoformat()
+        method = "email"
+    source = ""
+    if event is not None:
+        source = str((event.details or {}).get("source") or event.action)
+    elif applicant.source:
+        source = applicant.source
+    return {
+        "Invitation Status": status,
+        "Invitation Sent Date": sent_date,
+        "Invitation Expiry": applicant.assessment_deadline.isoformat() if applicant.assessment_deadline else "",
+        "Invitation Method": method,
+        "How Invited": source,
+    }
+
+
+def _applications_csv(applicants: list[Applicant], db: Session, *, include_invitation: bool) -> str:
+    from io import StringIO
+
+    buf = StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    columns = [
+        "First Name",
+        "Last Name",
+        "Email",
+        "Phone",
+        "Program",
+        "Status",
+        "Applied On",
+        "Source",
+        "Assessment Score",
+        "Assessment Taken At",
+    ]
+    invite_columns = [
+        "Invitation Status",
+        "Invitation Sent Date",
+        "Invitation Expiry",
+        "Invitation Method",
+        "How Invited",
+    ]
+    writer.writerow([sanitize_cell(c) for c in columns + (invite_columns if include_invitation else [])])
+    for applicant in applicants:
+        row = [
+            applicant.first_name,
+            applicant.last_name,
+            applicant.email,
+            applicant.phone or "",
+            applicant.program or "",
+            applicant.status,
+            applicant.applied_on.isoformat() if applicant.applied_on else "",
+            applicant.source or "",
+            "" if applicant.assessment_score is None else f"{applicant.assessment_score:.4f}",
+            applicant.assessment_taken_at.isoformat() if applicant.assessment_taken_at else "",
+        ]
+        if include_invitation:
+            info = _invitation_export_info(db, applicant)
+            row.extend(info[col] for col in invite_columns)
+        writer.writerow([sanitize_cell(c) for c in row])
+    return buf.getvalue()
 
 
 @router.get("", response_class=HTMLResponse)
@@ -70,6 +167,35 @@ def applications_page(
             "applied_to": to_date.isoformat() if to_date else "",
             "rank": rank,
         },
+    )
+
+
+@router.get("/export.csv")
+def applications_export(
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    applied_from: str | None = Query(default=None),
+    applied_to: str | None = Query(default=None),
+    rank: bool = Query(default=False),
+    include_invitation: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    from_date = _parse_optional_date(applied_from, "from")
+    to_date = _parse_optional_date(applied_to, "to")
+    if from_date is not None and to_date is not None and from_date > to_date:
+        raise HTTPException(status_code=400, detail="Start date must be before or the same as end date.")
+    applicants = admissions_service.list_applicants(
+        db,
+        status=status or None,
+        search=q or None,
+        applied_from=from_date,
+        applied_to=to_date,
+        rank_by_score=rank,
+    )
+    return Response(
+        content=_applications_csv(applicants, db, include_invitation=include_invitation),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=applications.csv"},
     )
 
 
@@ -133,15 +259,26 @@ def application_action(
     request: Request,
     action: str = Form(...),
     reason: str = Form(""),
+    extend_access: bool = Form(False),
     actor: Person = Depends(require_web_role("admin")),
     db: Session = Depends(get_db),
 ):
-    admissions_service.apply_admin_review_action(
-        db,
-        applicant_id=applicant_id,
-        action=action,
-        actor_person_id=actor.id,
-        base_url=str(request.base_url).rstrip("/"),
-        reason=reason.strip() or None,
-    )
+    if action == "resend_invitation" and extend_access:
+        admissions_service.resend_applicant_invitation(
+            db,
+            applicant_id=applicant_id,
+            actor_person_id=actor.id,
+            base_url=str(request.base_url).rstrip("/"),
+            extend_access=True,
+            reason=reason.strip() or None,
+        )
+    else:
+        admissions_service.apply_admin_review_action(
+            db,
+            applicant_id=applicant_id,
+            action=action,
+            actor_person_id=actor.id,
+            base_url=str(request.base_url).rstrip("/"),
+            reason=reason.strip() or None,
+        )
     return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)

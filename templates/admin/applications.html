@@ -32,6 +32,8 @@
             Rank
           </label>
           <button type="submit" class="btn-primary shrink-0">Apply</button>
+          <a href="/admin/applications/export.csv?status={{ selected_status }}&q={{ search_query }}&applied_from={{ applied_from }}&applied_to={{ applied_to }}&rank={{ 'true' if rank else 'false' }}" class="btn-ghost shrink-0">Export</a>
+          <a href="/admin/applications/export.csv?status={{ selected_status }}&q={{ search_query }}&applied_from={{ applied_from }}&applied_to={{ applied_to }}&rank={{ 'true' if rank else 'false' }}&include_invitation=true" class="btn-ghost shrink-0">Export invitations</a>
           {% if selected_status or search_query or applied_from or applied_to or rank %}
           <a href="/admin/applications" class="btn-ghost shrink-0">Clear</a>
           {% endif %}

@@ -13,11 +13,37 @@ from __future__ import annotations
 
 import html
 from datetime import UTC, datetime
+from typing import TypedDict
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.admissions import Applicant
+from app.models.assessment import Activity, QuestionBank
+from app.models.cohort import Cohort
+from app.models.course import Course
+from app.models.offering import CourseOffering
+from app.models.track import Track
 from app.services.email_outbox import enqueue_email
+from app.services.exceptions import BadRequestError
+
+
+class AssessmentEmailItem(TypedDict):
+    name: str
+    course: str
+    duration: str
+    availability: str
+    expiry: str
+
+
+class AssessmentEmailContext(TypedDict):
+    cohort: str
+    track: str
+    courses: list[str]
+    assessments: list[AssessmentEmailItem]
+    timezone: str
+
 
 _WRAP = """\
 <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0D1F16;
@@ -43,6 +69,86 @@ _BTN = """\
   <span style="word-break:break-all;">{url}</span>
 </p>"""
 
+
+
+def _fmt_dt(value: datetime | None) -> str:
+    if value is None:
+        return "Not configured"
+    return value.strftime("%A %d %B %Y %H:%M UTC")
+
+
+def _assessment_context(db: Session, *, applicant: Applicant) -> AssessmentEmailContext:
+    from app.services import entrance_exam
+
+    cohort = db.get(Cohort, applicant.cohort_id) if applicant.cohort_id else None
+    track = db.get(Track, applicant.track_id) if applicant.track_id else None
+    courses: list[Course] = []
+    assessments: list[AssessmentEmailItem] = []
+
+    if cohort is not None:
+        courses = list(
+            db.scalars(
+                select(Course)
+                .join(
+                    CourseOffering,
+                    (CourseOffering.course_id == Course.id) & (CourseOffering.tenant_id == Course.tenant_id),
+                )
+                .where(Course.tenant_id == applicant.tenant_id)
+                .where(CourseOffering.cohort_id == cohort.id)
+                .where(CourseOffering.status == "active")
+                .order_by(Course.title)
+            ).all()
+        )
+        course_ids = [course.id for course in courses]
+        if course_ids:
+            for activity, course, offering in db.execute(
+                select(Activity, Course, CourseOffering)
+                .join(Course, (Course.id == Activity.course_id) & (Course.tenant_id == Activity.tenant_id))
+                .join(
+                    CourseOffering,
+                    (CourseOffering.course_id == Course.id) & (CourseOffering.tenant_id == Course.tenant_id),
+                )
+                .where(Activity.tenant_id == applicant.tenant_id)
+                .where(Activity.course_id.in_(course_ids))
+                .where(CourseOffering.cohort_id == cohort.id)
+                .where(CourseOffering.status == "active")
+                .order_by(Course.title, Activity.chapter_number, Activity.title)
+            ).all():
+                assessments.append(
+                    {
+                        "name": activity.title,
+                        "course": course.title,
+                        "duration": "Not configured",
+                        "availability": f"{_fmt_dt(offering.starts_at)} to {_fmt_dt(offering.ends_at)}",
+                        "expiry": _fmt_dt(offering.ends_at),
+                    }
+                )
+
+    try:
+        bank_id = entrance_exam.resolve_bank_id(db, applicant=applicant)
+        bank = db.get(QuestionBank, bank_id)
+        entrance_course = db.get(Course, bank.course_id) if bank is not None else None
+        minutes = entrance_exam.time_limit_minutes(db, applicant=applicant)
+        assessments.insert(
+            0,
+            {
+                "name": entrance_course.title if entrance_course is not None else "Entrance assessment",
+                "course": entrance_course.title if entrance_course is not None else "Admissions",
+                "duration": f"{minutes} minutes" if minutes else "Untimed",
+                "availability": f"Now to {_fmt_dt(applicant.assessment_deadline)}",
+                "expiry": _fmt_dt(applicant.assessment_deadline),
+            },
+        )
+    except BadRequestError:
+        pass
+
+    return {
+        "cohort": cohort.name if cohort is not None else "Not assigned",
+        "track": track.name if track is not None else (applicant.program or "Not assigned"),
+        "courses": [course.title for course in courses] or ([applicant.program] if applicant.program else []),
+        "assessments": assessments,
+        "timezone": settings.academy_timezone,
+    }
 
 def send_application_received(db: Session, *, applicant: Applicant) -> bool:
     """Acknowledge the application. Sent immediately on submit."""
@@ -78,6 +184,24 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     name = html.escape((applicant.first_name or "there").strip())
     deadline = applicant.assessment_deadline
     by = deadline.strftime("%A %d %B %Y") if deadline else None
+    ctx = _assessment_context(db, applicant=applicant)
+    courses = ctx["courses"]
+    courses_html = "".join(f"<li>{html.escape(str(course))}</li>" for course in courses) or "<li>Not assigned</li>"
+    courses_text = "; ".join(str(course) for course in courses) or "Not assigned"
+    assessment_html = "".join(
+        "<li>"
+        f"<strong>{html.escape(item['name'])}</strong><br>"
+        f"Duration: {html.escape(item['duration'])}<br>"
+        f"Availability: {html.escape(item['availability'])}<br>"
+        f"Expiration date: {html.escape(item['expiry'])}"
+        "</li>"
+        for item in ctx["assessments"]
+    )
+    assessment_text = "\n".join(
+        f"- {item['name']} | Duration: {item['duration']} | "
+        f"Availability: {item['availability']} | Expires: {item['expiry']}"
+        for item in ctx["assessments"]
+    )
 
     timing = (
         f"<li>It is <strong>timed: {minutes} minutes</strong> once you begin, and submits "
@@ -99,6 +223,16 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     body = (
         f"<p>Hi {name},</p>"
         "<p>Here is your Dotmac Academy entrance assessment.</p>"
+        f"<p>Learner: <strong>{name}</strong></p>"
+        f"<p>Cohort: <strong>{html.escape(str(ctx['cohort']))}</strong><br>"
+        f"Track: <strong>{html.escape(str(ctx['track']))}</strong><br>"
+        f"Timezone: <strong>{html.escape(str(ctx['timezone']))}</strong></p>"
+        f"<p>Course(s):</p><ul>{courses_html}</ul>"
+        + (
+            f"<p>Assigned assessment(s):</p><ul style='line-height:1.7;'>{assessment_html}</ul>"
+            if assessment_html
+            else ""
+        )
         + rules
         + (f"<p><strong>Complete it by {by}.</strong></p>" if by else "")
         + _BTN.format(url=html.escape(url, quote=True))
@@ -107,7 +241,10 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     )
     text = (
         f"Hi {name},\n\nYour Dotmac Academy entrance assessment:\n{url}\n\n"
-        "- 30 multiple-choice questions, one best answer each\n"
+        f"Learner: {name}\nCohort: {ctx['cohort']}\nTrack: {ctx['track']}\nTimezone: {ctx['timezone']}\n"
+        f"Course(s): {courses_text}\n"
+        + (f"Assigned assessment(s):\n{assessment_text}\n" if assessment_text else "")
+        + "- 30 multiple-choice questions, one best answer each\n"
         + (f"- Timed: {minutes} minutes once you begin; it submits automatically at zero\n" if minutes else "")
         + "- One attempt — start when you can finish uninterrupted\n"
         "- Answers save as you go; if your connection drops, reopen the link and continue\n"
