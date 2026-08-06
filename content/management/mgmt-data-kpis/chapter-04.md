@@ -1,0 +1,132 @@
+---
+chapter: 4
+title: "Reading Dashboards & Reports"
+part: ""
+---
+
+# Reading Dashboards & Reports
+
+Collecting good numbers is half the discipline; reading them without
+fooling yourself is the other half. The same dashboard supports opposite
+conclusions in careless hands — panic over a normal wobble, calm over a
+real decline, credit for a rebound that was coming anyway. This chapter
+is the manager's reading skill: trends over snapshots, noise versus
+signal, seasonality, outliers, and the standing question every number
+deserves: *could this be lying to me?*
+
+FIGURE `MGT-DK-04` *Read the ribbon, not the dot — and circle the outlier before it rewrites the story.*
+
+## Trends beat snapshots
+
+A single number — "87% on-time this week" — is almost uninterpretable
+alone. Is that good? Improving? Collapsing? The information lives in
+**comparison**: against the baseline (Chapter 3), against the same period
+last year, against the path to target, and above all against the metric's
+own recent history. The first habit of numerate management is refusing
+the snapshot: every KPI displayed as a line over time, not a lone figure
+in a box. The line answers in one glance what the box cannot — direction,
+pace, and whether this week is remarkable at all.
+
+Three refinements make lines trustworthy:
+
+- **Windows matter.** A week of data shows weather; a year shows climate.
+  Judge tactical moves on short windows, the team's health on long ones —
+  and be suspicious of any presentation that chooses its window to
+  flatter (the rally since March looks less heroic on the two-year line
+  that shows March as the bottom of a slide).
+- **Rates, denominators, and mix.** A rising complaint count under
+  doubling customers is *improvement*; a "record month" of output during
+  a mix-shift to easy jobs is not. Before believing any move, ask what
+  the denominator did — and whether the mix of work changed under the
+  number.
+- **Averages hide; distributions tell.** The average resolution time can
+  hold steady while a tail of ancient cases grows (the Finance course
+  made the same point about revenue per customer). Watch a spread
+  measure — median plus the worst tenth, or the oldest open item —
+  wherever the tail is where the damage lives.
+
+## Noise, signal, and the wobble
+
+Every metric bounces. Staffing, luck, weather, which day the month ended
+on — all of it shakes the line without meaning anything. The baseline
+work of Chapter 3 told you each metric's **normal range**; reading is
+applying it: a point inside the usual wobble is *weather*, and reacting
+to it — the Friday interrogation over a two-point dip that reverses
+itself Monday — is worse than doing nothing. It burns the team's trust
+in the numbers, generates explanations for randomness (which then get
+believed), and trains everyone to manage the wobble instead of the work.
+
+What deserves attention is **pattern**: a run of periods on one side of
+the baseline, a step-change that persists, a slow consistent drift, or a
+point far outside the normal range. The eye is bad at this distinction
+and worse under pressure — which is why the range belongs *drawn on the
+chart* (even informally: "we normally land between 71 and 79"), so that
+"is this real?" is answered by looking, not arguing.
+
+## Seasonality and the calendar
+
+Many businesses breathe with the calendar — paydays, seasons, holidays,
+school terms. A metric with rhythm must be read against it: compare to
+the *same period last cycle*, not the period before. The December dip
+that recurs every December is not this quarter's crisis, and the manager
+who "fixes" it every year is taking credit for January. Know your
+rhythms, mark them on the chart, and reserve alarm for departures *from
+the pattern* — the December dip that came deeper, or didn't recover.
+
+## Outliers: circle them, then decide
+
+One wild point — a catastrophic day, a huge one-off order — can drag an
+average and repaint a whole month. When an outlier appears: **first
+verify it** (a decent share of outliers are data errors — a mistyped
+figure, a double-count, a broken feed); **then understand it** (one-off
+event, or first sign of something structural?); **then report honestly
+both with and without it** ("the month was fine except the flood week;
+here's both views"). What you may not do is silently delete it — or
+silently keep it and let one strange day masquerade as a trend. Outliers
+are where Chapter 1's promise that numbers end arguments gets tested;
+handle them in daylight or the arguments return, now about the data.
+
+## When the number is lying
+
+The standing question. Numbers lie in recognisable ways, and the reading
+manager runs the checklist whenever a story seems too tidy:
+
+- **Definition drift** — the metric improved because what counts changed
+  (Chapter 2's undefined edges, resolved in the flattering direction).
+- **Collection gaps** — the complaints fell because the recording did;
+  silence in the data is not peace (the Customer Experience course's
+  gaming section is this same alarm, rung for service metrics).
+- **Survivorship** — averages computed only over what remained: the
+  satisfaction of customers who stayed, the cycle time of jobs that
+  finished. The departed and the stuck are the story, and they're not in
+  the sample.
+- **Correlation dressed as cause** — two lines moving together prove
+  little; the confident narrative connecting them is a theory to test
+  (Decision Making's evidence discipline), not a conclusion to act on.
+- **The dashboard that's always green** — the deepest tell. Real
+  operations wobble and sometimes fail; a wall of steady green means
+  thresholds set too loose, metrics chosen too safe, or truth filtered
+  on the way up. Trust dashboards that sometimes bring bad news; audit
+  the ones that never do.
+
+Reading well is ultimately a temperament: curious before the anomaly,
+calm before the wobble, suspicious of the flattering, and always willing
+to walk from the chart to the floor and check the number against the
+thing itself.
+
+## Summary
+
+- Never read snapshots: every KPI as a line against baseline, target
+  path, and last cycle — with windows chosen for truth, not flattery.
+- Check denominators, mix, and distributions before believing any move;
+  averages hide the tail where damage lives.
+- Know each metric's normal wobble and react only to pattern — runs,
+  steps, drifts, and far-outside points. Reacting to noise is worse than
+  nothing.
+- Read seasonal metrics against the same period last cycle; alarm at
+  departures from rhythm, not the rhythm.
+- Verify outliers, understand them, report with-and-without — never
+  silently drop or keep them.
+- Run the lying-number checklist: definition drift, collection gaps,
+  survivorship, correlation-as-cause — and distrust the dashboard that
+  is always green.
