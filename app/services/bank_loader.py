@@ -247,7 +247,18 @@ def lint_bank(doc: BankDoc) -> list[str]:
             if not isinstance(accepted, list) or len(accepted) == 0:
                 out.append(f"{q.get('id')}: short_text correct must be a non-empty list")
         elif qtype != "truefalse":
-            opts = set(q.get("options", []))
+            raw_opts = q.get("options", [])
+            # An option that is not a string means the YAML parsed it as
+            # something else — most often text of the form "Word: rest", which
+            # becomes a mapping. Report it; do not raise on the way past.
+            malformed = [o for o in raw_opts if not isinstance(o, str)]
+            if malformed:
+                out.append(
+                    f"{q.get('id')}: option is not text — {malformed[0]!r}. Text "
+                    f"beginning 'Word: ' parses as a YAML mapping; quote it or reword."
+                )
+                continue
+            opts = set(raw_opts)
             for c in q.get("correct", []):
                 if c not in opts:
                     out.append(f"{q.get('id')}: correct {c!r} not in options")

@@ -172,3 +172,11 @@ def test_lint_checks_balance_within_a_competency_too():
             "rubric_category": "application" if i > 3 else "recall", "weight": 1,
         })
     assert any(v.startswith("safety: distractor balance") for v in lint_bank(doc))
+
+def test_lint_reports_a_mapping_shaped_option_instead_of_crashing():
+    """Option text of the form "Word: rest" parses as a dict, not a string."""
+    doc = parse_bank(FX)
+    doc.questions[0]["options"] = [{"Flawed": "the reasoning does not hold"}, "B", "C"]
+    violations = lint_bank(doc)          # must not raise
+    assert any("option is not text" in v for v in violations)
+    assert any("YAML mapping" in v for v in violations)
