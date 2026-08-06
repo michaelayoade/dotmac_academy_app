@@ -144,3 +144,39 @@ def test_lint_skips_category_check_when_there_is_only_one():
     for q in doc.questions:
         q["category"] = "general"
     assert not any(v.startswith("general:") for v in lint_bank(doc))
+
+def test_competency_is_read_as_the_question_domain():
+    """The technical manuals tag `competency:`; only `category:` was ever read."""
+    from app.services.bank_loader import _competency_of
+    assert _competency_of({"competency": "net-fundamentals"}) == "net-fundamentals"
+    assert _competency_of({"category": "safety"}) == "safety"
+    # `category` wins where a bank somehow carries both.
+    assert _competency_of({"category": "safety", "competency": "other"}) == "safety"
+    assert _competency_of({}) is None
+
+def test_lint_checks_balance_within_a_competency_too():
+    """A competency-tagged bank must get the same per-domain check as a category one."""
+    doc = parse_bank(FX)
+    doc.questions = []
+    for i in range(6):
+        doc.questions.append({
+            "id": f"safe-{i}", "type": "single", "competency": "safety",
+            "options": [f"The full careful safety answer number {i}", "No", "Yes", "Maybe"],
+            "correct": [f"The full careful safety answer number {i}"],
+            "rubric_category": "application", "weight": 1,
+        })
+    for i in range(14):
+        doc.questions.append({
+            "id": f"net-{i}", "type": "single", "competency": "net-fundamentals",
+            "options": ["AAAA", "BBBB", "CCCC", "DDDD"], "correct": ["AAAA"],
+            "rubric_category": "application" if i > 3 else "recall", "weight": 1,
+        })
+    assert any(v.startswith("safety: distractor balance") for v in lint_bank(doc))
+
+def test_lint_reports_a_mapping_shaped_option_instead_of_crashing():
+    """Option text of the form "Word: rest" parses as a dict, not a string."""
+    doc = parse_bank(FX)
+    doc.questions[0]["options"] = [{"Flawed": "the reasoning does not hold"}, "B", "C"]
+    violations = lint_bank(doc)          # must not raise
+    assert any("option is not text" in v for v in violations)
+    assert any("YAML mapping" in v for v in violations)

@@ -103,6 +103,19 @@ def _policy_violations(doc: BankDoc) -> list[str]:
     return out
 
 
+def _competency_of(q: dict) -> str | None:
+    """The skill domain a question measures, under either spelling.
+
+    The entrance bank tags `category:`; the 252 technical manual banks tag
+    `competency:` and meant the same thing. Only `category` was ever read, so
+    every technical question imported with a NULL domain and the taxonomy the
+    content team maintained was discarded at the door — which also left those
+    banks outside the per-domain balance check below.
+    """
+    value = q.get("category") or q.get("competency")
+    return str(value) if value else None
+
+
 def _balance_stats(
     questions: list[dict],
 ) -> tuple[int, list[str], list[str], list[float]]:
@@ -234,7 +247,18 @@ def lint_bank(doc: BankDoc) -> list[str]:
             if not isinstance(accepted, list) or len(accepted) == 0:
                 out.append(f"{q.get('id')}: short_text correct must be a non-empty list")
         elif qtype != "truefalse":
-            opts = set(q.get("options", []))
+            raw_opts = q.get("options", [])
+            # An option that is not a string means the YAML parsed it as
+            # something else — most often text of the form "Word: rest", which
+            # becomes a mapping. Report it; do not raise on the way past.
+            malformed = [o for o in raw_opts if not isinstance(o, str)]
+            if malformed:
+                out.append(
+                    f"{q.get('id')}: option is not text — {malformed[0]!r}. Text "
+                    f"beginning 'Word: ' parses as a YAML mapping; quote it or reword."
+                )
+                continue
+            opts = set(raw_opts)
             for c in q.get("correct", []):
                 if c not in opts:
                     out.append(f"{q.get('id')}: correct {c!r} not in options")
@@ -258,9 +282,9 @@ def lint_bank(doc: BankDoc) -> list[str]:
     # a candidate's safety score is not rescued by well-written numeracy items.
     categories: dict[str, list[dict]] = {}
     for q in doc.questions:
-        category = q.get("category")
+        category = _competency_of(q)
         if category:
-            categories.setdefault(str(category), []).append(q)
+            categories.setdefault(category, []).append(q)
     if len(categories) > 1:
         for category, group in sorted(categories.items()):
             out.extend(_distractor_balance_violations(group, scope=category))
@@ -311,7 +335,7 @@ def load_bank(db: Session, *, tenant_id, course_id, doc: BankDoc) -> QuestionBan
                 options=q.get("options", []),
                 correct=q.get("correct", []),
                 rubric_category=q["rubric_category"],
-                category=q.get("category"),
+                category=_competency_of(q),
                 explanation=q.get("explanation", ""),
                 weight=int(q.get("weight", 1)),
             )
