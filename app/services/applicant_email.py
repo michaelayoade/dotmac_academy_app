@@ -27,6 +27,7 @@ from app.models.offering import CourseOffering
 from app.models.track import Track
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError
+from app.services.localtime import to_local
 
 
 class AssessmentEmailItem(TypedDict):
@@ -74,7 +75,10 @@ _BTN = """\
 def _fmt_dt(value: datetime | None) -> str:
     if value is None:
         return "Not configured"
-    return value.strftime("%A %d %B %Y %H:%M UTC")
+    local = to_local(value)
+    assert local is not None
+    zone = local.tzname() or settings.academy_timezone
+    return f"{local.strftime('%A %d %B %Y at %H:%M')} {zone} ({settings.academy_timezone})"
 
 
 def _assessment_context(db: Session, *, applicant: Applicant) -> AssessmentEmailContext:
@@ -183,7 +187,7 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
     """
     name = html.escape((applicant.first_name or "there").strip())
     deadline = applicant.assessment_deadline
-    by = deadline.strftime("%A %d %B %Y") if deadline else None
+    by = _fmt_dt(deadline) if deadline else None
     ctx = _assessment_context(db, applicant=applicant)
     courses = ctx["courses"]
     courses_html = "".join(f"<li>{html.escape(str(course))}</li>" for course in courses) or "<li>Not assigned</li>"
@@ -234,7 +238,7 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
             else ""
         )
         + rules
-        + (f"<p><strong>Complete it by {by}.</strong></p>" if by else "")
+        + (f"<p><strong>Your assessment link is valid until {by}.</strong></p>" if by else "")
         + _BTN.format(url=html.escape(url, quote=True))
         + "<p style='font-size:13px;color:#5B6B62;'>Trouble with the link, or cut off part-way? "
         "Reply to the team and we can reopen your sitting.</p>"
@@ -248,7 +252,8 @@ def send_exam_invite(db: Session, *, applicant: Applicant, url: str, minutes: in
         + (f"- Timed: {minutes} minutes once you begin; it submits automatically at zero\n" if minutes else "")
         + "- One attempt — start when you can finish uninterrupted\n"
         "- Answers save as you go; if your connection drops, reopen the link and continue\n"
-        "- It tests general aptitude, not fibre knowledge\n" + (f"\nComplete it by {by}.\n" if by else "")
+        "- It tests general aptitude, not fibre knowledge\n"
+        + (f"\nYour assessment link is valid until {by}.\n" if by else "")
     )
     queued = enqueue_email(
         db,
