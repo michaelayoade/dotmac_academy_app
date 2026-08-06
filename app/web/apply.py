@@ -87,8 +87,13 @@ def _open_track_choices(db: Session, tenant_id: UUID) -> list[dict[str, object]]
 
 def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list[Question]:
     bank_id = entrance_exam.resolve_bank_id(db, applicant=applicant)
-    return list(
+    questions = list(
         db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
+    )
+    # The same deterministic subset the grader will reproduce, so what the
+    # candidate sits is exactly what gets scored.
+    return entrance_exam.sample_for(
+        applicant, questions, entrance_exam.questions_per_category(db)
     )
 
 

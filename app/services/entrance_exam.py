@@ -88,6 +88,61 @@ def options_for(applicant: Applicant, question) -> list[str]:
     return opts
 
 
+def questions_per_category(db: Session) -> int:
+    """How many questions to draw from each category; 0 means the whole bank."""
+    from app.services import settings_store
+
+    raw = settings_store.effective(db).get("entrance_questions_per_category", 0)
+    if raw is None or isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw
+    try:
+        return int(str(raw))
+    except ValueError:
+        return 0
+
+
+def sample_for(applicant: Applicant, questions: list, per_category: int) -> list:
+    """A stratified per-applicant subset of the bank, or all of it.
+
+    Growing the bank is how questions stop going stale — 112 candidates sitting
+    one fixed set of 30 leaks it. But the entrance exam scores a per-CATEGORY
+    profile, so a flat random draw would hand one candidate nine numeracy items
+    and another two, making the profiles incomparable. This draws ``per_category``
+    from each category instead, so every candidate is measured on the same shape.
+
+    Selection is DETERMINISTIC in (applicant, question) — the same trick, and the
+    same reason, as :func:`options_for`. The subset survives a page reload or a
+    resumed sitting, and grading reproduces it without persisting anything.
+
+    ``per_category`` of 0 (or a value at/above every category's size) returns the
+    whole bank, which is the behaviour before pooling existed.
+    """
+    if per_category <= 0:
+        return list(questions)
+
+    by_category: dict[str, list] = {}
+    for q in questions:
+        by_category.setdefault(q.category or "general", []).append(q)
+
+    chosen: list = []
+    for group in by_category.values():
+        if len(group) <= per_category:
+            chosen.extend(group)
+            continue
+        ranked = sorted(
+            group,
+            key=lambda q: hashlib.sha256(f"{applicant.id}:{q.ext_id}".encode()).hexdigest(),
+        )
+        chosen.extend(ranked[:per_category])
+
+    # Stable overall order, again per applicant, so the paper is not grouped by
+    # category — which would telegraph the structure and let candidates compare.
+    chosen.sort(key=lambda q: hashlib.sha256(f"{applicant.id}:order:{q.ext_id}".encode()).hexdigest())
+    return chosen
+
+
 def issue_token(db: Session, *, applicant: Applicant) -> str:
     """Mint a self-serve access token for the applicant's entrance exam.
 
@@ -353,6 +408,9 @@ def grade_and_record(
     )
     if not questions:
         raise NotFoundError("Entrance assessment has no questions.")
+    # Grade the subset this applicant was actually shown, not the whole bank —
+    # sample_for is deterministic, so this reproduces the same paper.
+    questions = sample_for(applicant, questions, questions_per_category(db))
 
     q_dicts = [
         {"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight, "options": q.options}

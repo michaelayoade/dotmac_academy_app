@@ -584,3 +584,59 @@ def test_reapplying_blank_does_not_wipe_a_supplied_profile(admin_session, tenant
     assert again.years_experience == 3     # preserved
     assert again.city == "Ikeja"           # newly supplied
     admin_session.rollback()
+
+
+# --- stratified sampling ---------------------------------------------------
+
+class _Q:
+    def __init__(self, ext_id, category):
+        self.ext_id = ext_id
+        self.category = category
+        self.options = ["a", "b", "c", "d"]
+
+class _A:
+    def __init__(self, id_):
+        self.id = id_
+
+def _bank(per_cat=6, cats=("numeracy", "safety", "reading")):
+    return [_Q(f"{c}-{i}", c) for c in cats for i in range(per_cat)]
+
+def test_sample_for_zero_returns_the_whole_bank():
+    """The pre-sampling behaviour has to survive untouched."""
+    from app.services.entrance_exam import sample_for
+    bank = _bank()
+    assert len(sample_for(_A("app-1"), bank, 0)) == len(bank)
+
+def test_sample_for_is_stratified_by_category():
+    """Every candidate must be measured on the same shape, or profiles differ."""
+    from app.services.entrance_exam import sample_for
+    bank = _bank(per_cat=6)
+    for applicant in ("a", "b", "c", "d", "e"):
+        got = sample_for(_A(applicant), bank, 2)
+        counts: dict[str, int] = {}
+        for q in got:
+            counts[q.category] = counts.get(q.category, 0) + 1
+        assert counts == {"numeracy": 2, "safety": 2, "reading": 2}
+
+def test_sample_for_is_deterministic_per_applicant():
+    """A reload or resumed sitting must not redraw the paper."""
+    from app.services.entrance_exam import sample_for
+    bank = _bank()
+    first = [q.ext_id for q in sample_for(_A("app-1"), bank, 3)]
+    again = [q.ext_id for q in sample_for(_A("app-1"), bank, 3)]
+    assert first == again
+
+def test_sample_for_differs_between_applicants():
+    """Otherwise the bank leaks exactly as a fixed paper does."""
+    from app.services.entrance_exam import sample_for
+    bank = _bank(per_cat=8)
+    a = {q.ext_id for q in sample_for(_A("app-1"), bank, 3)}
+    b = {q.ext_id for q in sample_for(_A("app-2"), bank, 3)}
+    assert a != b
+
+def test_sample_for_takes_all_of_a_short_category():
+    """A category smaller than the draw must not silently vanish from the profile."""
+    from app.services.entrance_exam import sample_for
+    bank = [*_bank(per_cat=6), _Q("tech-0", "technical")]
+    got = sample_for(_A("app-1"), bank, 4)
+    assert sum(1 for q in got if q.category == "technical") == 1
