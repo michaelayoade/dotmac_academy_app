@@ -195,8 +195,23 @@ def _load_banks(args: argparse.Namespace) -> None:
                 activity.title = title
                 activity.pass_threshold = pass_threshold
 
+            # Assessment policy declared in the bank. Only keys the author
+            # actually set are applied, so a bank without a policy block leaves
+            # the activity exactly as it was.
+            policy_applied = []
+            if "pool" in doc.policy:
+                activity.question_count = doc.policy["pool"]
+                policy_applied.append(f"pool={doc.policy['pool']}")
+            if "max_attempts" in doc.policy:
+                activity.max_attempts = doc.policy["max_attempts"]
+                policy_applied.append(f"max_attempts={doc.policy['max_attempts']}")
+            if "mode" in doc.policy:
+                activity.assessment_mode = doc.policy["mode"]
+                policy_applied.append(f"mode={doc.policy['mode']}")
+
             db.commit()
-            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'")
+            suffix = f", policy: {' '.join(policy_applied)}" if policy_applied else ""
+            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'{suffix}")
             loaded += 1
 
         print(f"Done — {loaded}/{len(yaml_files)} bank(s) loaded.")

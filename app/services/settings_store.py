@@ -53,6 +53,7 @@ KNOWN_KEYS: tuple[str, ...] = (
     "success_inactive_days",
     "success_min_grade_pct",
     "success_certificate_grace_hours",
+    "entrance_questions_per_category",
 )
 
 
@@ -82,6 +83,10 @@ def _defaults() -> dict[str, object]:
         # Off by default: turning this on mails every active learner, so it
         # must be a deliberate act rather than a consequence of deploying.
         "learner_digest_enabled": False,
+        # 0 = serve the whole entrance bank, which is the behaviour that existed
+        # before sampling. Set it once the bank is large enough that drawing N
+        # per category still covers every competency.
+        "entrance_questions_per_category": 0,
     }
 
 
