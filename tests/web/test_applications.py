@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.models.assessment import Question, QuestionBank
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort
+from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
 from app.models.person import Person
 from app.models.rbac import AuditEvent, PersonRole
@@ -270,3 +272,237 @@ def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
         .where(EmailOutbox.kind == "onboarding_invite")
     ).one()
     assert invitation.recipient == applicant.email
+
+
+
+def _entrance_config(admin_session, tenant):
+    course = Course(
+        tenant_id=tenant.id,
+        slug="entrance-export-test",
+        title="Entrance Export Test",
+        discipline="fiber",
+        source_ref="test",
+        version=1,
+        status="published",
+    )
+    admin_session.add(course)
+    admin_session.flush()
+    bank = QuestionBank(tenant_id=tenant.id, course_id=course.id, chapter_number=1, kind="chapter", version=1)
+    admin_session.add(bank)
+    admin_session.flush()
+    admin_session.add(
+        Question(
+            tenant_id=tenant.id,
+            bank_id=bank.id,
+            ext_id="q1",
+            stem="Pick A",
+            type="single",
+            options=["A", "B"],
+            correct=["A"],
+            rubric_category="recall",
+            explanation="Because A",
+            weight=1,
+        )
+    )
+    tenant.default_entrance_bank_id = bank.id
+    tenant.default_entrance_time_limit_minutes = 30
+    admin_session.flush()
+    return bank
+
+
+def test_admin_resends_invitation_extends_deadline_and_audits(app_client, admin_session, tenant_a):
+    actor = _seed_user(admin_session, tenant_a, "resend-admin@a.edu", "admin")
+    _entrance_config(admin_session, tenant_a)
+    applicant = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="resend-candidate@a.edu",
+        first_name="Resend",
+        last_name="Candidate",
+    )
+    applicant.assessment_token_hash = "old-token-hash"
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(days=1)
+    admin_session.commit()
+
+    headers = _login(app_client, "resend-admin@a.edu")
+    app_client.get(f"/admin/applications/{applicant.id}", headers=headers)
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/admin/applications/{applicant.id}/action",
+        headers={**headers, "x-csrf-token": csrf},
+        data={"action": "resend_invitation", "extend_access": "true", "reason": "Expired link"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    admin_session.rollback()
+    admin_session.refresh(applicant)
+    assert applicant.assessment_token_hash != "old-token-hash"
+    assert applicant.assessment_deadline > datetime.now(UTC)
+    mail = admin_session.scalars(
+        select(EmailOutbox).where(EmailOutbox.recipient == "resend-candidate@a.edu")
+    ).one()
+    assert mail.kind == "entrance_invite"
+    assert "Resend" in mail.text_body
+    assert "Entrance Export Test" in mail.text_body
+    assert "Duration: 30 minutes" in mail.text_body
+    event = admin_session.scalars(
+        select(AuditEvent).where(AuditEvent.entity_id == str(applicant.id)).where(AuditEvent.action == "applicant.invitation_resent")
+    ).one()
+    assert event.actor_person_id == actor.id
+    assert event.details["extended_access"] is True
+
+
+
+def test_resend_invitation_without_extension_preserves_active_deadline(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "resend-noextend-admin@a.edu", "admin")
+    _entrance_config(admin_session, tenant_a)
+    applicant = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="resend-noextend@a.edu",
+        first_name="Noextend",
+        last_name="Candidate",
+    )
+    applicant.assessment_token_hash = "old-active-token-hash"
+    original_deadline = datetime.now(UTC) + timedelta(days=3)
+    applicant.assessment_deadline = original_deadline
+    admin_session.commit()
+
+    headers = _login(app_client, "resend-noextend-admin@a.edu")
+    app_client.get(f"/admin/applications/{applicant.id}", headers=headers)
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/admin/applications/{applicant.id}/action",
+        headers={**headers, "x-csrf-token": csrf},
+        data={"action": "resend_invitation", "reason": "Lost email"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    admin_session.rollback()
+    admin_session.refresh(applicant)
+    assert applicant.assessment_token_hash != "old-active-token-hash"
+    assert applicant.assessment_deadline == original_deadline
+    event = admin_session.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.entity_id == str(applicant.id))
+        .where(AuditEvent.action == "applicant.invitation_resent")
+    ).one()
+    assert event.details["extended_access"] is False
+
+
+def test_admin_extends_access_without_resetting_completed_work(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "extend-admin@a.edu", "admin")
+    _entrance_config(admin_session, tenant_a)
+    applicant = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="extend-candidate@a.edu",
+        first_name="Extend",
+        last_name="Candidate",
+    )
+    applicant.assessment_token_hash = "existing-token-hash"
+    applicant.assessment_answers = {"q1": ["A"]}
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(days=1)
+    admin_session.commit()
+
+    headers = _login(app_client, "extend-admin@a.edu")
+    app_client.get(f"/admin/applications/{applicant.id}", headers=headers)
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/admin/applications/{applicant.id}/action",
+        headers={**headers, "x-csrf-token": csrf},
+        data={"action": "extend_access", "reason": "More time"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    admin_session.rollback()
+    admin_session.refresh(applicant)
+    assert applicant.assessment_token_hash == "existing-token-hash"
+    assert applicant.assessment_answers == {"q1": ["A"]}
+    assert applicant.assessment_deadline > datetime.now(UTC)
+    assert admin_session.scalars(
+        select(AuditEvent).where(AuditEvent.entity_id == str(applicant.id)).where(AuditEvent.action == "applicant.access_extended")
+    ).one()
+
+
+def test_application_export_optional_invitation_columns_and_filters(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "export-admin@a.edu", "admin")
+    invited = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="invited-export@a.edu",
+        first_name="Invited",
+        last_name="Export",
+        applied_on=date(2026, 2, 1),
+    )
+    invited.assessment_deadline = datetime(2026, 2, 8, tzinfo=UTC)
+    other = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="other-export@a.edu",
+        first_name="Other",
+        last_name="Export",
+        applied_on=date(2026, 3, 1),
+    )
+    admin_session.add(
+        EmailOutbox(
+            tenant_id=tenant_a.id,
+            idempotency_key="export-invite:test",
+            kind="entrance_invite",
+            recipient=invited.email,
+            subject="Invite",
+            status="sent",
+            sent_at=datetime(2026, 2, 2, tzinfo=UTC),
+            html_body="html",
+            text_body="text",
+        )
+    )
+    admin_session.commit()
+
+    response = app_client.get(
+        "/admin/applications/export.csv?applied_from=2026-02-01&applied_to=2026-02-28&include_invitation=true",
+        headers=_login(app_client, "export-admin@a.edu"),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    body = response.text
+    assert "Invitation Status" in body
+    assert "Invitation Sent Date" in body
+    assert "Invitation Expiry" in body
+    assert "invited-export@a.edu" in body
+    assert "other-export@a.edu" not in body
+    assert "sent" in body
+    assert other.id
+
+
+def test_application_export_requires_admin(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "export-student@a.edu", "student")
+    response = app_client.get("/admin/applications/export.csv", headers=_login(app_client, "export-student@a.edu"))
+    assert response.status_code == 403
+
+
+def test_application_action_requires_csrf_after_cookie(app_client, admin_session, tenant_a):
+    _seed_user(admin_session, tenant_a, "csrf-admin@a.edu", "admin")
+    applicant = admissions.submit_application(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email="csrf-candidate@a.edu",
+        first_name="Csrf",
+        last_name="Candidate",
+    )
+    admin_session.commit()
+    headers = _login(app_client, "csrf-admin@a.edu")
+    app_client.get(f"/admin/applications/{applicant.id}", headers=headers)
+
+    response = app_client.post(
+        f"/admin/applications/{applicant.id}/action",
+        headers=headers,
+        data={"action": "extend_access"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403

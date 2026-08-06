@@ -78,6 +78,12 @@
         <label class="block text-sm font-semibold text-ink" for="reason-{{ action.key }}">{{ action.label }}</label>
         <input id="reason-{{ action.key }}" name="reason" maxlength="1000" placeholder="Reason or review note"
                class="mt-2 w-full px-3 py-2">
+        {% if action.key == "resend_invitation" %}
+        <label class="mt-3 flex items-center gap-2 text-sm font-semibold text-ink">
+          <input type="checkbox" name="extend_access" value="true" checked>
+          Also extend access
+        </label>
+        {% endif %}
         <button type="submit"
                 class="{{ 'btn-secondary' if action.destructive else 'btn-primary' }} mt-3 px-4 py-2 text-sm"
                 {% if action.destructive %}onclick="return confirm('Confirm this action?')"{% endif %}>

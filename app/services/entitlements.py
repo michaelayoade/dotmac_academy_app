@@ -200,7 +200,7 @@ def open_course_ids(db: Session, *, tenant_id: UUID, person_id: UUID, now: datet
         .where(Enrollment.status == "active")
         .where(or_(Enrollment.track_id.is_(None), TrackCourse.id.isnot(None)))
         .where(or_(CourseOffering.starts_at.is_(None), CourseOffering.starts_at <= now))
-        .where(or_(CourseOffering.ends_at.is_(None), CourseOffering.ends_at >= now))
+        .where(or_(CourseOffering.ends_at.is_(None), CourseOffering.ends_at >= now, Enrollment.access_ends_at >= now))
     ).all()
     return set(rows)
 

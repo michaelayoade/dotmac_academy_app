@@ -11,8 +11,10 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.config import settings
 from app.models.admissions import Applicant
 from app.models.email_outbox import EmailOutbox
+from app.services.localtime import to_local
 from tests.conftest import client_for
 from tests.test_apply_assessment import _cohort_with_exam
 
@@ -65,6 +67,63 @@ def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_se
     again = a.get(f"/apply/assessment?token={token}")
     assert "Pick A" in again.text
     assert "Before you begin" not in again.text
+
+
+def test_exam_invite_shows_full_local_expiry_timestamp(app_client, tenant_a, admin_session):
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
+    _apply(app_client, tenant_a, cohort, track, "deadline-email@a.ex")
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(
+        select(Applicant).where(Applicant.email == "deadline-email@a.ex")
+    ).one()
+    invitation = admin_session.scalars(
+        select(EmailOutbox)
+        .where(EmailOutbox.recipient == applicant.email)
+        .where(EmailOutbox.kind == "entrance_invite")
+    ).one()
+    local_deadline = to_local(applicant.assessment_deadline)
+    assert local_deadline is not None
+    expected = (
+        f"{local_deadline.strftime('%A %d %B %Y at %H:%M')} "
+        f"{local_deadline.tzname()} ({settings.academy_timezone})"
+    )
+    assert f"Your assessment link is valid until {expected}." in invitation.html_body
+    assert f"Your assessment link is valid until {expected}." in invitation.text_body
+
+
+def test_expired_deadline_blocks_autosave_and_submission(app_client, tenant_a, admin_session):
+    cohort, track = _cohort_with_exam(admin_session, tenant_a)
+    a, token = _apply(app_client, tenant_a, cohort, track, "expired-write@a.ex")
+    _start(a, token)
+
+    admin_session.rollback()
+    applicant = admin_session.scalars(
+        select(Applicant).where(Applicant.email == "expired-write@a.ex")
+    ).one()
+    applicant.assessment_answers = {"q2": ["B"]}
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(seconds=1)
+    admin_session.commit()
+
+    csrf = a.cookies.get("csrf_token", "")
+    autosave = a.post(
+        "/apply/assessment/save",
+        data={"token": token, "q1": "A"},
+        headers={"x-csrf-token": csrf},
+    )
+    assert autosave.status_code == 204
+    submitted = a.post(
+        "/apply/assessment",
+        data={"token": token, "q1": "A"},
+        headers={"x-csrf-token": csrf},
+    )
+    assert submitted.status_code == 200
+    assert "This assessment has closed" in submitted.text
+
+    admin_session.rollback()
+    admin_session.refresh(applicant)
+    assert applicant.assessment_answers == {"q2": ["B"]}
+    assert applicant.assessment_taken_at is None
 
 
 def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch):

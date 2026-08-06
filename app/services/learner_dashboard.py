@@ -55,7 +55,7 @@ def _entitled_courses(db: Session, tenant_id: UUID, person_id: UUID) -> list[tup
     if not allowed:
         return []
     rows = db.execute(
-        select(Course, CourseOffering)
+        select(Course, CourseOffering, Enrollment.access_ends_at)
         .join(
             CourseOffering,
             (CourseOffering.course_id == Course.id)
@@ -74,13 +74,17 @@ def _entitled_courses(db: Session, tenant_id: UUID, person_id: UUID) -> list[tup
         .order_by(Course.title)
     ).all()
     chosen: dict[UUID, tuple[Course, CourseOffering]] = {}
-    for course, offering in rows:
+    for course, offering, access_ends_at in rows:
+        if access_ends_at is not None and (offering.ends_at is None or access_ends_at > offering.ends_at):
+            offering.effective_ends_at = access_ends_at
+        else:
+            offering.effective_ends_at = offering.ends_at
         held = chosen.get(course.id)
         if held is None:
             chosen[course.id] = (course, offering)
             continue
-        held_end = held[1].ends_at
-        this_end = offering.ends_at
+        held_end = getattr(held[1], "effective_ends_at", held[1].ends_at)
+        this_end = getattr(offering, "effective_ends_at", offering.ends_at)
         if this_end is not None and (held_end is None or this_end < held_end):
             chosen[course.id] = (course, offering)
     return sorted(chosen.values(), key=lambda pair: pair[0].title)
@@ -427,10 +431,9 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
             state = "upcoming"
         elif completion is not None and completion.status == "completed":
             state = "completed"
-        elif offering.ends_at is not None and offering.ends_at < now:
-            state = "expired"
         else:
-            state = "in_progress"
+            effective_ends_at = getattr(offering, "effective_ends_at", offering.ends_at)
+            state = "expired" if effective_ends_at is not None and effective_ends_at < now else "in_progress"
         counts[state] += 1
 
         next_activity = next((a for a in activities if a.id not in best or not best[a.id].passed), None)
@@ -468,7 +471,11 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
                 "grade_pct": grade["pct"],
                 "final_threshold_pct": int(round(final_threshold * 100)),
                 "next_activity": next_activity,
-                "next_deadline": _next_deadline_from(due_by_offering.get(offering.id, []), offering.ends_at, now),
+                "next_deadline": _next_deadline_from(
+                    due_by_offering.get(offering.id, []),
+                    getattr(offering, "effective_ends_at", offering.ends_at),
+                    now,
+                ),
                 "starts_at": offering.starts_at,
                 "last_read": (
                     {"number": read_row[0], "title": read_row[1]}

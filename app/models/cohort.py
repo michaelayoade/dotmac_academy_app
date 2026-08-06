@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Float, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,3 +69,6 @@ class Enrollment(Base, TimestampMixin):
     # employee reference — identity between the systems is that reference.
     audience: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     employee_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Per-learner extension only. CourseOffering.ends_at remains the cohort
+    # schedule; this nullable override can extend, but never shorten, access.
+    access_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -118,6 +118,15 @@ def _notice(request: Request, title: str, body: str) -> HTMLResponse:
     )
 
 
+def _deadline_closed_notice(request: Request) -> HTMLResponse:
+    return _notice(
+        request,
+        "This assessment has closed",
+        "The deadline for your entrance assessment has passed. If you were unable to "
+        "sit it in time, contact us and we can reopen it for you.",
+    )
+
+
 @router.get("/apply")
 def apply_form(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
@@ -225,12 +234,7 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
     if applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
     if entrance_exam.past_deadline(applicant):
-        return _notice(
-            request,
-            "This assessment has closed",
-            "The deadline for your entrance assessment has passed. If you were unable to "
-            "sit it in time, contact us and we can reopen it for you.",
-        )
+        return _deadline_closed_notice(request)
     if applicant.assessment_started_at is None:
         # Instruction screen first: the clock must start on an explicit choice,
         # never on a curious click of the emailed link.
@@ -283,12 +287,7 @@ def assessment_start(request: Request, token: str = Form(...), db: Session = Dep
     if applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "You've already completed the entrance assessment. Thank you.")
     if entrance_exam.past_deadline(applicant):
-        return _notice(
-            request,
-            "This assessment has closed",
-            "The deadline for your entrance assessment has passed. If you were unable to "
-            "sit it in time, contact us and we can reopen it for you.",
-        )
+        return _deadline_closed_notice(request)
     entrance_exam.start_exam(db, applicant=applicant)
     url = f"/apply/assessment?token={token}"
     if request.headers.get("HX-Request"):
@@ -312,7 +311,11 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
         raw=str(form.get("token") or ""),
         lock=True,
     )
-    if applicant is None or applicant.assessment_taken_at is not None:
+    if (
+        applicant is None
+        or applicant.assessment_taken_at is not None
+        or entrance_exam.past_deadline(applicant)
+    ):
         return Response(status_code=204)
     questions = _exam_questions(db, tenant.id, applicant)
     answers = {q.ext_id: form.getlist(q.ext_id) for q in questions}
@@ -327,6 +330,8 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
     applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token, lock=True)
     if applicant is None or applicant.assessment_taken_at is not None:
         return _notice(request, "Already completed", "This assessment was already submitted, or the link is invalid.")
+    if entrance_exam.past_deadline(applicant):
+        return _deadline_closed_notice(request)
     questions = _exam_questions(db, tenant.id, applicant)
     form = await request.form()
     # Start from anything autosaved, then let this submission win where it answered.
