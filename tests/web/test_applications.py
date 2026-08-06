@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -469,6 +470,7 @@ def test_application_export_optional_invitation_columns_and_filters(app_client, 
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
+    assert response.headers["content-disposition"] == "attachment; filename=applications.csv"
     body = response.text
     assert "Invitation Status" in body
     assert "Invitation Sent Date" in body
@@ -477,6 +479,14 @@ def test_application_export_optional_invitation_columns_and_filters(app_client, 
     assert "other-export@a.edu" not in body
     assert "sent" in body
     assert other.id
+
+
+def test_application_export_cannot_be_captured_by_applicant_detail_route():
+    source = Path("app/web/applications.py").read_text()
+    export_route = '@router.get("/export.csv")'
+    detail_route = '@router.get("/{applicant_id:uuid}", response_class=HTMLResponse)'
+
+    assert source.index(export_route) < source.index(detail_route)
 
 
 def test_application_export_requires_admin(app_client, admin_session, tenant_a):

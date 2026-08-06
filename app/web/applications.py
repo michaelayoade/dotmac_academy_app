@@ -199,7 +199,7 @@ def applications_export(
     )
 
 
-@router.get("/{applicant_id}", response_class=HTMLResponse)
+@router.get("/{applicant_id:uuid}", response_class=HTMLResponse)
 def application_detail(
     applicant_id: UUID,
     request: Request,
@@ -228,7 +228,7 @@ def application_detail(
     )
 
 
-@router.post("/{applicant_id}/intake")
+@router.post("/{applicant_id:uuid}/intake")
 def application_intake(
     applicant_id: UUID,
     request: Request,
@@ -253,7 +253,7 @@ def application_intake(
     return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)
 
 
-@router.post("/{applicant_id}/action")
+@router.post("/{applicant_id:uuid}/action")
 def application_action(
     applicant_id: UUID,
     request: Request,
