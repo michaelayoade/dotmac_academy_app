@@ -9,9 +9,23 @@
   <meta property="og:description" content="Field-grade training for the engineers keeping the network running — courses, assessments, and hands-on labs.">
   <meta property="og:image" content="/static/img/og-card.webp">
   <meta property="og:type" content="website">
+  <script>
+    (function () {
+      try {
+        var key = "dotmac:theme";
+        var theme = window.localStorage.getItem(key);
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
-  <link rel="stylesheet" href="/static/app.css?v=6">
+  <link rel="stylesheet" href="/static/app.css?v=7">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">

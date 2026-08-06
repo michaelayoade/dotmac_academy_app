@@ -5,8 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ branding_name | default("Dotmac Academy") }} — Technical and management training that proves itself</title>
   <meta name="description" content="The Dotmac Academy: cohort-based technical training for network careers, and self-paced management short courses for working professionals. Real labs, honest assessments, verifiable certificates.">
+  <script>
+    (function () {
+      try {
+        var key = "dotmac:theme";
+        var theme = window.localStorage.getItem(key);
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
   <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
-  <link rel="stylesheet" href="/static/public.css?v=2">
+  <link rel="stylesheet" href="/static/public.css?v=3">
 </head>
 <body class="pub">
 

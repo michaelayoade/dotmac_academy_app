@@ -12,14 +12,104 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+  --bg-oklch: 0.972 0.013 115;
+  --surface-oklch: 0.992 0.008 110;
+  --surface-muted-oklch: 0.945 0.017 116;
+  --surface-raised-oklch: 0.992 0.008 110;
+  --text-oklch: 0.28 0.025 162;
+  --text-muted-oklch: 0.46 0.022 162;
+  --border-oklch: 0.905 0.019 117;
+  --brand-oklch: 0.44 0.10 161;
+  --brand-strong-oklch: 0.37 0.085 162;
+  --accent-oklch: 0.70 0.125 58;
+  --danger-oklch: 0.62 0.135 52;
+
+  --bg: oklch(var(--bg-oklch));
+  --surface: oklch(var(--surface-oklch));
+  --surface-muted: oklch(var(--surface-muted-oklch));
+  --surface-raised: oklch(var(--surface-raised-oklch));
+  --text: oklch(var(--text-oklch));
+  --text-muted: oklch(var(--text-muted-oklch));
+  --border: oklch(var(--border-oklch));
+  --brand: oklch(var(--brand-oklch));
+  --brand-strong: oklch(var(--brand-strong-oklch));
+  --accent: oklch(var(--accent-oklch));
+  --danger: oklch(var(--danger-oklch));
+  --focus: oklch(var(--brand-600-oklch));
+  --selection: color-mix(in oklch, var(--brand) 28%, transparent);
+  --overlay: oklch(0.20 0.02 160 / 0.82);
+  --code-copy-bg: oklch(0.985 0.006 95 / 0.14);
+  --code-copy-bg-hover: oklch(0.985 0.006 95 / 0.24);
+  --code-copy-border: oklch(0.985 0.006 95 / 0.22);
+  --shadow-card: 0 1px 2px oklch(0.30 0.06 162 / 0.05), 0 8px 24px -12px oklch(0.30 0.06 162 / 0.18);
+  --shadow-lift: 0 2px 4px oklch(0.30 0.06 162 / 0.06), 0 18px 40px -18px oklch(0.30 0.06 162 / 0.28);
+  --shadow-lightbox: 0 10px 40px oklch(0 0 0 / 0.4);
+
+  --sand-50-oklch: var(--surface-oklch);
+  --sand-100-oklch: var(--bg-oklch);
+  --sand-200-oklch: var(--surface-muted-oklch);
+  --sand-300-oklch: var(--border-oklch);
+  --sand-400-oklch: 0.84 0.02 120;
+  --sand-500-oklch: 0.72 0.022 125;
+  --ink-oklch: var(--text-oklch);
+  --ink-soft-oklch: var(--text-muted-oklch);
+  --brand-50-oklch: 0.97 0.02 155;
+  --brand-100-oklch: 0.94 0.04 156;
+  --brand-200-oklch: 0.88 0.06 157;
+  --brand-300-oklch: 0.80 0.09 158;
+  --brand-400-oklch: 0.70 0.12 159;
+  --brand-500-oklch: 0.60 0.13 160;
+  --brand-600-oklch: 0.52 0.12 161;
+  --brand-700-oklch: var(--brand-oklch);
+  --brand-800-oklch: var(--brand-strong-oklch);
+  --brand-900-oklch: 0.30 0.06 162;
+  --clay-400-oklch: 0.76 0.11 62;
+  --clay-500-oklch: var(--accent-oklch);
+  --clay-600-oklch: var(--danger-oklch);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-oklch: 0.18 0.018 162;
+  --surface-oklch: 0.22 0.018 162;
+  --surface-muted-oklch: 0.27 0.02 162;
+  --surface-raised-oklch: 0.24 0.018 162;
+  --text-oklch: 0.93 0.012 120;
+  --text-muted-oklch: 0.74 0.018 145;
+  --border-oklch: 0.42 0.026 162;
+  --brand-oklch: 0.74 0.13 158;
+  --brand-strong-oklch: 0.82 0.12 158;
+  --accent-oklch: 0.78 0.13 62;
+  --danger-oklch: 0.77 0.13 42;
+  --overlay: oklch(0.08 0.01 160 / 0.88);
+  --code-copy-bg: oklch(0.98 0.006 95 / 0.16);
+  --code-copy-bg-hover: oklch(0.98 0.006 95 / 0.26);
+  --code-copy-border: oklch(0.98 0.006 95 / 0.24);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.24), 0 16px 32px -20px oklch(0 0 0 / 0.65);
+  --shadow-lift: 0 2px 6px oklch(0 0 0 / 0.28), 0 24px 46px -20px oklch(0 0 0 / 0.7);
+  --shadow-lightbox: 0 10px 40px oklch(0 0 0 / 0.7);
+
+  --sand-400-oklch: 0.40 0.022 162;
+  --sand-500-oklch: 0.53 0.022 150;
+  --brand-50-oklch: 0.25 0.045 160;
+  --brand-100-oklch: 0.30 0.055 160;
+  --brand-200-oklch: 0.38 0.07 160;
+  --brand-300-oklch: 0.52 0.10 160;
+  --brand-400-oklch: 0.66 0.13 160;
+  --brand-500-oklch: 0.70 0.13 160;
+  --brand-600-oklch: 0.72 0.13 160;
+  --brand-900-oklch: 0.16 0.028 162;
+  --clay-400-oklch: 0.82 0.12 62;
+}
+
 /* Dotmac Academy — warm technical-editorial base layer.
    Compiled by Tailwind v3 to static/app.css (npm run build:css).
    Fonts (Fraunces / Manrope) are self-hosted via @font-face above (static/fonts/).
 
-   Brand colors are defined in tailwind.config.js with an <alpha-value>
-   placeholder so utility opacity modifiers (e.g. bg-brand-900/35) compile.
-   That placeholder makes theme() unsafe in raw CSS properties below, so the
-   handful of base-layer rules use literal oklch values (kept in sync). */
+   Color utilities read CSS variable channels from tailwind.config.js, while
+   raw CSS below uses the semantic custom properties declared above. */
 
 @layer base {
   html { -webkit-text-size-adjust: 100%; }
@@ -43,7 +133,7 @@
 
   /* Refined, brand-tinted focus ring (keyboard users only). */
   :focus-visible {
-    outline: 2px solid oklch(0.52 0.12 161);
+    outline: 2px solid var(--focus);
     outline-offset: 2px;
     border-radius: 3px;
   }
@@ -53,17 +143,17 @@
   input, select, textarea {
     @apply bg-sand-50 text-ink;
     font-family: inherit;
-    border: 1px solid oklch(0.905 0.019 117);
+    border: 1px solid var(--border);
     border-radius: 0.6rem;
   }
-  input::placeholder, textarea::placeholder { color: oklch(0.46 0.022 162); opacity: 0.7; }
+  input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 0.7; }
   input:focus, select:focus, textarea:focus {
     outline: none;
-    border-color: oklch(0.60 0.13 160);
-    box-shadow: 0 0 0 3px color-mix(in oklch, oklch(0.60 0.13 160) 22%, transparent);
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
   }
 
-  ::selection { background: color-mix(in oklch, oklch(0.60 0.13 160) 28%, transparent); }
+  ::selection { background: var(--selection); }
 }
 
 @layer components {
@@ -170,12 +260,15 @@
     padding: 1rem 1.15rem; border-radius: 0.75rem; overflow-x: auto; font-size: 0.86rem; line-height: 1.55;
   }
   .prose pre code { background: transparent; padding: 0; color: inherit; }
-  .prose img { border-radius: 0.75rem; border: 1px solid oklch(0.905 0.019 117); }
+  .prose img { border-radius: 0.75rem; border: 1px solid var(--border); }
+  .prose .embed-responsive { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 0.75rem; border: 1px solid var(--border); background: var(--surface-muted); }
+  .prose .embed-responsive iframe { width: 100%; height: 100%; }
+  .prose video { width: 100%; border-radius: 0.75rem; border: 1px solid var(--border); background: var(--surface-muted); }
   .prose table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
-  .prose th, .prose td { border: 1px solid oklch(0.905 0.019 117); padding: 0.5rem 0.7rem; text-align: left; }
+  .prose th, .prose td { border: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: left; }
   .prose blockquote {
-    border-left: 3px solid oklch(0.70 0.12 159);
-    padding-left: 1rem; color: oklch(0.46 0.022 162); font-style: italic;
+    border-left: 3px solid var(--brand);
+    padding-left: 1rem; color: var(--text-muted); font-style: italic;
   }
 }
 
@@ -185,7 +278,7 @@
 /* heading anchor links */
 .prose h2, .prose h3 { scroll-margin-top: 5rem; }
 .heading-anchor {
-  margin-left: 0.4rem; color: oklch(0.70 0.12 159); opacity: 0;
+  margin-left: 0.4rem; color: var(--brand); opacity: 0;
   text-decoration: none; font-weight: 400; transition: opacity .15s;
 }
 .prose h2:hover .heading-anchor, .prose h3:hover .heading-anchor { opacity: 0.7; }
@@ -195,36 +288,36 @@
 #chapter-toc li.toc-sub { padding-left: 0.85rem; }
 #chapter-toc a {
   display: block; padding: 0.2rem 0.6rem; border-left: 2px solid transparent;
-  color: oklch(0.46 0.022 162); font-size: 0.85rem; line-height: 1.35;
+  color: var(--text-muted); font-size: 0.85rem; line-height: 1.35;
   text-decoration: none; transition: color .12s, border-color .12s;
 }
-#chapter-toc a:hover { color: oklch(0.44 0.10 161); }
+#chapter-toc a:hover { color: var(--brand-strong); }
 #chapter-toc a.active {
-  color: oklch(0.44 0.10 161); border-left-color: oklch(0.52 0.12 161); font-weight: 600;
+  color: var(--brand-strong); border-left-color: var(--focus); font-weight: 600;
 }
 
 /* scroll-progress bar */
 #reading-progress {
   position: fixed; top: 0; left: 0; height: 3px; width: 0;
-  background: oklch(0.52 0.12 161); z-index: 50; transition: width .1s linear;
+  background: var(--focus); z-index: 50; transition: width .1s linear;
 }
 
 /* figure lightbox */
 .prose img.zoomable { cursor: zoom-in; }
 .lightbox {
   position: fixed; inset: 0; display: none; place-items: center;
-  background: oklch(0.20 0.02 160 / 0.82); z-index: 60; padding: 2rem; cursor: zoom-out;
+  background: var(--overlay); z-index: 60; padding: 2rem; cursor: zoom-out;
 }
 .lightbox.open { display: grid; }
-.lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 0.5rem; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+.lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 0.5rem; box-shadow: var(--shadow-lightbox); }
 
 /* code copy button */
 .code-copy {
   position: absolute; top: 0.5rem; right: 0.5rem;
   padding: 0.15rem 0.6rem; border-radius: 0.4rem; cursor: pointer;
   font-size: 0.72rem; font-weight: 600; font-family: inherit;
-  color: oklch(0.94 0.04 156); background: oklch(0.985 0.006 95 / 0.14);
-  border: 1px solid oklch(0.985 0.006 95 / 0.22); opacity: 0; transition: opacity .15s;
+  color: oklch(var(--brand-100-oklch)); background: var(--code-copy-bg);
+  border: 1px solid var(--code-copy-border); opacity: 0; transition: opacity .15s;
 }
 .prose pre:hover .code-copy { opacity: 1; }
-.code-copy:hover { background: oklch(0.985 0.006 95 / 0.24); }
+.code-copy:hover { background: var(--code-copy-bg-hover); }

@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 # Shared CSRF snippet so htmx form POSTs carry the double-submit token.
+_THEME_BOOTSTRAP_JS = (
+    "<script>(function(){try{var k='dotmac:theme',t=localStorage.getItem(k);"
+    "if(t!=='light'&&t!=='dark'){t=window.matchMedia&&window.matchMedia("
+    "'(prefers-color-scheme: dark)').matches?'dark':'light';}"
+    "document.documentElement.dataset.theme=t;}catch(e){"
+    "document.documentElement.dataset.theme='light';}})();</script>"
+)
+
 _CSRF_JS = (
     "<script>document.body.addEventListener('htmx:configRequest',function(e){"
     "var m=document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);"
@@ -37,7 +45,7 @@ def _page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
         f"<!doctype html><html lang=en><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title><link rel=stylesheet href='/static/app.css?v=2'>"
+        f"<title>{title}</title>{_THEME_BOOTSTRAP_JS}<link rel=stylesheet href='/static/app.css?v=7'>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
         f"<body class='min-h-screen bg-sand-100 text-ink'>"
         f"<main class='mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12'>"
