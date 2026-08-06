@@ -294,6 +294,44 @@ def lint_bank(doc: BankDoc) -> list[str]:
     return out
 
 
+def doc_from_db(db: Session, *, bank: QuestionBank, course_slug: str) -> BankDoc:
+    """Rebuild a BankDoc from a bank already in the database.
+
+    So the live estate can be checked with :func:`lint_bank` itself rather than
+    a second implementation of the rules in SQL. Two implementations of the same
+    decision drift the moment a threshold moves; this keeps one.
+    """
+    rows = db.scalars(
+        select(Question)
+        .where(Question.tenant_id == bank.tenant_id)
+        .where(Question.bank_id == bank.id)
+        .order_by(Question.ext_id)
+    ).all()
+    return BankDoc(
+        course=course_slug,
+        chapter=bank.chapter_number,
+        kind=bank.kind,
+        version=bank.version,
+        questions=[
+            {
+                "id": q.ext_id,
+                "stem": q.stem,
+                "type": q.type,
+                "options": q.options,
+                "correct": q.correct,
+                "rubric_category": q.rubric_category,
+                "category": q.category,
+                "explanation": q.explanation,
+                "weight": q.weight,
+            }
+            for q in rows
+        ],
+        # Policy lives on the Activity once loaded, not on the bank, so a
+        # database-sourced doc carries none — and lint_bank skips an empty one.
+        policy={},
+    )
+
+
 def load_bank(db: Session, *, tenant_id, course_id, doc: BankDoc) -> QuestionBank:
     """Upsert a QuestionBank and replace its Questions from a BankDoc.
 

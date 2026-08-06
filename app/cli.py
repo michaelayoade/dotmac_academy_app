@@ -124,6 +124,64 @@ def _import_manual(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _audit_banks(args: argparse.Namespace) -> None:
+    """Check every bank already live in the database against lint_bank.
+
+    load-banks enforces the rules on the way in, which leaves a gap: a bank
+    loaded before a rule existed stays live and non-compliant, and nothing
+    says so. This closes it — the same linter, pointed at the projection.
+    """
+    from app.db import SessionLocal
+    from app.models.assessment import QuestionBank
+    from app.models.course import Course
+    from app.models.tenant import Tenant
+    from app.services.bank_loader import doc_from_db, lint_bank
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+
+        q = (
+            db.query(QuestionBank, Course)
+            .join(Course, Course.id == QuestionBank.course_id)
+            .filter(QuestionBank.tenant_id == tenant.id)
+        )
+        if args.discipline:
+            q = q.filter(Course.discipline == args.discipline)
+        if args.course:
+            q = q.filter(Course.slug == args.course)
+        rows = q.order_by(Course.discipline, Course.slug, QuestionBank.chapter_number).all()
+
+        banks = failing = 0
+        per_discipline: dict[str, list[int]] = {}
+        for bank, course in rows:
+            banks += 1
+            doc = doc_from_db(db, bank=bank, course_slug=course.slug)
+            violations = lint_bank(doc)
+            tally = per_discipline.setdefault(course.discipline, [0, 0])
+            tally[0] += 1
+            if violations:
+                failing += 1
+                tally[1] += 1
+                label = f"ch{bank.chapter_number}" if bank.chapter_number else bank.kind
+                print(f"{course.slug} [{label}] {len(doc.questions)}q")
+                for v in violations:
+                    print(f"    {v}")
+
+        print()
+        print(f"{'discipline':32} {'banks':>6} {'failing':>8}")
+        for discipline, (total, bad) in sorted(per_discipline.items()):
+            print(f"{discipline:32} {total:>6} {bad:>8}")
+        print(f"{'TOTAL':32} {banks:>6} {failing:>8}")
+
+        if failing and args.fail_on_violations:
+            raise SystemExit(1)
+    finally:
+        db.close()
+
+
 def _load_banks(args: argparse.Namespace) -> None:
     from app.db import SessionLocal
     from app.models.assessment import Activity
@@ -933,6 +991,27 @@ def main() -> None:
         help="Directory containing *.yaml bank files (default: Foundation assessments/banks)",
     )
     lb.set_defaults(func=_load_banks)
+
+    ab = sub.add_parser(
+        "audit-banks",
+        help="Lint every question bank already live in the database.",
+        description=(
+            "load-banks enforces the bank rules on the way in. That leaves banks "
+            "loaded before a rule existed live and non-compliant with nothing to "
+            "say so. This runs the same lint_bank over the database, so the state "
+            "of the estate is a question anyone can answer rather than a query "
+            "someone has to write."
+        ),
+    )
+    ab.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    ab.add_argument("--discipline", default=None, help="Restrict to one discipline")
+    ab.add_argument("--course", default=None, help="Restrict to one course slug")
+    ab.add_argument(
+        "--fail-on-violations",
+        action="store_true",
+        help="Exit 1 if any bank fails, for use as a scheduled check.",
+    )
+    ab.set_defaults(func=_audit_banks)
 
     il = sub.add_parser(
         "import-labs",
