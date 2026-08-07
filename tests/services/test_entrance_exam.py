@@ -38,7 +38,7 @@ def _bank_with_questions(admin_session, tenant):
                 ext_id=ext,
                 stem="?",
                 type="single",
-                options=["A", "B"],
+                options=["A", "B", "C", "D"],
                 correct=["A"],
                 rubric_category="recall",
                 category=cat,
