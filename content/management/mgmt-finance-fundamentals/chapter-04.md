@@ -13,6 +13,17 @@ statements look fine. This chapter covers the disciplines that keep money
 actually arriving: billing that invites payment, collections without
 drama, and the manager's working view of cash flow.
 
+**By the end of this chapter you can:**
+
+- Explain why a profitable business can fail to pay Friday's wages.
+- Break the delivery-to-cash delay into its stages and say which stage you
+  personally control.
+- Put a naira figure on the cash a billing delay ties up, and on what
+  closing it releases.
+- Run a collections conversation that is firm, early, and keeps the
+  customer.
+- Say why fast growth consumes cash rather than producing it.
+
 FIGURE `MGT-FN-04` *Cash timing: revenue earned is not money arrived — the gap is where businesses fall.*
 
 ## Cash flow: the timing layer under the profit numbers
@@ -39,6 +50,38 @@ purchase, chase receivables, arrange finance *before* the gap. A cash
 crisis foreseen is a planning task; discovered, it's an emergency at the
 worst possible negotiating position, because everyone can smell the
 desperation.
+
+## Worked example: where sixty days goes
+
+An office serves 500 customers at ₦16,200 a month — ₦8,100,000 of monthly
+revenue, or ₦270,000 a day. Work is delivered, then:
+
+| Stage | Days | Who controls it |
+| --- | ---: | --- |
+| Delivery → invoice raised | 12 | You. Entirely. |
+| Invoice → payment due (terms) | 30 | Agreed at sale; negotiable |
+| Due → actually paid | 18 | Shared: your chasing, their process |
+| **Delivery → cash in hand** | **60** | |
+
+Sixty days at ₦270,000 a day means **₦16,200,000 is permanently in transit** —
+money the business has earned, is owed, and cannot spend. It funds that gap
+from savings, from an overdraft, or by paying suppliers late.
+
+Now close the two stages you influence. Invoice in 2 days instead of 12, and
+chase so the average payment lands 8 days late instead of 18:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Delivery → cash | 60 days | 40 days |
+| Cash tied up in transit | ₦16,200,000 | ₦10,800,000 |
+| **Released, once** | | **₦5,400,000** |
+
+That ₦5.4m is not profit — it is a one-off release of cash the business
+already owned. But it arrives without a single new customer, price rise, or
+cost cut, and it is usually the cheapest money a manager can find. Note also
+that the 12-day billing lag alone accounted for ₦3.24m of the gap: the
+slowest stage was the one entirely within the company's own control, which
+is the usual finding.
 
 ## Billing: the invoice is a service touchpoint
 
@@ -102,13 +145,35 @@ spending, accelerating billing, arranging a line of credit) are all
 early options. Profit is the destination; cash is the road condition.
 Managers who watch only the destination drive into the pothole.
 
+## Do this at work
+
+1. **Time your own three stages.** Take ten recent jobs. For each, record
+   the date delivered, the date invoiced, and the date paid. Average them.
+   Most managers are surprised by the first gap, which is the one they own.
+2. **Price the gap.** Multiply your daily revenue by the total days. That
+   is how much of your money is permanently in transit. It is usually a
+   larger number than expected, and it is the number that gets attention.
+3. **Attack the stage you control.** Cut the delivery-to-invoice lag first —
+   it needs no customer's agreement and no renegotiated terms.
+4. **Age your receivables.** List everything unpaid by how overdue it is:
+   0–30, 31–60, 61–90, 90+. Anything in the last bucket needs a decision
+   this week, not another reminder. Old debt does not improve with age.
+5. **Check your concentration.** What share of what you are owed sits with
+   your three largest customers? If one of them paying late would stop you
+   paying wages, that is a risk to name out loud before it happens.
+6. **Build one week of the rolling view.** List expected cash in and out
+   for the next four weeks. If the low point is uncomfortably close to
+   zero, you have found something worth escalating while options remain.
+
 ## Summary
 
 - Profit is periodic opinion, cash is daily fact; growth eats cash first
   — keep a rolling weekly cash view months ahead so crunches are planning
   tasks, not emergencies.
 - Bill promptly, accurately, and comprehensibly; every billing delay and
-  error is self-inflicted slow payment.
+  error is self-inflicted slow payment. The delivery-to-invoice lag is
+  usually the largest stage you fully control, and closing it releases
+  cash the business already owns.
 - Make paying easy, and chase failed automatic payments — much
   "non-payment" is an expired card nobody contacted.
 - Collect early on a fixed, unembarrassed rhythm; terms and deposits

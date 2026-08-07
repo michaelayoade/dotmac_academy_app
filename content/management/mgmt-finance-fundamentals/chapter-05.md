@@ -14,6 +14,17 @@ business plans and controls its spending, and the **business case**, which
 is how a manager earns a yes for something new. Both are exercises in the
 same skill: turning intentions into honest numbers.
 
+**By the end of this chapter you can:**
+
+- Build a budget line from unit economics rather than from last year plus
+  ten percent, and read a variance for its story.
+- Answer the five questions every funding decision asks, before they are
+  asked.
+- Separate one-off benefits from recurring ones — and spot a case whose
+  headline return depends entirely on the one-off.
+- Compute a simple payback and say over what horizon a case still holds.
+- Close your own loop after a yes, so the next case is easier to fund.
+
 FIGURE `MGT-FN-05` *A business case is built to be inspected: every block placed where a sceptic will press.*
 
 ## Budgets: a plan, not a punishment
@@ -84,6 +95,50 @@ honestly will occasionally convince *you* the idea doesn't clear the bar.
 That is the system working: the case you talk yourself out of on paper is
 the cheapest failure you'll ever have.
 
+## Worked example: the case that fell apart in year five
+
+A manager proposes a part-time collections clerk at ₦150,000 a month —
+₦1,800,000 a year. Using Chapter 4's office, the case claims two benefits:
+closing the delivery-to-cash gap by 15 days (₦270,000 a day, so ₦4,050,000)
+and cutting bad-debt write-offs from 2% of revenue to 1% (₦972,000 a year on
+₦97,200,000 of annual revenue).
+
+As submitted, it looks overwhelming: **₦5,022,000 of benefit against
+₦1,800,000 of cost.** Nearly threefold. Approve it.
+
+Now separate the two kinds of benefit, which is the single most useful move
+in reading any case:
+
+| | One-off | Recurring, per year |
+| --- | ---: | ---: |
+| Cash released by closing the gap | ₦4,050,000 | — |
+| Bad debt avoided | — | ₦972,000 |
+| Cost of the clerk | — | (₦1,800,000) |
+| **Net** | **₦4,050,000** | **(₦828,000)** |
+
+The cash release happens **once**. The clerk is paid **every year**. So the
+case is a large first-year win sitting on top of a permanent annual loss:
+
+| | Y1 | Y2 | Y3 | Y4 | Y5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Net for the year | ₦3,222,000 | (₦828,000) | (₦828,000) | (₦828,000) | (₦828,000) |
+| Cumulative | ₦3,222,000 | ₦2,394,000 | ₦1,566,000 | ₦738,000 | (₦90,000) |
+
+Approved on the headline, this decision looks brilliant for three years,
+ordinary in year four, and wrong in year five — by which time nobody
+connects the loss to the choice that caused it.
+
+That does not make the clerk a bad idea. It makes the *submitted case* a bad
+case. The honest versions are available: size the role to what the recurring
+benefit actually supports, fold the task into an existing job, or argue the
+recurring benefit is larger than ₦972,000 and show why. What you may not do
+is let a one-off number carry a permanent cost.
+
+**The rule:** one-off benefits pay for one-off costs; recurring costs need
+recurring benefits. Whenever a case's headline return is carried by a single
+non-repeating item, ask what the steady state looks like — and ask it about
+your own cases before a sceptic asks it for you.
+
 ## After the yes: close your own loop
 
 The step that separates managers who get funded repeatedly from those who
@@ -96,6 +151,27 @@ judgement about your own forecasts, and they build the track record that
 makes your *next* case's numbers believable on your signature. Finance
 teams everywhere fund track records long before they fund enthusiasm.
 
+## Do this at work
+
+1. **Rebuild one budget line bottom-up.** Take a line you own and derive it
+   from units — customers, jobs, hours — instead of last year's figure.
+   Where the two disagree, you have found either a saving or a shortfall.
+2. **Read one variance for its story.** Pick the largest gap between plan
+   and actual in your area. Is it timing, volume, price, or a real
+   overspend? Each has a different response, and the label matters more
+   than the number.
+3. **Write a one-page case for something you want.** Five questions, in
+   order, recommendation first. Include "do nothing, honestly costed".
+4. **Split your own benefits.** Mark every benefit in that case as one-off
+   or recurring, and check the recurring column alone covers the recurring
+   costs. If it does not, fix the case before someone else finds it.
+5. **Name your own tripwire.** Write the measurement and the result that
+   would mean stop. Proposers who define their own failure condition are
+   the ones trusted with the next case.
+6. **Close one old loop.** Find something funded a year ago in your area
+   and check whether the promised benefit arrived. Report it either way.
+   This is the habit that makes your future numbers believable.
+
 ## Summary
 
 - A budget is a plan built from unit economics, steered by monthly
@@ -106,6 +182,9 @@ teams everywhere fund track records long before they fund enthusiasm.
 - A business case is five honest answers: the evidenced problem, real
   options including do-nothing, full cost, valued-and-dated return, and
   risks with a stop condition.
+- Separate one-off benefits from recurring ones: recurring costs need
+  recurring benefits, and a headline return carried by a single
+  non-repeating item hides a permanent annual loss.
 - Never decorate unquantifiable benefits with invented numbers; plain
   honesty protects the credibility of the real figures.
 - Close the loop after the yes — checked results and reported misses are
