@@ -395,7 +395,7 @@ def grade_and_record(
 
     # Validity gate: is this a real measurement, or an absence of data?
     duration = float(applicant.assessment_elapsed_seconds)
-    valid, reason = check_validity(overall, duration)
+    valid, reason = check_validity(overall, duration, questions=questions)
 
     applicant.assessment_score = overall
     applicant.assessment_level = level

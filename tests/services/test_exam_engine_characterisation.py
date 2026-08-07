@@ -165,3 +165,42 @@ def test_variant_does_not_disturb_the_entrance_draw():
         "reading-08", "safety-09", "reading-06", "numeracy-00", "logic-08",
         "numeracy-04", "safety-08", "logic-10", "technical-09", "technical-04",
     ]
+
+
+# --- validity floors derived from the paper ------------------------------
+
+def _paper(n, options_each=4):
+    return [_Q(f"q{i:02d}", options=[f"opt{j}" for j in range(options_each)]) for i in range(n)]
+
+
+def test_time_floor_tracks_the_paper_size():
+    """The bug this fixes: a 60-question paper was still gated at six minutes."""
+    from app.services import exam_engine
+
+    assert exam_engine.duration_floor(_paper(30)) == 360   # unchanged for the old shape
+    assert exam_engine.duration_floor(_paper(60)) == 720   # and now moves with it
+
+    # 8 minutes on a 60-question paper is too fast, though it cleared the old gate.
+    assert exam_engine.check_validity(0.9, 480, questions=_paper(60))[1] == exam_engine.INVALID_TOO_FAST
+    assert exam_engine.check_validity(0.9, 480, questions=_paper(30)) == (True, None)
+
+
+def test_chance_floor_tracks_the_options_actually_offered():
+    """A true/false paper carries a 50% guessing baseline, not 25%."""
+    from app.services import exam_engine
+
+    assert exam_engine.chance_baseline(_paper(10, options_each=4)) == pytest.approx(0.25)
+    assert exam_engine.chance_baseline(_paper(10, options_each=2)) == pytest.approx(0.50)
+
+    # 60% on a true/false paper is near chance; on a four-option paper it is not.
+    assert exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=2))[1] == exam_engine.INVALID_NEAR_CHANCE
+    assert exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=4)) == (True, None)
+
+
+def test_without_a_paper_the_historical_constants_still_apply():
+    """Callers that cannot supply the paper must behave exactly as before."""
+    from app.services import exam_engine
+
+    assert exam_engine.check_validity(0.90, 900) == (True, None)
+    assert exam_engine.check_validity(0.33, 900)[1] == exam_engine.INVALID_NEAR_CHANCE
+    assert exam_engine.check_validity(0.90, 300)[1] == exam_engine.INVALID_TOO_FAST

@@ -223,11 +223,14 @@ def _load_banks(args: argparse.Namespace) -> None:
             bank = load_bank(db, tenant_id=tenant.id, course_id=course.id, doc=doc)
 
             # Upsert Activity for this chapter bank
-            pass_threshold = {
-                "chapter": 0.0,
-                "mid": 0.60,
-                "final": 0.70,
-            }.get(doc.kind, 0.0)
+            # The bank may set its own pass mark; the per-kind values are the
+            # default for banks that do not. Activity.pass_threshold is a real
+            # column, and hardcoding it here silently reverted anything set
+            # elsewhere on every import.
+            pass_threshold = doc.policy.get(
+                "pass_threshold",
+                {"chapter": 0.0, "mid": 0.60, "final": 0.70}.get(doc.kind, 0.0),
+            )
             title = f"Chapter {doc.chapter} test" if doc.kind == "chapter" else f"{doc.kind.title()} assessment"
             activity = (
                 db.query(Activity)
