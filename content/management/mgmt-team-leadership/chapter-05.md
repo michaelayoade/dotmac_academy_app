@@ -13,6 +13,14 @@ clear roles and rhythms perform; teams held together by improvisation crack.
 This chapter covers leading during a crisis, communicating while it runs, and
 converting the mess into improvement afterwards.
 
+**By the end of this chapter you can:**
+
+- Change what you personally do when a crisis starts.
+- Protect the team's thinking under pressure instead of adding to the noise.
+- Communicate on a rhythm while the situation is still unresolved.
+- Run a blameless review that produces changes rather than blame.
+- Notice the human cost a crisis leaves behind.
+
 FIGURE `MGT-TL-05` *In the storm, the leader's calm is the team's shelter — and the storm ends explicitly.*
 
 ## Your job changes during a crisis
@@ -110,6 +118,22 @@ visibly rebalanced, and thanks that are specific and public. Burnout rarely
 announces itself; it presents as your steadiest person becoming cynical,
 error-prone, or silent. By then you are late. The cheapest intervention is
 noticing early, and the second cheapest is asking.
+
+## Do this at work
+
+1. **Write your crisis role.** Before the next one: what will you personally
+   do, and what will you deliberately not do? Managers who grab a tool are
+   one more pair of hands and one fewer coordinator.
+2. **Set a communication rhythm now.** Decide in advance how often you will
+   update during an incident, even when there is nothing new. Silence gets
+   filled with worse information.
+3. **Name a single decision-maker.** For your most likely failure scenario,
+   decide now who runs it. Choosing under pressure wastes the first hour.
+4. **Run one blameless review.** What happened, what made it possible, what
+   changes. If the output is a person's name, the review has not finished.
+5. **Check the human ledger.** After the last hard stretch, who worked the
+   most unreasonable hours? Say thank you specifically, and give the time
+   back before it becomes resentment.
 
 ## Summary
 
