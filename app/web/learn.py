@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from html.parser import HTMLParser
 from typing import Any
 from uuid import UUID
@@ -19,7 +20,7 @@ from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
 from app.services import catalog as catalog_service
-from app.services import insights, learner_dashboard, learning_events, reading_progress
+from app.services import exam_engine, insights, learner_dashboard, learning_events, reading_progress
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
@@ -56,6 +57,26 @@ class _HeadingExtractor(HTMLParser):
                 self.headings.append({"level": tag, "title": title})
             self._current_tag = None
             self._parts = []
+
+
+def _sitting_view(person, questions: Sequence[Question]) -> list[dict]:
+    """Questions as this learner sees them, with options ordered per learner.
+
+    Until now every learner saw an identical option order, so "the answer is
+    the third one" transferred between them and stayed true — the leak that
+    the entrance exam has always shuffled to prevent. Deterministic in
+    (learner, question), so a reload does not move the options under answers
+    already selected, and safe because answers are submitted by option text.
+    """
+    return [
+        {
+            "ext_id": q.ext_id,
+            "stem": q.stem,
+            "type": q.type,
+            "options": exam_engine.present_options(person, q),
+        }
+        for q in questions
+    ]
 
 
 def _slugify_heading(value: str) -> str:
@@ -459,7 +480,8 @@ def activity(
         qs = sorted((q for q in qs if q.ext_id in order), key=lambda q: order[q.ext_id])
     return templates.TemplateResponse(
         request,
-        "activity.html", {"request": request, "activity": act, "questions": qs}
+        "activity.html",
+        {"request": request, "activity": act, "questions": _sitting_view(person, qs)},
     )
 
 

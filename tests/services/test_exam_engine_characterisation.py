@@ -1,0 +1,144 @@
+"""Pin the exam behaviour that exists today, before it moves into the engine.
+
+The entrance exam is live and ranking real candidates, so the refactor has to
+prove it changed nothing. These tests capture the *current* selection and option
+order for fixed inputs; they are written against the public functions so they
+keep passing after those functions delegate to the engine.
+
+If one of these fails during the refactor, a candidate's paper changed.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.services import entrance_exam
+
+
+class _Q:
+    def __init__(self, ext_id: str, category: str | None = None, options=None):
+        self.ext_id = ext_id
+        self.category = category
+        self.options = options or ["alpha", "bravo", "charlie", "delta"]
+
+
+class _Applicant:
+    def __init__(self, id_: str):
+        self.id = id_
+
+
+BANK = [
+    _Q(f"{cat}-{i:02d}", cat)
+    for cat in ("numeracy", "reading", "safety", "logic", "technical")
+    for i in range(18)
+]
+
+
+@pytest.mark.parametrize("applicant_id", ["cand-alpha", "cand-bravo", "cand-charlie"])
+def test_selection_is_stable_for_a_given_applicant(applicant_id):
+    """A reload or resumed sitting must not redraw the paper."""
+    first = [q.ext_id for q in entrance_exam.sample_for(_Applicant(applicant_id), BANK, 6)]
+    again = [q.ext_id for q in entrance_exam.sample_for(_Applicant(applicant_id), BANK, 6)]
+    assert first == again
+    assert len(first) == 30
+
+
+def test_selection_draws_the_same_shape_for_every_applicant():
+    """Per-category counts are what make two candidates' profiles comparable."""
+    for applicant_id in ("a", "b", "c", "d", "e", "f"):
+        drawn = entrance_exam.sample_for(_Applicant(applicant_id), BANK, 6)
+        counts: dict[str, int] = {}
+        for q in drawn:
+            counts[q.category] = counts.get(q.category, 0) + 1
+        assert counts == {
+            "numeracy": 6, "reading": 6, "safety": 6, "logic": 6, "technical": 6,
+        }
+
+
+def test_selection_differs_between_applicants():
+    """Otherwise the 90-question bank leaks exactly as a fixed 30 would."""
+    a = {q.ext_id for q in entrance_exam.sample_for(_Applicant("cand-alpha"), BANK, 6)}
+    b = {q.ext_id for q in entrance_exam.sample_for(_Applicant("cand-bravo"), BANK, 6)}
+    assert a != b
+
+
+# The exact drawn set for a known applicant. This is the sharpest guard in the
+# file: if the hashing or ordering changes at all, this fails, and a live
+# candidate's paper would have silently changed with it.
+def test_selection_is_byte_stable_against_a_recorded_draw():
+    drawn = [q.ext_id for q in entrance_exam.sample_for(_Applicant("cand-alpha"), BANK, 2)]
+    assert drawn == [
+        "reading-08", "safety-09", "reading-06", "numeracy-00", "logic-08",
+        "numeracy-04", "safety-08", "logic-10", "technical-09", "technical-04",
+    ]
+
+
+def test_option_order_is_stable_per_applicant_and_question():
+    """Answers are posted by option text, but a moving order breaks autosave."""
+    q = _Q("numeracy-00", "numeracy")
+    first = entrance_exam.options_for(_Applicant("cand-alpha"), q)
+    again = entrance_exam.options_for(_Applicant("cand-alpha"), q)
+    assert first == again
+    assert sorted(first) == sorted(q.options)
+
+
+def test_option_order_differs_between_applicants():
+    q = _Q("numeracy-00", "numeracy")
+    orders = {
+        tuple(entrance_exam.options_for(_Applicant(a), q))
+        for a in ("cand-alpha", "cand-bravo", "cand-charlie", "cand-delta")
+    }
+    assert len(orders) > 1
+
+
+def test_option_order_is_byte_stable_against_a_recorded_shuffle():
+    q = _Q("numeracy-00", "numeracy")
+    assert entrance_exam.options_for(_Applicant("cand-alpha"), q) == [
+        "delta", "alpha", "bravo", "charlie",
+    ]
+
+
+def test_validity_gate_thresholds():
+    """Near-chance and too-fast are absence of data, not weak candidates."""
+    assert entrance_exam.check_validity(0.90, 900) == (True, None)
+    assert entrance_exam.check_validity(0.33, 900)[1] == entrance_exam.INVALID_NEAR_CHANCE
+    assert entrance_exam.check_validity(0.90, 60)[1] == entrance_exam.INVALID_TOO_FAST
+    assert entrance_exam.check_validity(0.90, None)[1] == entrance_exam.INVALID_TOO_FAST
+
+
+# --- the engine, used directly -------------------------------------------
+
+def test_course_learners_now_get_a_per_learner_option_order():
+    """The leak this closes: every learner previously saw the same order."""
+    from app.services import exam_engine
+
+    q = _Q("ch01-q1", None)
+    orders = {
+        tuple(exam_engine.present_options(_Applicant(f"learner-{i}"), q))
+        for i in range(8)
+    }
+    assert len(orders) > 1, "all learners still see one order"
+    for order in orders:
+        assert sorted(order) == sorted(q.options), "shuffling must not drop or add an option"
+
+
+def test_flat_selection_draws_the_requested_total():
+    from app.services import exam_engine
+
+    drawn = exam_engine.select(_Applicant("l1"), BANK, exam_engine.SelectionPolicy(total=20))
+    assert len(drawn) == 20
+    assert len({q.ext_id for q in drawn}) == 20
+
+
+def test_selection_policy_refuses_two_conflicting_draws():
+    """per_category and total answer the same question differently."""
+    from app.services import exam_engine
+
+    with pytest.raises(ValueError):
+        exam_engine.SelectionPolicy(per_category=6, total=20)
+
+
+def test_empty_policy_returns_the_whole_bank():
+    from app.services import exam_engine
+
+    assert len(exam_engine.select(_Applicant("l1"), BANK, exam_engine.SelectionPolicy())) == len(BANK)
