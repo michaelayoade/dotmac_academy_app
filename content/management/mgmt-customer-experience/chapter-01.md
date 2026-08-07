@@ -14,6 +14,13 @@ habit of seeing that journey whole, finding where experience is won and lost,
 and understanding why the moments you overlook are usually the ones that
 decide.
 
+**By the end of this chapter you can:**
+
+- Map a customer journey across its touchpoints rather than defending one.
+- Identify the moments of truth that carry disproportionate weight.
+- Treat experience as a system produced by process, not by attitude.
+- Name who owns the journey end to end.
+
 FIGURE `MGT-CX-01` *The journey as the customer sees it: one path, many moments, a single memory.*
 
 ## One journey, many touchpoints
@@ -89,6 +96,20 @@ who cares; in a larger one it's a named responsibility. The test of real
 ownership: when a customer's problem spans three departments, is there one
 person whose job is unambiguously to see it resolved? If the answer is no,
 Chapter 2 is about fixing exactly that.
+
+## Do this at work
+
+1. **Walk one journey yourself.** Buy, enquire, or report a fault as a
+   customer would. What you notice in an hour is usually not in any report.
+2. **List the touchpoints.** Every point where a customer meets your
+   organisation. The ones nobody owns are where the experience fails.
+3. **Find your moments of truth.** Which two or three interactions decide how
+   the whole relationship is remembered? Those deserve disproportionate care.
+4. **Fix one systemic cause.** Take a recurring complaint and ask what
+   process produces it. Training people to apologise better is not a fix.
+5. **Name the journey owner.** If no single person owns the end-to-end
+   experience, the handoffs between departments are nobody's problem — which
+   is precisely where customers feel the damage.
 
 ## Summary
 

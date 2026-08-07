@@ -13,6 +13,14 @@ comparable quotes, comparing those quotes on total cost of ownership rather
 than sticker price, and running the sourcing conversation so that you end
 up with a supplier, not just a discount.
 
+**By the end of this chapter you can:**
+
+- Write a specification before you shop, not after.
+- Build a total-cost-of-ownership comparison over a realistic horizon.
+- Include downtime and residual value, which are usually omitted.
+- Compare quotes that are not offering the same thing.
+- Treat sourcing as a relationship decision, not only a price one.
+
 FIGURE `MGT-VP-02` *The cheapest pile isn't always the cheapest: compare what owning costs, not what buying costs.*
 
 ## The specification: decide before you shop
@@ -66,6 +74,49 @@ The practical tool is a simple side-by-side table over a realistic horizon
 takes an hour, and it routinely reverses the ranking the sticker prices
 suggested.
 
+### Worked example: the cheaper generator that costs 31% more
+
+Two generators, five-year horizon. A is ₦800,000 cheaper to buy.
+
+| | Generator A | Generator B |
+| --- | ---: | ---: |
+| Purchase price | ₦1,800,000 | ₦2,600,000 |
+| Fuel, 5 years @ ₦480k / ₦360k | ₦2,400,000 | ₦1,800,000 |
+| Servicing, 5 years @ ₦120k / ₦90k | ₦600,000 | ₦450,000 |
+| Expected major repair | ₦350,000 | — |
+| Downtime during that repair (3 days @ ₦270,000) | ₦810,000 | — |
+| Residual value at year 5 | (₦150,000) | (₦400,000) |
+| **Five-year total cost of ownership** | **₦5,810,000** | **₦4,450,000** |
+
+**A is ₦800,000 cheaper to buy and ₦1,360,000 more expensive to own — 31%
+more.** The decision that looked obvious at the quote stage is the wrong one,
+and nothing in this table is exotic: fuel, servicing, one predictable repair,
+what it is worth at the end.
+
+Two rows deserve attention because they are the ones routinely left out.
+
+**Downtime is a cost, and usually the largest single one.** The ₦810,000 is
+not money paid to anybody — it is three days of the business not operating,
+using the daily revenue figure from the Project Management course. It never
+appears on an invoice, which is exactly why it never appears in comparisons.
+A supplier with no local parts is selling you longer outages, and that is
+part of their price whether or not they quote it.
+
+**Residual value is real money.** B is worth ₦250,000 more at the end,
+because a machine that was serviced properly and is still in demand sells.
+Ignoring it flatters whatever you are disposing of cheaply.
+
+One honest caution: a TCO table is a forecast, and its inputs are estimates.
+The repair might not happen; fuel prices move; five years might turn out to
+be seven. The discipline is not false precision — it is making the estimates
+**explicit and comparable**, so the argument moves from "A is cheaper" (which
+is true and irrelevant) to "we think A needs one major repair in five years
+and B does not" (which is arguable, checkable, and the actual decision).
+
+If the two totals come out close, that is a finding too: buy on the things
+the table cannot hold — the supplier who answers the phone at 2 a.m., the
+parts that are in Lagos rather than in a container.
+
 ## Comparing quotes without fooling yourself
 
 With comparable quotes in hand, discipline still matters:
@@ -99,6 +150,21 @@ in mirror image: the supplier who trades concessions transparently, quotes
 realistic numbers, and says "no, we can't do that well" is showing you how
 they'll behave when something goes wrong. Take character evidence as
 seriously as price evidence — you'll be living with both.
+
+## Do this at work
+
+1. **Write the spec before the quotes.** For your next purchase, define what
+   it must do before anyone shows you what they sell.
+2. **Build one TCO table.** Purchase, running, maintenance, downtime,
+   residual, over a realistic life. It takes an hour and routinely reverses
+   the ranking.
+3. **Price your downtime.** What does an hour of that thing not working cost
+   the business? Until you know, you cannot compare suppliers properly.
+4. **Normalise three quotes.** Put them on the same scope before comparing.
+   Quotes are rarely offering the same thing, and the cheapest is often the
+   one that left something out.
+5. **Ask where the parts are.** A supplier with no local stock is selling
+   you longer outages, whatever their quote says.
 
 ## Summary
 

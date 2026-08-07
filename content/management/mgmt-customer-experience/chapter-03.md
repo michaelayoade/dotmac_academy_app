@@ -13,6 +13,14 @@ converts good intentions into something a customer can rely on. This chapter
 covers setting commitments deliberately, keeping them honestly, and
 recovering well when you fail, which you sometimes will.
 
+**By the end of this chapter you can:**
+
+- Set promises you can keep rather than promises that win the moment.
+- Keep the promise visible to the customer without them chasing.
+- Recover a failure so the relationship survives it.
+- Price a goodwill gesture against lifetime value.
+- Say when generosity has become rent paid to avoid a fix.
+
 FIGURE `MGT-CX-03` *A commitment is what you do when it rains — recovery is part of the promise.*
 
 ## Promise deliberately, not optimistically
@@ -91,13 +99,58 @@ failure becomes the other kind of story, told more often and louder. In
 subscription and repeat-purchase businesses especially, the credit that
 feels expensive today is trivial against the lifetime value it protects.
 
-Two honest limits. First, recovery generosity must not become an incentive
-to complain performatively — proportion, records, and pattern-awareness
-(the same customer, every month) keep it sane. Second, a business
-*constantly* buying its way out of the same failure is not doing service
-recovery; it's renting patience while refusing to fix the defect. Recovery
-handles the exception. When the miss is the rule, the fix is operational,
-and no voucher volume substitutes.
+### Worked example: pricing a goodwill credit
+
+A customer on the ₦16,200 subscription from the Finance course suffers a
+three-day outage. They ask for compensation. The service manager, guarding
+the monthly margin of ₦8,200, offers a ₦1,600 credit — three days' pro rata,
+technically correct and visibly grudging.
+
+Put the two options beside the thing they actually affect:
+
+| | Grudging credit | Generous recovery |
+| --- | ---: | ---: |
+| Credit given | ₦1,600 | ₦8,100 (half a month) |
+| Cost this month | ₦1,600 | ₦8,100 |
+| **Lifetime value at risk** | **₦164,000** | **₦164,000** |
+| Extra cost of the generous option | | **₦6,500** |
+
+The difference between the two gestures is **₦6,500 — about 4% of what the
+customer is worth over their 20-month lifespan.** And it is spent at the
+exact moment the customer is deciding which kind of story to tell about you.
+
+Now the acquisition side. Replacing that customer costs a full acquisition
+effort — at the Sales course's ratio, roughly seventeen conversations. The
+recovery costs one phone call and ₦6,500. A manager who declines the ₦6,500
+to protect this month's margin has, in expectation, spent far more than they
+saved, and has done it invisibly, which is why the decision keeps getting
+made that way.
+
+Two limits, and they are real. **This arithmetic only works on the
+exception.** Run the same numbers on a business with a recurring failure and
+generosity becomes a subscription to a defect: ₦8,100 a month, indefinitely,
+against a fix that might cost ₦200,000 once. When the miss is the rule, the
+credit is not recovery — it is rent paid to avoid an operational decision.
+
+And **the arithmetic must not become an incentive to complain**. A customer
+whose every month contains a claim is not being recovered; they are being
+farmed. Proportion, records, and pattern-awareness keep the policy sane —
+which is a reason to record recovery decisions, not merely to make them.
+
+## Do this at work
+
+1. **Find one promise you routinely miss.** Change the promise, not the
+   apology. A date you keep 95% of the time beats a date that wins the sale.
+2. **Make one status visible.** Where customers currently chase you for
+   progress, publish it instead. Chasing is effort, and effort predicts
+   leaving.
+3. **Price one recovery.** Take a recent goodwill decision and compare the
+   gesture to the customer's lifetime value. The ratio is usually startling.
+4. **Check for rented patience.** Find a failure you compensate for
+   repeatedly. Cost a year of those credits against fixing the cause once.
+5. **Give one frontline recovery budget.** A defined amount staff may spend
+   to fix things on the spot, without asking. Then review how it was used
+   rather than approving each case.
 
 ## Summary
 

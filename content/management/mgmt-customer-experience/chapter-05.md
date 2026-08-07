@@ -13,6 +13,14 @@ measurement toolkit: the standard metrics and what each actually tells you,
 the complaint analytics you already own, and the discipline that separates
 measurement from wallpaper — closing the loop.
 
+**By the end of this chapter you can:**
+
+- Choose between CSAT, NPS and effort for the question you actually have.
+- Publish a response rate beside every score.
+- Use the operational data you already own as experience measurement.
+- Close the loop with the individual customer and with the process.
+- Recognise a measurement that has been gamed.
+
 FIGURE `MGT-CX-05` *Measurement is a loop, not a dial: signals in, action out, back to the customer.*
 
 ## The standard gauges
@@ -45,6 +53,40 @@ a thermometer; the verbatims are the diagnosis. And **never weaponise the
 scores against individual staff** by default — the fastest way to corrupt
 a metric is to make someone's salary depend on begging customers for tens,
 and begged scores measure begging, not experience.
+
+Side by side, so you can pick rather than collect all three by default:
+
+| | CSAT | NPS | Customer effort |
+| --- | --- | --- | --- |
+| Asks | "How satisfied were you with X?" | "How likely are you to recommend us?" | "How easy did we make it?" |
+| About | One interaction | The whole relationship | One interaction |
+| When | Immediately after the event | Periodically | Immediately after the event |
+| Best for | Diagnosing a specific process | Tracking relationship trend | Predicting who will leave |
+| Blind to | The relationship beyond this event | Which process caused the score | Whether the outcome was right |
+| Fails when | Asked too late to recall | Asked of the wrong sample, or read as a number rather than a trend | Treated as a satisfaction score |
+
+The practical shape for most businesses is **effort or CSAT after
+interactions that matter, plus NPS on a slow cycle for trend** — not all
+three, everywhere, forever.
+
+### The response rate belongs beside the score
+
+One number makes or breaks all three, and it is almost never published: how
+many people answered.
+
+| | Team A | Team B |
+| --- | ---: | ---: |
+| Average score | **4.8** | 4.3 |
+| Responses | 6% of customers | 61% of customers |
+
+Team A's 4.8 is the opinion of the few percent motivated enough to reply,
+which skews to the delighted and the furious. Team B's 4.3 is close to what
+its customers actually think. Reported as bare scores, A wins a comparison it
+should lose, and the manager who quietly stopped chasing responses has been
+rewarded for it.
+
+**Publish the response rate next to every score, always.** It costs one extra
+column and it is the difference between a measurement and a decoration.
 
 ## The measurements you already own
 
@@ -106,6 +148,23 @@ metrics low-stakes for individuals and high-stakes for *decisions*. The
 Managing with Data course returns to this at length; for experience metrics
 the rule is simple: the customer's actual experience is the referee, and
 any number that drifts from it has stopped being information.
+
+## Do this at work
+
+1. **Add the response rate column.** To every experience score your
+   organisation publishes. It is one column and it changes what the numbers
+   mean.
+2. **Pick the right gauge for one question.** If you want to fix a process,
+   effort or CSAT after the event beats an annual relationship score.
+3. **Read fifty verbatims.** The score is a thermometer; the comments are
+   the diagnosis. Most organisations collect them and nobody reads them.
+4. **Use data you already have.** Repeat contacts, cancellations, time to
+   resolve, failed first visits. No survey required, and no response bias.
+5. **Close one loop both ways.** Go back to a customer who complained, and
+   change the process that caused it. Doing only the first is politeness;
+   doing both is management.
+6. **Look for begged scores.** If anyone's pay depends on a rating, you are
+   measuring begging. Check before trusting the trend.
 
 ## Summary
 

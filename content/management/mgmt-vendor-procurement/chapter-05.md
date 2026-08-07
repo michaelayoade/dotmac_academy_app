@@ -14,6 +14,13 @@ escalation that fixes problems without burning bridges, and the strategic
 calls — consolidate, diversify, or switch — that shape your supply base
 over years.
 
+**By the end of this chapter you can:**
+
+- Turn impressions of a supplier into a scorecard of facts.
+- Escalate a failing supplier professionally and early.
+- Decide when to consolidate, diversify, or switch.
+- Keep the relationship honest without making it adversarial.
+
 FIGURE `MGT-VP-05` *Tend the strong, prune the weak: a supplier base is a garden, not a lottery.*
 
 ## The scorecard: impressions become facts
@@ -107,6 +114,21 @@ corners you can't see. And keep the relationship institutional, not
 personal: records, reviews, and files that survive any individual's
 departure, so the knowledge belongs to the business — which is, in the
 end, this whole course in one sentence.
+
+## Do this at work
+
+1. **Score one supplier on facts.** On-time rate, quality issues, responsiveness,
+   price movement. Impressions are how bad suppliers survive good reputations.
+2. **Take the scorecard to the review.** A conversation about recorded
+   performance goes differently from one about how you feel it has been.
+3. **Escalate one drift early.** Specifics, a date, and what needs to change.
+   Suppliers rarely recover after the relationship sours; they often recover
+   after an early, unemotional conversation.
+4. **Check your single points of failure.** Which suppliers could stop you
+   operating? That list is a risk register, and it should be short and
+   deliberate.
+5. **Review one consolidation.** Fewer suppliers means better prices and more
+   exposure. Say which trade you are making rather than drifting into it.
 
 ## Summary
 
