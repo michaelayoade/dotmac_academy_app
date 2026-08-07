@@ -12,6 +12,16 @@ does. This chapter covers the universal mechanics — benefits over features,
 tailoring, proposals that get answered, and handling the price conversation
 with confidence instead of apology.
 
+**By the end of this chapter you can:**
+
+- Translate a feature into the benefit the buyer actually described wanting.
+- Build a proposal around the criteria discovery uncovered, not around your
+  product's structure.
+- State a price without apologising, framed against the real alternative.
+- Compute what any discount costs in margin, and the extra volume it
+  demands.
+- Offer something other than price when price is pushed.
+
 FIGURE `MGT-SF-03` *Price feels heavy only until the value side of the scale is loaded.*
 
 ## Features tell, benefits sell
@@ -85,6 +95,48 @@ universals:
   the point here is that the correct response is a question, not an
   immediate discount.
 
+## Worked example: what a discount actually costs
+
+A seller is asked for "just 10% off" on a ₦16,200 deal. It sounds like
+giving away a tenth. It is not — the discount comes out of the *margin*, not
+the price, and the margin is the smaller number.
+
+Using the Finance course's customer: price ₦16,200, variable cost ₦8,000, so
+margin ₦8,200.
+
+| Discount | New price | New margin | Margin lost | Extra volume to stand still |
+| ---: | ---: | ---: | ---: | ---: |
+| 0% | ₦16,200 | ₦8,200 | — | — |
+| 5% | ₦15,390 | ₦7,390 | −10% | **+11%** |
+| 10% | ₦14,580 | ₦6,580 | −20% | **+25%** |
+| 15% | ₦13,770 | ₦5,770 | −30% | **+42%** |
+
+Ten percent off the price is **twenty percent off the profit**, and it takes
+a quarter more volume just to end up where you started. A seller who
+discounts 10% across their year has to sell 25% more to earn the same — which
+is roughly a working day a week, given away at the moment of least
+resistance.
+
+The general shape, for any margin:
+
+| Your gross margin | 5% off | 10% off | 15% off | 20% off |
+| ---: | ---: | ---: | ---: | ---: |
+| 30% | +20% | +50% | +100% | +200% |
+| 40% | +14% | +33% | +60% | +100% |
+| 50% | +11% | +25% | +43% | +67% |
+
+Read the bottom-left against the top-right. On a 30% margin, a 20% discount
+requires **triple** the volume; on a 50% margin, the same discount needs
+two-thirds more. The thinner your margin, the more violent the arithmetic —
+which is exactly backwards from how discounting instinct works, since
+thin-margin businesses feel the most price pressure.
+
+None of this says never discount. It says know the number before you offer
+it, and reach for the alternatives first: a smaller scope at the lower price,
+a longer commitment, faster payment, a reference, a bundled extra that costs
+you less than the discount would. Chapter 4 makes trading rather than giving
+the central negotiation skill; this table is why it matters.
+
 ## Honesty scales
 
 One more universal, easily lost in the craft of persuasion: **never
@@ -94,6 +146,28 @@ word of mouth — and in the age of reviews, one oversold sale can cost ten
 future ones. Underclaim slightly and overdeliver: it converts buyers into
 the referring, returning kind that Chapter 5 shows are the cheapest revenue
 you will ever get.
+
+## Do this at work
+
+1. **Rewrite three features as benefits.** Take your product sheet and, for
+   each feature, write "which means you can ___". If the blank will not
+   fill, the feature does not belong in a proposal.
+2. **Audit one proposal against discovery.** Find a recent proposal and mark
+   every section that answers something the buyer actually said. The
+   unmarked sections are yours, not theirs.
+3. **Compute your own discount table.** Take your gross margin and work out
+   the extra volume needed at 5, 10 and 15% off. Carry it with you — the
+   arithmetic is unmemorable and the number is decisive.
+4. **Price one deal against the alternative.** For a live opportunity, write
+   what the problem costs the buyer per month if nothing changes. That
+   figure, not your price list, is the frame.
+5. **List five things you can trade instead of price.** Scope, timing,
+   payment terms, commitment length, references, bundled extras. Have them
+   ready before you are asked, because inventing them under pressure is how
+   discounts get granted.
+6. **Find one oversell.** Look for a claim your team makes that delivery
+   struggles to meet. That gap is a future complaint, a refund, or a
+   review — and it is cheaper to fix in the pitch than after the sale.
 
 ## Summary
 

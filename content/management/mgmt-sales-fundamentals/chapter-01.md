@@ -14,6 +14,18 @@ visit), but the principles underneath are the same everywhere, and this course
 teaches those. Where examples are needed we'll draw from several settings;
 translate freely into your own.
 
+**By the end of this chapter you can:**
+
+- Describe a sale as problem-solving rather than persuasion, and say why
+  that distinction is practical rather than moral.
+- Name the seven stages and diagnose which one a stalled deal actually
+  stopped at.
+- Build a pipeline funnel from your own numbers and compute the conversion
+  at each stage.
+- Say how many conversations a sales target requires — and choose between
+  more volume and better conversion.
+- Read two sellers with identical results and prescribe different fixes.
+
 FIGURE `MGT-SF-01` *The pipeline: many conversations in, predictable sales out.*
 
 ## Selling is problem-solving
@@ -76,6 +88,54 @@ Three consequences every seller must internalise:
   big deal, stop prospecting to deliver it, and hit a drought two months
   later. Prospecting is a fixed habit, not a response to emptiness.
 
+## Worked example: what a target actually costs in conversations
+
+A seller closed 12 deals last month. Here is the funnel that produced them:
+
+| Stage | Count | Survived from previous stage |
+| --- | ---: | ---: |
+| Conversations started | 200 | — |
+| Qualified | 100 | 50% |
+| Discovery completed | 60 | 60% |
+| Proposals issued | 36 | 60% |
+| **Sales closed** | **12** | **33%** |
+
+Overall, **6%** of conversations became sales — so one sale costs roughly 17
+conversations at this seller's current skill. That single ratio converts any
+target into a workload, which is the first genuinely useful thing a pipeline
+tells you.
+
+Now the target rises to 18. There are two honest routes:
+
+| Route | What changes | What it requires |
+| --- | --- | --- |
+| **More volume** | 200 → **300** conversations | 50% more prospecting, same skill |
+| **Better conversion** | Close rate 33% → **50%** | Same 200 conversations, better proposals |
+
+Both deliver 18. They are not equally available: prospecting is a habit you
+can start on Monday, while a 17-point improvement in close rate is months of
+craft. But the comparison is the point — *a seventeen-point gain at one stage
+is worth fifty percent more effort at the top*, and most sellers reach for the
+effort because it is the one they know how to increase.
+
+### Two sellers, same result, opposite prescriptions
+
+| | Seller A | Seller B |
+| --- | ---: | ---: |
+| Conversations started | 200 | 80 |
+| Sales closed | 12 | 12 |
+| Conversion | 6% | **15%** |
+
+Identical results, and a manager who looks only at closes sees identical
+sellers. But A is working two and a half times as hard for the same output —
+A's fix is qualification and discovery, because most of that effort is being
+spent on people who were never going to buy. B is genuinely good at selling
+and simply is not talking to enough people; B could add half again to output
+without getting one bit better at the craft.
+
+Coach them the same way and you will waste both. This is why the funnel gets
+measured stage by stage rather than only at the end.
+
 ## Effort goes where probability lives
 
 Time is a seller's only real inventory, and the pipeline view tells you where
@@ -95,6 +155,29 @@ that model won't do what you need" — compound into the only durable
 advantage in selling. Every technique in this course works *through* trust
 and fails without it.
 
+## Do this at work
+
+1. **Build your own funnel.** Count last month's conversations started,
+   qualified, discoveries done, proposals issued, and deals closed. Five
+   numbers. Most sellers have never written them down.
+2. **Compute your cost per sale in conversations.** Divide conversations by
+   closes. That number turns any target you are given into a weekly
+   prospecting workload — and it is the number to quote when a target
+   arrives without extra time attached.
+3. **Find your worst stage.** Which conversion is lowest relative to what
+   you would expect? That is where coaching pays, and it is usually earlier
+   than the stage where deals visibly die.
+4. **Diagnose one stalled deal properly.** Take a deal that "went quiet at
+   the close" and trace back to the stage that actually failed. Ask whether
+   discovery ever happened, or whether the proposal answered a question the
+   buyer never asked.
+5. **Compare two colleagues.** If two sellers close the same number, compare
+   their conversation counts. Same output from very different effort means
+   they need opposite coaching.
+6. **Check your prospecting rhythm.** Look at the weeks you started fewest
+   conversations. Then look at your closes two months later. The drought
+   was not sudden.
+
 ## Summary
 
 - Selling is helping a buyer make a good decision at a profit; understand
@@ -104,6 +187,9 @@ and fails without it.
   skipped early stages.
 - Results are a pipeline: top-of-funnel activity you control, stage
   conversions you can measure and improve, and feeding it is a habit.
+- Measure the funnel stage by stage, not only at the end: two sellers
+  closing the same number from 200 and 80 conversations need opposite
+  coaching, and the closes alone make them look identical.
 - Spend effort where probability lives; qualify hard and drop dead deals
   deliberately.
 - Trust — demonstrated understanding plus believable claims — is the
