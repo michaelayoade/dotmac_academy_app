@@ -30,8 +30,7 @@ from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.track import Track
 from app.services import announcements as ann_svc
-from app.services import attempt_policy
-from app.services import scheduling
+from app.services import attempt_policy, scheduling
 from app.services import tracks as track_svc
 from app.services.account_invitations import CohortAssignment, invite_and_enroll
 from app.services.analytics import item_analysis
