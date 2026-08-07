@@ -31,10 +31,20 @@ import random
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-# A sitting at or below this fraction is indistinguishable from clicking at
-# random on a four-option paper, and one faster than this was not engaged with.
-# Neither is a weak candidate; both are an ABSENCE OF DATA, and scoring them as
-# genuine low results pollutes whatever ranking or gradebook consumes them.
+# A sitting near the guessing baseline, or faster than anyone could read the
+# paper, is not a weak candidate — it is an ABSENCE OF DATA, and scoring it as
+# a genuine low result pollutes whatever ranking or gradebook consumes it.
+#
+# Both floors are DERIVED from the paper rather than fixed, because both depend
+# on it. The old constants encoded "four options" and "30 questions" in their
+# comments and then stopped tracking either: once the entrance paper size became
+# configurable, a 60-question sitting was still gated at six minutes. A setting
+# would not have fixed that — it would only have added a second value to drift.
+SECONDS_PER_QUESTION = 12.0  # faster than this is not reading the question
+NEAR_CHANCE_MARGIN = 1.33  # the gate sits this far above the paper's own chance
+
+# Fallbacks for callers that cannot supply the paper. They encode the historical
+# assumption — 30 four-option questions — and are what those callers already got.
 MIN_VALID_FRACTION = 1.0 / 3.0
 MIN_DURATION_SECONDS = 6 * 60
 
@@ -153,10 +163,50 @@ def present_options(sitter: Sitter, question: Question) -> list[str]:
     return opts
 
 
-def check_validity(fraction: float, duration_seconds: float | None) -> tuple[bool, str | None]:
-    """Is this sitting real signal, or an absence of data?"""
-    if fraction <= MIN_VALID_FRACTION + 1e-9:
+def chance_baseline(questions: list) -> float:
+    """The score guessing would produce on *this* paper.
+
+    Averaged over the questions that actually offer options, so a paper with
+    true/false items reports the ~50% it really carries rather than the 25% a
+    four-option assumption would claim.
+    """
+    per_question = []
+    for q in questions:
+        opts = getattr(q, "options", None)
+        if isinstance(opts, list) and len(opts) >= 2:
+            per_question.append(1.0 / len(opts))
+    if not per_question:
+        return MIN_VALID_FRACTION / NEAR_CHANCE_MARGIN
+    return sum(per_question) / len(per_question)
+
+
+def near_chance_floor(questions: list) -> float:
+    """Scores at or below this are indistinguishable from guessing."""
+    return chance_baseline(questions) * NEAR_CHANCE_MARGIN
+
+
+def duration_floor(questions: list) -> float:
+    """The fastest a sitting could plausibly have been read."""
+    return len(questions) * SECONDS_PER_QUESTION
+
+
+def check_validity(
+    fraction: float,
+    duration_seconds: float | None,
+    *,
+    questions: list | None = None,
+) -> tuple[bool, str | None]:
+    """Is this sitting real signal, or an absence of data?
+
+    Pass ``questions`` — the paper actually served — and both floors follow from
+    it. Without them the historical constants apply, which is what every caller
+    got before the floors were derived.
+    """
+    score_floor = near_chance_floor(questions) if questions else MIN_VALID_FRACTION
+    time_floor = duration_floor(questions) if questions else MIN_DURATION_SECONDS
+
+    if fraction <= score_floor + 1e-9:
         return False, INVALID_NEAR_CHANCE
-    if duration_seconds is None or duration_seconds < MIN_DURATION_SECONDS:
+    if duration_seconds is None or duration_seconds < time_floor:
         return False, INVALID_TOO_FAST
     return True, None

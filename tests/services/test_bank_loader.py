@@ -180,3 +180,19 @@ def test_lint_reports_a_mapping_shaped_option_instead_of_crashing():
     violations = lint_bank(doc)          # must not raise
     assert any("option is not text" in v for v in violations)
     assert any("YAML mapping" in v for v in violations)
+
+def test_lint_accepts_a_declared_pass_threshold():
+    doc = parse_bank(FX)
+    doc.policy = {"pass_threshold": 0.65}
+    assert not any("pass_threshold" in v for v in lint_bank(doc))
+
+def test_lint_rejects_a_pass_threshold_outside_zero_to_one():
+    """A pass mark is a fraction; 70 means 7000%, and would pass nobody."""
+    doc = parse_bank(FX)
+    doc.policy = {"pass_threshold": 70}
+    assert any("fraction between 0 and 1" in v for v in lint_bank(doc))
+
+def test_lint_rejects_a_non_numeric_pass_threshold():
+    doc = parse_bank(FX)
+    doc.policy = {"pass_threshold": "high"}
+    assert any("must be a number" in v for v in lint_bank(doc))

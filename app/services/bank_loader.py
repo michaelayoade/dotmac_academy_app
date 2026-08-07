@@ -73,7 +73,7 @@ def _policy_violations(doc: BankDoc) -> list[str]:
     """Validate a declared assessment policy against the bank it applies to."""
     out: list[str] = []
     policy = doc.policy
-    unknown = set(policy) - {"pool", "max_attempts", "mode"}
+    unknown = set(policy) - {"pool", "max_attempts", "mode", "pass_threshold"}
     if unknown:
         out.append(f"policy: unknown key(s) {', '.join(sorted(unknown))}")
 
@@ -92,6 +92,15 @@ def _policy_violations(doc: BankDoc) -> list[str]:
     attempts = policy.get("max_attempts")
     if attempts is not None and (not isinstance(attempts, int) or attempts < 1):
         out.append(f"policy: max_attempts must be a positive integer, got {attempts!r}")
+
+    threshold = policy.get("pass_threshold")
+    if threshold is not None:
+        if not isinstance(threshold, int | float) or isinstance(threshold, bool):
+            out.append(f"policy: pass_threshold must be a number, got {threshold!r}")
+        elif not 0.0 <= float(threshold) <= 1.0:
+            out.append(
+                f"policy: pass_threshold is a fraction between 0 and 1, got {threshold!r}"
+            )
 
     mode = policy.get("mode")
     if mode is not None and mode not in _ASSESSMENT_MODES:
