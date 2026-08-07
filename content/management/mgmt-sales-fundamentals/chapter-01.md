@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "How Selling Works"
-part: ""
+part: "The Buyer"
 ---
 
 # How Selling Works

@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Complaint Lifecycle & Ownership"
-part: ""
+part: "The Journey"
 ---
 
 # Complaint Lifecycle & Ownership

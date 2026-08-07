@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Consumer Rights & Compliance"
-part: ""
+part: "The Promise"
 ---
 
 # Consumer Rights & Compliance

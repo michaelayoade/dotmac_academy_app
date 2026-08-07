@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Structured Decision Frameworks"
-part: ""
+part: "Structured Methods"
 ---
 
 # Structured Decision Frameworks

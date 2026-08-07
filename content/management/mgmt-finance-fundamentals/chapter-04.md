@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Billing, Collections & Cash Flow"
-part: ""
+part: "The Flows"
 ---
 
 # Billing, Collections & Cash Flow

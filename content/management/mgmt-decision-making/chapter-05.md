@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Group Decisions & Buy-In"
-part: ""
+part: "Under Uncertainty"
 ---
 
 # Group Decisions & Buy-In

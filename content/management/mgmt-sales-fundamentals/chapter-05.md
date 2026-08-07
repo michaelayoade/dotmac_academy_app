@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Closing & Follow-Through"
-part: ""
+part: "The Follow-Through"
 ---
 
 # Closing & Follow-Through

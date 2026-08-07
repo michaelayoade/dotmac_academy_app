@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Sourcing & Quotations"
-part: ""
+part: "Buying Well"
 ---
 
 # Sourcing & Quotations

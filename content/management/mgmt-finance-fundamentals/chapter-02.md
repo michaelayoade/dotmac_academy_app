@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Unit Economics"
-part: "Function"
+part: "The Machine"
 ---
 
 # Unit Economics

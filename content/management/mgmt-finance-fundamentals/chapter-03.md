@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Customer Retention Economics"
-part: ""
+part: "The Flows"
 ---
 
 # Customer Retention Economics

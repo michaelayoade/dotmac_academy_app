@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Understanding the Customer"
-part: ""
+part: "The Buyer"
 ---
 
 # Understanding the Customer

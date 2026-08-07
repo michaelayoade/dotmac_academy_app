@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "Communicating as a Manager"
-part: ""
+part: "Foundations"
 ---
 
 # Communicating as a Manager

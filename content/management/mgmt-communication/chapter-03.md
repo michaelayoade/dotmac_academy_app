@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Briefing Up"
-part: ""
+part: "In Writing"
 ---
 
 # Briefing Up

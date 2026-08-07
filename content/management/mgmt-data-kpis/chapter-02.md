@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Choosing the Right KPIs"
-part: ""
+part: "Choosing Measures"
 ---
 
 # Choosing the Right KPIs

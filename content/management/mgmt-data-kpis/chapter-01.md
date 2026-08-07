@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "Why Measure"
-part: ""
+part: "Choosing Measures"
 ---
 
 # Why Measure

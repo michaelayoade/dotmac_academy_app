@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Contracts & Supplier SLAs"
-part: ""
+part: "Buying Well"
 ---
 
 # Contracts & Supplier SLAs

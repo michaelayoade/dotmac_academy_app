@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Stakeholders & Approvals"
-part: ""
+part: "Running It"
 ---
 
 # Stakeholders & Approvals

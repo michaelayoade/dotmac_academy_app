@@ -1,7 +1,7 @@
 ---
 chapter: 6
 title: "Closeout & Handover"
-part: ""
+part: "Finishing"
 ---
 
 # Closeout & Handover

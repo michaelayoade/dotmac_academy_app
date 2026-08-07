@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Coaching & Performance"
-part: ""
+part: "The People"
 ---
 
 # Coaching & Performance

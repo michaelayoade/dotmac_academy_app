@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Deciding Under Uncertainty"
-part: ""
+part: "Under Uncertainty"
 ---
 
 # Deciding Under Uncertainty

@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Receiving, Inventory & Asset Custody"
-part: ""
+part: "Keeping Control"
 ---
 
 # Receiving, Inventory & Asset Custody

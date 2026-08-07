@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Managing Suppliers & Quality"
-part: ""
+part: "Running It"
 ---
 
 # Managing Suppliers & Quality

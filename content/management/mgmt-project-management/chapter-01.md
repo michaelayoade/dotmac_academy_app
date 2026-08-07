@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "What Makes a Project"
-part: ""
+part: "Setting Up"
 ---
 
 # What Makes a Project

@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Objections & Negotiation"
-part: ""
+part: "The Case"
 ---
 
 # Objections & Negotiation

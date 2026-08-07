@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Planning the Work"
-part: ""
+part: "Setting Up"
 ---
 
 # Planning the Work

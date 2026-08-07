@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "How Decisions Go Wrong"
-part: ""
+part: "How Judgement Fails"
 ---
 
 # How Decisions Go Wrong

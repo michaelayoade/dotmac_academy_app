@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "The Customer Journey"
-part: ""
+part: "The Journey"
 ---
 
 # The Customer Journey
