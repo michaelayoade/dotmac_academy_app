@@ -14,6 +14,15 @@ the right message shaped for the wrong audience, sent through the wrong
 channel, or never sent at all. This chapter builds the manager's habit of
 choosing audience, message, and channel deliberately.
 
+**By the end of this chapter you can:**
+
+- Start from what the audience needs rather than what you want to say.
+- Adapt to the three directions — up, down, sideways — and their different
+  disciplines.
+- Choose a channel deliberately, and say why written or spoken fits.
+- Recognise that you now speak for the team, not only for yourself.
+- Read silence as the message it is.
+
 FIGURE `MGT-CM-01` *Three audiences, three shapes: the same fact travels up, down, and sideways differently.*
 
 ## Start from the audience, not the message
@@ -101,6 +110,28 @@ The compound move for anything important: **say it, then write it.** The
 conversation carries the meaning; the written follow-up ("as discussed:
 X by Friday, you'll handle Y") carries the record.
 
+As a decision table, when you are not sure which to reach for:
+
+| The message is… | Channel | Why |
+| --- | --- | --- |
+| Sensitive, personal, or likely to be misread | Spoken, privately — then a short written note | Tone survives; the record follows |
+| Binding: money, dates, scope, commitments | Written, always | Spoken agreements about these do not exist |
+| A simple fact people need to know | Written, once, where they look | A meeting for this wastes everyone's hour |
+| Complex and needs pushback to get right | Spoken, with the document sent first | Reading time before discussion doubles its value |
+| Bad news | Spoken, early, to those affected first | Hearing it second-hand is a separate injury |
+| Routine coordination | Written, in the shared place | Keeps the record where the next person will look |
+| Recognition | Spoken, in front of people who matter to them | Written praise is pleasant; public praise compounds |
+
+The row that costs organisations most is the fourth. Sending a complex
+document *with* the meeting invitation, rather than presenting it live,
+converts an hour of people reading silently at you into an hour of people
+arguing with what they already understand. It also surfaces the objection
+that would otherwise arrive a week later.
+
+The row people get wrong most often is the first. The instinct under
+discomfort is to write, because writing avoids the reaction — and writing is
+precisely what strips the tone that would have made it survivable.
+
 ## Silence is also a message
 
 Whatever you don't address, the team reads anyway — usually less
@@ -111,6 +142,20 @@ of communicating; you can only choose whether the message is deliberate.
 When something is genuinely confidential, say *that* — "there's a decision
 coming I can't discuss yet; you'll hear it first from me" beats silence,
 because it replaces speculation with a promise you can keep.
+
+## Do this at work
+
+1. **Rewrite one message for its reader.** Take something you sent recently
+   and rewrite it starting from what that person needed to know or do.
+2. **Check your last sensitive message.** Was it written because writing was
+   right, or because writing avoided the reaction? The instinct under
+   discomfort is to type.
+3. **Say it, then write it.** For your next important conversation, follow up
+   within the hour with two lines: what was agreed, by when.
+4. **Find one thing you posted and assumed was delivered.** Broadcast is
+   awareness, not acknowledgement. Confirm individually where it mattered.
+5. **Audit your silences.** Where has your team heard nothing for a while?
+   That gap is being filled with a story, and it is rarely a generous one.
 
 ## Summary
 

@@ -14,6 +14,15 @@ three things: compression without distortion, recommendations instead of
 option-dumps, and answering the question that was actually asked. This
 chapter covers all three.
 
+**By the end of this chapter you can:**
+
+- Structure upward communication as a pyramid: conclusion first, detail
+  underneath.
+- Bring a recommendation rather than a menu of options.
+- Answer the question that was actually asked.
+- Deliver bad news early, with a plan attached.
+- Frame your message in terms of what your reader is accountable for.
+
 FIGURE `MGT-CM-03` *Briefing up is a pyramid: the glowing top travels alone; the base stands ready underneath.*
 
 ## The pyramid: summary on top, detail underneath
@@ -108,6 +117,20 @@ weeks of Chidi's time, which pushes X — worth it because Y"). The
 finance course's vocabulary — margin, payback, cash timing — is much of
 this translation. You don't need to speak like a director; you need your
 facts to arrive pre-fitted to the decisions they feed.
+
+## Do this at work
+
+1. **Put the conclusion first.** Take your next upward report and move the
+   answer to the top. Everything else becomes support.
+2. **Add your recommendation.** Where you have presented options, say which
+   one you would choose and why. A menu asks your manager to do your
+   thinking.
+3. **Deliver one piece of bad news early.** Something you are hoping resolves
+   itself. Raise it this week with what you propose to do about it.
+4. **Answer the actual question.** Re-read a recent reply and check whether
+   you answered what was asked or what you wanted to discuss.
+5. **Learn one thing about their world.** What is your manager measured on
+   this quarter? Frame your next request in those terms.
 
 ## Summary
 

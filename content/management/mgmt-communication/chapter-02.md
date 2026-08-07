@@ -15,6 +15,14 @@ length, structure the reader can raid. This chapter covers those mechanics
 for the reports managers actually write — status updates, operational
 reports, incident summaries, and proposals.
 
+**By the end of this chapter you can:**
+
+- Lead with the outcome instead of the chronology.
+- Use the three standard skeletons for status, incident and proposal.
+- Label a request so it cannot be skimmed past.
+- Write for the reader who will forward it without context.
+- Make your message easy to answer.
+
 FIGURE `MGT-CM-02` *The page that leads with the outcome gets read; the stack that buries it gets skimmed.*
 
 ## Lead with the outcome
@@ -59,6 +67,61 @@ skeleton worth memorising:
   recommendation first, then problem, options, costs, returns, risks.
   One page wherever possible — a proposal that can't summarise itself on
   one page usually isn't ready.
+
+### Worked example: the same update, buried and led
+
+A real status update, written the way most are:
+
+> Hi all — hope the week is going well. Following on from the site visit on
+> Tuesday, the team completed the survey work and we've been working through
+> the readings with the contractor. There were a few complications with
+> access on the north side which took longer than expected, and we've also
+> been chasing the supplier about the delivery schedule. Amaka has done a
+> great job keeping the documentation up to date throughout. On the timeline,
+> we're still hopeful about the end of the month, although this does depend
+> on whether we can get the revised permit signed off, and it would be
+> helpful to know if anyone can assist with that as the office has not
+> responded to two emails.
+
+Everything a reader needs is in there. The problem is *where*: the project is
+at risk, and the sentence saying so is the second-to-last clause of a
+paragraph, after the thanks and the survey detail. A busy reader stops at
+"hope the week is going well" and files it as fine.
+
+The same content, led:
+
+> **Status: AT RISK.** End-of-month delivery depends on a permit that has not
+> been signed off.
+>
+> **What I need:** someone with a contact in the permits office. Two emails
+> unanswered since the 4th. If it is not moving by Friday the date slips by
+> about two weeks.
+>
+> **Done:** site survey complete; readings reconciled with the contractor.
+> **Next:** finalise the cable schedule; confirm the delivery date.
+> **Note:** north-side access took three days longer than planned — worth
+> allowing for on the next site. Amaka's documentation has been consistently
+> good.
+
+Same facts, same length, roughly. Three differences that matter:
+
+| | Buried version | Led version |
+| --- | --- | --- |
+| Time to learn the project is at risk | Read the whole paragraph | First three words |
+| The request for help | A clause near the end | Its own labelled block, with a date and a consequence |
+| What a skim-reader takes away | "Things are progressing" | "At risk, needs a permit contact" |
+
+The buried version is not badly written — it is written in the order the
+author *experienced* the week. The led version is written in the order the
+reader needs it, which is almost always the reverse: **conclusion, request,
+then supporting detail.**
+
+Note especially what happened to the request. Buried, it is phrased as "it
+would be helpful to know if anyone can assist" — which asks nobody for
+anything and gives no deadline, so nobody acts and the author can honestly
+say they raised it. Led, it names what is needed, by when, and what happens
+otherwise. A buried request licenses the reader to miss it; a labelled
+request with a consequence is much harder to leave alone.
 
 ## Brevity is a service, not a shortcut
 
@@ -106,6 +169,21 @@ say that too — "no action needed, for your awareness" — so the reader can
 file it with a clear conscience. Reports whose purpose is ambiguous get
 the worst of both worlds: no action *and* a vague sense you're generating
 paperwork.
+
+## Do this at work
+
+1. **Rewrite one update, led.** Status in the first line, request in its own
+   block with a date and a consequence, detail underneath.
+2. **Find a buried request.** Look for something you asked for in the middle
+   of a paragraph and never got. Re-send it labelled, with a deadline.
+3. **Commit to one status word.** On track, at risk, or blocked — pick one.
+   "Mostly on track with some challenges" is a way of not saying at risk.
+4. **Test the forwarded reader.** Take your last long message and ask whether
+   someone forwarded it with no context would understand the ask.
+5. **Cut one message by a third.** Same content, fewer words. Brevity is what
+   you do so the reader does not have to.
+6. **Make one reply a yes/no.** Where you need a decision, offer the specific
+   thing to approve rather than an open question about what to do.
 
 ## Summary
 
