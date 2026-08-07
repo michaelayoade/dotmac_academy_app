@@ -14,6 +14,14 @@ time to respond. This chapter covers breaking work down, estimating like
 an adult, sequencing around dependencies, and building the schedule you
 can actually defend.
 
+**By the end of this chapter you can:**
+
+- Break work down until the pieces are small enough to estimate honestly.
+- Estimate in ranges with the people doing the work, checked against history.
+- Map dependencies and compute a critical path with slack.
+- Say where a day saved changes the finish date and where it changes nothing.
+- Place milestones that give the schedule a heartbeat.
+
 FIGURE `MGT-PM-02` *Work broken into blocks, dependencies made visible — the plan is the shared picture, not the prophecy.*
 
 ## Break it down until you can see it
@@ -77,6 +85,48 @@ polite: the approval that "takes two weeks" takes two weeks *from when
 it's submitted*, and projects routinely lose a month by submitting late
 paperwork punctually.
 
+### Worked example: finding the critical path
+
+A small installation, seven tasks, durations in working days:
+
+| Task | Days | Waits for | Starts | Finishes | Slack |
+| --- | ---: | --- | ---: | ---: | ---: |
+| A · Survey the site | 3 | — | 1 | 3 | **0** |
+| B · Place the materials order | 2 | A | 4 | 5 | **0** |
+| C · Materials delivery *(supplier)* | 10 | B | 6 | 15 | **0** |
+| D · Prepare the trench | 4 | A | 4 | 7 | 8 |
+| E · Lay cable | 5 | C, D | 16 | 20 | **0** |
+| F · Splice and test | 3 | E | 21 | 23 | **0** |
+| G · Customer training | 2 | A | 4 | 5 | 18 |
+
+The critical path is **A → B → C → E → F = 23 days**, and it is the only
+chain with no slack anywhere on it. Three practical readings follow, and
+none of them is obvious from a task list.
+
+**Trenching faster buys you nothing.** D has eight days of slack: it finishes
+on day 7 and is not needed until day 15. Send two extra people and finish it
+in two days instead of four, and the project still ends on day 23. This is
+the single most common waste in project management — visible effort applied
+to the task that is easiest to speed up rather than the one that governs the
+finish.
+
+**The longest item on the critical path is the one you don't control.** C is
+ten of the twenty-three days and it belongs to a supplier. That is where the
+attention goes: confirm the lead time before planning around it, order
+earlier than feels necessary, and get a delivery date in writing. A day lost
+on C is a day lost on the project, one for one.
+
+**Slack is not spare capacity — it is protection.** D's eight days are what
+absorb the trench hitting rock. Spend them on comfort ("we've got time, start
+D next week") and the slack is gone before the risk arrives. Slack is
+insurance you have already bought; don't sell it back for convenience.
+
+One caution: the critical path moves. If the supplier delivers early or the
+trench hits that rock and takes fourteen days instead of four, D becomes
+critical and C stops being. Recalculate after any significant change,
+because managing yesterday's critical path is how projects overrun while
+everyone watches the wrong task.
+
 ## Milestones: the heartbeat of the schedule
 
 A milestone is a checkpoint that is unambiguously done or not done —
@@ -96,6 +146,26 @@ compressed to a wished-for date by decree. A shorter date is buyable —
 with more people, less scope, or more risk, chosen explicitly (the
 scope–time–cost triangle again). Compression by decree just relocates
 the truth to the end of the project, where it costs the most.
+
+## Do this at work
+
+1. **Break one task down.** Take the vaguest item on your plan and split it
+   until each piece is something one person could finish in a few days. The
+   vagueness usually hides the risk.
+2. **Re-estimate with the doer.** Take an estimate you made for someone else
+   and ask them for theirs. Where they differ, ask what they can see that you
+   could not.
+3. **Check three estimates against history.** How long did the last three
+   comparable jobs actually take? If they consistently ran over, the fix is
+   arithmetic, not encouragement.
+4. **Draw your critical path.** List tasks, durations, and what each waits
+   for. Find the longest dependent chain. Then find the tasks with slack and
+   stop worrying about them.
+5. **Find your longest external item.** The delivery, permit or sign-off you
+   do not control. Confirm its real lead time in writing this week.
+6. **Make the contingency visible.** If your plan has padding, move it into
+   one named project-level buffer. Hidden padding teaches everyone the
+   numbers are fiction.
 
 ## Summary
 

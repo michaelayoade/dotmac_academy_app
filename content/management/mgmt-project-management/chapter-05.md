@@ -13,6 +13,14 @@ conversation, so that steering happens while steering still works. They
 are also, together, the antidote to the three killers from Chapter 1:
 late bad news, surprise, and creep.
 
+**By the end of this chapter you can:**
+
+- Track completion rather than effort or sentiment.
+- Divide spend by work done, and forecast the real finish and cost.
+- Keep a risk register that gets acted on rather than filed.
+- Run change control that protects the budget without blocking the work.
+- Recognise and report a project that is genuinely off track.
+
 FIGURE `MGT-PM-05` *Flags planted before the bends, changes routed through the gate — the project steered, not narrated.*
 
 ## Tracking: measure done, not effort
@@ -37,6 +45,46 @@ upward on the same rhythm with the same honesty (Chapter 3's update
 cadence): a project lead's credibility is worth more than a green
 status, because credibility is what makes the eventual "we need a
 decision" land.
+
+### Worked example: the project that looks perfectly on budget
+
+A ten-week project with a ₦10,000,000 budget. At the week-6 review:
+
+| | Planned by week 6 | Actual |
+| --- | ---: | ---: |
+| Time elapsed | 60% | 60% |
+| Budget spent | 60% | 60% (₦6,000,000) |
+| **Work actually complete** | 60% | **40%** |
+
+Compare only the first two rows — which is exactly what a spend-against-budget
+report shows — and this project is textbook. Sixty percent through, sixty
+percent spent. Nobody has anything to escalate.
+
+Now divide spend by *work done* rather than by time:
+
+| | Plan | Forecast on current performance |
+| --- | ---: | ---: |
+| Total cost | ₦10,000,000 | **₦15,000,000** |
+| Duration | 10 weeks | **15 weeks** |
+
+Forty percent of the work has consumed ₦6,000,000, so the whole of it will
+consume ₦15,000,000 — a 50% overrun. And 40% of the work took six weeks, so
+all of it takes fifteen. The project is five weeks late and ₦5m over, and
+**both facts were fully visible at week 6** to anyone who compared spend to
+progress instead of spend to calendar.
+
+This is the arithmetic behind "measure done, not effort". A budget report
+answers *how much have we spent?* A progress report answers *how much have we
+finished?* Neither alone tells you whether you will land — only the ratio
+does, and it is the single most useful number a project lead can compute.
+
+Two honest cautions. Early-project ratios are unreliable, because setup costs
+land before visible output; treat the forecast as a signal from about a third
+of the way in. And the forecast assumes the remaining work behaves like the
+work so far — sometimes wrong in both directions, since a slow start can be
+learning that speeds up the rest, while a fast start can be the easy tasks
+being done first. The number is a prompt to investigate, not a verdict. But a
+prompt at week 6 is worth far more than a discovery at week 10.
 
 ## Risk: manage the future while it's cheap
 
@@ -107,6 +155,25 @@ question: *would we start this today?*) deserves an honest ending, not
 a slow one. A project killed at the right moment is a management
 success; the slow-motion failure everyone saw coming is the expensive
 kind of politeness.
+
+## Do this at work
+
+1. **Compute your own ratio.** Spend to date ÷ share of work complete. Then
+   compare it to the budget. If the forecast exceeds the plan, you have
+   found something worth raising while it is still early enough to matter.
+2. **Kill one "90% done" task.** Find the task that has been nearly finished
+   for weeks. Its last tenth contains the problem; call it not done and find
+   out what the problem is.
+3. **Age your risk register.** Every risk should have an owner and a next
+   action. Risks with neither are a list, not a register.
+4. **Price one change.** Take a change someone has requested informally and
+   write its cost in days and money. Most informal changes stop being urgent
+   once they have a number attached.
+5. **Check what changed since the plan.** Recompute the critical path. If it
+   has moved, you have been managing yesterday's project.
+6. **Write one honest status.** If the date is at risk, say so this week
+   rather than next. A project lead's credibility is what makes the eventual
+   "we need a decision" land.
 
 ## Summary
 

@@ -16,6 +16,14 @@ cheap, and acceptance discipline that doesn't stall delivery. (The
 Vendor & Procurement Management course covers sourcing and supplier
 relationships in depth; this chapter is the project-side view.)
 
+**By the end of this chapter you can:**
+
+- Write a specification precise enough to be the quality decision it is.
+- Agree what happens on a bad day before the bad day arrives.
+- Inspect at the moments where a defect is still cheap to fix.
+- Run an acceptance gate that actually gates.
+- Act early and proportionately on a failing supplier.
+
 FIGURE `MGT-PM-04` *Inspect while it's cheap: acceptance is a decision made against a written standard, not a mood.*
 
 ## The specification is the quality decision
@@ -111,6 +119,25 @@ records, correspondence) decide whether the project recovers in weeks
 or in court. The Decision Making course's tripwire discipline applies:
 decide in advance what evidence triggers escalation, so the decision
 fires even when the relationship makes it awkward.
+
+## Do this at work
+
+1. **Read one live specification as a supplier would.** Where could a
+   reasonable person deliver something you would reject? Every such gap is
+   a dispute waiting to be scheduled.
+2. **Find the missing bad-day clause.** In a current agreement, what happens
+   if delivery is late, quality is wrong, or volumes change? If it is not
+   written, it will be negotiated at the worst possible moment.
+3. **Move one inspection earlier.** Find a check that currently happens at
+   delivery and ask whether a sample, a first article, or a factory visit
+   would catch the problem while it is still cheap.
+4. **Put teeth in one acceptance gate.** Write what "accepted" requires, who
+   signs it, and what payment or milestone depends on it. A gate with no
+   consequence is a formality.
+5. **Escalate one supplier early.** If performance is drifting, have the
+   conversation now, with specifics and a date. Suppliers rarely recover
+   after the relationship has soured; they often recover after a clear,
+   early, unemotional conversation.
 
 ## Summary
 
