@@ -9,8 +9,6 @@ all run on.
 
 from __future__ import annotations
 
-import hashlib
-import random
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -23,6 +21,7 @@ from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.models.tenant import Tenant
+from app.services import exam_engine
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
 from app.services.security import hash_token
@@ -54,20 +53,13 @@ def level_for(fraction: float, levels: tuple[tuple[str, float], ...] = LEVELS) -
 # With 4 options the guessing baseline is 25%; a score at or below a third is
 # indistinguishable from clicking at random. And nobody engages with a 30-question
 # assessment in under six minutes.
-MIN_VALID_FRACTION = 1.0 / 3.0  # <= this is at/near chance
-MIN_DURATION_SECONDS = 6 * 60  # faster than this = did not engage
+MIN_VALID_FRACTION = exam_engine.MIN_VALID_FRACTION
+MIN_DURATION_SECONDS = exam_engine.MIN_DURATION_SECONDS
 
-INVALID_NEAR_CHANCE = "near_chance"
-INVALID_TOO_FAST = "too_fast"
+INVALID_NEAR_CHANCE = exam_engine.INVALID_NEAR_CHANCE
+INVALID_TOO_FAST = exam_engine.INVALID_TOO_FAST
 
-
-def check_validity(fraction: float, duration_seconds: float | None) -> tuple[bool, str | None]:
-    """Is this sitting real signal? Returns (valid, reason_if_not)."""
-    if fraction <= MIN_VALID_FRACTION + 1e-9:
-        return False, INVALID_NEAR_CHANCE
-    if duration_seconds is None or duration_seconds < MIN_DURATION_SECONDS:
-        return False, INVALID_TOO_FAST
-    return True, None
+check_validity = exam_engine.check_validity
 
 
 def options_for(applicant: Applicant, question) -> list[str]:
@@ -81,11 +73,7 @@ def options_for(applicant: Applicant, question) -> list[str]:
     against the wrong options. Safe because answers are posted by option TEXT, not
     by index, so grading is order-independent.
     """
-    opts = list(question.options or [])
-    seed = f"{applicant.id}:{question.ext_id}"
-    rng = random.Random(hashlib.sha256(seed.encode()).hexdigest())
-    rng.shuffle(opts)
-    return opts
+    return exam_engine.present_options(applicant, question)
 
 
 def questions_per_category(db: Session) -> int:
@@ -106,41 +94,13 @@ def questions_per_category(db: Session) -> int:
 def sample_for(applicant: Applicant, questions: list, per_category: int) -> list:
     """A stratified per-applicant subset of the bank, or all of it.
 
-    Growing the bank is how questions stop going stale — 112 candidates sitting
-    one fixed set of 30 leaks it. But the entrance exam scores a per-CATEGORY
-    profile, so a flat random draw would hand one candidate nine numeracy items
-    and another two, making the profiles incomparable. This draws ``per_category``
-    from each category instead, so every candidate is measured on the same shape.
-
-    Selection is DETERMINISTIC in (applicant, question) — the same trick, and the
-    same reason, as :func:`options_for`. The subset survives a page reload or a
-    resumed sitting, and grading reproduces it without persisting anything.
-
-    ``per_category`` of 0 (or a value at/above every category's size) returns the
-    whole bank, which is the behaviour before pooling existed.
+    Thin adapter over :func:`exam_engine.select`. Kept as a named function
+    because the entrance flow and its tests refer to it, but the decision now
+    belongs to the engine so the course path cannot drift from it.
     """
-    if per_category <= 0:
-        return list(questions)
-
-    by_category: dict[str, list] = {}
-    for q in questions:
-        by_category.setdefault(q.category or "general", []).append(q)
-
-    chosen: list = []
-    for group in by_category.values():
-        if len(group) <= per_category:
-            chosen.extend(group)
-            continue
-        ranked = sorted(
-            group,
-            key=lambda q: hashlib.sha256(f"{applicant.id}:{q.ext_id}".encode()).hexdigest(),
-        )
-        chosen.extend(ranked[:per_category])
-
-    # Stable overall order, again per applicant, so the paper is not grouped by
-    # category — which would telegraph the structure and let candidates compare.
-    chosen.sort(key=lambda q: hashlib.sha256(f"{applicant.id}:order:{q.ext_id}".encode()).hexdigest())
-    return chosen
+    return exam_engine.select(
+        applicant, questions, exam_engine.SelectionPolicy(per_category=max(per_category, 0))
+    )
 
 
 def issue_token(db: Session, *, applicant: Applicant) -> str:
