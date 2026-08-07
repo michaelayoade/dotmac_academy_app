@@ -15,6 +15,14 @@ they are where working hours go to die. This chapter is about paying the
 price only when the purchase is worth it, and collecting the full value
 when you do.
 
+**By the end of this chapter you can:**
+
+- Decide whether a meeting should exist at all.
+- Put a cost on a recurring meeting and price the fixes.
+- Write an agenda that functions as a contract.
+- Chair with a light but real hand.
+- Close the loop in writing so the meeting produces something.
+
 FIGURE `MGT-CM-04` *An agenda, a clock, and one decision on the table — a meeting that earns its cost.*
 
 ## First: should this meeting exist?
@@ -39,6 +47,45 @@ Two structural prunes worth running quarterly:
 - **Audit the invite lists.** Every attendee should be there to decide,
   contribute, or commit. "Kept in the loop" is what minutes are for.
   Fewer people means faster meetings *and* franker ones.
+
+### Worked example: what a standing meeting costs
+
+Meetings feel free because nobody invoices for them. Put a number on one —
+eight people, one hour, every week, at ₦2,400 an hour of loaded labour:
+
+| | Per week | Per year (48 weeks) |
+| --- | ---: | ---: |
+| The hour itself (8 × 1h) | ₦19,200 | ₦921,600 |
+| **With 15 minutes of context-switching each side** (8 × 1.5h) | **₦28,800** | **₦1,382,400** |
+
+**A recurring one-hour meeting of eight people costs about ₦1.4 million a
+year.** Nobody would approve that as a line item without asking what it
+produces — and yet almost no organisation asks that of the meeting.
+
+The second row is the one people forget. An hour in the middle of a morning
+does not cost an hour; it costs the hour plus the settling either side, which
+is why three scattered meetings can consume a day that shows nothing for it.
+
+Now price the fixes, against that ₦1,382,400 baseline:
+
+| Change | Annual cost | Saved |
+| --- | ---: | ---: |
+| Trim the invite list to the 4 who decide or contribute | ₦691,200 | **₦691,200** |
+| Make it fortnightly | ₦691,200 | **₦691,200** |
+| Cut it to 30 minutes | ₦921,600 | ₦460,800 |
+
+Each is a single decision, taken once, that returns money every week
+thereafter. Compare that to the effort of finding ₦691,200 of savings
+anywhere else in a budget.
+
+Two honest caveats. This is not cash — those hours are salaried whether or
+not the meeting happens, so the saving is *capacity*, not money in the bank;
+it only becomes real if the freed time goes somewhere useful. And some
+meetings are worth far more than they cost: a decision made together in forty
+minutes can be worth many times ₦1.4m, and the human moments have a value no
+table captures. The point is not that meetings are expensive. It is that a
+meeting nobody has ever priced is being renewed indefinitely on the assumption
+that it is free.
 
 ## Before: the agenda is a contract
 
@@ -107,6 +154,21 @@ and deliver them. And when a meeting you attend chronically wastes its
 room, say so kindly to its owner with a suggestion — most bad meetings
 have simply never been questioned. Modelling the standard is how it
 spreads; meeting culture is set by what the room's managers visibly do.
+
+## Do this at work
+
+1. **Price one standing meeting.** Attendees × duration × an hourly rate ×
+   the weeks per year. Then ask what the last three produced.
+2. **Trim one invite list.** Everyone should be there to decide, contribute,
+   or commit. "Kept in the loop" is what the notes are for.
+3. **Halve one meeting.** Frequency or duration. See what breaks — usually
+   nothing, and you have the number showing what it returned.
+4. **Send the document before the meeting.** For your next complex item.
+   Reading time beforehand converts presentation into discussion.
+5. **Write one agenda as a contract.** Each item with a purpose — decide,
+   discuss, or inform — and a time. Items without a purpose get dropped.
+6. **Close one loop.** Send the decisions and actions within the day: who,
+   what, by when. A meeting nobody wrote down did not happen.
 
 ## Summary
 

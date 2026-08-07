@@ -14,6 +14,14 @@ courage. The craft is mostly preparation, sequence, and the discipline to
 stay on the problem when everything in the room invites you onto the
 person. This chapter covers the general method, then the three hard cases.
 
+**By the end of this chapter you can:**
+
+- Apply one general method to any difficult conversation.
+- Prepare and hold a performance conversation without it becoming a verdict.
+- Mediate between two team members without taking a side prematurely.
+- Handle an escalated customer so the relationship survives the complaint.
+- Say the hard sentence plainly, early, and once.
+
 FIGURE `MGT-CM-05` *Held early and honestly, the storm between two people shrinks to something that can grow.*
 
 ## The general method
@@ -108,6 +116,22 @@ communication craft for the moment the furious escalation reaches *you*:
 - **Repair, then close the loop.** Proportionate make-good (Customer
   Experience's recovery anatomy), and when the dust settles, feed what
   the escalation revealed back into the complaint pattern analysis.
+
+## Do this at work
+
+1. **Prepare one hard conversation properly.** What you will say in the
+   first thirty seconds, what outcome you want, and what you might be wrong
+   about.
+2. **Say the hard sentence first.** Practise stating it plainly. Difficult
+   conversations get worse when the point arrives in minute nine.
+3. **Ask before concluding.** In your next conflict, ask each person what
+   they think happened before you decide what did.
+4. **Handle one escalation personally.** Take the next angry customer
+   yourself rather than routing it. What you learn about the cause is worth
+   the discomfort.
+5. **Follow up in writing.** After any difficult conversation: what was
+   discussed, what was agreed, when you will review. Three lines, shared
+   with the person.
 
 ## Summary
 
