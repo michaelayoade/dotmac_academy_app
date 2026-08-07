@@ -30,7 +30,7 @@ from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.track import Track
 from app.services import announcements as ann_svc
-from app.services import scheduling
+from app.services import attempt_policy, scheduling
 from app.services import tracks as track_svc
 from app.services.account_invitations import CohortAssignment, invite_and_enroll
 from app.services.analytics import item_analysis
@@ -846,6 +846,47 @@ def override(
         max_score=max_score,
         reason=reason,
     )
+    return hx_redirect(request, "/instructor/results")
+
+
+@router.post("/activities/{activity_id}/attempts/grant")
+def grant_attempt(
+    activity_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    person_id: UUID = Form(...),
+    reason: str = Form(...),
+    extra_attempts: int = Form(1),
+    db: Session = Depends(get_db),
+):
+    """Give one learner another go at this activity.
+
+    The alternative an instructor had was to raise ``max_attempts``, which
+    reopens the activity for everyone on it. This is scoped to the learner and
+    keeps the reason.
+    """
+    tenant = require_tenant(request)
+    act = db.scalars(
+        select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)
+    ).first()
+    if act is None:
+        raise HTTPException(status_code=404)
+    if act.max_attempts is None:
+        # Nothing to grant: the activity is already uncapped, and recording a
+        # grant against it would imply a limit that does not exist.
+        raise HTTPException(status_code=400, detail="This activity has no attempt limit.")
+    try:
+        attempt_policy.grant_extra_attempt(
+            db,
+            tenant_id=tenant.id,
+            person_id=person_id,
+            activity_id=activity_id,
+            reason=reason,
+            granted_by=person.id,
+            extra_attempts=extra_attempts,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return hx_redirect(request, "/instructor/results")
 
 

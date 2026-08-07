@@ -42,7 +42,7 @@ from app.models.success_queue import (
     STATUS_RESOLVED,
     SuccessQueueEntry,
 )
-from app.services import learning_events, notifications
+from app.services import attempt_policy, learning_events, notifications
 from app.services import todo as todo_service
 from app.services.assessment import attempts_used, best_scores_for
 from app.services.audit import write_audit_event
@@ -195,8 +195,10 @@ def _rule_failed_final(db: Session, *, tenant_id: UUID, person_id: UUID,
         if score is None or score.passed:
             continue
         used = attempts_used(db, tenant_id=tenant_id, person_id=person_id, activity_id=final.id)
-        exhausted = final.max_attempts is not None and used >= final.max_attempts
-        if not exhausted:
+        ent = attempt_policy.for_learner(
+            db, tenant_id=tenant_id, person_id=person_id, activity=final, used=used
+        )
+        if not ent.exhausted:
             continue
         course = db.get(Course, final.course_id)
         facts = {
@@ -206,7 +208,7 @@ def _rule_failed_final(db: Session, *, tenant_id: UUID, person_id: UUID,
             "best_pct": int(round(score.fraction * 100)),
             "required_pct": int(round(final.pass_threshold * 100)),
             "attempts_used": used,
-            "max_attempts": final.max_attempts,
+            "max_attempts": ent.limit,
         }
         action = "Attempts exhausted on the final — review readiness and authorise a reset if warranted."
         return facts, "high", action

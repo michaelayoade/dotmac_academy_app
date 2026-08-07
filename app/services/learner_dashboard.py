@@ -30,7 +30,7 @@ from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.models.reading import ChapterRead
-from app.services import scheduling
+from app.services import attempt_policy, scheduling
 from app.services.assessment import (
     attempts_used_by_person,
     best_scores_for,
@@ -515,6 +515,9 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
     activities_by_course = _activities_by_course(db, tenant_id, course_ids)
     best = best_scores_for_person(db, tenant_id=tenant_id, person_id=person_id, course_ids=course_ids)
     attempts_by_activity = attempts_used_by_person(db, tenant_id=tenant_id, person_id=person_id)
+    grants_by_activity = attempt_policy.granted_by_activity(
+        db, tenant_id=tenant_id, person_id=person_id
+    )
     due_rows_by_offering = _due_by_offering(db, tenant_id, offering_ids)
     completions = {
         c.course_id: c
@@ -560,7 +563,10 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
         for a in activities:
             score = best.get(a.id)
             used = attempts_by_activity.get(a.id, 0)
-            remaining = None if a.max_attempts is None else max(a.max_attempts - used, 0)
+            ent = attempt_policy.entitlement(
+                a, used=used, granted=grants_by_activity.get(a.id, 0)
+            )
+            remaining = ent.remaining
             due = due_by_activity.get(a.id) or offering.ends_at
             is_passed = score is not None and score.passed
             is_overdue = due is not None and due < now and not is_passed
@@ -572,11 +578,15 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
                 "passed": is_passed,
                 "threshold_pct": int(round(a.pass_threshold * 100)),
                 "attempts_used": used,
-                "max_attempts": a.max_attempts,
+                "max_attempts": ent.limit,
                 "attempts_left": remaining,
+                "attempts_granted": ent.granted,
                 "feedback_available": (
                     score is not None
-                    and reveal_feedback(a, passed=score.passed, attempts_used=used)
+                    and reveal_feedback(
+                        a, passed=score.passed, attempts_used=used,
+                        attempts_granted=ent.granted,
+                    )
                 ),
                 "due_at": due,
                 "overdue": is_overdue,
