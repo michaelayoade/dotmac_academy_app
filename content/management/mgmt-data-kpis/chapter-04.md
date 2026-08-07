@@ -14,6 +14,16 @@ is the manager's reading skill: trends over snapshots, noise versus
 signal, seasonality, outliers, and the standing question every number
 deserves: *could this be lying to me?*
 
+**By the end of this chapter you can:**
+
+- Refuse a snapshot and ask for the line, with a window you did not choose
+  to flatter.
+- Check the denominator and the mix before believing any movement.
+- Separate a normal wobble from a pattern worth acting on.
+- Recognise a seasonal shape and stop it being reported as performance.
+- Investigate an outlier before it rewrites the story, and name the ways a
+  number can be lying to you.
+
 FIGURE `MGT-DK-04` *Read the ribbon, not the dot — and circle the outlier before it rewrites the story.*
 
 ## Trends beat snapshots
@@ -44,6 +54,37 @@ Three refinements make lines trustworthy:
   made the same point about revenue per customer). Watch a spread
   measure — median plus the worst tenth, or the oldest open item —
   wherever the tail is where the damage lives.
+
+## Worked example: the same five months, two opposite conclusions
+
+A service business reviews complaints over five months.
+
+| Month | 1 | 2 | 3 | 4 | 5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Complaints received | 20 | 24 | 28 | 33 | 38 |
+| Customers served | 400 | 500 | 620 | 780 | 950 |
+| **Complaints per 100 customers** | **5.0** | **4.8** | **4.5** | **4.2** | **4.0** |
+
+Read the first row alone and complaints are up **90%** — a crisis, and the
+kind of chart that gets a service manager summoned. Read the third row and
+the complaint rate has fallen by a fifth, while the business grew 138%.
+Service is not deteriorating. It is improving, during rapid growth, which is
+the hard case.
+
+Both rows are true and drawn from the same data. Only one answers the
+question anyone actually cares about.
+
+This is the single most common way a dashboard misleads, and it does not
+require anyone to be dishonest — it only requires the denominator to go
+unmentioned. The habit that defends against it is mechanical: **before
+believing any movement, ask what the denominator did.**
+
+Note also what the rate row does *not* excuse. Thirty-eight complaining
+customers are still thirty-eight people with a problem, and the absolute
+number is what the complaints team must staff for. The rate tells you
+whether the process is getting better; the count tells you how much work is
+arriving. A dashboard that shows only one of them is half a picture, which
+is why the table above shows all three rows rather than the "right" one.
 
 ## Noise, signal, and the wobble
 
@@ -114,12 +155,38 @@ calm before the wobble, suspicious of the flattering, and always willing
 to walk from the chart to the floor and check the number against the
 thing itself.
 
+## Do this at work
+
+1. **Convert one count to a rate.** Take a number your area reports as a
+   total and divide it by whatever grew underneath it. If the two rows
+   point different ways, you have found a conclusion that needs correcting
+   before someone acts on it.
+2. **Redraw one chart on a longer window.** Take a recent success story and
+   plot it over two years instead of six months. Does the rally still look
+   like a rally, or like a recovery from a dip nobody mentioned?
+3. **Mark the normal range.** On your most-watched chart, draw the band the
+   metric usually sits in. Then count how many past "interventions"
+   responded to points inside it.
+4. **Check a mix shift.** Find a period your team's output rose and ask
+   whether the *kind* of work changed. Easy-job months look like good
+   months from a distance.
+5. **Look at your tail, not your average.** For one metric with a duration
+   — resolution time, age of open items — find the worst tenth. That
+   number is usually the one customers talk about.
+6. **Audit an always-green dashboard.** Find a report in your organisation
+   that has not shown bad news in a year. Either the thresholds are loose,
+   the metrics are safe, or the truth is being filtered before it arrives.
+   All three are worth knowing.
+
 ## Summary
 
 - Never read snapshots: every KPI as a line against baseline, target
   path, and last cycle — with windows chosen for truth, not flattery.
 - Check denominators, mix, and distributions before believing any move;
-  averages hide the tail where damage lives.
+  averages hide the tail where damage lives. Complaints rising 90% while
+  the complaint *rate* falls a fifth is the same data telling opposite
+  stories — and needs nobody to be dishonest, only the denominator to go
+  unmentioned.
 - Know each metric's normal wobble and react only to pattern — runs,
   steps, drifts, and far-outside points. Reacting to noise is worse than
   nothing.

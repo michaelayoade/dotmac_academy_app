@@ -15,6 +15,17 @@ review that converts numbers into owned actions, the follow-through that
 makes actions stick, and the honest management of measurement's shadow
 side — gaming.
 
+**By the end of this chapter you can:**
+
+- Run an operational review with a fixed shape, where every signal ends in
+  an owner and a date.
+- Check whether last review's actions *worked*, not merely happened.
+- Diagnose before prescribing when a metric signals trouble.
+- Predict how a target will be gamed, and read the guard metric that
+  exposes it.
+- Respond to discovered gaming as system feedback rather than as a
+  character problem.
+
 FIGURE `MGT-DK-05` *The gauge that turns a wrench: measurement only matters when it drives the machine.*
 
 ## The operational review
@@ -99,6 +110,45 @@ than the moral one:
   made the fake cheaper than the real, fix that, and reserve discipline
   for dishonesty that survives a fixed system.
 
+## Worked example: the target that was met without improving anything
+
+Return to Chapter 2's dispatch team. They adopted Definition A — *on time
+means meeting the current promised date* — which, as noted then, means
+re-promising resets the clock. Chapter 3's baseline put them at 74%. A
+target of 85% arrives, tied to the quarterly bonus, with no guard metric.
+
+Two quarters later:
+
+| | Baseline | After the target | |
+| --- | ---: | ---: | --- |
+| On-time (Definition A) | 74% | **86%** | ✅ target met |
+| Jobs rescheduled by us | 8 per 100 | **24 per 100** | ⚠️ tripled |
+| On-time against the *first* promised date | 71% | **68%** | ⚠️ worse |
+| Reopen rate | 6% | **11%** | ⚠️ nearly doubled |
+| Satisfaction | 4.2 | **3.8** | ⚠️ fell |
+
+The headline KPI improved by 12 points and the bonus was paid. The customer
+experience got worse in every respect that was not being inspected.
+
+Nobody falsified anything. The team found the cheapest available route to a
+number they were judged on: re-promise the job that is about to run late,
+and close cases faster to keep the queue moving. Definition A permitted the
+first; the absence of a quality guard permitted the second. Both were
+*designed in* the moment the target was set — the team merely read the design
+correctly.
+
+Notice that the failure is visible only because someone kept measuring the
+other four rows. A dashboard showing on-time alone would have reported a
+triumph, indefinitely. This is why Chapter 2 insists on drawing from five
+families and Chapter 3 insists on pairing every push with a guard: not
+because teams are dishonest, but because **an unguarded target is an
+instruction, and it will be followed.**
+
+The fix here is not a disciplinary conversation. It is to publish on-time
+against the first promised date alongside Definition A, put reschedule
+volume on the same page, and keep the reopen rate next to both. Then the
+cheapest route to a good number is the one you actually wanted.
+
 ## A measurement culture, in the end
 
 Zoom out and the five chapters assemble into something simpler than a
@@ -111,6 +161,32 @@ the review held every week, the action checked every review, the honest
 miss thanked, the gamed number quietly made impossible. Measurement, done
 this way, stops being surveillance and becomes what it was always for:
 the team, seeing its own performance clearly, getting better on purpose.
+
+## Do this at work
+
+1. **Give your review a fixed shape.** Same numbers, same order, every
+   time. Put last review's actions first on the agenda — before any new
+   discussion.
+2. **Audit your last ten actions.** For each, record whether it was done
+   *and* whether the metric responded. The second column is usually much
+   emptier than the first, and that gap is what separates an improvement
+   loop from activity theatre.
+3. **Find a signal that ended in neither sentence.** Look back through
+   recent reviews for a discussed metric that produced no owner and no
+   recorded decision. That is where measurement leaks into lament.
+4. **Predict the gaming.** Take a target your team currently carries and
+   write down the cheapest route to hitting it *without* doing the
+   underlying work. You will usually think of it in under a minute — which
+   tells you the team already has.
+5. **Check that route.** Now find the metric that would reveal it. If no
+   such metric is published, add it before the next cycle rather than after
+   the next bonus.
+6. **Audit one number against reality.** Read the actual tickets, visit the
+   actual site, call an actual customer. Compare what you find to what the
+   dashboard says. Do this occasionally and visibly; it is the cheapest
+   defence measurement has.
+7. **Thank one honest bad number.** Publicly. The first time a team watches
+   a manager punish the messenger, the drift toward permanent green begins.
 
 ## Summary
 

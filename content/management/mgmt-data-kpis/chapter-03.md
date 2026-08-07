@@ -14,6 +14,17 @@ badly they demoralise, distort, and teach a team that numbers are
 politics. The difference is mostly one discipline: **baseline before you
 promise.**
 
+**By the end of this chapter you can:**
+
+- Establish a baseline's level, spread and shape before promising anything.
+- Say why a metric's natural bounce determines the period a target can be
+  judged over.
+- Set a stretch anchored to evidence, with a stated theory of how the gap
+  closes.
+- Pair every push with the guard that stops it being met by cutting a
+  corner.
+- Recognise when a "missed" target is a seasonal dip meeting a flat number.
+
 FIGURE `MGT-DK-03` *Measure the plant before you plant the flag — a target is a baseline plus a reasoned stretch.*
 
 ## Baseline first
@@ -38,6 +49,39 @@ target teaches helplessness, the accidental one teaches theatre. When a
 number has never been measured before, the honest first "target" is
 simply: *measure it for a quarter.* That is not stalling; it is the
 difference between aiming and gesturing.
+
+## Worked example: what a baseline actually tells you
+
+Twelve weeks of on-time completion, before anyone sets a target:
+
+| Week | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| On-time % | 71 | 78 | 69 | 76 | 74 | 81 | 68 | 75 | 72 | 79 | 70 | 77 |
+
+Read the three things:
+
+| | Value | What it means |
+| --- | ---: | --- |
+| **Level** | 74.2% | The honest starting point — not the 81% of week 6 |
+| **Spread** | 68–81, typical swing ±4 points | The metric's ordinary bounce, with nothing changing |
+| **Shape** | Flat (4-week means: 73.5, 74.5, 74.5) | No trend to ride and none to fight |
+
+Now watch what a weekly target of 80% does to this team. **Week 6 already
+hit 81% — with no improvement whatsoever.** A manager judging weekly would
+have congratulated the team for a good week that was pure bounce, and then
+asked what went wrong in week 7 when it fell to 68% for exactly the same
+reason: nothing.
+
+That is the practical meaning of "spread determines the period." With a
+±4-point natural swing, a weekly judgement is mostly reading noise (Chapter
+4's subject). Judged over a month, the same data is stable to within a
+point, and a real improvement of 4–6 points would be unmistakable.
+
+So the honest target here is **78–80% measured monthly, by end of quarter,
+with a stated reason** — say the two delay causes the team has identified,
+which together account for roughly six points. Not "95% because excellence".
+And not weekly, because at this spread a weekly target does not measure the
+team; it measures the dice.
 
 ## Setting the stretch
 
@@ -111,11 +155,36 @@ managers who keep asking "and is the *thing itself* better?" keep the
 proxy honest. Hold targets firmly and proxies lightly, and never confuse
 beating the metric with doing the job.
 
+## Do this at work
+
+1. **Baseline something before you promise it.** Take a metric with a
+   target already attached and pull its last twelve periods. Compute the
+   mean, the range, and whether it is trending. Compare the mean to the
+   target — the gap is what someone actually committed the team to.
+2. **Measure your spread.** Note the highest and lowest of those twelve.
+   If your review period is shorter than the spread can settle over, you
+   are reviewing noise, and you can say so with evidence.
+3. **Find a target that was hit by bounce.** Look for a period praised for
+   beating a target where the following period fell back with nothing
+   changed. That pair is worth showing to whoever sets the targets.
+4. **State the theory behind one target.** Write "we get from X to Y
+   because ___". If the blank will not fill, the target is a wish and the
+   team already knows it.
+5. **Name the guard.** For each target your team is pushing, write the
+   metric that would reveal it being met by cutting a corner. If there
+   isn't one, you have announced which corner is available.
+6. **Check one seasonal miss.** Find a target your team misses at the same
+   time each year. That is a flat number meeting a seasonal shape, and it
+   is a target problem rather than a performance problem.
+
 ## Summary
 
 - Baseline before promising: level, natural spread, and existing
   trend/seasonality — several periods of honest data. A brand-new
   metric's first target is "measure it for a quarter."
+- Spread decides the review period. A metric swinging ±4 points will beat
+  a stretch target by luck alone in some weeks and miss it in others; judge
+  it over a span long enough for the bounce to settle.
 - Set targets as reasoned stretches: anchored to the baseline, backed by
   a theory of how the gap closes, staged into waypoints when large.
 - Pair every pushed metric with a guard metric, and set targets with the
