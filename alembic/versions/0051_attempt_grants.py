@@ -18,8 +18,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0036_attempt_grants"
-down_revision = "0035_applicant_profile"
+revision = "0051_attempt_grants"
+down_revision = "0050_enrollment_access_extension"
 branch_labels = None
 depends_on = None
 
