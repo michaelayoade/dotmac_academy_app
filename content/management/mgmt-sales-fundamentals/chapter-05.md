@@ -13,6 +13,14 @@ asking a ready buyer to decide** — and most sales that die at the end die
 because nobody asked. This chapter covers asking well, and the follow-through
 that turns one sale into a stream of them.
 
+**By the end of this chapter you can:**
+
+- Read buying signals and ask for the decision plainly, without pressure.
+- Handle the first days after a yes so the sale survives delivery.
+- Put a number on what a referral is worth against a cold conversation.
+- Ask for a referral at the moment it is most likely to be given.
+- Keep pipeline records honest enough that your forecast is worth having.
+
 FIGURE `MGT-SF-05` *The close isn't the end: follow-through loops one sale into the next.*
 
 ## Ask for the decision
@@ -78,6 +86,45 @@ them the moment the invoice clears. The follow-through habits:
   Present without pestering: each contact should carry something of value
   to *them*.
 
+## Worked example: what asking for a referral is worth
+
+Chapter 1's seller needed **17 conversations per sale** working cold. A
+referred prospect arrives pre-trusted, already qualified by someone whose
+judgement they respect, and usually with the trigger already established —
+so the funnel is dramatically shorter. Say three conversations per sale:
+
+| | Cold prospect | Referred prospect |
+| --- | ---: | ---: |
+| Conversations per sale | 17 | 3 |
+| Hours per sale, at 2h each | 34 | **6** |
+
+A referred sale costs roughly **a sixth of the effort** of a cold one. Now
+apply that to a working month. The seller closes 12 deals; suppose they ask
+each satisfied customer for an introduction and 40% give one:
+
+| | |
+| --- | ---: |
+| Customers asked | 12 |
+| Referrals given (40%) | 4.8 |
+| Sales from those referrals (1 in 3) | **1.6 per month** |
+| Over a year | **~19 extra sales** |
+| Cold prospecting effort that would have cost | **54 hours a month** |
+
+Nineteen sales a year, for the cost of asking a question at the moment
+someone is pleased with you.
+
+And this compounds with Finance ch3's retention arithmetic: these customers
+arrive cheaper *and* tend to stay longer, because a customer who came by
+recommendation started the relationship already trusting it. The cheapest
+acquisition channel most sellers have is the one they already own and rarely
+use.
+
+The reason it goes unused is almost never that customers refuse. It is that
+nobody asks — the invoice clears, the seller moves to the next hunt, and the
+warmest lead in the pipeline is left sitting in a delivered job. **Ask at the
+moment of satisfaction**, which is a specific moment: just after the thing
+worked, not months later at renewal.
+
 ## Pipeline discipline: the habits that make numbers predictable
 
 Chapter 1 promised that a pipeline makes results predictable. That's only
@@ -94,6 +141,27 @@ does):
 - **Review your own numbers regularly.** Conversations started, quotes
   sent, win rate, time-to-close. Not for the boss — for you: they tell you
   which chapter of this course to reread.
+
+## Do this at work
+
+1. **Count your unasked closes.** Look through recent deals that went quiet
+   and mark the ones where nobody ever plainly asked for a decision. That
+   count is usually uncomfortable, and it is the cheapest thing on this list
+   to fix.
+2. **Write your three closing questions.** Plain, unpressured, in your own
+   words. Rehearse them until they sound like you rather than like a script.
+3. **Compute your own referral ratio.** How many conversations does a cold
+   sale take you, and how many did your last referred sale take? The gap is
+   the argument for the habit.
+4. **Ask five customers this week.** At the moment something worked, not at
+   renewal. Track how many say yes — most sellers overestimate the refusal
+   rate badly.
+5. **Audit your pipeline for honesty.** Every deal: is the stage label true,
+   and is there a next action with a date? Deals failing either test are
+   inflating a forecast someone is planning against.
+6. **Review your own five numbers.** Conversations started, quotes sent,
+   win rate, time-to-close, referrals asked. Monthly, for yourself. They
+   tell you which chapter of this course to reread.
 
 ## Summary
 
