@@ -6,6 +6,7 @@ bank:
   policy:
     mode: exam
     max_attempts: 5
+    pool: 20
   questions:
     - id: dmf-01
       stem: "Decision quality is assessed on the process at the time. What is the consequence of assessing it on outcomes instead?"
@@ -167,4 +168,85 @@ bank:
       correct: ["It fires without needing anyone's attention at the awkward moment"]
       rubric_category: analysis
       explanation: "Vigilance decays precisely when things get busy; a tripwire set while you were calm does not."
+      weight: 1
+    - id: dmf-21
+      stem: "A risk you have decided to accept should be:"
+      type: single
+      options: ["Recorded, owned, no action", "Removed from the register", "Reviewed only if it fires", "Escalated to the sponsor"]
+      correct: ["Recorded, owned, no action"]
+      rubric_category: recall
+      explanation: "Acceptance by decision is management; acceptance by silence is luck."
+      weight: 1
+    - id: dmf-22
+      stem: "Which bias gives the current arrangement a free pass that no new option would survive?"
+      type: single
+      options: ["Status quo bias", "Anchoring", "Availability", "Sunk cost"]
+      correct: ["Status quo bias"]
+      rubric_category: recall
+      explanation: "The incumbent option is rarely subjected to the scrutiny applied to its challengers."
+      weight: 1
+    - id: dmf-23
+      stem: "A supplier's first quote arrives well above expectation and every later discussion circles it. What should have happened first?"
+      type: single
+      options: ["Your own estimate, made before opening it", "A second quote requested at the same time", "A cap set on what you could approve", "Criteria agreed for judging the quotes"]
+      correct: ["Your own estimate, made before opening it"]
+      rubric_category: application
+      explanation: "Anchoring: the first number drags every later estimate toward it, so produce yours in advance."
+      weight: 1
+    - id: dmf-24
+      stem: "You are told a decision cannot wait until tomorrow. What separates a real deadline from a manufactured one?"
+      type: single
+      options: ["Whether an option actually expires", "Whether the request came from above", "Whether the team feels the pressure", "Whether the analysis is complete"]
+      correct: ["Whether an option actually expires"]
+      rubric_category: application
+      explanation: "Decision deadlines expire options; discomfort deadlines only exist to stop the anxiety."
+      weight: 1
+    - id: dmf-25
+      stem: "An option pays out 60% of the time at ₦500,000 and loses ₦200,000 otherwise. What is its expected value, in naira?"
+      type: numeric
+      options:
+        tolerance: 2000
+      correct: 220000
+      rubric_category: application
+      explanation: "(0.60 × 500,000) − (0.40 × 200,000) = 300,000 − 80,000 = ₦220,000 — then ask whether the loss case is survivable."
+      weight: 1
+    - id: dmf-26
+      stem: "Which of these belong in a five-line decision log? (Select all that apply.)"
+      type: multi
+      options: ["What was decided", "Who decided, and when", "What would change our minds", "How long the debate ran"]
+      correct: ["What was decided", "Who decided, and when", "What would change our minds"]
+      rubric_category: application
+      explanation: "Plus the reasoning and who was told. The length of the argument is not a fact worth keeping."
+      weight: 1
+    - id: dmf-27
+      stem: "Your investigation has settled on a cause within an hour and everyone agrees. What should you deliberately do?"
+      type: single
+      options: ["Look for what the theory fails to explain", "Move to the fix while agreement holds", "Document the conclusion and close it", "Ask a second team to confirm the finding"]
+      correct: ["Look for what the theory fails to explain"]
+      rubric_category: application
+      explanation: "Fast unanimous agreement is when confirmation bias is least visible and most expensive."
+      weight: 1
+    - id: dmf-28
+      stem: "Why does a group that reaches consensus quickly warrant more scrutiny, not less?"
+      type: single
+      options: ["Cohesion suppresses the doubts people hold", "Quick agreement usually means a simple problem", "The loudest voice has usually prevailed early", "Consensus takes longer on important decisions"]
+      correct: ["Cohesion suppresses the doubts people hold"]
+      rubric_category: analysis
+      explanation: "Groupthink makes a group more confident than any member, which is why dissent is assigned rather than hoped for."
+      weight: 1
+    - id: dmf-29
+      stem: "Why is 'we never actually decided that' the signature phrase of the most invisible failure mode?"
+      type: single
+      options: ["The calendar made the choice while nobody owned it", "The decision was made informally and not recorded", "Responsibility was spread across too many people", "The options were never properly written down"]
+      correct: ["The calendar made the choice while nobody owned it"]
+      rubric_category: analysis
+      explanation: "Deferral is sometimes right; unconscious deferral never is, and it leaves no trace until the cost arrives."
+      weight: 1
+    - id: dmf-30
+      stem: "Why does a pilot with no defined stopping condition tell you nothing?"
+      type: single
+      options: ["It can only confirm what was already decided", "It takes longer than a full rollout would", "It produces results too small to generalise", "It cannot be compared against the status quo"]
+      correct: ["It can only confirm what was already decided"]
+      rubric_category: analysis
+      explanation: "Define the result that would stop you, or the pilot is a ceremony rather than a test."
       weight: 1
