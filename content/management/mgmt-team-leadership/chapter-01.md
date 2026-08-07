@@ -12,6 +12,13 @@ skills the new role runs on. This chapter is about the shift — what you stop
 doing, what you start doing, and how to measure yourself once "did I do good
 work today?" is no longer the right question.
 
+**By the end of this chapter you can:**
+
+- Say what changes when you move from doing the work to leading it.
+- Recognise the player-coach trap in your own week.
+- Name what a manager actually produces, and judge yourself against it.
+- Use your first weeks to listen before you change things.
+
 FIGURE `MGT-TL-01` *The player-coach trap: the hero stays busy while the team stays blocked.*
 
 ## What actually changes
@@ -108,6 +115,21 @@ Resist arriving with a reform agenda. In your first weeks:
   first.
 - **Invisible managing.** Doing real management work but never explaining
   decisions, so the team experiences you as arbitrary.
+
+## Do this at work
+
+1. **Audit last week's calendar.** How many hours went to doing the work
+   yourself versus making the team more effective? The ratio is your job
+   description as actually practised.
+2. **Find the task you cannot let go of.** There is usually one you keep
+   because you are the best at it. That is the player-coach trap with a name.
+3. **Ask three people what would help.** Before changing anything, ask what
+   gets in their way. Listening first is not delay; it is how you avoid
+   fixing what was not broken.
+4. **Write what your team produces.** One sentence. If it reads like a list
+   of activities rather than an outcome, keep rewriting.
+5. **Name one thing only you can do.** Then protect time for it this week.
+   Everything else is a candidate for Chapter 2.
 
 ## Summary
 

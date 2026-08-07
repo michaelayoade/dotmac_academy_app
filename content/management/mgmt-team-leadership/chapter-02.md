@@ -13,6 +13,15 @@ abdication (you hand something over and discover at the deadline that it went
 wrong weeks ago). This chapter gives you a repeatable way to hand over work so
 that it actually comes back done.
 
+**By the end of this chapter you can:**
+
+- Delegate outcomes with an explicit definition of done.
+- Choose a delegation level for the task rather than the person, and say it
+  out loud.
+- Move a recurring responsibility up a level over time.
+- Follow up on outcomes without re-litigating methods.
+- Respond usefully when delegated work comes back wrong.
+
 FIGURE `MGT-TL-02` *Delegation done well: each handover builds the next person's capability.*
 
 ## Why delegating feels wrong — and why you must anyway
@@ -56,20 +65,32 @@ of playback catches most misunderstandings before they cost a week.
 Delegation is not all-or-nothing. Match the level to the person's experience
 with *this kind of task* — not their seniority in general:
 
-- **Level 1 — Do exactly this.** Step-by-step instruction. For beginners or
-  safety-critical work. Expensive for you; use it as a teaching stage, not a
-  permanent state.
-- **Level 2 — Investigate, then we decide together.** They gather the facts
-  and options; the decision is joint.
-- **Level 3 — Decide, then tell me before acting.** They own the decision;
-  you keep a veto for a while.
-- **Level 4 — Act, and tell me what you did.** Routine reporting only.
-- **Level 5 — Fully yours.** You hear about it only if something needs you.
+| Level | They do | You keep | Use when | Costs you |
+| ---: | --- | --- | --- | --- |
+| 1 | Follow your steps | Every decision | Brand new to this task; safety-critical | Most — this is teaching time |
+| 2 | Gather facts and options | The decision | They know the ground but not the judgement | A lot |
+| 3 | Decide, tell you before acting | A veto | Judgement forming; consequences still large | Some |
+| 4 | Act, then report | Awareness | Demonstrated competence on this task | Little |
+| 5 | Own it entirely | Nothing routine | Proven, and the work is genuinely theirs | Nothing |
 
-The goal for every recurring responsibility is to move it up a level every few
-cycles. If someone has been at level 1 or 2 on the same task for months,
-either coach differently or reconsider the assignment — holding them there is
-a cost to you both.
+Two things this table is for. First, **the level belongs to the task, not the
+person** — a fifteen-year veteran handling their first disciplinary case
+belongs at level 2, and a new starter who has done a hundred of one particular
+job belongs at level 4. Managers who set one level per person get both wrong
+at once.
+
+Second, the level is supposed to *move*. The goal for every recurring
+responsibility is to climb one every few cycles. If someone has been at level
+1 or 2 on the same task for months, that is a finding: either coach
+differently, or reconsider the assignment. Holding them there costs them
+growth and costs you the hours — and it is usually not a decision anyone made,
+just a level nobody revisited.
+
+The commonest failure is the invisible jump: delegating at level 4 while
+privately expecting level 3, then being annoyed at an action taken without
+consulting you. The person did exactly what was asked. **Say the level out
+loud** — "decide it and tell me before you act" takes four seconds and
+prevents the entire class of problem.
 
 ## One owner per task
 
@@ -109,6 +130,23 @@ It will, sometimes. Your response determines whether delegation survives:
   wherever the deadline allows. The redo is where the learning happens.
 - Escalate your involvement, not your volume: move the task down a delegation
   level for the next cycle rather than performing frustration now.
+
+## Do this at work
+
+1. **Name the level for one delegation this week.** Say it explicitly:
+   "decide it and tell me before you act." Four seconds, and it prevents the
+   commonest delegation failure.
+2. **Find someone stuck at level 2.** Same task, same level, months on end.
+   Either coach differently or move the assignment — both beat leaving it.
+3. **Write "done" for one task.** What it looks like, by when, and what
+   "good" includes. Most delegation failures are definition failures.
+4. **Check your ownership list.** Any task owned by "the team" is owned by
+   nobody. Put one name against each.
+5. **Agree a check-in in advance.** Then do not check in between. That single
+   discipline is the whole difference between follow-up and micromanagement.
+6. **Debrief one thing that came back wrong.** Was the brief unclear, the
+   level too high, or the skill missing? Each has a different fix, and
+   guessing wrong makes it worse.
 
 ## Summary
 

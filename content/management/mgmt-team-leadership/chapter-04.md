@@ -12,6 +12,14 @@ feedback that changes behaviour, coaching that develops judgement, and the
 harder discipline of dealing with underperformance early, fairly, and in
 writing.
 
+**By the end of this chapter you can:**
+
+- Give feedback as situation, behaviour and impact rather than as a verdict.
+- Make praise specific enough to be repeatable.
+- Coach by building judgement instead of supplying answers.
+- Hold a performance conversation early, while it is still small.
+- Record what needs recording, and know why.
+
 FIGURE `MGT-TL-04` *Coaching is a loop: feedback, practice, growth — not a verdict.*
 
 ## Feedback: specific, prompt, and about behaviour
@@ -43,6 +51,29 @@ Three habits multiply the effect:
   what makes the corrective kind survivable.
 - **Feedback flows up too.** Ask your team what you should do differently,
   and visibly act on one thing they say. It buys you the right to be heard.
+
+The difference the structure makes, on the same underlying concern:
+
+| Vague and personal | Situation · Behaviour · Impact |
+| --- | --- |
+| "You're careless with detail." | "In yesterday's client meeting, you gave a delivery date we hadn't agreed as a team. We're now committed to a date two people say is impossible." |
+| "You need to be more of a team player." | "On Tuesday the rota changed and Ada found out from the customer. It meant she'd already promised a visit she couldn't make." |
+| "Great job this week." | "You spotted that the delivery address didn't match the survey notes and checked before dispatch. That's a wasted trip we didn't take." |
+
+Read the left column and notice what it gives the recipient: a verdict about
+their character, no evidence, and nothing to do differently on Monday. It is
+also unanswerable — you cannot discuss whether someone is careless, only
+whether they did a specific thing.
+
+The right column is answerable, which is the point. It may well come back
+with context you did not have ("the client had already been given that date
+by sales"), and that is the structure working rather than failing. Feedback
+that cannot be corrected by new information is not feedback; it is a
+sentence.
+
+Note that the third row applies the same discipline to praise. "Great job" is
+pleasant and teaches nothing; naming the behaviour makes it repeatable by the
+person who did it and by everyone who hears it.
 
 ## Coaching: build judgement, not dependence
 
@@ -106,6 +137,24 @@ what we agreed, when we review.*
 The converse also matters: document the good. Recognition tied to specifics —
 in reviews, in front of the team where appropriate — is the cheapest
 performance tool you have, and the one most managers underuse.
+
+## Do this at work
+
+1. **Rewrite one piece of feedback.** Take something you have said or meant
+   to say and put it into situation, behaviour, impact. Notice that it
+   becomes answerable — that is the point.
+2. **Give one specific positive.** Name the behaviour and its effect, not
+   "great job". Specific praise is repeatable; general praise is only
+   pleasant.
+3. **Say the thing you have been saving.** Find the concern you have been
+   storing for a formal review and raise it this week, small and private.
+   Saved-up feedback arrives as an ambush.
+4. **Ask for feedback upward.** Ask your team what you should do differently,
+   then visibly act on one thing. It buys the right to be heard.
+5. **Replace one answer with a question.** Next time someone brings you a
+   problem, ask what they would do. Then usually agree with it.
+6. **Check a record.** For any performance concern in progress, is there a
+   written note of what was discussed and agreed? If not, write it now.
 
 ## Summary
 
