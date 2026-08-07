@@ -94,6 +94,9 @@ Requisition-to-custody for managers who buy goods and services.
    shrinkage prevention.
 5. **Supplier Performance & Relationships** — scorecards, escalation, when to
    consolidate or switch suppliers.
+6. **Procurement Ethics & Controls** — conflicts of interest, gifts and
+   hospitality, bribery and facilitation payments, separation of duties,
+   red flags and how to report.
 
 ---
 
