@@ -14,6 +14,13 @@ Procurement is simply purchasing made deliberate. This chapter covers the
 basic machinery — requisition, approval, purchase order — and why the
 discipline exists even when it feels like paperwork slowing you down.
 
+**By the end of this chapter you can:**
+
+- Follow the request–approve–purchase spine and say what each step protects.
+- Explain why approval discipline exists beyond bureaucracy.
+- Say who may commit the organisation to spend, and to how much.
+- Apply the same spine proportionately in a small business.
+
 FIGURE `MGT-VP-01` *From need to order: each gate exists because money is about to move.*
 
 ## The three-step spine
@@ -101,6 +108,21 @@ system — the discipline is in the sequence, not the tooling. Grow the
 tooling when volume demands it; the three-step spine and the separation of
 duties stay identical from market stall to multinational, and the business
 that learns them small avoids learning them expensively large.
+
+## Do this at work
+
+1. **Trace one purchase end to end.** Who requested it, who approved it, who
+   ordered it, who confirmed it arrived. Any step performed by the same
+   person as another is where control is missing.
+2. **Check your own authority.** What may you commit without approval? If
+   you are not certain, neither is anyone else.
+3. **Find a purchase made outside the spine.** There is usually one that was
+   urgent. Ask what would have happened if it had gone wrong.
+4. **Separate one duty.** Ordering, receiving and paying should not all sit
+   with one person. Where they do, fix it before anything goes wrong rather
+   than after.
+5. **Write the small-business version.** Three lines, proportionate. A spine
+   nobody can follow is the same as no spine.
 
 ## Summary
 

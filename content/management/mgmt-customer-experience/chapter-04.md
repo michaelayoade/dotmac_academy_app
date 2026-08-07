@@ -14,6 +14,13 @@ chapter treats compliance not as paperwork but as what it actually is: the
 legally-enforced minimum version of the good service this course has been
 describing all along.
 
+**By the end of this chapter you can:**
+
+- State the consumer rights that apply wherever you operate.
+- Run compliance as a management system rather than a reaction.
+- Recognise where meeting the minimum is a poor commercial choice.
+- Handle a regulator or complaint body professionally.
+
 FIGURE `MGT-CX-04` *The regulated minimum: rights, fairness, and a documented trail — protection for both sides.*
 
 ## The universal consumer rights
@@ -93,6 +100,19 @@ The reputational frame matters too: in the age of screenshots, the gap
 between "legal" and "fair" is a news story waiting to run. Businesses are
 judged by the standard of the fair; the law merely sets where punishment
 begins.
+
+## Do this at work
+
+1. **Read your own terms as a customer would.** Anything you would be
+   embarrassed to have quoted back to you is a future complaint.
+2. **Check one compliance obligation is actually operating.** Not that a
+   policy exists — that the thing the policy requires is happening.
+3. **Find a lawful practice you would not defend publicly.** Those are the
+   ones that cost reputation later regardless of their legality.
+4. **Log one regulatory contact properly.** Date, who, what was asked, what
+   was provided. The record is your case if it ever matters.
+5. **Ask what a complaint body would make of your worst month.** If the
+   answer is uncomfortable, you have found this year's priority.
 
 ## Summary
 

@@ -13,6 +13,13 @@ and most leak-prone stretch of the whole buying cycle. This chapter covers
 receiving goods properly, keeping inventory records that match reality, and
 custody — knowing, at all times, who holds what.
 
+**By the end of this chapter you can:**
+
+- Treat receiving as the last cheap moment to catch a problem.
+- Keep records that match what is actually on the shelf.
+- Attach names to assets so custody is real.
+- Measure shrinkage rather than absorbing it.
+
 FIGURE `MGT-VP-04` *Counted in, signed for, shelved with a name attached: custody is a chain, not a vibe.*
 
 ## Receiving: the last cheap moment to catch a problem
@@ -103,6 +110,20 @@ deliveries, open shelves, unnamed custody, uncounted variance. You will
 never reach zero; you can make it visible, small, and boring. The pattern
 to watch hardest is normalisation — the site where "some loss is normal"
 has stopped measuring, and what is unmeasured grows.
+
+## Do this at work
+
+1. **Check one delivery properly.** Against the order, not just the
+   delivery note. Signing for what you did not verify is how disputes are
+   lost.
+2. **Count one shelf.** Compare it to the record. The gap is your data
+   quality, and it is usually worse than assumed.
+3. **Name the custodian of five assets.** Vehicles, tools, devices. Assets
+   owned by "the company" walk away; assets owned by a person do not.
+4. **Measure shrinkage once.** Put a number on what goes missing annually.
+   Unmeasured, it is absorbed; measured, it becomes a decision.
+5. **Find the reconciliation nobody does.** Ordered, received, invoiced,
+   paid. Where those four are never compared, errors survive indefinitely.
 
 ## Summary
 

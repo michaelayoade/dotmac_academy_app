@@ -13,6 +13,13 @@ do receive doubly valuable: a relationship still open, and a defect report
 from the field. This chapter covers running complaints as a managed lifecycle
 with single ownership, rather than as unpleasant interruptions.
 
+**By the end of this chapter you can:**
+
+- Move a complaint deliberately through its five states.
+- Give every complaint one named owner.
+- Push resolution authority to where the complaint lands.
+- Handle an angry customer without escalating the anger.
+
 FIGURE `MGT-CX-02` *One complaint, one owner, carried to the end — however many hands contribute.*
 
 ## The lifecycle: every complaint moves through five states
@@ -95,6 +102,21 @@ uncertainty more than on the problem itself. And afterwards, don't take the
 heat personally or pass it onward: the customer was shouting at the
 situation wearing your face. Teams that debrief hard cases briefly and
 without mockery keep both their standards and their nerves.
+
+## Do this at work
+
+1. **Check your oldest open complaint.** How long has it been open, and who
+   owns it? Age is the single best predictor of a complaint becoming
+   something worse.
+2. **Find the ownerless ones.** Any complaint whose owner is a department
+   rather than a person is being handled by nobody.
+3. **Raise frontline authority by one step.** Give the people who take the
+   call the power to resolve a defined class of issue without asking. Then
+   watch what it does to resolution time.
+4. **Read ten closed complaints.** Were they resolved, or merely closed?
+   The difference shows up later as repeat contacts.
+5. **Practise the first sentence.** For an angry customer, what you say
+   first decides the next ten minutes. Have it ready before you need it.
 
 ## Summary
 

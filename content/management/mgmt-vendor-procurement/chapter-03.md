@@ -14,6 +14,14 @@ chapter covers the terms that matter, service levels with teeth, and the
 renewal discipline that stops yesterday's good deal from quietly becoming
 today's bad one.
 
+**By the end of this chapter you can:**
+
+- Identify the contract terms that actually decide outcomes.
+- Attach consequences to service levels so they mean something.
+- Read the supplier's paper before signing it.
+- Argue the uplift clause once, at signature, where it is worth arguing.
+- Diarise notice dates so renewals are chosen rather than suffered.
+
 FIGURE `MGT-VP-03` *Written while friendly, read when not: the contract is shelter for both sides.*
 
 ## The terms that actually matter
@@ -98,6 +106,58 @@ simple and pays every year:
   the scorecard from Chapter 5 walks into the renewal meeting with you.
   Loyalty is worth something; unexamined loyalty is worth precisely what
   the supplier decides to charge for it.
+
+### Worked example: the 8% that nobody argues with
+
+A ₦2,000,000 annual contract carries an "annual adjustment" clause of 8%.
+Each year it arrives as a single-line notice, and each year 8% is small
+enough that challenging it costs more attention than it seems to be worth.
+
+| Year | Annual price |
+| ---: | ---: |
+| 1 | ₦2,000,000 |
+| 2 | ₦2,160,000 |
+| 3 | ₦2,332,800 |
+| 4 | ₦2,519,424 |
+| 5 | **₦2,720,978** |
+
+| | |
+| --- | ---: |
+| Five-year total as signed | ₦11,733,202 |
+| Five-year total if held flat | ₦10,000,000 |
+| **Paid for never having the conversation** | **₦1,733,202** |
+
+By year five the price is **36% higher** than year one, and the cumulative
+overpayment is nearly a full year's contract value. No single increase was
+unreasonable. That is precisely the mechanism: a leak survives because each
+individual instance is beneath the threshold at which anyone escalates.
+
+The lesson is not that uplifts are illegitimate — costs genuinely rise, and a
+supplier holding prices flat for five years while their own inputs inflate is
+a supplier heading for trouble you will inherit. The lesson is that the clause
+should be **argued once, at signature**, where it is worth ₦1.7m of attention:
+cap it, tie it to a published index rather than the supplier's discretion, or
+trade accepting it for something you want. Arguing it at each renewal is where
+it always wins, because by then it is only ever "8%".
+
+And diarise the notice date the day you sign. An auto-renewal missed by a week
+does not cost you a negotiation — it costs you a year of the number above.
+
+## Do this at work
+
+1. **Find your uplift clauses.** Any contract with an annual adjustment.
+   Compute five years of it compounded, and see what never having the
+   conversation costs.
+2. **Diarise every notice date.** Today, for every live contract. An
+   auto-renewal missed by a week costs a year.
+3. **Check one SLA for teeth.** What actually happens when the supplier
+   misses it? A service level with no consequence is a wish.
+4. **Read one contract you signed on their paper.** Look specifically at
+   termination, liability, and price change. Those three decide most
+   disputes.
+5. **Market-test one relationship.** Not as a bluff — a genuine check, told
+   honestly to the incumbent. Unexamined loyalty is worth exactly what the
+   supplier decides to charge for it.
 
 ## Summary
 
