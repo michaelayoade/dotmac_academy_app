@@ -15,6 +15,13 @@ over months, by drifting away from a destination nobody wrote down. This
 chapter covers the definitions that prevent that drift — and the reasons
 projects overrun, which are remarkably consistent across every industry.
 
+**By the end of this chapter you can:**
+
+- Say what makes a piece of work a project rather than ongoing operations.
+- Name the four standard causes of overrun and spot them starting.
+- Identify the roles a project must have, and what breaks when one is vacant.
+- Write success criteria specific enough to be judged against.
+
 FIGURE `MGT-PM-01` *A project is a destination and a chosen path — everything else is scope waiting to creep.*
 
 ## A project is defined by its ending
@@ -96,6 +103,24 @@ cost*, and, where it matters, what the result should achieve afterwards
 the project deserve a check-back date). Written success criteria do two
 jobs: they aim the team, and they protect it — against the retrospective
 memory that the project was "supposed to" include things it never was.
+
+## Do this at work
+
+1. **Write the ending.** For a piece of work in your area, write the sentence
+   that says when it is finished. If you cannot, it is operations, not a
+   project, and it needs a different kind of management.
+2. **Name your sponsor.** Who can resolve a conflict over resources or
+   priority? If the answer is "nobody" or "a committee", that is the first
+   thing to fix.
+3. **Write three success criteria.** Specific enough that two people would
+   agree whether they were met. "Improved efficiency" fails this test;
+   "installations per crew per day above six" passes.
+4. **Check for the vacant role.** Project lead, sponsor, and the people who
+   will operate the result. Vacant roles do not announce themselves — they
+   surface as decisions nobody can make.
+5. **Diagnose one past overrun.** Scope creep, optimistic estimates, an
+   unmanaged dependency, or a late decision? The answer tells you which of
+   the next five chapters to read hardest.
 
 ## Summary
 

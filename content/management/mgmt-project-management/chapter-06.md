@@ -14,6 +14,14 @@ punch list that never closed, the supplier retention never released, the
 same mistakes rediscovered by the next project at full price. This
 chapter is about landing the plane, not just approaching the runway.
 
+**By the end of this chapter you can:**
+
+- Hand over ownership rather than merely delivering an output.
+- Confirm the receiving team can actually run what you built.
+- Close the commercial and administrative business, not just the work.
+- Run a review that captures what the next project should inherit.
+- Declare the ending clearly enough that the project stops consuming attention.
+
 FIGURE `MGT-PM-06` *Done means owned: the keys, the knowledge, and the records handed over — then the ending declared.*
 
 ## Handover is a transfer of ownership, not a delivery
@@ -92,6 +100,26 @@ what). Undeclared endings leave a ghost project that haunts calendars
 and budgets for months. Declared endings return the scarcest resource —
 attention — to whatever comes next, and end the story while it can
 still be told as a success.
+
+## Do this at work
+
+1. **Name the receiving owner.** One person or team who owns the result from
+   the handover date. A handover to "the business" is not a handover.
+2. **Test the handover, don't assert it.** Have the receiving team run the
+   thing while you watch. What they stumble on is what your documentation is
+   missing.
+3. **Close the commercial tail.** Final invoices, retentions, warranties,
+   unused purchase orders, access that should be revoked. This is the part
+   that quietly stays open for months.
+4. **Hold the review while people remember.** Within two weeks. What went
+   well, what did not, and specifically what the next project should do
+   differently — written down, not just discussed.
+5. **Check one estimate against actuals.** Compare planned to actual
+   duration and cost. That comparison is the only thing that makes your next
+   estimate better.
+6. **Declare it over.** Tell the stakeholders, release the team, and stop the
+   status reports. Projects that are never declared finished keep consuming
+   attention from people who could be doing the next thing.
 
 ## Summary
 
