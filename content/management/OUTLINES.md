@@ -162,6 +162,20 @@ Practical selling for anyone who talks to customers about buying, any industry.
    after-sale follow-up that produces referrals, and the pipeline discipline
    (records, next actions, honest stages) that makes numbers predictable.
 
+### 10. People & HR for Managers — `mgmt-people-hr`
+The manager's duties toward the people they hire, keep and sometimes lose.
+
+1. **Hiring Well** — defining a role by outcomes, structured interviews, work
+   samples, the bias guards, and what a bad hire actually costs.
+2. **Onboarding & Probation** — the first ninety days, early attrition as an
+   onboarding number, probation as a decision rather than a date.
+3. **Pay, Records & the Employment File** — what must be recorded and why, pay
+   as a message, compression, and handling personal data.
+4. **Discipline & Grievance** — conduct versus capability, fair process in
+   order, proportionate sanctions, and receiving a complaint about yourself.
+5. **Retention & Exit** — costing turnover, why people actually leave, stay
+   conversations, handover, and getting truth out of an exit.
+
 ---
 
 ## Assessment plan (all courses)
