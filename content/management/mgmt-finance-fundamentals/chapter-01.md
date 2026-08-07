@@ -13,6 +13,16 @@ where it goes, why "we're selling a lot" and "we're making money" are
 different claims, and the handful of terms that let you hold your own in any
 budget conversation.
 
+**By the end of this chapter you can:**
+
+- Name the three revenue shapes and say which one your area earns.
+- Separate fixed from variable costs, and compute contribution per sale.
+- Work out a break-even volume from ordinary operating figures, and say
+  what happens to profit above and below it.
+- Tell capex from opex, and predict which approval gate a purchase faces.
+- Read gross, operating, and net margin, and say which one a discount
+  comes out of.
+
 FIGURE `MGT-FN-01` *The money machine: revenue flows in, costs branch off, profit is what settles.*
 
 ## Revenue: the top of the machine
@@ -61,6 +71,31 @@ which is why volume beyond break-even feels so different from volume before
 it, and why high-fixed-cost businesses are dangerous at low volume and
 wonderful at high volume.
 
+## Worked example: finding the break-even
+
+A regional office sells one service at ₦16,200 a month per customer. Its
+variable costs — the ones that travel with each customer — are ₦8,000. Its
+fixed costs are ₦4,000,000 a month whether it serves ten customers or a
+thousand.
+
+| Step | Working | Result |
+| --- | --- | ---: |
+| Contribution per customer | ₦16,200 − ₦8,000 | ₦8,200 |
+| Break-even volume | ₦4,000,000 ÷ ₦8,200 | 488 customers |
+| Profit at 400 customers | (400 × ₦8,200) − ₦4,000,000 | −₦720,000 |
+| Profit at 600 customers | (600 × ₦8,200) − ₦4,000,000 | ₦920,000 |
+
+Notice what a 50% rise in customers did to profit: from a ₦720,000 loss to
+a ₦920,000 profit — a swing far larger than the change in volume. That
+leverage is the whole reason break-even is worth computing. It also runs in
+reverse, which is why a high-fixed-cost business losing a fifth of its
+customers is in far more trouble than the word "fifth" suggests.
+
+One caution: contribution assumes the fixed costs really are fixed across
+that range. Somewhere above 600 customers this office needs another van or
+another engineer, the fixed line steps up, and the break-even moves with it.
+Break-even is a picture of a range, not a permanent constant.
+
 By **purpose**, finance splits spending differently: **operating expense
 (opex)** — the recurring cost of running (salaries, rent, fuel) — versus
 **capital expenditure (capex)** — buying assets that serve for years
@@ -69,6 +104,21 @@ practically: capex is usually a bigger approval gate but is spread
 ("depreciated") over the asset's life in the accounts, while opex hits the
 current period in full. When finance asks "is that capex or opex?", they're
 asking whether you're buying a durable asset or consuming a resource.
+
+| | Opex | Capex |
+| --- | --- | --- |
+| What it buys | A resource you consume this period | An asset that serves for years |
+| Examples | Salaries, rent, fuel, bandwidth, repairs | Vehicles, equipment, buildings, a fibre build |
+| Hits the accounts | In full, this period | Spread over the asset's life (depreciation) |
+| Typical approval | Within a budget line | A bigger gate, often a business case |
+| Effect on this month's profit | The whole amount | Only this month's slice of it |
+
+The borderline cases are where managers get caught. A repair that keeps an
+asset working is opex; an upgrade that extends its life or capability is
+usually capex. Software subscriptions are opex; a perpetual licence may be
+capex. When it genuinely matters to your budget, ask finance before you
+commit rather than after — the classification changes which budget the
+money comes out of, not merely how it is recorded.
 
 ## Profit: several floors of the same building
 
@@ -100,13 +150,37 @@ discounts; and profitable-on-paper businesses dying of cash timing
 busy is not the same as profitable, and the numbers are where the
 difference shows first.
 
+## Do this at work
+
+1. **Find your treadmill.** Write down the fixed monthly costs your area
+   carries — salaries, rent, licences, vehicles. Then write the revenue
+   your area produced last month. Which is bigger, and by how much?
+2. **Compute one contribution.** Take a single typical sale or job. Subtract
+   only the costs that would disappear if that sale had not happened. What
+   is left is its contribution — and it is almost always smaller than people
+   assume.
+3. **Estimate your break-even.** Divide your fixed costs by that
+   contribution. Compare the answer to your actual volume. If you are below
+   it, no amount of effort makes this month profitable, and that is a fact
+   worth escalating rather than absorbing.
+4. **Check one classification.** Find a purchase your area made recently
+   and decide whether it was capex or opex. Ask finance whether you got it
+   right. The conversation is short and it is how the distinction stops
+   being abstract.
+5. **Price one discount.** Take your gross margin percentage and a discount
+   your team commonly grants. Work out how much extra volume that discount
+   requires to break even. Chapter 2 makes this a table; do it once by hand
+   first, because the size of the answer is the point.
+
 ## Summary
 
 - Revenue is what customers pay — not cash until collected, and not all
   of equal quality; recurring, full-margin revenue is worth the most.
 - Fixed costs are the treadmill, variable costs travel with each sale;
   contribution per sale must cover the treadmill before profit begins —
-  know your break-even.
+  know your break-even, and remember it moves when fixed costs step up.
+- Above break-even, profit swings far harder than volume does; the same
+  leverage works in reverse when volume falls.
 - Capex buys durable assets, opex runs the period; expect different
   approval gates.
 - Gross, operating, and net profit answer different questions; margins are
