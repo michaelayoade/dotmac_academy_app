@@ -14,6 +14,15 @@ correction: a small set of honest numbers that tell you what is true, early
 enough to act. This chapter is about what measurement is *for* — and the two
 distinctions that separate numbers that manage from numbers that decorate.
 
+**By the end of this chapter you can:**
+
+- State the test a measure must pass to earn its place on your dashboard.
+- Tell a leading indicator from a lagging one, and pair them into a theory
+  the numbers can test.
+- Show why a slow drift is invisible month to month and severe over a year.
+- Spot a vanity metric by asking what decision it would change.
+- Weigh the cost of measuring against the cost of not knowing.
+
 FIGURE `MGT-DK-01` *Two dials: the ornate one connected to nothing, the plain one wired to the machine.*
 
 ## What a measure is for
@@ -37,6 +46,39 @@ through most measurement confusion:
 
 The manager's aim is not "more data." It is *fewer, better questions asked
 relentlessly* — and Chapter 2 is about choosing them.
+
+## Worked example: the drift nobody sees
+
+Take a measure that matters — jobs completed on the first visit, say —
+declining 2% a month. Not two percentage points; 2% of wherever it currently
+stands.
+
+| Month | Index | Change since last month |
+| ---: | ---: | --- |
+| 0 | 100.0 | — |
+| 3 | 94.1 | −2% |
+| 6 | 88.6 | −2% |
+| 9 | 83.4 | −2% |
+| 12 | 78.5 | −2% |
+
+Every month, the change is 2% — smaller than the ordinary wobble between a
+good week and a bad one, and comfortably inside the range where someone says
+"that's normal variation." No month triggers an alarm. No day is a bad day.
+Nobody is negligent.
+
+And the year loses **21.5%** of the measure.
+
+This is the whole argument for measurement, and it is why a *recorded* history
+beats memory. Feel compares this month to last month, where the signal is 2%
+and the noise is larger — so feel concludes nothing is wrong, correctly, every
+month, all the way down. Only comparison against a baseline twelve months back
+makes the decline visible, and by then a fifth of the performance is gone.
+
+Note what this does *not* require: no incompetence, no crisis, no single
+decision to blame. Slow drift is the normal condition of an unmeasured
+process, which is why catching it is a systems problem rather than a
+vigilance problem. Chapter 4 returns to this as the difference between a
+snapshot and a trend.
 
 ## Leading and lagging indicators
 
@@ -62,6 +104,23 @@ was wrong, which is worth more than the metric itself. Managers who track
 only lagging numbers are driving by the rear-view mirror; managers who
 track only leading ones are admiring their own effort without checking it
 works.
+
+The pairing looks like this across ordinary functions. Read each row as a
+sentence: *if the leading indicator moves, the lagging one should follow.*
+
+| Function | Lagging outcome | Leading indicators that should drive it |
+| --- | --- | --- |
+| Sales | Revenue won this month | Enquiries answered within the hour; quotes issued; follow-ups made on time |
+| Service | Customers lost | Complaints still open past target; repeat visits for the same fault; first-contact resolution |
+| Field operations | Jobs completed per crew per week | Vehicles serviced on schedule; materials in stock at dispatch; rework rate |
+| Finance | Cash collected | Days from delivery to invoice; invoices disputed; receivables past 60 days |
+| People | Voluntary leavers | Overtime hours creeping; one-to-ones actually held; vacancies open past target |
+
+The right-hand column is where a manager can act this week. The left-hand
+column is what they will be judged on next quarter, and by then it is
+history. That gap — between the number you can move and the number you are
+measured on — is the reason the pairing is worth doing deliberately rather
+than hoping the connection exists.
 
 ## Vanity metrics and actionable ones
 
@@ -113,6 +172,29 @@ a dashboard of forty you won't. The rest of this course is the craft —
 choosing the few (Chapter 2), setting targets against them (Chapter 3),
 reading them without fooling yourself (Chapter 4), and converting them
 into action (Chapter 5).
+
+## Do this at work
+
+1. **Audit your current dials.** List every number reported about your area.
+   Against each, write the decision it would change. The ones with a blank
+   beside them are candidates for removal, and there are usually more than
+   you expect.
+2. **Find a total that should be a rate.** Pick a raw count your team
+   reports — jobs done, calls handled, deliveries made — and convert it to
+   per person, per crew, or per week. Compare the last six months both ways.
+   Growth often disappears when you divide.
+3. **Write one pairing as a sentence.** "If we improve *X*, then *Y* should
+   follow within *N* weeks." Name the lag. That sentence is a theory of your
+   business, and it is now testable.
+4. **Check whether the theory held.** Find a leading indicator your team
+   improved in the past year. Did the lagging outcome move? If it did not,
+   you have learned something more valuable than the metric.
+5. **Look for a drift.** Take one measure and compare today against twelve
+   months ago — not against last month. If it has slipped quietly, you have
+   just found the thing this chapter exists to catch.
+6. **Name one number you're graded on but can't move.** Then say what you
+   *can* move that feeds it. That conversation, had upward, is usually
+   overdue.
 
 ## Summary
 

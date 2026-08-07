@@ -14,6 +14,17 @@ ones that never could. A key performance indicator is exactly what the
 name says: one of the small set of numbers that indicates whether the
 team's *key* performance is happening. This chapter builds that set.
 
+**By the end of this chapter you can:**
+
+- Write the mission sentence a team's KPIs must fall out of.
+- Draw a balanced set from the five families, and say what each family
+  stops the others from hiding.
+- Write a KPI definition complete enough that two people compute the same
+  number from it.
+- Show how one undefined term produces two honest answers twenty points
+  apart.
+- Decide what to do when someone proposes a sixth KPI.
+
 FIGURE `MGT-DK-02` *From the wall of possible measures, the few that reflect the team's real job.*
 
 ## Start from the job, not the data
@@ -99,17 +110,87 @@ eventually be resolved in the direction that flatters. Write the
 definition when you adopt the metric, while nobody yet has a score to
 defend.
 
+## Worked example: two honest answers, twenty-three points apart
+
+A dispatch team is asked for its on-time delivery rate. Last month it
+promised 100 jobs, and this is what happened:
+
+| Outcome | Jobs |
+| --- | ---: |
+| Completed by the date first promised | 71 |
+| Rescheduled at the customer's request, met the new date | 15 |
+| Rescheduled by us, met the new date | 8 |
+| Late against every date | 6 |
+| **Total** | **100** |
+
+Two people now compute "on-time delivery":
+
+| Definition | Counts as on time | Result |
+| --- | --- | ---: |
+| **A** — met the current promised date | 71 + 15 + 8 | **94%** |
+| **B** — met the date first promised | 71 | **71%** |
+
+Neither is wrong. Neither person is dishonest. The 23-point gap is *entirely*
+definitional, and it sits in a single unstated question: does re-promising
+reset the clock?
+
+Notice which way each definition leans. Definition A means a team can protect
+its score by rescheduling — the measure quietly rewards the thing the
+customer experiences as being let down. Definition B counts the customer's
+actual experience but punishes the team for reschedules it did not ask for.
+The honest resolution is usually to publish **both**, or to define A while
+separately reporting reschedule volume so the escape hatch stays visible.
+
+This is why the definition step is not bureaucracy. Adopt this metric without
+settling the question and you have not adopted a metric — you have adopted a
+future argument, and it will be resolved by whoever most needs the number to
+look good.
+
 ## A worked shape
 
-Pulling it together for an illustrative service team: output = cases
-resolved per person per week; quality = share reopened within a month;
-speed = median time to resolution and oldest open case; cost = hours per
-resolved case; satisfaction = post-interaction rating. Five numbers, one
-page, each with a definition, an owner, and a target (Chapter 3). A
-different mission — a production crew, a sales desk, a back office —
-swaps the instances but keeps the shape. When someone proposes a sixth
-and a seventh, the question is not "is it interesting?" but "which of
-these five does it replace, and what decision needs it?"
+Pulling it together for an illustrative service team. This is the artefact —
+five numbers on one page, each with a definition precise enough to survive
+the argument above, a named owner, and a target from Chapter 3:
+
+| Family | KPI | Definition and edges | Source | Owner |
+| --- | --- | --- | --- | --- |
+| Output | Cases resolved per person per week | Cases moved to *resolved* and not reopened within 7 days ÷ FTE on the rota that week | Ticket system, weekly export | Service lead |
+| Quality | Reopen rate | Cases reopened within 30 days of resolution ÷ cases resolved in the same window | Ticket system | Service lead |
+| Speed | Median time to resolution; oldest open case | Clock starts at *first customer contact*, not first assignment; pauses only while awaiting customer reply | Ticket system | Team supervisor |
+| Cost | Hours per resolved case | Logged hours on resolved cases ÷ cases resolved; includes travel, excludes training | Timesheets | Operations manager |
+| Satisfaction | Post-interaction rating | Mean score of responses received within 7 days of closure; response rate published alongside | Survey tool | Service lead |
+
+Two details in that table do real work. The speed clock starts at *first
+customer contact* rather than first assignment, which stops the queue before
+assignment from being invisible. And satisfaction publishes its response rate
+alongside the score, because a 4.8 from 6% of customers and a 4.3 from 60%
+are not the same fact.
+
+A different mission — a production crew, a sales desk, a back office — swaps
+the instances but keeps the shape. When someone proposes a sixth and a
+seventh, the question is not "is it interesting?" but **"which of these five
+does it replace, and what decision needs it?"**
+
+## Do this at work
+
+1. **Write your mission sentence.** What does your team exist to produce,
+   for whom, to what standard? One sentence. If it takes three, the team
+   may be doing two jobs.
+2. **Sort your current metrics into the five families.** Output, quality,
+   speed, cost, satisfaction. The empty column is the finding — and it is
+   cost or satisfaction more often than not.
+3. **Find your undefined term.** Take your most-quoted KPI and ask two
+   colleagues to state exactly what counts. If their answers differ, you
+   have found a future argument while nobody yet has a score to defend.
+4. **Compute one metric two ways.** Pick one where a reasonable second
+   definition exists and calculate both. The gap tells you how much of your
+   reported performance is definitional.
+5. **Write one definition properly.** What counts, the formula's edges, the
+   source, the owner. Then have someone else compute it from your writing
+   alone and compare.
+6. **Prune one.** Find a metric on your wall that no decision depends on
+   and take it down. Note who objects and why — that conversation usually
+   reveals what the number was really for.
 
 ## Summary
 
@@ -121,6 +202,8 @@ these five does it replace, and what decision needs it?"
 - Keep three to six per team, reviewed on rhythm; everything else is
   diagnostic in the cupboard, not on the wall.
 - Write definitions at adoption: what counts, the formula's edges, the
-  source, one owner. Ambiguity becomes flattery later.
+  source, one owner. Ambiguity becomes flattery later — one unstated
+  question ("does re-promising reset the clock?") produced two honest
+  on-time figures 23 points apart.
 - The chosen set IS the team's read of your priorities — choose it as
   deliberately as you'd write them down, and prune it annually.
