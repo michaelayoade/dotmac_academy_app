@@ -176,6 +176,21 @@ The manager's duties toward the people they hire, keep and sometimes lose.
 5. **Retention & Exit** — costing turnover, why people actually leave, stay
    conversations, handover, and getting truth out of an exit.
 
+### 11. Health, Safety & Risk for Managers — `mgmt-health-safety`
+What a manager personally owns when work can hurt people.
+
+1. **Why Safety Is a Management Job** — care is not a control; hazard versus
+   risk; reasonably practicable; near misses as free information.
+2. **Risk Assessment That Is Actually Used** — the five steps, scoring,
+   inherent versus residual, and the assessment written to be filed.
+3. **The Hierarchy of Controls** — eliminate, substitute, engineer,
+   administrative, PPE; why controls do not add up.
+4. **Safe Systems, Competence & Stopping Work** — methods crews use, the four
+   parts of competence, permits and isolation, real stop-work authority.
+5. **Incidents, Investigation & Culture** — the first hour, root cause past
+   the person's name, findings that get done, and reporting as a trust
+   measure.
+
 ---
 
 ## Assessment plan (all courses)
