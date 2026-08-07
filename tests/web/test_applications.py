@@ -219,6 +219,9 @@ def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
     assert detail.status_code == 200
     assert "Training placement" in detail.text
     assert "Accept and invite to onboarding" not in detail.text
+    assert f'hx-post="/admin/applications/{applicant_id}/intake"' in detail.text
+    assert f'hx-post="/admin/applications/{applicant_id}/action"' in detail.text
+    assert "x-csrf-token" in detail.text
 
     csrf = app_client.cookies.get("csrf_token", "")
     assigned = app_client.post(

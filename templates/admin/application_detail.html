@@ -43,7 +43,9 @@
       Acceptance and enrolment use this canonical cohort/track pair.
     </p>
     {% if intake_choices %}
-    <form method="post" action="/admin/applications/{{ applicant.id }}/intake" class="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+    <form method="post" action="/admin/applications/{{ applicant.id }}/intake"
+          hx-post="/admin/applications/{{ applicant.id }}/intake" hx-target="body"
+          class="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
       <div>
         <label class="block text-sm font-semibold text-ink" for="intake-choice">Cohort and track</label>
         <select id="intake-choice" name="intake_choice" required class="mt-2 w-full px-3 py-2">
@@ -73,7 +75,9 @@
     {% if actions %}
     <div class="mt-4 grid gap-4">
       {% for action in actions %}
-      <form method="post" action="/admin/applications/{{ applicant.id }}/action" class="rounded-lg border border-sand-200 p-4">
+      <form method="post" action="/admin/applications/{{ applicant.id }}/action"
+            hx-post="/admin/applications/{{ applicant.id }}/action" hx-target="body"
+            class="rounded-lg border border-sand-200 p-4">
         <input type="hidden" name="action" value="{{ action.key }}">
         <label class="block text-sm font-semibold text-ink" for="reason-{{ action.key }}">{{ action.label }}</label>
         <input id="reason-{{ action.key }}" name="reason" maxlength="1000" placeholder="Reason or review note"
