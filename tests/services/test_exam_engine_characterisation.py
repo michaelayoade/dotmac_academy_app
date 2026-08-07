@@ -142,3 +142,26 @@ def test_empty_policy_returns_the_whole_bank():
     from app.services import exam_engine
 
     assert len(exam_engine.select(_Applicant("l1"), BANK, exam_engine.SelectionPolicy())) == len(BANK)
+
+
+def test_a_retake_draws_a_different_paper():
+    """Pooling a bank that allows retakes is pointless if attempt 2 repeats attempt 1."""
+    from app.services import exam_engine
+
+    policy = exam_engine.SelectionPolicy(total=20)
+    first = [q.ext_id for q in exam_engine.select(_Applicant("l1"), BANK, policy, variant="attempt0:")]
+    second = [q.ext_id for q in exam_engine.select(_Applicant("l1"), BANK, policy, variant="attempt1:")]
+    assert first != second
+    # ...but each remains reproducible, which is what lets a reload resume.
+    assert first == [q.ext_id for q in exam_engine.select(_Applicant("l1"), BANK, policy, variant="attempt0:")]
+
+
+def test_variant_does_not_disturb_the_entrance_draw():
+    """The entrance exam passes no variant; its recorded paper must be untouched."""
+    from app.services import exam_engine
+
+    policy = exam_engine.SelectionPolicy(per_category=2)
+    assert [q.ext_id for q in exam_engine.select(_Applicant("cand-alpha"), BANK, policy)] == [
+        "reading-08", "safety-09", "reading-06", "numeracy-00", "logic-08",
+        "numeracy-04", "safety-08", "logic-10", "technical-09", "technical-04",
+    ]

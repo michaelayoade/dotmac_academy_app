@@ -51,15 +51,23 @@ class Sitter(Protocol):
     learners and candidates is an admissions concern, not an exam one.
     """
 
-    id: Any
+    # A read-only property rather than an attribute, so both a mutable ORM
+    # model and a frozen dataclass adapter satisfy it.
+    @property
+    def id(self) -> Any: ...
 
 
 class Question(Protocol):
     """The shape the engine needs from a question. Banks own the rest."""
 
-    ext_id: str
-    category: Any
-    options: Any
+    @property
+    def ext_id(self) -> str: ...
+
+    @property
+    def category(self) -> Any: ...
+
+    @property
+    def options(self) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -95,8 +103,16 @@ def _rank(sitter: Sitter, salt: str, key: str) -> str:
     return hashlib.sha256(f"{sitter.id}:{salt}{key}".encode()).hexdigest()
 
 
-def select(sitter: Sitter, questions: list, policy: SelectionPolicy) -> list:
-    """The questions this sitter gets, in the order they get them."""
+def select(
+    sitter: Sitter, questions: list, policy: SelectionPolicy, variant: str = ""
+) -> list:
+    """The questions this sitter gets, in the order they get them.
+
+    ``variant`` distinguishes repeat sittings by the same person. Without it a
+    learner's second attempt at a pooled activity would draw the identical
+    paper as their first, which removes the only reason to pool a bank that
+    allows retakes. The entrance exam is a single sitting and passes nothing.
+    """
     if policy.per_category:
         by_category: dict[str, list] = {}
         for q in questions:
@@ -109,17 +125,17 @@ def select(sitter: Sitter, questions: list, policy: SelectionPolicy) -> list:
                 # rather than vanishing from the profile.
                 chosen.extend(group)
                 continue
-            ranked = sorted(group, key=lambda q: _rank(sitter, "", q.ext_id))
+            ranked = sorted(group, key=lambda q: _rank(sitter, variant, q.ext_id))
             chosen.extend(ranked[: policy.per_category])
     elif policy.total:
-        ranked = sorted(questions, key=lambda q: _rank(sitter, "", q.ext_id))
+        ranked = sorted(questions, key=lambda q: _rank(sitter, variant, q.ext_id))
         chosen = ranked[: policy.total]
     else:
         chosen = list(questions)
 
     # Re-rank the whole paper so it is not grouped by competency, which would
     # telegraph the structure and let sitters compare notes by section.
-    chosen.sort(key=lambda q: _rank(sitter, "order:", q.ext_id))
+    chosen.sort(key=lambda q: _rank(sitter, f"{variant}order:", q.ext_id))
     return chosen
 
 

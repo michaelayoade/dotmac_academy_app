@@ -475,6 +475,7 @@ def activity(
         attempt = open_or_create_attempt(
             db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id,
             all_ext_ids=[q.ext_id for q in qs], count=act.question_count,
+            questions=list(qs),
         )
         order = {eid: i for i, eid in enumerate(attempt.question_ext_ids)}
         qs = sorted((q for q in qs if q.ext_id in order), key=lambda q: order[q.ext_id])
