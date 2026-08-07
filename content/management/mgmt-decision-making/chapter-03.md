@@ -12,6 +12,14 @@ symptom being treated while its cause survives. This chapter is about the
 discipline of digging past the first plausible answer — and knowing when the
 digging is done.
 
+**By the end of this chapter you can:**
+
+- Tell a symptom from a cause, and a one-off from a class of problem.
+- Establish facts before adopting a theory.
+- Run five whys past the point where a person's name appears.
+- Say what fix each level of "why" buys, and why workarounds are a tax.
+- Verify a fix actually worked rather than assuming it did.
+
 FIGURE `MGT-DM-03` *The symptom is the tip; the cause is the structure under the waterline.*
 
 ## Symptom, cause, and the class of problem
@@ -66,6 +74,31 @@ future failures. Three cautions:
   something you can change that would have prevented the problem. Beyond
   that lies philosophy ("why does entropy exist?") — pull back up one level.
 
+### What each level of "why" buys you
+
+The reason to keep asking is that the value of the available fix rises
+sharply with depth. Same incident, five possible stopping points:
+
+| Stop at | The fix available here | What it prevents |
+| --- | --- | --- |
+| The van left late | A word with the driver | Nothing. The driver was not the cause. |
+| Loading finished late | Chase the loading bay harder | This one delivery, maybe |
+| The picking list wasn't ready | A manual workaround each morning | Late loading — at the cost of someone's daily attention, for ever |
+| The overnight job failed | Fix the job | This failure mode, until the next job fails |
+| **The alert goes to an unread mailbox** | **Route alerts somewhere monitored** | **Every silent failure of every overnight job** |
+
+Notice the third row, because it is the one real organisations actually
+choose. A manual workaround genuinely stops the symptom, so it looks like a
+solution — and it quietly converts a one-off defect into a permanent tax on
+someone's morning. Workarounds are how organisations accumulate the "decision
+debt" of Chapter 1: each is locally sensible, and collectively they are why
+everyone is busy and nothing is fixed.
+
+The last row is a different kind of fix. It does not just repair this
+incident; it repairs the *class*. That is what "structural" means, and it is
+why the extra two minutes of asking is the highest-return two minutes in
+problem solving.
+
 ## The fishbone: when causes are tangled
 
 When a problem is recurring and multi-causal — quality drifting, morale
@@ -99,6 +132,25 @@ And close the loop with the people involved: the team that lived the problem
 should hear what the cause was and what changed. It converts an annoyance
 into visible improvement — and it trains everyone in the habit of asking
 one more "why".
+
+## Do this at work
+
+1. **Run five whys on last week's incident.** Write the chain down. If you
+   stop at a person's name, you have a symptom with feelings — keep going.
+2. **Map the fixes by level.** For that chain, write what fix is available
+   at each depth and what each would prevent. The leverage difference is
+   usually stark.
+3. **Find a workaround you are paying for.** Something someone does manually
+   every day to compensate for a defect nobody fixed. Cost it in hours per
+   year, then decide whether the real fix is cheaper.
+4. **Separate the one-off from the class.** For a recurring issue, ask what
+   family of failures the structural fix would prevent, not just this
+   instance.
+5. **Check a fix you already made.** Did the metric respond? Fixes are
+   assumed to work far more often than they are verified, and an unverified
+   fix is a belief.
+6. **Ask what would prove you wrong.** For your current leading theory,
+   name the evidence that would refute it — then go and look for it.
 
 ## Summary
 
