@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Root-Cause Problem Solving"
-part: ""
+part: "Structured Methods"
 ---
 
 # Root-Cause Problem Solving

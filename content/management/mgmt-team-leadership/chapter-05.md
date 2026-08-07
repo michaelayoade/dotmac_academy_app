@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Leading Under Pressure"
-part: ""
+part: "The People"
 ---
 
 # Leading Under Pressure

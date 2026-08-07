@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Running Effective Meetings"
-part: ""
+part: "In Person"
 ---
 
 # Running Effective Meetings

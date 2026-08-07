@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Presenting Value"
-part: ""
+part: "The Case"
 ---
 
 # Presenting Value

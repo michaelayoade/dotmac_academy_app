@@ -1,7 +1,7 @@
 ---
 chapter: 4
 title: "Reading Dashboards & Reports"
-part: ""
+part: "Making Them Mean"
 ---
 
 # Reading Dashboards & Reports

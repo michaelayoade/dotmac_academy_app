@@ -890,6 +890,107 @@ def _reap_labs(args: argparse.Namespace) -> None:
     print(f"reaped {reaped} idle lab(s); provisioned {provisioned} pending lab(s)")
 
 
+def _load_curriculum(args: argparse.Namespace) -> None:
+    """Apply a CURRICULUM.yaml's prerequisite graph. The canonical writer.
+
+    ``CoursePrerequisite`` is read by ``entitlements`` in two places and was
+    written in none, so prerequisites were enforceable and uncreatable. The file
+    is authoritative and the table is a projection of it: rows for the
+    discipline that the file no longer declares are removed, so re-running after
+    deleting an edge actually deletes it.
+    """
+    import yaml
+
+    from app.db import SessionLocal
+    from app.models.course import Course
+    from app.models.prerequisite import CoursePrerequisite
+    from app.models.tenant import Tenant
+
+    doc = yaml.safe_load(args.file.read_text())["curriculum"]
+    declared = doc.get("prerequisites") or []
+
+    db = SessionLocal()
+    try:
+        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+
+        courses = {
+            c.slug: c
+            for c in db.query(Course).filter(Course.tenant_id == tenant.id).all()
+        }
+
+        wanted: set[tuple] = set()
+        missing: list[str] = []
+        for entry in declared:
+            slug = entry["course"]
+            for req in entry.get("requires") or []:
+                for name in (slug, req):
+                    if name not in courses:
+                        missing.append(name)
+                if slug in courses and req in courses:
+                    if slug == req:
+                        raise SystemExit(f"{slug} cannot require itself")
+                    wanted.add((courses[slug].id, courses[req].id))
+
+        if missing:
+            # Fail rather than silently skip: a typo'd slug would otherwise look
+            # exactly like a successful run that enforced nothing.
+            raise SystemExit(
+                "These courses are declared in the file but not imported: "
+                + ", ".join(sorted(set(missing)))
+            )
+
+        # A cycle would lock every course in it permanently unreachable.
+        edges: dict = {}
+        for course_id, requires_id in wanted:
+            edges.setdefault(course_id, set()).add(requires_id)
+        state: dict = {}
+
+        def _walk(node) -> None:
+            state[node] = 1
+            for nxt in edges.get(node, ()):
+                if state.get(nxt) == 1:
+                    raise SystemExit("prerequisite cycle detected; refusing to write")
+                if not state.get(nxt):
+                    _walk(nxt)
+            state[node] = 2
+
+        for node in list(edges):
+            if not state.get(node):
+                _walk(node)
+
+        existing_rows = (
+            db.query(CoursePrerequisite)
+            .filter(CoursePrerequisite.tenant_id == tenant.id)
+            .all()
+        )
+        scoped = {c.id for c in courses.values() if c.discipline == doc.get("discipline")}
+        existing = {(r.course_id, r.requires_course_id): r for r in existing_rows}
+
+        added = removed = 0
+        for pair in wanted - set(existing):
+            db.add(
+                CoursePrerequisite(
+                    tenant_id=tenant.id, course_id=pair[0], requires_course_id=pair[1]
+                )
+            )
+            added += 1
+        for pair, row in existing.items():
+            if pair not in wanted and pair[0] in scoped:
+                db.delete(row)
+                removed += 1
+
+        if args.dry_run:
+            db.rollback()
+            print(f"[dry-run] would add {added}, remove {removed}")
+            return
+        db.commit()
+        print(f"prerequisites: {added} added, {removed} removed, {len(wanted)} declared")
+    finally:
+        db.close()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="app.cli",
@@ -994,6 +1095,21 @@ def main() -> None:
         help="Directory containing *.yaml bank files (default: Foundation assessments/banks)",
     )
     lb.set_defaults(func=_load_banks)
+
+    lc = sub.add_parser(
+        "load-curriculum",
+        help="Apply a CURRICULUM.yaml prerequisite graph for a tenant.",
+        description=(
+            "The canonical writer for CoursePrerequisite, which entitlements enforces "
+            "but nothing previously created. The file is authoritative: declared edges "
+            "are added, and edges no longer declared are removed, so the table stays a "
+            "projection of the file. Refuses to write on an unknown slug or a cycle."
+        ),
+    )
+    lc.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    lc.add_argument("--file", type=Path, required=True, help="Path to CURRICULUM.yaml")
+    lc.add_argument("--dry-run", action="store_true", help="Report changes without writing")
+    lc.set_defaults(func=_load_curriculum)
 
     ab = sub.add_parser(
         "audit-banks",

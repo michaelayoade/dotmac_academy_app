@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "How a Business Makes Money"
-part: ""
+part: "The Machine"
 ---
 
 # How a Business Makes Money

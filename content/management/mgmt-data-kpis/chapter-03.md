@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Targets & Baselines"
-part: ""
+part: "Making Them Mean"
 ---
 
 # Targets & Baselines

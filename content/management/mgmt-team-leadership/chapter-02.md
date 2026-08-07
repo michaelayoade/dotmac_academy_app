@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Delegation & Accountability"
-part: ""
+part: "The Work"
 ---
 
 # Delegation & Accountability

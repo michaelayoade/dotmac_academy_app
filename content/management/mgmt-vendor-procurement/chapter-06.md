@@ -1,7 +1,7 @@
 ---
 chapter: 6
 title: "Procurement Ethics & Controls"
-part: ""
+part: "Keeping Control"
 ---
 
 # Procurement Ethics & Controls

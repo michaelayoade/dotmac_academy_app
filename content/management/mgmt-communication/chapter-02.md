@@ -1,7 +1,7 @@
 ---
 chapter: 2
 title: "Written Reports That Get Read"
-part: ""
+part: "In Writing"
 ---
 
 # Written Reports That Get Read

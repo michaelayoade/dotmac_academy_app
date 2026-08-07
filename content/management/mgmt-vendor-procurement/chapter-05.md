@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Supplier Performance & Relationships"
-part: ""
+part: "Keeping Control"
 ---
 
 # Supplier Performance & Relationships

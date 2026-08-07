@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Measuring Experience"
-part: ""
+part: "The Loop"
 ---
 
 # Measuring Experience

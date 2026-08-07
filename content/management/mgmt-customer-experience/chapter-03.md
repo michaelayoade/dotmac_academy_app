@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Service Commitments"
-part: ""
+part: "The Promise"
 ---
 
 # Service Commitments

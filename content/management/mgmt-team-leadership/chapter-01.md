@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "From Doer to Manager"
-part: ""
+part: "The Role"
 ---
 
 # From Doer to Manager

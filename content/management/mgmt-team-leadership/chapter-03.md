@@ -1,7 +1,7 @@
 ---
 chapter: 3
 title: "Organising the Team's Work"
-part: ""
+part: "The Work"
 ---
 
 # Organising the Team's Work

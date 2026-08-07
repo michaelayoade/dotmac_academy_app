@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Budgets & Business Cases"
-part: ""
+part: "Deciding"
 ---
 
 # Budgets & Business Cases

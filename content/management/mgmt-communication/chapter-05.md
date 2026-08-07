@@ -1,7 +1,7 @@
 ---
 chapter: 5
 title: "Difficult Conversations"
-part: ""
+part: "In Person"
 ---
 
 # Difficult Conversations

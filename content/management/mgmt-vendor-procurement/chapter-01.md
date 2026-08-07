@@ -1,7 +1,7 @@
 ---
 chapter: 1
 title: "Procurement Basics"
-part: ""
+part: "Buying Well"
 ---
 
 # Procurement Basics
