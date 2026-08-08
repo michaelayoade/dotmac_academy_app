@@ -10,7 +10,12 @@ dist/
 # Virtual envs
 .venv/
 venv/
+# .env and anything derived from it. The bare `.env` rule left backups like
+# `.env.bak-glitchtip-20260730-101507` untracked but committable, so a single
+# `git add -A` on a deploy host would have committed live credentials.
 .env
+.env.*
+!.env.example
 
 # Tooling caches
 .pytest_cache/
