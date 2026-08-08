@@ -191,6 +191,20 @@ What a manager personally owns when work can hurt people.
    the person's name, findings that get done, and reporting as a trust
    measure.
 
+### 12. Personal Effectiveness for Managers — `mgmt-personal-effectiveness`
+Managing your own time, attention and capacity before managing anyone else's.
+
+1. **Where Your Time Actually Goes** — logging a real week, the four
+   categories, and what interruption costs over a year.
+2. **Priorities & Saying No** — urgent versus important, a real 1-2-3 order,
+   and the trade-off that beats a refusal.
+3. **Attention, Focus & the Working Day** — fragmented hours, shaping the day,
+   defending a block, batching messages.
+4. **Systems That Carry the Load** — capture, one list, waiting-on, the weekly
+   review, and when the system becomes the problem.
+5. **Sustaining It** — restarting after a lapse, busy period versus overload,
+   escalating capacity with numbers, and what to keep when everything goes.
+
 ---
 
 ## Assessment plan (all courses)
