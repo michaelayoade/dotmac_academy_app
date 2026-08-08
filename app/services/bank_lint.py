@@ -331,8 +331,14 @@ def balance_targets(doc: BankDoc) -> list[dict]:
         ordered = sorted(distractors, key=len)
         longest_other = len(ordered[-1])
         shortest_other = len(ordered[0])
-        if shortest_other < a < longest_other:
-            continue  # already straddled
+        # Only actual violations. The linter flags an answer that is *strictly*
+        # longest or shortest, so ties are fine and equal-length options are
+        # ideal — "20% / 35% / 50% / 75%" needs no help. Reporting those as work
+        # invites damaging a balanced question to satisfy a number.
+        strictly_longest = a > longest_other
+        strictly_shortest = a < shortest_other
+        if not (strictly_longest or strictly_shortest):
+            continue
 
         # Spread the distractors either side of the answer. The widest sits
         # above it, the narrowest below, the rest near it — mean lands ~= a,
