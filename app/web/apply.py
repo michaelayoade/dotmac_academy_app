@@ -26,6 +26,7 @@ from app.models.tenant import Tenant
 from app.models.track import CohortTrack, Track
 from app.services import admissions as admissions_service
 from app.services import applicant_email, entrance_exam
+from app.services import erp_applicant_assessments as erp_registration
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.web.templating import templates
 
@@ -364,6 +365,15 @@ async def assessment_submit(request: Request, token: str = Form(...), db: Sessio
         applicant_email.send_waitlist_notice(db, applicant=applicant)
     else:
         applicant_email.send_results_received(db, applicant=applicant)
+    if applicant.assessment_return_url:
+        try:
+            return_url = erp_registration.validate_return_url(applicant.assessment_return_url)
+        except erp_registration.RegistrationError:
+            return_url = None
+        if return_url is not None:
+            if request.headers.get("HX-Request"):
+                return Response(status_code=204, headers={"HX-Redirect": return_url})
+            return RedirectResponse(return_url, status_code=303)
     return HTMLResponse(
         _RESULT.format(
             title="Assessment submitted",

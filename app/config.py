@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     erp_webhook_url: str = ""
     erp_webhook_secret: str = ""
 
+    # ERP -> Academy applicant-assessment registration. Inbound and outbound
+    # secrets are deliberately different trust directions. The public base URL
+    # is used to mint links without trusting the request Host header; allowed
+    # return origins are a comma-separated exact-origin allowlist.
+    erp_inbound_hmac_secret: str = ""
+    erp_assessment_token_secret: str = ""
+    erp_inbound_hmac_max_skew_seconds: int = 300
+    erp_allowed_return_origins: str = ""
+    academy_public_base_url: str = ""
+
     # Email / SMTP (inert by default — empty smtp_host disables sending).
     smtp_host: str = ""
     smtp_port: int = 587
@@ -99,4 +109,17 @@ def validate_settings(s: Settings) -> list[str]:
         errors.append("rate-limit request and window values must be positive")
     if s.is_production and s.smtp_host and not s.smtp_starttls:
         errors.append("SMTP_STARTTLS must be true when SMTP is configured in production")
+    if s.erp_inbound_hmac_max_skew_seconds <= 0:
+        errors.append("ERP_INBOUND_HMAC_MAX_SKEW_SECONDS must be positive")
+    if s.erp_inbound_hmac_secret:
+        if not s.erp_assessment_token_secret:
+            errors.append("ERP_ASSESSMENT_TOKEN_SECRET is required when ERP inbound integration is enabled")
+        if not s.erp_allowed_return_origins:
+            errors.append("ERP_ALLOWED_RETURN_ORIGINS is required when ERP inbound integration is enabled")
+        if not s.academy_public_base_url:
+            errors.append("ACADEMY_PUBLIC_BASE_URL is required when ERP inbound integration is enabled")
+        if s.erp_webhook_secret and s.erp_inbound_hmac_secret == s.erp_webhook_secret:
+            errors.append("ERP inbound and outbound HMAC secrets must be distinct")
+    if s.is_production and s.academy_public_base_url and not s.academy_public_base_url.startswith("https://"):
+        errors.append("ACADEMY_PUBLIC_BASE_URL must use HTTPS in production")
     return errors

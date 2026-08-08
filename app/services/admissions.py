@@ -134,9 +134,12 @@ def submit_application(
         if selected_track is None:
             raise BadRequestError("That training track is not open for the selected cohort.")
         program = selected_track.name
-    existing = db.scalar(
-        select(Applicant).where(Applicant.email == email)  # RLS scopes to tenant
+    lookup = (
+        select(Applicant).where(Applicant.external_ref == external_ref)
+        if external_ref
+        else select(Applicant).where(Applicant.email == email).where(Applicant.external_ref.is_(None))
     )
+    existing = db.scalar(lookup)
     if existing is not None:
         existing.first_name = first_name.strip()
         existing.last_name = last_name.strip()

@@ -57,6 +57,7 @@ def build_payload(*, email: str, course_title: str, completed_on: datetime | Non
 
 # Reply bodies meaning "ERP understood us and wrote nothing".
 _NOT_RECORDED = frozenset({"ignored", "unsupported"})
+_RECORDED = frozenset({"recorded", "updated", "duplicate"})
 
 
 def _reply_status(resp: httpx.Response) -> str | None:
@@ -92,9 +93,9 @@ def _outcome(resp: httpx.Response) -> str:
         return UNMATCHED
     if resp.status_code // 100 != 2:
         return FAILED
-    if status is None:
-        # A 2xx we cannot read is not evidence of anything. Retry rather than
-        # assume; a permanently unreadable endpoint is a visible backlog.
+    if status not in _RECORDED:
+        # A 2xx without an explicit acknowledgement is not evidence of a
+        # durable write. Retry rather than silently discard the event.
         return FAILED
     return SYNCED
 
@@ -171,4 +172,10 @@ def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -
     ).all()
     for completion in rows:
         counts[push_completion(db, tenant_id=tenant_id, completion=completion, now=now)] += 1
+    from app.services import erp_assessment_sync
+
+    for outcome, amount in erp_assessment_sync.sync_pending(
+        db, tenant_id=tenant_id, now=now
+    ).items():
+        counts[outcome] += amount
     return counts

@@ -170,10 +170,10 @@ def test_unreadable_2xx_body_is_retried_not_assumed(admin_session, tenant_a, mon
     admin_session.rollback()
 
 
-def test_recorded_and_updated_replies_both_count_as_delivered(admin_session, tenant_a, monkeypatch):
+def test_recorded_updated_and_duplicate_replies_count_as_delivered(admin_session, tenant_a, monkeypatch):
     """ERP answers "updated" when re-delivering the same certificate ref."""
     _configure(monkeypatch)
-    for status in ("recorded", "updated"):
+    for status in ("recorded", "updated", "duplicate"):
         monkeypatch.setattr(
             erp_sync.httpx, "post", lambda *a, s=status, **k: _FakeResp(200, {"status": s})
         )
