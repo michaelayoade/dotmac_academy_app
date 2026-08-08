@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -179,6 +180,76 @@ def submit_application(
         db.rollback()
         raise ConflictError("An application with this email already exists.") from exc
     return applicant
+
+
+
+def submit_external_application(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    external_ref: str,
+    email: str,
+    first_name: str,
+    last_name: str,
+    source: str,
+    applied_on: date | None = None,
+) -> tuple[Applicant, bool]:
+    """Create (or find) an applicant owned by an external system's application.
+
+    The second identity rule for intake, and the reason this belongs here rather
+    than in the caller. ``submit_application`` is idempotent on *(tenant, email)*
+    — one applicant per person — which is right for public intake. An external
+    system's applications are not people: the same individual may apply for two
+    jobs and must get two applicants, two sittings and two results. So this is
+    idempotent on *(tenant, external_ref)* instead.
+
+    Both rules are intake decisions, so both live with the intake owner. A
+    caller that inserted ``Applicant`` rows itself to get the second rule would
+    be a second writer of intake, and the two would drift the moment either
+    changed — the failure ``docs/adr/0005-assessment-engine-owns-exam-logic.md``
+    records one layer up.
+
+    Returns the applicant and whether this call created it, because callers
+    need to distinguish a first registration from a replay.
+    """
+    canonical = email.strip().lower()
+
+    created = db.execute(
+        insert(Applicant)
+        .values(
+            tenant_id=tenant_id,
+            email=canonical,
+            first_name=first_name.strip(),
+            last_name=last_name.strip(),
+            status="applied",
+            source=source,
+            external_ref=external_ref,
+            applied_on=applied_on or date.today(),
+        )
+        .on_conflict_do_nothing(
+            index_elements=[Applicant.tenant_id, Applicant.external_ref],
+            index_where=Applicant.external_ref.is_not(None),
+        )
+        .returning(Applicant.id)
+    ).first()
+
+    applicant = db.scalars(
+        select(Applicant)
+        .where(Applicant.tenant_id == tenant_id)
+        .where(Applicant.external_ref == external_ref)
+        .with_for_update()
+    ).first()
+    if applicant is None:
+        # Insert did nothing and the row is not there: the external_ref lost a
+        # race with a conflicting write, or the partial index is missing.
+        raise ConflictError("Could not establish an applicant for that external reference.")
+
+    if applicant.email != canonical:
+        raise ConflictError(
+            "That external reference is already registered to a different email address."
+        )
+
+    return applicant, created is not None
 
 
 def list_applicants(
