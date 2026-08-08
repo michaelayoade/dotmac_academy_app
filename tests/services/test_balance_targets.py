@@ -64,6 +64,19 @@ def test_targets_put_the_mean_ratio_near_one():
     assert 0.90 <= ratio <= 1.10, f"ratio {ratio:.2f} leaves no headroom"
 
 
+def test_equal_length_options_are_not_reported():
+    """All options the same length is ideal, not work. The linter flags only a
+    *strictly* longest or shortest answer, so reporting ties would invite
+    damaging a balanced question — "20% / 35% / 50% / 75%" needs nothing."""
+    rows = balance_targets(_doc([_q("q1", "50%", ["20%", "35%", "75%"])]))
+    assert rows == []
+
+
+def test_an_answer_tied_for_shortest_is_not_reported():
+    rows = balance_targets(_doc([_q("q1", "x" * 13, ["y" * 13, "z" * 16, "w" * 20])]))
+    assert rows == []
+
+
 def test_two_option_questions_are_skipped():
     """True/false cannot straddle, and they are 1% of flags estate-wide."""
     assert balance_targets(_doc([_q("q1", "false", ["true"])])) == []
