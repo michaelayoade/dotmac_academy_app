@@ -135,8 +135,9 @@ def applicant_for_token(
 
 
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
-    """The entrance bank for this applicant: the cohort's override, else the
-    academy-wide default (so every applicant sits an entrance exam)."""
+    """Per-applicant snapshot, then cohort override, then Academy default."""
+    if applicant.assessment_bank_id is not None:
+        return applicant.assessment_bank_id
     if applicant.cohort_id is not None:
         cohort = db.get(Cohort, applicant.cohort_id)
         if cohort is not None and cohort.entrance_bank_id is not None:
@@ -305,6 +306,7 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     applicant.assessment_invalid_reason = None
     applicant.assessment_time_exceeded = False
     applicant.assessment_deadline = None
+    applicant.assessment_erp_synced_at = None
     applicant.assessment_reset_count = (applicant.assessment_reset_count or 0) + 1
     return issue_token(db, applicant=applicant)
 
@@ -362,6 +364,7 @@ def grade_and_record(
         raise BadRequestError("Entrance assessment has not been started.")
     record_elapsed(db, applicant=applicant, now=now)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
+    applicant.assessment_bank_id = bank_id
 
     questions = list(
         db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
@@ -404,6 +407,8 @@ def grade_and_record(
     applicant.assessment_invalid_reason = reason
     applicant.assessment_time_exceeded = _time_exceeded(db, applicant, now)
     applicant.assessment_taken_at = now
+    applicant.assessment_result_version = (applicant.assessment_result_version or 0) + 1
+    applicant.assessment_erp_synced_at = None
     applicant.assessment_answers = None  # graded; drop the autosave scratchpad
     db.flush()
     return {

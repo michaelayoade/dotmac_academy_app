@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
+from app.api.erp_applicant_assessments import router as erp_applicant_assessments_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.config import settings, validate_settings
@@ -159,6 +160,7 @@ def metrics(request: Request):
 
 
 app.include_router(auth_router)
+app.include_router(erp_applicant_assessments_router)
 app.include_router(persons_router)
 app.include_router(admissions_router)
 app.include_router(rbac_router)

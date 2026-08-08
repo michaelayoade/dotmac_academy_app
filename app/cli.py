@@ -858,6 +858,8 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
             band = "beginner" if score <= p25 else "advanced" if score >= p75 else "intermediate"
             if a.assessment_level != band:
                 a.assessment_level = band
+                a.assessment_result_version = (a.assessment_result_version or 0) + 1
+                a.assessment_erp_synced_at = None
                 changed += 1
         db.commit()
         print(f"re-banded {changed} applicant(s) by percentile (bottom 25% / middle / top 25%).")
