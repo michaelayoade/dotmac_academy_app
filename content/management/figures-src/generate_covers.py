@@ -25,7 +25,7 @@ import sys
 import urllib.error
 import urllib.request
 
-REPO = pathlib.Path(__file__).resolve().parents[2]
+REPO = pathlib.Path(__file__).resolve().parents[3]
 OUT = REPO / "static" / "img"
 KEY = (pathlib.Path.home() / ".gemini_key").read_text().strip()
 URL = (
