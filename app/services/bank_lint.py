@@ -301,17 +301,84 @@ def lint_bank(doc: BankDoc) -> list[str]:
     return out
 
 
+def balance_targets(doc: BankDoc) -> list[dict]:
+    """For each unbalanced question, the option lengths that would fix it.
+
+    Rebalancing by eye oscillates. Trimming an over-long answer makes it the
+    *shortest* option; padding distractors to compensate makes it the longest
+    again. Two passes over foundation ch05 went 85% -> 78% and back to
+    answer-longest without converging, which is what prompted this.
+
+    The stable shape is distractors that **straddle** the answer — at least one
+    longer, at least one shorter, and a mean close to the answer's own length.
+    That satisfies both halves of the extreme-share rule and puts the mean ratio
+    near 1.0 rather than near an edge of the allowed band.
+
+    Targets are derived from the same constants the linter checks against, so
+    they cannot drift from the rule they are meant to satisfy.
+    """
+    out: list[dict] = []
+    for q in doc.questions:
+        options = q.get("options") or []
+        correct = (q.get("correct") or [None])[0]
+        if len(options) < 3 or not isinstance(correct, str):
+            continue
+        distractors = [o for o in options if o != correct]
+        if len(distractors) < 2:
+            continue
+
+        a = len(correct)
+        ordered = sorted(distractors, key=len)
+        longest_other = len(ordered[-1])
+        shortest_other = len(ordered[0])
+        if shortest_other < a < longest_other:
+            continue  # already straddled
+
+        # Spread the distractors either side of the answer. The widest sits
+        # above it, the narrowest below, the rest near it — mean lands ~= a,
+        # so the ratio check clears with margin rather than by a hair.
+        spread = [1.18, 1.0, 0.84, 0.92, 1.10][: len(distractors)]
+        targets = [max(8, round(a * f)) for f in spread]
+        out.append(
+            {
+                "id": q.get("id"),
+                "answer_len": a,
+                "distractors": [
+                    {"text": d, "now": len(d), "target": t}
+                    for d, t in zip(ordered, sorted(targets), strict=False)
+                ],
+            }
+        )
+    return out
+
+
 def _main(argv: list[str]) -> int:
     """Lint bank files given as paths. Exit 1 if any fails, so CI can gate on it."""
     import sys
 
     paths: list[Path] = []
     for a in argv:
+        if a.startswith("--"):
+            continue
         p = Path(a)
         paths.extend(sorted(p.glob("**/*.yaml")) if p.is_dir() else [p])
     if not paths:
         print("no bank files given", file=sys.stderr)
         return 2
+
+    if "--targets" in argv:
+        for path in paths:
+            rows = balance_targets(parse_bank(path))
+            if not rows:
+                continue
+            print(f"\n{path.name}")
+            for r in rows:
+                print(f"  {r['id']}  answer={r['answer_len']}")
+                for d in r["distractors"]:
+                    delta = d["target"] - d["now"]
+                    sign = "+" if delta > 0 else ""
+                    print(f"     {d['now']:>4} -> {d['target']:<4} ({sign}{delta})  {d['text'][:76]}")
+        return 0
 
     failed = 0
     for path in paths:
