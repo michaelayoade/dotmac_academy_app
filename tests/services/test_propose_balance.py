@@ -61,12 +61,21 @@ def test_a_gap_beyond_the_hedge_library_is_flagged_not_guessed():
 
 def test_applying_every_suggestion_clears_the_lint():
     """End to end: the proposals must actually fix the bank, not merely look
-    plausible. This is the property the whole tool is for."""
+    plausible. This is the property the whole tool is for.
+
+    Six questions, not three: the balance rule exempts banks below
+    `_MIN_BALANCE_SAMPLE` (5), where a single question would swing the share
+    too far. A three-question fixture is not a broken bank, it is an exempt
+    one — which is why the fixture-sanity assertion below is worth keeping.
+    """
     doc = _doc(
         [
             _q("q1", "x" * 60, ["y" * 55, "z" * 50, "w" * 45]),
             _q("q2", "x" * 70, ["y" * 66, "z" * 40, "w" * 35]),
             _q("q3", "x" * 30, ["y" * 28, "z" * 25, "w" * 20]),
+            _q("q4", "x" * 90, ["y" * 84, "z" * 60, "w" * 55]),
+            _q("q5", "x" * 45, ["y" * 41, "z" * 38, "w" * 33]),
+            _q("q6", "x" * 52, ["y" * 48, "z" * 44, "w" * 40]),
         ]
     )
     assert any("distractor" in v.lower() for v in lint_bank(doc)), "fixture not broken"
