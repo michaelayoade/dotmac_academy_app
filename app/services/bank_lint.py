@@ -14,6 +14,7 @@ repository can run it directly:
 
 ``bank_loader`` re-exports everything here, so existing callers are unchanged.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -83,8 +84,7 @@ def _policy_violations(doc: BankDoc) -> list[str]:
             # A pool at or above the bank size draws every question every time,
             # which is the behaviour the author was trying to move away from.
             out.append(
-                f"policy: pool {pool} exceeds the {len(doc.questions)} questions in "
-                f"the bank — nothing is held back"
+                f"policy: pool {pool} exceeds the {len(doc.questions)} questions in the bank — nothing is held back"
             )
 
     attempts = policy.get("max_attempts")
@@ -96,16 +96,11 @@ def _policy_violations(doc: BankDoc) -> list[str]:
         if not isinstance(threshold, int | float) or isinstance(threshold, bool):
             out.append(f"policy: pass_threshold must be a number, got {threshold!r}")
         elif not 0.0 <= float(threshold) <= 1.0:
-            out.append(
-                f"policy: pass_threshold is a fraction between 0 and 1, got {threshold!r}"
-            )
+            out.append(f"policy: pass_threshold is a fraction between 0 and 1, got {threshold!r}")
 
     mode = policy.get("mode")
     if mode is not None and mode not in _ASSESSMENT_MODES:
-        out.append(
-            f"policy: mode must be one of {', '.join(sorted(_ASSESSMENT_MODES))}, "
-            f"got {mode!r}"
-        )
+        out.append(f"policy: mode must be one of {', '.join(sorted(_ASSESSMENT_MODES))}, got {mode!r}")
 
     return out
 
@@ -276,9 +271,7 @@ def lint_bank(doc: BankDoc) -> list[str]:
         # vs target 30% ±10%) must pass — bare float subtraction yields
         # 0.4-0.3==0.10000000000000003 and would wrongly reject a compliant bank.
         if abs(frac - target) > _TOL + 1e-9:
-            out.append(
-                f"rubric mix off: {cat} {frac:.0%} (target {target:.0%} ±{_TOL:.0%})"
-            )
+            out.append(f"rubric mix off: {cat} {frac:.0%} (target {target:.0%} ±{_TOL:.0%})")
 
     out.extend(_distractor_balance_violations(doc.questions))
 
@@ -350,12 +343,78 @@ def balance_targets(doc: BankDoc) -> list[dict]:
                 "id": q.get("id"),
                 "answer_len": a,
                 "distractors": [
-                    {"text": d, "now": len(d), "target": t}
-                    for d, t in zip(ordered, sorted(targets), strict=False)
+                    {"text": d, "now": len(d), "target": t} for d, t in zip(ordered, sorted(targets), strict=False)
                 ],
             }
         )
     return out
+
+
+# Hedges used to lengthen a distractor. Every one is a qualifier that asserts no
+# new fact, which is what makes this safe to apply mechanically: a distractor is
+# already the wrong answer, so hedging it cannot make it more or less wrong. The
+# same appended to a *correct* answer would be unacceptable, which is why
+# propose_balance only ever touches distractors.
+_HEDGES = [
+    ", in practice",
+    ", as a general rule",
+    ", in most ordinary cases",
+    ", which is the usual assumption here",
+    ", at least as it is normally understood on site",
+    ", which is what most people would reasonably expect to happen",
+]
+
+
+def propose_balance(doc: BankDoc) -> list[dict]:
+    """Concrete edits that would bring each unbalanced question into range.
+
+    The binding constraint is narrower than `balance_targets` implies. A
+    question needs one distractor longer than the answer and one shorter — not
+    three distractors at ideal lengths. Chasing all three took four passes on
+    foundation ch07; computing exactly how many characters the longest
+    distractor needed took one.
+
+    So this proposes the minimum edit: extend the longest distractor just past
+    the answer, using the shortest hedge that gets there. Output is for review
+    rather than blind application — a hedge that reads badly in context should
+    be replaced by hand, and questions whose answer is long for domain reasons
+    ("Within 50 milliseconds", "Core / Metro / Access / International")
+    should be left alone entirely.
+    """
+    proposals: list[dict] = []
+    for row in balance_targets(doc):
+        distractors = row["distractors"]
+        if not distractors:
+            continue
+        answer_len = row["answer_len"]
+        longest = max(distractors, key=lambda d: d["now"])
+        if longest["now"] > answer_len:
+            continue  # already straddled above; the shortfall is on the low side
+
+        needed = answer_len - longest["now"] + 1
+        hedge = next((h for h in _HEDGES if len(h) >= needed), None)
+        if hedge is None:
+            proposals.append(
+                {
+                    "id": row["id"],
+                    "option": longest["text"],
+                    "needed": needed,
+                    "suggestion": None,
+                    "note": "gap too large for a hedge — rewrite or trim the answer",
+                }
+            )
+            continue
+
+        proposals.append(
+            {
+                "id": row["id"],
+                "option": longest["text"],
+                "needed": needed,
+                "suggestion": longest["text"].rstrip(".") + hedge,
+                "note": None,
+            }
+        )
+    return proposals
 
 
 def _main(argv: list[str]) -> int:
@@ -371,6 +430,21 @@ def _main(argv: list[str]) -> int:
     if not paths:
         print("no bank files given", file=sys.stderr)
         return 2
+
+    if "--propose" in argv:
+        for path in paths:
+            rows = propose_balance(parse_bank(path))
+            if not rows:
+                continue
+            print(f"\n{path.name}")
+            for r in rows:
+                print(f"  {r['id']}  needs +{r['needed']}")
+                print(f"    -  {r['option']}")
+                if r["suggestion"]:
+                    print(f"    +  {r['suggestion']}")
+                else:
+                    print(f"    !  {r['note']}")
+        return 0
 
     if "--targets" in argv:
         for path in paths:
