@@ -204,6 +204,19 @@ Managing your own time, attention and capacity before managing anyone else's.
    review, and when the system becomes the problem.
 5. **Sustaining It** — restarting after a lapse, busy period versus overload,
    escalating capacity with numbers, and what to keep when everything goes.
+### 13. Operations & Process for Managers — `mgmt-operations-process`
+Making the work visible, predictable and steadily better.
+
+1. **Seeing the Process** — mapping as it runs, value versus necessary versus
+   waste, why waiting dominates duration, and handoffs as queues.
+2. **Standard Work & Variation** — same mean, different operations; standard
+   work as the baseline improvement needs; common versus special cause.
+3. **Bottlenecks, Flow & Quality at Source** — only the constraint sets
+   output, batches make queues, and where a defect should have been caught.
+4. **Changing a Process Without Breaking It** — predict, pilot small,
+   standardise, and revert failures honestly.
+5. **Running the Operation Day to Day** — the daily review, the numbers worth
+   watching, escalation before the customer, and improvement without a project.
 
 ---
 
