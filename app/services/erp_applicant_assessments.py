@@ -6,19 +6,20 @@ import base64
 import hashlib
 import hmac
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
 from app.models.tenant import Tenant
+from app.services import admissions
+from app.services.exceptions import ConflictError
 from app.services.identity import normalize_email
 from app.services.security import hash_token
 
@@ -158,47 +159,23 @@ def register(
     safe_return_url = validate_return_url(return_url)
     canonical_email = normalize_email(email)
 
-    created = db.execute(
-        insert(Applicant)
-        .values(
+    # Intake is admissions' decision, including the external-ref identity rule.
+    # This module owns what happens to the *assessment* once an applicant
+    # exists, and nothing about who an applicant is.
+    try:
+        applicant, created = admissions.submit_external_application(
+            db,
             tenant_id=tenant_id,
-            email=canonical_email,
-            first_name=first_name.strip(),
-            last_name=last_name.strip(),
-            status="applied",
-            source=SOURCE,
             external_ref=external_ref,
-            applied_on=date.today(),
-            assessment_bank_id=bank.id,
-            assessment_return_url=safe_return_url,
-            assessment_deadline=now + timedelta(days=DEFAULT_DEADLINE_DAYS),
+            email=canonical_email,
+            first_name=first_name,
+            last_name=last_name,
+            source=SOURCE,
         )
-        .on_conflict_do_nothing(
-            index_elements=[Applicant.tenant_id, Applicant.external_ref],
-            index_where=Applicant.external_ref.is_not(None),
-        )
-        .returning(Applicant.id)
-    ).first()
-
-    applicant = db.scalars(
-        select(Applicant)
-        .where(Applicant.tenant_id == tenant_id)
-        .where(Applicant.external_ref == external_ref)
-        .with_for_update()
-    ).first()
-    if applicant is None:
+    except ConflictError as exc:
         raise RegistrationError(
-            "registration_conflict",
-            "Could not establish applicant assessment",
-            status_code=409,
-        )
-
-    if applicant.email != canonical_email:
-        raise RegistrationError(
-            "external_ref_conflict",
-            "external_ref is already registered with different applicant data",
-            status_code=409,
-        )
+            "external_ref_conflict", str(exc), status_code=409
+        ) from exc
     if applicant.assessment_bank_id is not None and applicant.assessment_bank_id != bank.id:
         raise RegistrationError(
             "external_ref_conflict",
@@ -221,7 +198,7 @@ def register(
     applicant.source = SOURCE
     applicant.assessment_bank_id = bank.id
     applicant.assessment_return_url = safe_return_url
-    if created is not None or applicant.assessment_started_at is None:
+    if created or applicant.assessment_started_at is None:
         applicant.first_name = first_name.strip()
         applicant.last_name = last_name.strip()
     if applicant.assessment_deadline is None:
