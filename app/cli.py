@@ -76,7 +76,10 @@ def _import_foundation(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
         course = import_foundation(
             db,
             tenant_id=tenant.id,
@@ -109,7 +112,10 @@ def _import_manual(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
         course = import_manual(
             db,
             tenant_id=tenant.id,
@@ -153,7 +159,10 @@ def _audit_banks(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
 
         q = (
             db.query(QuestionBank, Course)
@@ -209,7 +218,10 @@ def _load_banks(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
 
         banks_dir = Path(args.banks_dir)
         if not banks_dir.is_dir():
@@ -310,7 +322,10 @@ def _import_labs(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
 
         course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
@@ -939,7 +954,10 @@ def _load_curriculum(args: argparse.Namespace) -> None:
         # `tenants` is not tenant-scoped, so the lookup above succeeds even with
         # no RLS scope set — which is why the omission was invisible. Every query
         # after this point needs the scope or it silently returns nothing.
-        set_tenant(db, tenant.id)
+        #
+        # Session-level, not transaction-local: these commands commit in a loop,
+        # and SET LOCAL would be discarded by the first commit. See set_tenant.
+        set_tenant(db, tenant.id, transaction_local=False)
 
         courses = {
             c.slug: c
