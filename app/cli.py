@@ -64,7 +64,7 @@ def _email_outbox(args: argparse.Namespace) -> None:
 
 
 def _import_foundation(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.tenant import Tenant
     from app.services.content_import import import_foundation, sync_figures
 
@@ -73,6 +73,10 @@ def _import_foundation(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
         course = import_foundation(
             db,
             tenant_id=tenant.id,
@@ -93,7 +97,7 @@ def _import_foundation(args: argparse.Namespace) -> None:
 
 
 def _import_manual(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.tenant import Tenant
     from app.services.content_import import import_manual, sync_figures
 
@@ -102,6 +106,10 @@ def _import_manual(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
         course = import_manual(
             db,
             tenant_id=tenant.id,
@@ -131,7 +139,7 @@ def _audit_banks(args: argparse.Namespace) -> None:
     loaded before a rule existed stays live and non-compliant, and nothing
     says so. This closes it — the same linter, pointed at the projection.
     """
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.assessment import QuestionBank
     from app.models.course import Course
     from app.models.tenant import Tenant
@@ -142,6 +150,10 @@ def _audit_banks(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
 
         q = (
             db.query(QuestionBank, Course)
@@ -183,7 +195,7 @@ def _audit_banks(args: argparse.Namespace) -> None:
 
 
 def _load_banks(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.assessment import Activity
     from app.models.course import Course
     from app.models.tenant import Tenant
@@ -194,6 +206,10 @@ def _load_banks(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
 
         banks_dir = Path(args.banks_dir)
         if not banks_dir.is_dir():
@@ -281,7 +297,7 @@ def _load_banks(args: argparse.Namespace) -> None:
 
 
 def _import_labs(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.course import Course
     from app.models.tenant import Tenant
     from app.services.lab_content import import_labs
@@ -291,6 +307,10 @@ def _import_labs(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
 
         course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
@@ -903,7 +923,7 @@ def _load_curriculum(args: argparse.Namespace) -> None:
     """
     import yaml
 
-    from app.db import SessionLocal
+    from app.db import SessionLocal, set_tenant
     from app.models.course import Course
     from app.models.prerequisite import CoursePrerequisite
     from app.models.tenant import Tenant
@@ -916,6 +936,10 @@ def _load_curriculum(args: argparse.Namespace) -> None:
         tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
         if tenant is None:
             raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
+        # no RLS scope set — which is why the omission was invisible. Every query
+        # after this point needs the scope or it silently returns nothing.
+        set_tenant(db, tenant.id)
 
         courses = {
             c.slug: c

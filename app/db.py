@@ -32,6 +32,21 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 PlatformSessionLocal = sessionmaker(bind=platform_engine, autocommit=False, autoflush=False)
 
 
+def set_tenant(db: Session, tenant_id) -> None:
+    """Apply the RLS tenant scope to `db`. The single writer of the setting.
+
+    It exists because the setting used to be issued inline in `get_db` and
+    nowhere else, which left every caller outside the request cycle — the whole
+    CLI — running with no scope. RLS fails closed, so those callers silently saw
+    zero rows instead of erroring. `SET LOCAL` is transaction-scoped, so this
+    must be applied per session, after the tenant is resolved.
+    """
+    db.execute(
+        text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+        {"tenant_id": str(tenant_id)},
+    )
+
+
 def get_db(request: Request) -> Generator[Session, None, None]:
     """Per-request DB session with tenant context applied for RLS.
 
@@ -44,10 +59,7 @@ def get_db(request: Request) -> Generator[Session, None, None]:
     try:
         tenant = getattr(request.state, "tenant", None)
         if tenant is not None:
-            db.execute(
-                text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-                {"tenant_id": str(tenant.id)},
-            )
+            set_tenant(db, tenant.id)
         yield db
         db.commit()
     except Exception:
