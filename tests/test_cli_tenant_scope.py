@@ -80,6 +80,41 @@ def test_unscoped_session_is_blind(admin_session, app_user_session, tenant_a):
         _cleanup(admin_session, course, bank)
 
 
+def test_a_transaction_local_scope_does_not_survive_a_commit(admin_session, app_user_session, tenant_a):
+    """The regression. A CLI command that commits in a loop loses its scope.
+
+    `SET LOCAL` dies with the transaction, `expire_on_commit` reloads attributes
+    on the next statement, and that statement runs unscoped — so a row the same
+    session just wrote comes back invisible. `load-banks` hit exactly this on
+    the first bank it committed, as `ObjectDeletedError`.
+    """
+    course, bank = _seed_bank(admin_session, tenant_a)
+    try:
+        set_tenant(app_user_session, tenant_a.id, transaction_local=True)
+        assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
+        app_user_session.commit()
+        assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 0
+    finally:
+        app_user_session.rollback()
+        _cleanup(admin_session, course, bank)
+
+
+def test_a_session_level_scope_survives_a_commit(admin_session, app_user_session, tenant_a):
+    """What the CLI needs, and what it now asks for."""
+    course, bank = _seed_bank(admin_session, tenant_a)
+    try:
+        set_tenant(app_user_session, tenant_a.id, transaction_local=False)
+        assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
+        app_user_session.commit()
+        assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
+        app_user_session.commit()
+        assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
+    finally:
+        app_user_session.execute(text("RESET app.current_tenant"))
+        app_user_session.rollback()
+        _cleanup(admin_session, course, bank)
+
+
 def test_set_tenant_makes_the_rows_visible(admin_session, app_user_session, tenant_a):
     """The fix: same session, same query, scope applied."""
     course, bank = _seed_bank(admin_session, tenant_a)

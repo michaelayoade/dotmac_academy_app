@@ -32,18 +32,29 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 PlatformSessionLocal = sessionmaker(bind=platform_engine, autocommit=False, autoflush=False)
 
 
-def set_tenant(db: Session, tenant_id) -> None:
+def set_tenant(db: Session, tenant_id, *, transaction_local: bool = True) -> None:
     """Apply the RLS tenant scope to `db`. The single writer of the setting.
 
-    It exists because the setting used to be issued inline in `get_db` and
-    nowhere else, which left every caller outside the request cycle — the whole
-    CLI — running with no scope. RLS fails closed, so those callers silently saw
-    zero rows instead of erroring. `SET LOCAL` is transaction-scoped, so this
-    must be applied per session, after the tenant is resolved.
+    `transaction_local` is the whole subtlety, and getting it wrong is silent in
+    both directions:
+
+    * `True` (SET LOCAL) is **required** for `get_db`. Its session comes from a
+      pool, so a scope that outlived the transaction would be inherited by the
+      next request to borrow that connection — one tenant reading another's
+      rows. Transaction-local means the setting dies with the transaction.
+
+    * `False` is **required** for a long-running CLI session that commits more
+      than once. A commit ends the transaction and takes `SET LOCAL` with it;
+      `expire_on_commit` then reloads attributes on the *next* statement, which
+      runs unscoped, and RLS fails closed — so a row the same session just
+      wrote comes back invisible as `ObjectDeletedError`. That is not
+      theoretical: it is what `load-banks` did on the first bank it committed.
+      A CLI process owns its connections and exits with them, so a
+      session-level setting cannot leak to anyone.
     """
     db.execute(
-        text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-        {"tenant_id": str(tenant_id)},
+        text("SELECT set_config('app.current_tenant', :tenant_id, :is_local)"),
+        {"tenant_id": str(tenant_id), "is_local": transaction_local},
     )
 
 
