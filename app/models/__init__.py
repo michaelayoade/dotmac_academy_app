@@ -10,6 +10,7 @@ from app.models.cohort import Cohort, Enrollment  # noqa: F401
 from app.models.completion import CourseCompletion  # noqa: F401
 from app.models.course import Chapter, Course  # noqa: F401
 from app.models.email_outbox import EmailOutbox  # noqa: F401
+from app.models.entrance_defaults import TenantEntranceDefaults  # noqa: F401
 from app.models.lab import LabInstance, LabTemplate  # noqa: F401
 from app.models.learning_event import LearningEvent  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
@@ -21,6 +22,5 @@ from app.models.prerequisite import CoursePrerequisite  # noqa: F401
 from app.models.reading import ChapterRead  # noqa: F401
 from app.models.reminder import ReminderLog, ReminderPreference  # noqa: F401
 from app.models.success_queue import SuccessQueueEntry  # noqa: F401
-from app.models.entrance_defaults import TenantEntranceDefaults  # noqa: F401
 from app.models.tenant import Tenant, TenantDomain  # noqa: F401
 from app.models.track import CohortTrack, Track, TrackCourse  # noqa: F401

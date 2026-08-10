@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
-from app.services.entrance_exam import academy_default_bank_id
 from app.services import admissions
+from app.services.entrance_exam import academy_default_bank_id
 from app.services.exceptions import ConflictError
 from app.services.identity import normalize_email
 from app.services.security import hash_token

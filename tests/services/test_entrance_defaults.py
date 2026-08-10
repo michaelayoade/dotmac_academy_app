@@ -15,10 +15,11 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy.orm import Session
+
 from app.models.entrance_defaults import TenantEntranceDefaults
 from app.models.tenant import Tenant
 from app.services import entrance_exam
-from sqlalchemy.orm import Session
 
 
 def test_tenant_carries_no_product_columns() -> None:

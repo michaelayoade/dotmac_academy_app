@@ -21,8 +21,9 @@ Revises: 0052_erp_applicant_assessments
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0053_entrance_defaults"
 down_revision = "0052_erp_applicant_assessments"

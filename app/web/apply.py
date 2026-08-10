@@ -22,11 +22,11 @@ from app.api.deps import get_db, require_tenant
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
-from app.services.entrance_exam import academy_default_bank_id
 from app.models.track import CohortTrack, Track
 from app.services import admissions as admissions_service
 from app.services import applicant_email, entrance_exam
 from app.services import erp_applicant_assessments as erp_registration
+from app.services.entrance_exam import academy_default_bank_id
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.web.templating import templates
 

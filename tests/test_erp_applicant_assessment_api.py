@@ -17,8 +17,8 @@ from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
 from app.models.course import Course
 from app.services import entrance_exam
-from app.services.erp_integration_security import sign_request
 from app.services.entrance_exam import set_academy_defaults
+from app.services.erp_integration_security import sign_request
 
 SECRET = "test-inbound-secret"
 TOKEN_SECRET = "test-assessment-token-secret"
