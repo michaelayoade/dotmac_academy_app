@@ -20,7 +20,13 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+
+from dotmac_kernel.db import platform_session, tenant_session_by_slug
+from dotmac_kernel.exceptions import NotFoundError
+from sqlalchemy.orm import Session
 
 _DEFAULT_CHAPTERS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters")
 _DEFAULT_FIGURES_DIR = Path("/home/dotmac/projects/dotmac-academy/figures/final")
@@ -28,12 +34,29 @@ _DEFAULT_BANKS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-found
 _DEFAULT_LABS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/labs")
 
 
+@contextmanager
+def _tenant_session(slug: str) -> Iterator[tuple[Session, object]]:
+    """`tenant_session_by_slug` with the CLI's error convention.
+
+    The kernel raises `NotFoundError`; a command-line tool should exit with a
+    message, not a traceback. Wrapping it here keeps that translation in one
+    place instead of six.
+    """
+    try:
+        with tenant_session_by_slug(slug) as (db, tenant):
+            yield db, tenant
+    except NotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _bootstrap(args: argparse.Namespace) -> None:
-    from dotmac_kernel.db import SessionLocal
     from app.services.bootstrap import bootstrap_tenant
 
-    db = SessionLocal()
-    try:
+    # The one command that cannot be tenant-scoped: it is CREATING the tenant,
+    # so there is nothing to scope to yet. Creating a tenant is a platform
+    # operation, which is what `platform_session` is for. Its small pool is
+    # irrelevant here — this is a one-shot command, not a request path.
+    with platform_session() as db:
         t = bootstrap_tenant(
             db,
             slug=args.slug,
@@ -41,10 +64,7 @@ def _bootstrap(args: argparse.Namespace) -> None:
             admin_email=args.admin_email,
             admin_password=args.admin_password,
         )
-        db.commit()
         print(f"tenant {t.slug} ({t.id}) created")
-    finally:
-        db.close()
 
 
 def _email_outbox(args: argparse.Namespace) -> None:
@@ -64,22 +84,9 @@ def _email_outbox(args: argparse.Namespace) -> None:
 
 
 def _import_foundation(args: argparse.Namespace) -> None:
-    from dotmac_kernel.db import SessionLocal, set_tenant
-    from app.models.tenant import Tenant
     from app.services.content_import import import_foundation, sync_figures
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         course = import_foundation(
             db,
             tenant_id=tenant.id,
@@ -95,27 +102,12 @@ def _import_foundation(args: argparse.Namespace) -> None:
             f"foundation course '{course.slug}' ({course.id}) v{course.version} imported; "
             f"{copied} figure(s) synced to static/figures/"
         )
-    finally:
-        db.close()
 
 
 def _import_manual(args: argparse.Namespace) -> None:
-    from dotmac_kernel.db import SessionLocal, set_tenant
-    from app.models.tenant import Tenant
     from app.services.content_import import import_manual, sync_figures
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         course = import_manual(
             db,
             tenant_id=tenant.id,
@@ -134,8 +126,6 @@ def _import_manual(args: argparse.Namespace) -> None:
             f"course '{course.slug}' ({course.id}) v{course.version} imported; "
             f"{copied} figure(s) synced to static/figures/"
         )
-    finally:
-        db.close()
 
 
 def _audit_banks(args: argparse.Namespace) -> None:
@@ -145,24 +135,11 @@ def _audit_banks(args: argparse.Namespace) -> None:
     loaded before a rule existed stays live and non-compliant, and nothing
     says so. This closes it — the same linter, pointed at the projection.
     """
-    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.assessment import QuestionBank
     from app.models.course import Course
-    from app.models.tenant import Tenant
     from app.services.bank_loader import doc_from_db, lint_bank
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
 
         q = (
             db.query(QuestionBank, Course)
@@ -199,29 +176,14 @@ def _audit_banks(args: argparse.Namespace) -> None:
 
         if failing and args.fail_on_violations:
             raise SystemExit(1)
-    finally:
-        db.close()
 
 
 def _load_banks(args: argparse.Namespace) -> None:
-    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.assessment import Activity
     from app.models.course import Course
-    from app.models.tenant import Tenant
     from app.services.bank_loader import lint_bank, load_bank, parse_bank
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
 
         banks_dir = Path(args.banks_dir)
         if not banks_dir.is_dir():
@@ -304,28 +266,13 @@ def _load_banks(args: argparse.Namespace) -> None:
             loaded += 1
 
         print(f"Done — {loaded}/{len(yaml_files)} bank(s) loaded.")
-    finally:
-        db.close()
 
 
 def _import_labs(args: argparse.Namespace) -> None:
-    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.course import Course
-    from app.models.tenant import Tenant
     from app.services.lab_content import import_labs
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
 
         course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
@@ -349,8 +296,6 @@ def _import_labs(args: argparse.Namespace) -> None:
         for t in templates:
             print(f"lab '{t.slug}' -> activity {t.activity_id} v{t.version}")
         print(f"Done — {len(templates)} lab(s) imported for course '{course.slug}' and tenant '{args.tenant_slug}'.")
-    finally:
-        db.close()
 
 
 def _reminders_sweep(args: argparse.Namespace) -> None:
@@ -942,26 +887,13 @@ def _load_curriculum(args: argparse.Namespace) -> None:
     """
     import yaml
 
-    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.course import Course
     from app.models.prerequisite import CoursePrerequisite
-    from app.models.tenant import Tenant
 
     doc = yaml.safe_load(args.file.read_text())["curriculum"]
     declared = doc.get("prerequisites") or []
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-        # `tenants` is not tenant-scoped, so the lookup above succeeds even with
-        # no RLS scope set — which is why the omission was invisible. Every query
-        # after this point needs the scope or it silently returns nothing.
-        #
-        # Session-level, not transaction-local: these commands commit in a loop,
-        # and SET LOCAL would be discarded by the first commit. See set_tenant.
-        set_tenant(db, tenant.id, transaction_local=False)
+    with _tenant_session(args.tenant_slug) as (db, tenant):
 
         courses = {
             c.slug: c
@@ -1035,8 +967,6 @@ def _load_curriculum(args: argparse.Namespace) -> None:
             return
         db.commit()
         print(f"prerequisites: {added} added, {removed} removed, {len(wanted)} declared")
-    finally:
-        db.close()
 
 
 def main() -> None:

@@ -41,7 +41,7 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # commit-survival fix in a29 — adopting anything earlier would delete the RLS
 # scoping this repo added in #111/#114 and silently reinstate the defect that
 # had `audit-banks` reporting a clean estate it could not see.
-dotmac-kernel = { version = "0.1.0a29", source = "forgejo" }
+dotmac-kernel = { version = "0.1.0a30", source = "forgejo" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

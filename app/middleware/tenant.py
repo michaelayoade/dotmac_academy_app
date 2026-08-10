@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from dotmac_kernel.db import SessionLocal
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,7 +22,6 @@ from starlette.requests import Request
 from starlette.types import ASGIApp
 
 from app.config import settings
-from dotmac_kernel.db import SessionLocal
 from app.models.tenant import Tenant, TenantDomain
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,21 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
     def _resolve(self, host: str) -> Tenant | None:
         if not host:
             return None
+        # The one place this repo still imports the kernel's private
+        # `SessionLocal`, and the reason is structural: resolving a tenant from
+        # the Host header is what DECIDES the scope, so there is nothing to scope
+        # to yet. `tenant_session_by_slug` cannot help — we have a host, not a
+        # slug — and `platform_session` is the wrong tool despite fitting
+        # semantically: its engine is pool_size=2/max_overflow=2, and this runs on
+        # every request.
+        #
+        # The kernel's own `TenantResolverMiddleware` does exactly this with the
+        # same private import, so the primitive it needs — an unscoped session on
+        # the main engine, for resolving which tenant to scope to — is simply
+        # missing from the public surface. Raised upstream; adopting the kernel's
+        # middleware wholesale is NOT the answer here, because it has no
+        # equivalent of `_allow_single_tenant` and would silently drop this
+        # deployment's single-tenant lockdown.
         with SessionLocal() as db:
             # 1. Custom domain
             tenant = db.scalars(
