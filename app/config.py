@@ -18,10 +18,6 @@ class Settings(BaseSettings):
     platform_root_domain: str = "localhost"
     # IANA zone for instructor-entered wall-clock times (sessions/timetables).
     academy_timezone: str = "Africa/Lagos"
-    # Academy is deployed as one product tenant. The tenant-aware schema and RLS
-    # remain defence-in-depth, but production host resolution must resolve only
-    # this slug unless a future ADR explicitly re-enables multi-tenancy.
-    academy_tenant_slug: str = ""
     trusted_hosts: str = ""
     jwt_secret: str = "dev-insecure-change-me"
     session_hash_secret: str = "dev-insecure-change-me"
@@ -95,8 +91,18 @@ def validate_settings(s: Settings) -> list[str]:
         errors.append("TRUSTED_HOSTS is required in production")
     if s.is_production and s.platform_root_domain in {"localhost", ""}:
         errors.append("PLATFORM_ROOT_DOMAIN must be a real domain in production")
-    if s.is_production and not s.academy_tenant_slug:
-        errors.append("ACADEMY_TENANT_SLUG is required in production")
+    # Single-tenancy is the kernel's control now (TENANCY=single, which makes it
+    # assert at startup that exactly one tenant row exists and bind to it). This
+    # repo used to name the slug itself in ACADEMY_TENANT_SLUG; that duplicated
+    # an identity the database already holds. Production must still declare the
+    # posture, so the requirement moves rather than disappearing.
+    from dotmac_kernel.config import settings as kernel_settings
+
+    if s.is_production and kernel_settings.tenancy != "single":
+        errors.append(
+            "TENANCY must be 'single' in production — this is a single-tenant "
+            "deployment and the kernel's startup assertion is what enforces it"
+        )
     if s.is_production and s.jwt_secret == "dev-insecure-change-me":  # noqa: S105
         errors.append("JWT_SECRET must be set in production")
     if s.is_production and s.session_hash_secret == "dev-insecure-change-me":  # noqa: S105

@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 
-from dotmac_kernel.db import SessionLocal
+from dotmac_kernel.db import resolver_session
+from dotmac_kernel.tenancy import single_tenant_binding
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -31,7 +32,10 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._root = settings.platform_root_domain.lower().lstrip(".")
-        self._single_tenant_slug = settings.academy_tenant_slug.strip().lower()
+        # The lockdown is the kernel's now: TENANCY=single makes it assert at
+        # startup that exactly one tenant exists and bind to it. This reads that
+        # binding rather than a slug of our own, so the identity comes from the
+        # database instead of from configuration that could drift from it.
 
     async def dispatch(self, request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
@@ -47,22 +51,11 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
     def _resolve(self, host: str) -> Tenant | None:
         if not host:
             return None
-        # The one place this repo still imports the kernel's private
-        # `SessionLocal`, and the reason is structural: resolving a tenant from
-        # the Host header is what DECIDES the scope, so there is nothing to scope
-        # to yet. `tenant_session_by_slug` cannot help — we have a host, not a
-        # slug — and `platform_session` is the wrong tool despite fitting
-        # semantically: its engine is pool_size=2/max_overflow=2, and this runs on
-        # every request.
-        #
-        # The kernel's own `TenantResolverMiddleware` does exactly this with the
-        # same private import, so the primitive it needs — an unscoped session on
-        # the main engine, for resolving which tenant to scope to — is simply
-        # missing from the public surface. Raised upstream; adopting the kernel's
-        # middleware wholesale is NOT the answer here, because it has no
-        # equivalent of `_allow_single_tenant` and would silently drop this
-        # deployment's single-tenant lockdown.
-        with SessionLocal() as db:
+        # `resolver_session` is the kernel's boundary for exactly this: an
+        # unscoped session on the main engine, for deciding which tenant to
+        # scope to. Before kernel 0.1.0a32 there was no such name and this
+        # reached for the private `SessionLocal`.
+        with resolver_session() as db:
             # 1. Custom domain
             tenant = db.scalars(
                 select(Tenant)
@@ -98,9 +91,16 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
             return None
 
     def _allow_single_tenant(self, tenant: Tenant | None) -> Tenant | None:
-        if tenant is None:
-            return None
-        if self._single_tenant_slug and tenant.slug != self._single_tenant_slug:
+        """Refuse a tenant this deployment is not bound to.
+
+        The binding is produced by the kernel's startup assertion under
+        `TENANCY=single`; this covers the remaining window, a tenant created
+        after startup that no assertion would see until the next restart.
+        """
+        bound = single_tenant_binding()
+        if tenant is None or bound is None:
+            return tenant
+        if tenant.slug.lower() != bound:
             logger.warning("rejected non-Academy tenant host for slug=%s", tenant.slug)
             return None
         return tenant

@@ -37,11 +37,11 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # release is a deliberate act with a changelog to read, not something a lockfile
 # refresh should do on our behalf.
 #
-# 0.1.0a29 is the floor, not a preference. `set_tenant` landed in a28 and its
-# commit-survival fix in a29 — adopting anything earlier would delete the RLS
+# 0.1.0a32 is the floor, not a preference. `set_tenant` landed in a28, its commit-survival
+# fix in a29, `resolver_session` and TENANCY=single in a32 — adopting anything earlier would delete the RLS
 # scoping this repo added in #111/#114 and silently reinstate the defect that
 # had `audit-banks` reporting a clean estate it could not see.
-dotmac-kernel = { version = "0.1.0a31", source = "forgejo" }
+dotmac-kernel = { version = "0.1.0a32", source = "forgejo" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

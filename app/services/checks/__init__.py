@@ -30,8 +30,8 @@ from .primitives import eval_command, eval_config_grep, eval_probe
 
 __all__ = [
     "eval_check",
-    "run_checks",
     "eval_command",
-    "eval_probe",
     "eval_config_grep",
+    "eval_probe",
+    "run_checks",
 ]
