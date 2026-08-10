@@ -8,10 +8,10 @@ session, DB error) falls back to safe empty defaults.
 
 from __future__ import annotations
 
+from dotmac_kernel.db import SessionLocal
 from fastapi import Request
 from sqlalchemy import text
 
-from app.db import SessionLocal
 from app.services import notifications as notif_svc
 from app.services import web_auth
 from app.services.roles import role_slugs
