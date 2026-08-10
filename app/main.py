@@ -67,6 +67,51 @@ from app.web.todo import router as web_todo_router
 logger = logging.getLogger(__name__)
 
 
+def _bind_single_tenant_or_fail() -> list[str]:
+    """Run the kernel's single-tenancy assertion. Returns fatal errors, if any.
+
+    The kernel performs this inside `create_app`'s lifespan. This app is built
+    by hand — its own `FastAPI(...)` and its own lifespan — so none of that runs
+    here, and the binding `TenantResolverMiddleware` reads would stay None.
+
+    That is not a theoretical gap: it silently disabled the single-tenant
+    lockdown for one deploy. `TENANCY=single` was read and honoured by config
+    validation, so everything *looked* configured, while
+    `single_tenant_binding()` returned None and the middleware passed every
+    tenant through.
+
+    Built from the kernel's public surface rather than reaching into
+    `app_factory._tenancy_errors`, which is private. If the kernel later exposes
+    the assertion itself, delete this and call that.
+    """
+    from dotmac_kernel.config import settings as kernel_settings
+
+    if kernel_settings.tenancy != "single":
+        return []
+
+    from dotmac_kernel.db import resolver_session
+    from dotmac_kernel.models import Tenant as KernelTenant
+    from dotmac_kernel.tenancy import bind_single_tenant
+
+    try:
+        with resolver_session() as db:
+            slugs = [t.slug for t in db.query(KernelTenant).order_by(KernelTenant.slug).all()]
+    except Exception as exc:  # an unreachable store is not a tenancy verdict
+        logger.warning("Tenancy check skipped: %s", exc)
+        return []
+
+    if len(slugs) == 1:
+        bind_single_tenant(slugs[0])
+        logger.info("Single-tenant deployment bound to slug=%s", slugs[0])
+        return []
+    if not slugs:
+        return ["TENANCY=single but no tenant exists"]
+    return [
+        f"TENANCY=single but this database holds {len(slugs)} tenants "
+        f"({', '.join(slugs)})"
+    ]
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     errors = validate_settings(settings)
@@ -74,6 +119,10 @@ async def lifespan(_: FastAPI):
         if settings.is_production:
             raise RuntimeError(f"Configuration error: {err}")
         logger.warning("Config: %s", err)
+    for err in _bind_single_tenant_or_fail():
+        if settings.is_production:
+            raise RuntimeError(f"Tenancy error: {err}")
+        logger.warning("Tenancy: %s", err)
     from app.error_tracking import init_error_tracking
 
     init_error_tracking()
