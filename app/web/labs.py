@@ -20,6 +20,7 @@ from uuid import UUID
 
 import httpx
 import websockets
+from dotmac_kernel.db import SessionLocal
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy import desc, select, text
@@ -28,7 +29,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
-from dotmac_kernel.db import SessionLocal
 from app.middleware.tenant import TenantResolverMiddleware
 from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabTemplate

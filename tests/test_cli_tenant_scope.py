@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import uuid
 
+from dotmac_kernel.db import set_tenant
 from sqlalchemy import text
 
-from dotmac_kernel.db import set_tenant
 from app.models.assessment import Question, QuestionBank
 from app.models.course import Course
 
