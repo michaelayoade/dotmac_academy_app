@@ -33,6 +33,13 @@ jobs:
       # which holds INSERT/UPDATE on platform_settings; app_user is SELECT-only there.
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
       PLATFORM_ROOT_DOMAIN: localhost
+      # `dotmac-kernel` is published to the private Dotmac index, not PyPI, so
+      # `poetry install` needs credentials for the `forgejo` source declared in
+      # pyproject.toml. Only the secret NAME appears here; the value is a repo
+      # secret whose source of record is OpenBao (secret/dotmac/forgejo/read-token).
+      # Same shape as dotmac_erp and dotmac_sub use.
+      POETRY_HTTP_BASIC_FORGEJO_USERNAME: ci-reader
+      POETRY_HTTP_BASIC_FORGEJO_PASSWORD: ${{ secrets.FORGEJO_READ_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4

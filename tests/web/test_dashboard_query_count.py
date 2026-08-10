@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from sqlalchemy import event
 
-import app.db as app_db
+import dotmac_kernel.db as app_db
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment

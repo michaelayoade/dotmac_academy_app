@@ -21,7 +21,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp
 
 from app.config import settings
-from app.db import SessionLocal
+from dotmac_kernel.db import SessionLocal
 from app.models.tenant import Tenant, TenantDomain
 
 logger = logging.getLogger(__name__)

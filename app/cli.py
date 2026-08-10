@@ -29,7 +29,7 @@ _DEFAULT_LABS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-founda
 
 
 def _bootstrap(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
+    from dotmac_kernel.db import SessionLocal
     from app.services.bootstrap import bootstrap_tenant
 
     db = SessionLocal()
@@ -64,7 +64,7 @@ def _email_outbox(args: argparse.Namespace) -> None:
 
 
 def _import_foundation(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.tenant import Tenant
     from app.services.content_import import import_foundation, sync_figures
 
@@ -100,7 +100,7 @@ def _import_foundation(args: argparse.Namespace) -> None:
 
 
 def _import_manual(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.tenant import Tenant
     from app.services.content_import import import_manual, sync_figures
 
@@ -145,7 +145,7 @@ def _audit_banks(args: argparse.Namespace) -> None:
     loaded before a rule existed stays live and non-compliant, and nothing
     says so. This closes it — the same linter, pointed at the projection.
     """
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.assessment import QuestionBank
     from app.models.course import Course
     from app.models.tenant import Tenant
@@ -204,7 +204,7 @@ def _audit_banks(args: argparse.Namespace) -> None:
 
 
 def _load_banks(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.assessment import Activity
     from app.models.course import Course
     from app.models.tenant import Tenant
@@ -309,7 +309,7 @@ def _load_banks(args: argparse.Namespace) -> None:
 
 
 def _import_labs(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.course import Course
     from app.models.tenant import Tenant
     from app.services.lab_content import import_labs
@@ -938,7 +938,7 @@ def _load_curriculum(args: argparse.Namespace) -> None:
     """
     import yaml
 
-    from app.db import SessionLocal, set_tenant
+    from dotmac_kernel.db import SessionLocal, set_tenant
     from app.models.course import Course
     from app.models.prerequisite import CoursePrerequisite
     from app.models.tenant import Tenant

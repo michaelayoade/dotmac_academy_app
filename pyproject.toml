@@ -33,6 +33,16 @@ fpdf2 = "^2.8.7"
 prometheus-client = "^0.26.0"
 sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 
+# The platform kernel. Pinned exactly, never a caret range: adopting a kernel
+# release is a deliberate act with a changelog to read, not something a lockfile
+# refresh should do on our behalf.
+#
+# 0.1.0a29 is the floor, not a preference. `set_tenant` landed in a28 and its
+# commit-survival fix in a29 — adopting anything earlier would delete the RLS
+# scoping this repo added in #111/#114 and silently reinstate the defect that
+# had `audit-banks` reporting a clean estate it could not see.
+dotmac-kernel = { version = "0.1.0a29", source = "forgejo" }
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 pytest-asyncio = "^1.4.0"
@@ -42,6 +52,14 @@ mypy = "^1.11"
 types-pyyaml = "^6.0.12.20260518"
 types-markdown = "^3.10.2.20260518"
 pip-audit = "^2.10.1"
+
+
+# Private Dotmac package index (Forgejo). URL only — credentials live in the CI
+# environment, sourced from OpenBao, and never in Git.
+[[tool.poetry.source]]
+name = "forgejo"
+url = "https://registry.dotmac.io/api/packages/dotmac/pypi/simple/"
+priority = "explicit"
 
 [tool.ruff]
 line-length = 120

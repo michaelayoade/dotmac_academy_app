@@ -10,7 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_db, get_platform_db
+from dotmac_kernel.db import get_db, get_platform_db
 from app.models.auth import AuthSession
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
