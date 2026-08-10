@@ -110,9 +110,20 @@ def test_security_headers_cover_browser_responses():
 
 
 def test_single_academy_slug_rejects_other_tenant(monkeypatch):
-    from app.config import settings
+    """The binding now comes from the kernel's startup assertion, not our config."""
+    from dotmac_kernel.tenancy import bind_single_tenant, clear_single_tenant_binding
 
-    monkeypatch.setattr(settings, "academy_tenant_slug", "alpha")
+    bind_single_tenant("alpha")
+    monkeypatch.setattr(
+        "app.middleware.tenant.single_tenant_binding", lambda: "alpha", raising=False
+    )
+    try:
+        _assert_rejects_other_tenant()
+    finally:
+        clear_single_tenant_binding()
+
+
+def _assert_rejects_other_tenant() -> None:
     middleware = TenantResolverMiddleware(_ok_app)
     alpha = Tenant(slug="alpha", name="Alpha")
     beta = Tenant(slug="beta", name="Beta")
