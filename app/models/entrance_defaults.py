@@ -15,8 +15,10 @@ magnet: the next product concern lands in it, and two years later nothing owns
 any row. One table per concern, owned by the service that resolves it —
 `app.services.entrance_exam` is that service, and it is the only writer.
 
-Deliberately NOT tenant-scoped by RLS, matching `tenants` itself: the resolver
-reads this before any tenant context exists.
+RLS-protected like every other tenant-keyed table here. `tenants` is exempt
+because the resolver reads it before any context exists; this table has no such
+reader — every caller runs inside a request, or under the BYPASSRLS admin role
+the CLI setter uses.
 """
 
 from __future__ import annotations

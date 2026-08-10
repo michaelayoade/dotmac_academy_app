@@ -59,6 +59,21 @@ def upgrade() -> None:
         """
     )
 
+    # Same protection every other tenant-keyed table here gets. `tenants` itself
+    # is exempt because the resolver reads it before any context exists; this
+    # table has no such reader — every caller runs inside a request or under the
+    # BYPASSRLS admin role, so there is no reason to leave it unguarded.
+    op.execute("ALTER TABLE tenant_entrance_defaults ENABLE ROW LEVEL SECURITY;")
+    op.execute("ALTER TABLE tenant_entrance_defaults FORCE ROW LEVEL SECURITY;")
+    op.execute(
+        "CREATE POLICY tenant_entrance_defaults_tenant_isolation ON tenant_entrance_defaults "
+        "USING (tenant_id = app_current_tenant_id()) "
+        "WITH CHECK (tenant_id = app_current_tenant_id());"
+    )
+    op.execute(
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_entrance_defaults TO app_user, platform_api;"
+    )
+
     op.drop_column("tenants", "default_entrance_bank_id")
     op.drop_column("tenants", "default_entrance_time_limit_minutes")
 
