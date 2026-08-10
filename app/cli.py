@@ -26,6 +26,7 @@ from pathlib import Path
 
 from dotmac_kernel.db import platform_session, tenant_session_by_slug
 from dotmac_kernel.exceptions import NotFoundError
+from dotmac_kernel.models import Tenant as KernelTenant
 from sqlalchemy.orm import Session
 
 _DEFAULT_CHAPTERS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters")
@@ -35,8 +36,14 @@ _DEFAULT_LABS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-founda
 
 
 @contextmanager
-def _tenant_session(slug: str) -> Iterator[tuple[Session, object]]:
+def _tenant_session(slug: str) -> Iterator[tuple[Session, KernelTenant]]:
     """`tenant_session_by_slug` with the CLI's error convention.
+
+    Yields the KERNEL's `Tenant`, not `app.models.tenant.Tenant`: the kernel
+    resolves the slug against its own model. Both map the `tenants` table, and
+    the CLI only reads `.id`/`.slug`, so this works — but two mapped classes for
+    one table is exactly the duplication that adopting the kernel's `Tenant`
+    outright would remove. Annotated honestly rather than cast to ours.
 
     The kernel raises `NotFoundError`; a command-line tool should exit with a
     message, not a traceback. Wrapping it here keeps that translation in one
