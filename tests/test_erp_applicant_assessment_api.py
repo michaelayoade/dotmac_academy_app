@@ -18,6 +18,7 @@ from app.models.assessment import Question, QuestionBank
 from app.models.course import Course
 from app.services import entrance_exam
 from app.services.erp_integration_security import sign_request
+from app.services.entrance_exam import set_academy_defaults
 
 SECRET = "test-inbound-secret"
 TOKEN_SECRET = "test-assessment-token-secret"
@@ -67,7 +68,7 @@ def _bank(admin_session, tenant):
             weight=1,
         )
     )
-    tenant.default_entrance_bank_id = bank.id
+    set_academy_defaults(admin_session, tenant_id=tenant.id, bank_id=bank.id)
     admin_session.commit()
     return bank
 

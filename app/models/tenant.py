@@ -1,6 +1,9 @@
 """Tenant + tenant_domains models.
 
 `Tenant` is the platform-level table — NO `tenant_id` column on it (it IS the tenant).
+It carries no product columns either: the academy's entrance-exam defaults used to
+live here and now sit in `tenant_entrance_defaults`, so this model can be swapped
+for the kernel's without dropping anything (see app/models/entrance_defaults.py).
 RLS is NOT applied to `tenants` or `tenant_domains` — those are read by the resolver
 middleware before tenant context is established.
 """
@@ -10,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,8 +36,6 @@ class Tenant(Base, TimestampMixin):
 
     # Academy-wide default entrance assessment: every applicant (to any cohort)
     # sits it unless the cohort sets its own entrance_bank_id override.
-    default_entrance_bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    default_entrance_time_limit_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     domains: Mapped[list["TenantDomain"]] = relationship(
         back_populates="tenant",

@@ -18,6 +18,7 @@ from app.models.track import CohortTrack, Track
 from app.services import admissions
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from app.services.entrance_exam import set_academy_defaults
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
@@ -308,8 +309,9 @@ def _entrance_config(admin_session, tenant):
             weight=1,
         )
     )
-    tenant.default_entrance_bank_id = bank.id
-    tenant.default_entrance_time_limit_minutes = 30
+    set_academy_defaults(
+        admin_session, tenant_id=tenant.id, bank_id=bank.id, time_limit_minutes=30
+    )
     admin_session.flush()
     return bank
 

@@ -22,7 +22,7 @@ from app.api.deps import get_db, require_tenant
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
-from app.models.tenant import Tenant
+from app.services.entrance_exam import academy_default_bank_id
 from app.models.track import CohortTrack, Track
 from app.services import admissions as admissions_service
 from app.services import applicant_email, entrance_exam
@@ -72,8 +72,7 @@ def _open_track_choices(db: Session, tenant_id: UUID) -> list[dict[str, object]]
         .where(CohortTrack.status == "active")
         .where(Track.status == "active")
     )
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None or tenant.default_entrance_bank_id is None:
+    if academy_default_bank_id(db, tenant_id=tenant_id) is None:
         stmt = stmt.where(Cohort.entrance_bank_id.isnot(None))
     rows = db.execute(stmt.order_by(Track.name, Cohort.name)).all()
     return [

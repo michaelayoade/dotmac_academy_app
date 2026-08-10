@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
-from app.models.tenant import Tenant
+from app.models.entrance_defaults import TenantEntranceDefaults
 from app.services import exam_engine
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
@@ -134,6 +134,45 @@ def applicant_for_token(
     return db.scalars(stmt).first()
 
 
+def academy_default_bank_id(db: Session, *, tenant_id: UUID) -> UUID | None:
+    """The academy-wide default bank, or None if none is configured.
+
+    The last tier of the precedence chain, and the only reader of
+    `tenant_entrance_defaults` outside this module's setter. No row means no
+    default — a valid state, not an error.
+    """
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    return row.default_bank_id if row is not None else None
+
+
+def academy_default_time_limit(db: Session, *, tenant_id: UUID) -> int | None:
+    """The academy-wide default sitting limit in minutes (None = untimed)."""
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    return row.default_time_limit_minutes if row is not None else None
+
+
+def set_academy_defaults(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    bank_id: UUID,
+    time_limit_minutes: int | None = None,
+) -> TenantEntranceDefaults:
+    """Upsert the academy-wide defaults. The ONE writer of this table.
+
+    Kept here rather than in the CLI so the row has an owner: the service that
+    resolves a default is the service that sets it.
+    """
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    if row is None:
+        row = TenantEntranceDefaults(tenant_id=tenant_id)
+        db.add(row)
+    row.default_bank_id = bank_id
+    row.default_time_limit_minutes = time_limit_minutes
+    db.flush()
+    return row
+
+
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
     """Per-applicant snapshot, then cohort override, then Academy default."""
     if applicant.assessment_bank_id is not None:
@@ -142,9 +181,9 @@ def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
         cohort = db.get(Cohort, applicant.cohort_id)
         if cohort is not None and cohort.entrance_bank_id is not None:
             return cohort.entrance_bank_id
-    tenant = db.get(Tenant, applicant.tenant_id)
-    if tenant is not None and tenant.default_entrance_bank_id is not None:
-        return tenant.default_entrance_bank_id
+    default_bank_id = academy_default_bank_id(db, tenant_id=applicant.tenant_id)
+    if default_bank_id is not None:
+        return default_bank_id
     raise BadRequestError("No entrance assessment is configured for this cohort or academy.")
 
 
@@ -169,8 +208,7 @@ def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
         cohort = db.get(Cohort, applicant.cohort_id)
         if cohort is not None and cohort.entrance_time_limit_minutes is not None:
             return cohort.entrance_time_limit_minutes
-    tenant = db.get(Tenant, applicant.tenant_id)
-    return tenant.default_entrance_time_limit_minutes if tenant is not None else None
+    return academy_default_time_limit(db, tenant_id=applicant.tenant_id)
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
