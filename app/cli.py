@@ -722,16 +722,20 @@ def _set_default_entrance_bank(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
+    from app.services.entrance_exam import set_academy_defaults
 
     with lab_jobs.admin_session() as db:
         tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
         if tenant is None:
             raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
-        tenant.default_entrance_bank_id = uuid.UUID(args.bank_id)
-        if args.time_limit_minutes is not None:
-            tenant.default_entrance_time_limit_minutes = args.time_limit_minutes or None
+        row = set_academy_defaults(
+            db,
+            tenant_id=tenant.id,
+            bank_id=uuid.UUID(args.bank_id),
+            time_limit_minutes=(args.time_limit_minutes or None),
+        )
         db.commit()
-        limit = tenant.default_entrance_time_limit_minutes
+        limit = row.default_time_limit_minutes
         print(
             f"academy '{tenant.slug}' default entrance bank set to {args.bank_id}"
             + (f" (time limit {limit} min)" if limit else " (untimed)")

@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.admissions import Applicant
 from app.models.assessment import Question, QuestionBank
-from app.models.tenant import Tenant
 from app.services import admissions
+from app.services.entrance_exam import academy_default_bank_id
 from app.services.exceptions import ConflictError
 from app.services.identity import normalize_email
 from app.services.security import hash_token
@@ -90,8 +90,7 @@ def _public_base_url() -> str:
 def _resolve_bank(db: Session, *, tenant_id: UUID, requested: UUID | None) -> QuestionBank:
     bank_id = requested
     if bank_id is None:
-        tenant = db.get(Tenant, tenant_id)
-        bank_id = tenant.default_entrance_bank_id if tenant is not None else None
+        bank_id = academy_default_bank_id(db, tenant_id=tenant_id)
         if bank_id is None:
             raise RegistrationError(
                 "assessment_bank_required",
