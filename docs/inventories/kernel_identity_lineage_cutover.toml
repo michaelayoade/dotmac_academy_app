@@ -4,6 +4,47 @@ decision = "docs/adr/0008-kernel-identity-and-lineage-cutover.md"
 kernel_distribution = "dotmac-kernel"
 kernel_version = "0.1.0a38"
 
+[adoption_strategy]
+status = "accepted"
+kernel_target_owner = "dotmac-kernel"
+starter_role = "reference_assembly_and_schema_rehearsal_pattern"
+legacy_data_pattern = "dotmac_sub_evidence_bound_identity_backfill"
+external_auth_pattern = "dotmac_erp_local_issuer_subject_binding"
+copy_product_identity_schema = false
+starter_is_identity_system_of_record = false
+new_kernel_adoption_facility_before_reuse = false
+
+[sub_reference_lineage_gate]
+source = "dotmac_starter_mt/docs/adr/0017-adoption-is-the-scarce-resource.md"
+status = "pending_external_evidence"
+blocks_academy_lineage_activation = true
+academy_may_design_rehearsals = true
+academy_may_activate_lineage = false
+
+[[baseline_evidence]]
+owner = "dotmac-kernel"
+concern = "canonical_security_identity"
+adopt = "tenant_party_subtypes_credentials_sessions_rbac_rls"
+reject = "product_specific_identity_models"
+
+[[baseline_evidence]]
+owner = "dotmac_starter_mt"
+concern = "schema_and_lineage_adoption"
+adopt = "create_or_adopt_full_catalog_drift_rollback_rehearsals"
+reject = "starter_as_identity_authority"
+
+[[baseline_evidence]]
+owner = "dotmac_sub"
+concern = "legacy_data_adoption"
+adopt = "audit_adjudication_digest_approval_serializable_receipt"
+reject = "untenant_scoped_business_party_and_business_role_schema"
+
+[[baseline_evidence]]
+owner = "dotmac_erp"
+concern = "external_authentication"
+adopt = "local_issuer_subject_binding_and_local_authorization"
+reject = "legacy_person_credential_session_rbac_schema"
+
 [current_lineage]
 owner = "academy_legacy"
 root = "0001_initial_tenant_schema"

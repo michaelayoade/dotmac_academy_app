@@ -164,6 +164,59 @@ def test_inventory_pins_the_installed_kernel_and_both_lineage_endpoints() -> Non
     assert kernel_roots == {inventory["target_kernel_lineage"]["root"]}
 
 
+def test_adoption_strategy_composes_proven_patterns_without_copying_product_schemas() -> None:
+    inventory = _inventory()
+    strategy = inventory["adoption_strategy"]
+    assert strategy == {
+        "status": "accepted",
+        "kernel_target_owner": "dotmac-kernel",
+        "starter_role": "reference_assembly_and_schema_rehearsal_pattern",
+        "legacy_data_pattern": "dotmac_sub_evidence_bound_identity_backfill",
+        "external_auth_pattern": "dotmac_erp_local_issuer_subject_binding",
+        "copy_product_identity_schema": False,
+        "starter_is_identity_system_of_record": False,
+        "new_kernel_adoption_facility_before_reuse": False,
+    }
+
+    evidence = {
+        entry["owner"]: (entry["concern"], entry["adopt"], entry["reject"])
+        for entry in inventory["baseline_evidence"]
+    }
+    assert evidence == {
+        "dotmac-kernel": (
+            "canonical_security_identity",
+            "tenant_party_subtypes_credentials_sessions_rbac_rls",
+            "product_specific_identity_models",
+        ),
+        "dotmac_starter_mt": (
+            "schema_and_lineage_adoption",
+            "create_or_adopt_full_catalog_drift_rollback_rehearsals",
+            "starter_as_identity_authority",
+        ),
+        "dotmac_sub": (
+            "legacy_data_adoption",
+            "audit_adjudication_digest_approval_serializable_receipt",
+            "untenant_scoped_business_party_and_business_role_schema",
+        ),
+        "dotmac_erp": (
+            "external_authentication",
+            "local_issuer_subject_binding_and_local_authorization",
+            "legacy_person_credential_session_rbac_schema",
+        ),
+    }
+
+
+def test_sub_reference_lineage_gate_blocks_activation_but_not_rehearsal_design() -> None:
+    gate = _inventory()["sub_reference_lineage_gate"]
+    assert gate == {
+        "source": "dotmac_starter_mt/docs/adr/0017-adoption-is-the-scarce-resource.md",
+        "status": "pending_external_evidence",
+        "blocks_academy_lineage_activation": True,
+        "academy_may_design_rehearsals": True,
+        "academy_may_activate_lineage": False,
+    }
+
+
 def test_the_shared_root_id_is_one_ddl_contract_not_two_independent_owners() -> None:
     inventory = _inventory()
     root_revision = inventory["current_lineage"]["root"]
@@ -197,3 +250,4 @@ def test_design_only_status_forbids_an_early_lineage_or_identity_mutation() -> N
     assert 'create_table("party_roles"' not in migration_source
     assert 'create_table("academy_person_profiles"' not in migration_source
     assert 'create_table("academy_login_security"' not in migration_source
+    assert not (ROOT / "app" / "migrations" / "kernel_identity_adoption.py").exists()

@@ -60,3 +60,13 @@ lineage for Academy product state. It names the directional shadow projectors,
 zero-drift cutover, legacy-release rollback, fallback retirement, and fresh/
 adopt/rollback rehearsals. Updating documentation alone does not flip those
 owners.
+
+ADR 0008 composes, but does not copy, the fleet's proven identity-adoption
+patterns: kernel owns the target security identity; Starter supplies the
+create-or-adopt catalog/lineage rehearsal; Sub supplies evidence-bound
+audit/adjudication/backfill and durable receipts; ERP supplies the replaceable
+external-authentication boundary. Starter is never an identity system of
+record, and product identity schemas do not enter kernel. Accepted Starter ADR
+0017 keeps Academy's lineage activation blocked until Sub's reference
+product-database lineage gate completes and its reusable findings are reflected
+in Academy's pinned contract.

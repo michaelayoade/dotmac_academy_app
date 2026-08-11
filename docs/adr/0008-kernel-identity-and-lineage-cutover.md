@@ -42,6 +42,49 @@ cutover/contract programme, then rebaseline its product schema as an independent
 `assembly` lineage. Directly composing today's two version directories is
 forbidden.
 
+### Composable baseline and fleet sequence
+
+This cutover does **not** move Academy identity into Starter. Starter remains a
+reference assembly and migration-pattern exemplar; `dotmac-kernel` is the
+platform owner, and Academy remains the owner of its product extensions and
+legacy-source mapping.
+
+The implementation deliberately composes the strongest proven boundary from
+each existing system instead of copying any one product schema:
+
+| Concern | Pattern to reuse | Boundary not copied |
+|---|---|---|
+| Canonical security identity | Kernel's tenant-scoped `Party`, subtypes, credentials, sessions, RBAC, composite tenant constraints, RLS, and single email authority | No Academy, Sub, or ERP identity model is promoted into Starter or kernel |
+| Schema and lineage adoption | Starter's `a001_adopt_custom_field_definitions` create-or-adopt revision and PostgreSQL migration rehearsals: full catalog/RLS/grant verification, drift rejection, destructive-downgrade refusal, and real stamp/rollback proof | Starter is not a runtime identity system of record |
+| Legacy-data adoption | Sub's party-identity audit, adjudication, exact-plan digest, expiring approval, serializable execution, row locking, idempotent receipt, and drift/collision/repoint refusal | Sub's untenant-scoped business-party tables and business-role vocabulary are not kernel RBAC and are not copied |
+| External authentication | ERP's replaceable OIDC-provider boundary: bind exact issuer/subject locally, create a local session, and ignore provider authorization claims | ERP's legacy `Person`, credential, session, and RBAC schema is not copied |
+
+The checked-in reference evidence is:
+
+- `dotmac_starter_mt/docs/adr/0017-adoption-is-the-scarce-resource.md`;
+- `dotmac_starter_mt/alembic/versions/a001_adopt_custom_field_definitions.py` and
+  `dotmac_starter_mt/tests/test_migration_split_rehearsals.py`;
+- `dotmac_sub/docs/PARTY_ROLE_RELATIONSHIP_SOT.md`,
+  `app/services/party_identity_audit.py`,
+  `app/services/party_identity_adjudication.py`,
+  `app/services/party_identity_backfill.py`, and
+  `tests/test_party_identity_backfill.py`; and
+- `dotmac_erp/docs/oidc_identity_contract.md`.
+
+Accepted Starter ADR 0017 makes adoption the scarce resource and names Sub as
+the reference kernel-lineage adopter. Academy may design its adapter and its
+rehearsals now, but it must not activate the identity lineage transfer until
+Sub has run the released kernel lineage in a product database and the reusable
+findings have been incorporated here. Academy also does not add a speculative
+kernel identity-adoption SDK: it uses existing released kernel surfaces. A new
+public kernel seam is extracted only after Sub and Academy demonstrate the same
+need, making that extraction demand-pulled.
+
+If the Sub gate advances the required kernel revision beyond Academy's pinned
+version, Academy updates and validates that dependency in a separate adoption
+change before changing this ADR's lineage endpoints. It does not silently
+substitute a newer head during a database cutover.
+
 ### Target ownership
 
 | State | Owner before cutover | Owner after cutover |
@@ -164,8 +207,13 @@ catalog verification, not an assumed two-row runtime shape, are authoritative.
 Implementation cannot contract or activate the final graph until disposable
 PostgreSQL rehearsals prove all of the following:
 
+- the ADR-0017 Sub reference-adopter lineage gate is complete and its reusable
+  findings are reflected in Academy's pinned contract;
 - fresh kernel-plus-Academy install;
 - adoption from a copy at every supported Academy legacy head;
+- a PII-free, digest-bound adoption plan whose exact input, approval window,
+  maximum row counts, and durable execution receipt are verified before any
+  backfill write;
 - exact row/count/hash equivalence for people, names, email, active state,
   profiles, credentials, sessions, roles, audit actors, and all 27 classified
   person references;
@@ -209,4 +257,5 @@ from silently becoming a learner or instructor.
 
 This ADR authorizes the design and its tests only. Each implementation phase is
 a separate, reviewable change with its own PostgreSQL rehearsal evidence; no
-schema mutation is included with this decision.
+schema mutation is included with this decision. ADR 0017's Sub-first lineage
+gate must be satisfied before Academy activates the identity lineage transfer.
