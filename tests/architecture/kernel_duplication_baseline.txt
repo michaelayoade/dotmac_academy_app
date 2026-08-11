@@ -1,0 +1,20 @@
+# Names this repo defines that the installed kernel already provides.
+#
+# This list is a RATCHET: it may shrink, never grow. See
+# tests/architecture/test_kernel_duplication.py for what each entry cost.
+#
+# Retiring an entry means importing the kernel version instead. Do not
+# regenerate this file to make a failure go away — a new entry means a new
+# fork of something that already exists.
+app/middleware/csrf.py
+app/middleware/observability.py
+app/middleware/rate_limit.py
+app/middleware/security_headers.py
+app/middleware/tenant.py
+app/models/auth.py:AuthSession
+app/models/auth.py:UserCredential
+app/models/base.py:Base
+app/models/base.py:TimestampMixin
+app/models/rbac.py:Role
+app/models/tenant.py:Tenant
+app/models/tenant.py:TenantDomain
