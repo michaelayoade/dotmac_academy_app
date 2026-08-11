@@ -37,11 +37,12 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # release is a deliberate act with a changelog to read, not something a lockfile
 # refresh should do on our behalf.
 #
-# 0.1.0a32 is the floor, not a preference. `set_tenant` landed in a28, its commit-survival
-# fix in a29, `resolver_session` and TENANCY=single in a32 — adopting anything earlier would delete the RLS
-# scoping this repo added in #111/#114 and silently reinstate the defect that
-# had `audit-banks` reporting a clean estate it could not see.
-dotmac-kernel = { version = "0.1.0a32", source = "forgejo" }
+# 0.1.0a38 is the first release that supports Academy's complete product
+# assembly contract: FastAPI 0.140 lazy-router guard validation, explicit
+# platform-surface omission, product startup checks/hooks, and typed
+# CSP/COOP/CORP policy. Earlier releases require local runtime adapters and can
+# silently skip included-route permission/capability validation on FastAPI 0.140.
+dotmac-kernel = { version = "0.1.0a38", source = "forgejo" }
 
 # Shared presentation contract. Pinned exactly for the same reason as the
 # kernel: token/API adoption is reviewed deliberately, never pulled in by an

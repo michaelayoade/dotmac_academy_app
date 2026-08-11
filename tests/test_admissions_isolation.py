@@ -137,12 +137,7 @@ def test_pipeline_transitions_and_guards(app_client, tenant_a, admin_session, ap
         assert r.json()["status"] == nxt
 
     # Unknown status -> 400.
-    assert (
-        a.post(
-            f"/admissions/{app_id}/transition", json={"to_status": "banana"}, headers=auth
-        ).status_code
-        == 400
-    )
+    assert a.post(f"/admissions/{app_id}/transition", json={"to_status": "banana"}, headers=auth).status_code == 400
 
 
 def test_admissions_api_requires_admin(app_client, tenant_a):
@@ -172,4 +167,4 @@ def test_api_cannot_accept_applicant_without_canonical_intake(
         headers=auth,
     )
     assert accepted.status_code == 400
-    assert "canonical training track" in accepted.json()["detail"]
+    assert "canonical training track" in accepted.json()["message"]

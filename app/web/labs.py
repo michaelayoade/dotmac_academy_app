@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 import websockets
 from dotmac_kernel.db import SessionLocal
+from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy import desc, select, text
@@ -29,7 +31,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
-from app.middleware.tenant import TenantResolverMiddleware
 from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
@@ -41,6 +42,13 @@ from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 logger = logging.getLogger(__name__)
+
+
+class _TenantContext(Protocol):
+    """The common request-tenant shape shared by Academy and kernel models."""
+
+    id: UUID
+
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
@@ -90,7 +98,12 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
     return f"http://{settings.lab_console_host}:{port}/" if port else None
 
 
-def _require_instance_entitlement(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> None:
+def _require_instance_entitlement(
+    db: Session,
+    tenant: _TenantContext,
+    person: Person,
+    instance: LabInstance,
+) -> None:
     """Re-check the owner is STILL entitled to the lab's course.
 
     Ownership alone is not enough: a learner who launched a lab while entitled may
@@ -108,7 +121,7 @@ def _require_instance_entitlement(db: Session, tenant: Tenant, person: Person, i
 
 def _authorize_console(
     db: Session,
-    tenant: Tenant,
+    tenant: _TenantContext,
     person: Person,
     instance_id: UUID,
     node: str,

@@ -12,7 +12,11 @@ import tomllib
 from pathlib import Path
 
 import dotmac_ui
+from dotmac_ui import static_dir
+from fastapi.testclient import TestClient
 
+from app.assembly import assembly
+from app.main import app
 from app.ui import UI_ASSET_DIRECTORY, UI_ASSET_MOUNT, UI_STYLESHEET_URL
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,10 +42,7 @@ def _channels() -> dict[str, tuple[int, int, int]]:
         r"--dmui-([a-z0-9-]+)-rgb:\s*(\d+)\s+(\d+)\s+(\d+);",
         INPUT_CSS.read_text(encoding="utf-8"),
     )
-    return {
-        name: (int(red), int(green), int(blue))
-        for name, red, green, blue in declarations
-    }
+    return {name: (int(red), int(green), int(blue)) for name, red, green, blue in declarations}
 
 
 def _hex(channels: tuple[int, int, int]) -> str:
@@ -57,18 +58,14 @@ def test_dependency_is_an_exact_pin_to_the_first_adoptable_release() -> None:
     assert dotmac_ui.UI_CONTRACT_VERSION == 1
 
 
-def test_installed_compiled_asset_is_mounted_before_academys_static_catch_all() -> None:
-    main_source = (REPO_ROOT / "app" / "main.py").read_text(encoding="utf-8")
-
+def test_installed_compiled_asset_is_composed_below_academys_static_layer() -> None:
     assert UI_ASSET_DIRECTORY.is_dir()
     assert (UI_ASSET_DIRECTORY / "dotmac-ui-1.css").is_file()
     assert UI_STYLESHEET_URL.startswith(f"{UI_ASSET_MOUNT}/dotmac-ui-1.css?v=")
-    assert main_source.index("app.mount(\n    UI_ASSET_MOUNT,") < main_source.index(
-        'app.mount("/static"'
-    )
-    assert not (REPO_ROOT / "static" / "dotmac-ui").exists(), (
-        "serve the package; do not copy it"
-    )
+    assert assembly.packaged_static_dirs == (static_dir(),)
+    assert assembly.stylesheets == (UI_STYLESHEET_URL,)
+    assert TestClient(app).get(UI_STYLESHEET_URL).status_code == 200
+    assert not (REPO_ROOT / "static" / "dotmac-ui").exists(), "serve the package; do not copy it"
 
 
 def test_every_full_page_consumes_the_shared_head_and_light_theme_contract() -> None:
@@ -86,9 +83,7 @@ def test_every_full_page_consumes_the_shared_head_and_light_theme_contract() -> 
 
     assert full_pages, "the guard is vacuous: no full-page templates found"
 
-    lifecycle = (REPO_ROOT / "app" / "web" / "lifecycle.py").read_text(
-        encoding="utf-8"
-    )
+    lifecycle = (REPO_ROOT / "app" / "web" / "lifecycle.py").read_text(encoding="utf-8")
     assert "UI_STYLESHEET_URL" in lifecycle
     assert "UI_THEME_ATTRIBUTE" in lifecycle
 
@@ -109,11 +104,7 @@ def test_academy_supplies_complete_brand_accent_and_neutral_ramps() -> None:
     for step in RAMP_STEPS:
         assert f"color-semantic-neutral-{step}" in channels
 
-    assert all(
-        0 <= channel <= 255
-        for colour in channels.values()
-        for channel in colour
-    )
+    assert all(0 <= channel <= 255 for colour in channels.values() for channel in colour)
 
 
 def test_academy_overrides_the_roles_it_uses_instead_of_leaking_generic_values() -> None:

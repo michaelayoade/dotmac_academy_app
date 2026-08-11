@@ -6,7 +6,7 @@ and SMTP are adapters around these owners.
 
 | Domain/state | Authoritative input and owner | Canonical writer | Derived/projection state | Reconciler/backstop |
 |---|---|---|---|---|
-| Academy deployment identity | Configured `ACADEMY_TENANT_SLUG` plus offline `Tenant` row | Offline bootstrap/operator | `request.state.tenant` | Tenant resolver rejects every other production slug; RLS fails closed |
+| Academy deployment identity | Sole offline-created `Tenant` row plus `TENANCY=single` topology | Offline bootstrap owns identity; kernel startup owns binding | `request.state.tenant` | Startup rejects zero/multiple tenants; resolver rejects any slug other than the database-owned binding; RLS fails closed |
 | User identity and roles | `Person`, `UserCredential`, `Role`, `PersonRole` | Account/lifecycle services | Auth sessions and navigation permissions | Tenant-bound token/session checks; admin invitation workflow |
 | Login abuse state | Credential failure count and `locked_until` | `web_auth.authenticate` | Login response | Credential row lock and successful-login reset |
 | Applicant intake | Public `/apply` facts | `admissions.submit_application` | Applicant profile completeness and display `program` | Idempotent email-key intake; admin review for legacy gaps |
@@ -19,6 +19,7 @@ and SMTP are adapters around these owners.
 | Email consequence | Committed domain transaction | `email_outbox.enqueue_email` | Pending/sent/failed delivery ledger | Timer worker, exponential retries, stable Message-ID, manual requeue |
 | SMTP delivery | One outbox row | `email_outbox.deliver_pending` | `sent_at`, sanitized error class, invite delivery projection | `academy-email-outbox.timer`; SMTP is transport only |
 | Academy settings | Environment defaults plus `platform_settings` overrides | Academy admin settings route using restricted settings-writer role | Effective SMTP/branding/policy/lab config | DB-over-env resolver; blank secret fields preserve existing value |
+| Application runtime | `app.assembly` product declaration | `dotmac_kernel.create_app` | FastAPI app, lifespan, tenancy binding, generic middleware and liveness | Architecture tests forbid a parallel app factory and copied middleware |
 | Official operational history | Domain service facts | `write_audit_event` | Admin audit and applicant decision history | Migration baseline plus append-only application behavior |
 | Student reminder consequence | Canonical enrollment/deadline/session/grade/completion state + `ReminderPreference` | `reminders.sweep` (sole decision owner; ledger `ReminderLog` enforces once-per-occurrence) | In-app notification + outbox email (immediate/digest/quiet-hours pacing) | `academy-reminders.timer` re-sweeps idempotently; admin history + audited resend; outbox stays delivery owner |
 | Public catalog visibility | `Course.listed` + `status='published'` (ADR 0003) | Course import/authoring services | Anonymous landing and `/courses` projection | `catalog.public_catalog` is the only reader; routes add no extra filters; external marketing pages are 301 redirects, never copies |

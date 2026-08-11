@@ -1,10 +1,10 @@
 """What this app reimplements from the kernel, as a number that can only go down.
 
-This repo defines its own `Base`, `Tenant`, `Role`, `UserCredential`,
-`AuthSession`, and its own `csrf`, `observability`, `rate_limit`,
-`security_headers` and `tenant` middleware — every one of which the kernel also
-provides, by the same name. It is a fork of the assembly layer, not a consumer
-of it, and ADR-0015 asks whether that should change.
+This repo still defines its own `Base`, `Tenant`, `Role`, `UserCredential`, and
+`AuthSession`, each of which the kernel also provides by the same name. The five
+duplicate middleware modules were retired when Academy adopted the kernel app
+factory; the remaining model entries are intentionally deferred because their
+lineage and identity cutover is a separate migration.
 
 The fork is not free, and 2026-08-10 priced it three times in one afternoon:
 
@@ -15,10 +15,9 @@ The fork is not free, and 2026-08-10 priced it three times in one afternoon:
   37 commits. Neither ever raised.
 * Adopting a kernel package moved this repo's dependencies for the first time,
   and the deploy recipe had no `poetry install` step. 502.
-* The single-tenant lockdown was adopted as a *setting* (`TENANCY=single`) but
-  not as *behaviour*: the kernel asserts it inside `create_app`'s lifespan and
-  this app hand-builds its own, so the binding stayed `None` and the middleware
-  passed every tenant through. Config validation could not tell.
+* The single-tenant lockdown was once adopted as a *setting*
+  (`TENANCY=single`) but not as *behaviour*. Academy now runs the kernel
+  lifespan and tests the binding through its real app.
 
 ## Why a ratchet and not a gate
 
@@ -136,10 +135,7 @@ def test_baseline_shrinks_when_a_duplicate_is_retired() -> None:
 def test_baseline_entries_still_exist() -> None:
     """A renamed file leaves a hole for its replacement to fall into."""
     gone = sorted(e for e in _read_baseline() if not _entry_path(e).is_file())
-    assert not gone, (
-        "These baseline entries no longer exist and must be removed:\n  "
-        + "\n  ".join(gone)
-    )
+    assert not gone, "These baseline entries no longer exist and must be removed:\n  " + "\n  ".join(gone)
 
 
 def test_the_comparison_tracks_the_installed_kernel() -> None:

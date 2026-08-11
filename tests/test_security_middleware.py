@@ -1,4 +1,4 @@
-"""CSRF, rate-limit, and observability middleware tests."""
+"""Academy's contract with the kernel-owned middleware stack."""
 
 from __future__ import annotations
 
@@ -7,12 +7,14 @@ from http import cookies
 from typing import Any
 from uuid import uuid4
 
-from app.middleware.csrf import CSRF_COOKIE, CSRFMiddleware
-from app.middleware.observability import ObservabilityMiddleware
-from app.middleware.rate_limit import RateLimitMiddleware
-from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.middleware.tenant import TenantResolverMiddleware
-from app.models.tenant import Tenant
+from dotmac_kernel.middleware.csrf import CSRF_COOKIE, CSRFMiddleware
+from dotmac_kernel.middleware.observability import ObservabilityMiddleware
+from dotmac_kernel.middleware.rate_limit import RateLimitMiddleware
+from dotmac_kernel.middleware.security_headers import SecurityHeadersMiddleware
+from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
+from dotmac_kernel.models import Tenant
+
+from app.assembly import assembly
 
 
 def test_csrf_sets_cookie_on_safe_request_and_blocks_cookie_post_without_header():
@@ -75,9 +77,7 @@ def test_observability_generates_request_id_by_default():
         headers=[(b"x-request-id", b"untrusted-id")],
     )
     assert response["status"] == 200
-    response_request_ids = [
-        value for key, value in response["headers"] if key == b"x-request-id"
-    ]
+    response_request_ids = [value for key, value in response["headers"] if key == b"x-request-id"]
     assert response_request_ids
     assert response_request_ids[0] != b"untrusted-id"
 
@@ -96,17 +96,26 @@ def test_observability_can_trust_inbound_request_id():
 
 
 def test_security_headers_cover_browser_responses():
+    policy = assembly.security_policy
     response = _run(
-        SecurityHeadersMiddleware(_ok_app, hsts=True),
+        SecurityHeadersMiddleware(
+            _ok_app,
+            content_security_policy=policy.content_security_policy,
+            cross_origin_opener_policy=policy.cross_origin_opener_policy,
+            cross_origin_resource_policy=policy.cross_origin_resource_policy,
+        ),
         method="GET",
         path="/",
+        scheme="https",
     )
     headers = dict(response["headers"])
     assert b"default-src 'self'" in headers[b"content-security-policy"]
     assert headers[b"x-content-type-options"] == b"nosniff"
     assert headers[b"x-frame-options"] == b"DENY"
     assert headers[b"referrer-policy"] == b"strict-origin-when-cross-origin"
-    assert headers[b"strict-transport-security"] == b"max-age=31536000; includeSubDomains"
+    assert headers[b"strict-transport-security"] == b"max-age=63072000; includeSubDomains"
+    assert headers[b"cross-origin-opener-policy"] == b"same-origin"
+    assert headers[b"cross-origin-resource-policy"] == b"same-origin"
 
 
 def test_single_academy_slug_rejects_other_tenant(monkeypatch):
@@ -115,7 +124,9 @@ def test_single_academy_slug_rejects_other_tenant(monkeypatch):
 
     bind_single_tenant("alpha")
     monkeypatch.setattr(
-        "app.middleware.tenant.single_tenant_binding", lambda: "alpha", raising=False
+        "dotmac_kernel.middleware.tenant.single_tenant_binding",
+        lambda: "alpha",
+        raising=False,
     )
     try:
         _assert_rejects_other_tenant()
@@ -128,8 +139,8 @@ def _assert_rejects_other_tenant() -> None:
     alpha = Tenant(slug="alpha", name="Alpha")
     beta = Tenant(slug="beta", name="Beta")
 
-    assert middleware._allow_single_tenant(alpha) is alpha
-    assert middleware._allow_single_tenant(beta) is None
+    assert middleware._allow(alpha) is alpha
+    assert middleware._allow(beta) is None
 
 
 async def _ok_app(scope, receive, send) -> None:
@@ -150,6 +161,7 @@ def _run(
     path: str,
     headers: list[tuple[bytes, bytes]] | None = None,
     tenant: object | None = None,
+    scheme: str = "http",
 ) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
 
@@ -166,7 +178,7 @@ def _run(
         "raw_path": path.encode(),
         "query_string": b"",
         "headers": headers or [],
-        "scheme": "http",
+        "scheme": scheme,
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
         "state": {"tenant": tenant} if tenant is not None else {},

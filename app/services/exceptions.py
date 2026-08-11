@@ -1,23 +1,14 @@
-"""Domain exceptions raised by the service layer.
+"""Compatibility imports for kernel-owned domain exceptions.
 
-Routes let these bubble to app-level handlers (registered in app/main.py) for
-consistent HTTP translation. Same hierarchy as dotmac_starter for portability.
+Keeping this module avoids a noisy all-at-once import rewrite while ensuring
+Academy services raise the exact classes handled by ``dotmac_kernel.create_app``.
 """
 
-from __future__ import annotations
+from dotmac_kernel.exceptions import (
+    BadRequestError,
+    ConflictError,
+    DomainError,
+    NotFoundError,
+)
 
-
-class DomainError(Exception):
-    """Base class for service-layer errors."""
-
-
-class NotFoundError(DomainError):
-    """Requested entity does not exist (or is hidden by RLS — same outcome)."""
-
-
-class BadRequestError(DomainError):
-    """Caller input invalid."""
-
-
-class ConflictError(DomainError):
-    """Operation conflicts with existing state (unique violation, etc.)."""
+__all__ = ["BadRequestError", "ConflictError", "DomainError", "NotFoundError"]

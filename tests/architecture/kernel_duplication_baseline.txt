@@ -6,11 +6,6 @@
 # Retiring an entry means importing the kernel version instead. Do not
 # regenerate this file to make a failure go away — a new entry means a new
 # fork of something that already exists.
-app/middleware/csrf.py
-app/middleware/observability.py
-app/middleware/rate_limit.py
-app/middleware/security_headers.py
-app/middleware/tenant.py
 app/models/auth.py:AuthSession
 app/models/auth.py:UserCredential
 app/models/base.py:Base
