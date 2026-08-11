@@ -12,6 +12,7 @@ does not expose public tenant provisioning or public account registration.
 Architecture:
 
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
+- [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
 - [ADR 0001 — historical multi-tenant foundation](docs/adr/0001-multi-tenant-architecture.md)
 
@@ -35,7 +36,8 @@ Architecture:
 
 ## Local development
 
-Requirements: Python 3.12 or 3.13, Poetry, Docker, and PostgreSQL client tools.
+Requirements: Python 3.12 or 3.13, Poetry, Node.js 20, Docker, and PostgreSQL
+client tools.
 
 ```bash
 poetry install
@@ -102,8 +104,13 @@ exercise RLS or the concurrency constraints.
 poetry run ruff check .
 poetry run mypy --no-incremental
 poetry run pip-audit
+npm ci
+npm run build:css
+git diff --exit-code -- static/app.css
 poetry run pytest -q
 ```
 
-CI runs all four gates. The cross-tenant tests are deliberate RLS isolation
+CI runs all gates. The CSS rebuild proves Academy still consumes the installed
+`dotmac-ui` preset and that the committed browser asset is current. The
+cross-tenant tests are deliberate RLS isolation
 canaries even though production accepts only one Academy tenant.

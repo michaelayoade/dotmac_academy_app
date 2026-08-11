@@ -33,8 +33,8 @@ jobs:
       # which holds INSERT/UPDATE on platform_settings; app_user is SELECT-only there.
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
       PLATFORM_ROOT_DOMAIN: localhost
-      # `dotmac-kernel` is published to the private Dotmac index, not PyPI, so
-      # `poetry install` needs credentials for the `forgejo` source declared in
+      # `dotmac-kernel` and `dotmac-ui` are published to the private Dotmac
+      # index, not PyPI, so `poetry install` needs credentials for `forgejo` in
       # pyproject.toml. Only the secret NAME appears here; the value is a repo
       # secret whose source of record is OpenBao (secret/dotmac/forgejo/read-token).
       # Same shape as dotmac_erp and dotmac_sub use.
@@ -54,6 +54,14 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install CSS build dependencies
+        run: npm ci
+
       - name: Bootstrap DB roles
         env:
           PGPASSWORD: academy_super
@@ -71,6 +79,12 @@ jobs:
       - name: Type check (mypy)
         if: '!cancelled()'
         run: poetry run mypy
+
+      - name: Shared UI preset and compiled CSS freshness
+        if: '!cancelled()'
+        run: |
+          npm run build:css
+          git diff --exit-code -- static/app.css
 
       - name: Dependency audit
         if: '!cancelled()'

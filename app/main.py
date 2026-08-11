@@ -36,6 +36,7 @@ from app.services.exceptions import (
     DomainError,
     NotFoundError,
 )
+from app.ui import UI_ASSET_DIRECTORY, UI_ASSET_MOUNT
 from app.web.account import router as web_account_router
 from app.web.accounts import router as web_accounts_router
 from app.web.admin_home import router as web_admin_router
@@ -131,6 +132,14 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="dotmac_academy_app", lifespan=lifespan)
 
+# The namespaced package mount must precede Academy's catch-all /static mount.
+# Serving the installed artifact directly keeps one canonical writer; no copy
+# of dotmac-ui's compiled CSS is checked into this repository.
+app.mount(
+    UI_ASSET_MOUNT,
+    StaticFiles(directory=UI_ASSET_DIRECTORY),
+    name="dotmac_ui_static",
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 

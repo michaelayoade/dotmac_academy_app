@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Courses — {{ branding_name | default("Dotmac Academy") }}</title>
   <meta name="description" content="The full Dotmac Academy catalog: technical training for network careers and management short courses for professionals — chaptered, assessed, certified.">
   <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
+  {% include "_dotmac_ui_head.html" %}
   <link rel="stylesheet" href="/static/public.css?v=2">
 </head>
 <body class="pub">

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,6 +10,7 @@
   <meta property="og:image" content="/static/img/og-card.webp">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  {% include "_dotmac_ui_head.html" %}
   <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
   <link rel="stylesheet" href="/static/app.css?v=6">
   <script src="/static/htmx.min.js" defer></script>

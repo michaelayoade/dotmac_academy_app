@@ -8,6 +8,148 @@
 @font-face{font-family:'Manrope';font-style:normal;font-weight:600;font-display:swap;src:url('/static/fonts/manrope-600.woff2') format('woff2');}
 @font-face{font-family:'Manrope';font-style:normal;font-weight:700;font-display:swap;src:url('/static/fonts/manrope-700.woff2') format('woff2');}
 
+/* Academy owns product identity; dotmac-ui owns the token roles and asset
+   contract. Whole-colour values retain the Oklch authoring source. Tailwind's
+   alpha-capable preset consumes the paired sRGB channels; the two clipped
+   emerald steps are the explicit sRGB compatibility decision in ADR 0006. */
+:root {
+  /* Emerald brand ramp. */
+  --dmui-color-brand-50: oklch(0.97 0.02 155);
+  --dmui-color-brand-50-rgb: 235 249 239;
+  --dmui-color-brand-100: oklch(0.94 0.04 156);
+  --dmui-color-brand-100-rgb: 215 244 224;
+  --dmui-color-brand-200: oklch(0.88 0.06 157);
+  --dmui-color-brand-200-rgb: 184 228 200;
+  --dmui-color-brand-300: oklch(0.80 0.09 158);
+  --dmui-color-brand-300-rgb: 139 208 168;
+  --dmui-color-brand-400: oklch(0.70 0.12 159);
+  --dmui-color-brand-400-rgb: 82 181 131;
+  --dmui-color-brand-500: oklch(0.60 0.13 160);
+  --dmui-color-brand-500-rgb: 23 151 101;
+  --dmui-color-brand-600: oklch(0.52 0.12 161);
+  --dmui-color-brand-600-rgb: 0 125 82;
+  --dmui-color-brand-700: oklch(0.44 0.10 161);
+  --dmui-color-brand-700-rgb: 0 99 64;
+  --dmui-color-brand-800: oklch(0.37 0.085 162);
+  --dmui-color-brand-800-rgb: 0 77 49;
+  --dmui-color-brand-900: oklch(0.30 0.06 162);
+  --dmui-color-brand-900-rgb: 7 55 36;
+  --dmui-color-brand-950: oklch(0.22 0.04 163);
+  --dmui-color-brand-950-rgb: 5 32 21;
+
+  /* Clay accent ramp. 50–300 and 700–950 complete the former partial ramp. */
+  --dmui-color-accent-50: oklch(0.98 0.02 80);
+  --dmui-color-accent-50-rgb: 255 247 234;
+  --dmui-color-accent-100: oklch(0.95 0.04 78);
+  --dmui-color-accent-100-rgb: 254 236 209;
+  --dmui-color-accent-200: oklch(0.90 0.07 72);
+  --dmui-color-accent-200-rgb: 252 215 171;
+  --dmui-color-accent-300: oklch(0.83 0.09 67);
+  --dmui-color-accent-300-rgb: 239 188 136;
+  --dmui-color-accent-400: oklch(0.76 0.11 62);
+  --dmui-color-accent-400-rgb: 227 161 101;
+  --dmui-color-accent-500: oklch(0.70 0.125 58);
+  --dmui-color-accent-500-rgb: 216 137 73;
+  --dmui-color-accent-600: oklch(0.62 0.135 52);
+  --dmui-color-accent-600-rgb: 196 107 45;
+  --dmui-color-accent-700: oklch(0.54 0.12 46);
+  --dmui-color-accent-700-rgb: 166 85 43;
+  --dmui-color-accent-800: oklch(0.45 0.10 42);
+  --dmui-color-accent-800-rgb: 130 64 37;
+  --dmui-color-accent-900: oklch(0.37 0.075 39);
+  --dmui-color-accent-900-rgb: 97 48 32;
+  --dmui-color-accent-950: oklch(0.25 0.05 36);
+  --dmui-color-accent-950-rgb: 54 24 16;
+
+  /* Sand/ink neutral ramp. The old sand and ink utilities now alias this one
+     shared neutral scale instead of carrying independent literal values. */
+  --dmui-color-semantic-neutral-50: oklch(0.992 0.008 110);
+  --dmui-color-semantic-neutral-50-rgb: 253 253 247;
+  --dmui-color-semantic-neutral-100: oklch(0.972 0.013 115);
+  --dmui-color-semantic-neutral-100-rgb: 245 247 237;
+  --dmui-color-semantic-neutral-200: oklch(0.945 0.017 116);
+  --dmui-color-semantic-neutral-200-rgb: 236 238 226;
+  --dmui-color-semantic-neutral-300: oklch(0.905 0.019 117);
+  --dmui-color-semantic-neutral-300-rgb: 222 225 212;
+  --dmui-color-semantic-neutral-400: oklch(0.84 0.02 120);
+  --dmui-color-semantic-neutral-400-rgb: 201 205 190;
+  --dmui-color-semantic-neutral-500: oklch(0.72 0.022 125);
+  --dmui-color-semantic-neutral-500-rgb: 161 167 152;
+  --dmui-color-semantic-neutral-600: oklch(0.60 0.023 135);
+  --dmui-color-semantic-neutral-600-rgb: 122 132 118;
+  --dmui-color-semantic-neutral-700: oklch(0.46 0.022 162);
+  --dmui-color-semantic-neutral-700-rgb: 77 92 84;
+  --dmui-color-semantic-neutral-800: oklch(0.36 0.024 160);
+  --dmui-color-semantic-neutral-800-rgb: 50 65 57;
+  --dmui-color-semantic-neutral-900: oklch(0.28 0.025 162);
+  --dmui-color-semantic-neutral-900-rgb: 30 45 37;
+  --dmui-color-semantic-neutral-950: oklch(0.20 0.02 162);
+  --dmui-color-semantic-neutral-950-rgb: 14 25 19;
+
+  /* Product roles: Academy is intentionally light-only in this slice. */
+  --dmui-surface-background: var(--dmui-color-semantic-neutral-100);
+  --dmui-surface-background-rgb: var(--dmui-color-semantic-neutral-100-rgb);
+  --dmui-surface-primary: var(--dmui-color-semantic-neutral-50);
+  --dmui-surface-primary-rgb: var(--dmui-color-semantic-neutral-50-rgb);
+  --dmui-surface-secondary: var(--dmui-color-semantic-neutral-200);
+  --dmui-surface-secondary-rgb: var(--dmui-color-semantic-neutral-200-rgb);
+  --dmui-surface-tertiary: var(--dmui-color-semantic-neutral-300);
+  --dmui-surface-tertiary-rgb: var(--dmui-color-semantic-neutral-300-rgb);
+  --dmui-surface-elevated: var(--dmui-color-semantic-neutral-50);
+  --dmui-surface-elevated-rgb: var(--dmui-color-semantic-neutral-50-rgb);
+  --dmui-text-primary: var(--dmui-color-semantic-neutral-900);
+  --dmui-text-primary-rgb: var(--dmui-color-semantic-neutral-900-rgb);
+  --dmui-text-secondary: var(--dmui-color-semantic-neutral-700);
+  --dmui-text-secondary-rgb: var(--dmui-color-semantic-neutral-700-rgb);
+  --dmui-text-tertiary: var(--dmui-color-semantic-neutral-700);
+  --dmui-text-tertiary-rgb: var(--dmui-color-semantic-neutral-700-rgb);
+  --dmui-text-muted: var(--dmui-color-semantic-neutral-700);
+  --dmui-text-muted-rgb: var(--dmui-color-semantic-neutral-700-rgb);
+  --dmui-text-inverted: var(--dmui-color-semantic-neutral-50);
+  --dmui-text-inverted-rgb: var(--dmui-color-semantic-neutral-50-rgb);
+  --dmui-border-subtle: var(--dmui-color-semantic-neutral-200);
+  --dmui-border-subtle-rgb: var(--dmui-color-semantic-neutral-200-rgb);
+  --dmui-border-default: var(--dmui-color-semantic-neutral-300);
+  --dmui-border-default-rgb: var(--dmui-color-semantic-neutral-300-rgb);
+  --dmui-border-strong: var(--dmui-color-semantic-neutral-600);
+  --dmui-border-strong-rgb: var(--dmui-color-semantic-neutral-600-rgb);
+  --dmui-border-focus: var(--dmui-color-brand-600);
+  --dmui-border-focus-rgb: var(--dmui-color-brand-600-rgb);
+
+  --dmui-action-primary-default: var(--dmui-color-brand-700);
+  --dmui-action-primary-default-rgb: var(--dmui-color-brand-700-rgb);
+  --dmui-action-primary-hover: var(--dmui-color-brand-800);
+  --dmui-action-primary-hover-rgb: var(--dmui-color-brand-800-rgb);
+  --dmui-action-primary-pressed: var(--dmui-color-brand-900);
+  --dmui-action-primary-pressed-rgb: var(--dmui-color-brand-900-rgb);
+  --dmui-action-primary-disabled: var(--dmui-color-brand-200);
+  --dmui-action-primary-disabled-rgb: var(--dmui-color-brand-200-rgb);
+  --dmui-action-primary-on: var(--dmui-color-semantic-neutral-50);
+  --dmui-action-primary-on-rgb: var(--dmui-color-semantic-neutral-50-rgb);
+  --dmui-action-accent-default: var(--dmui-color-accent-700);
+  --dmui-action-accent-default-rgb: var(--dmui-color-accent-700-rgb);
+  --dmui-action-accent-hover: var(--dmui-color-accent-800);
+  --dmui-action-accent-hover-rgb: var(--dmui-color-accent-800-rgb);
+  --dmui-action-accent-pressed: var(--dmui-color-accent-900);
+  --dmui-action-accent-pressed-rgb: var(--dmui-color-accent-900-rgb);
+  --dmui-action-accent-disabled: var(--dmui-color-accent-200);
+  --dmui-action-accent-disabled-rgb: var(--dmui-color-accent-200-rgb);
+  --dmui-action-accent-on: var(--dmui-color-semantic-neutral-50);
+  --dmui-action-accent-on-rgb: var(--dmui-color-semantic-neutral-50-rgb);
+
+  --dmui-font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --dmui-font-body: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --dmui-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --dmui-radius-xl: 0.9rem;
+  --dmui-radius-2xl: 1.25rem;
+  --dmui-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --dmui-shadow-md: 0 1px 2px oklch(0.30 0.06 162 / 0.05), 0 8px 24px -12px oklch(0.30 0.06 162 / 0.18);
+  --dmui-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.10), 0 4px 6px -4px rgb(0 0 0 / 0.10);
+  --dmui-shadow-xl: 0 2px 4px oklch(0.30 0.06 162 / 0.06), 0 18px 40px -18px oklch(0.30 0.06 162 / 0.28);
+  --dmui-focus-ring-color: var(--dmui-color-brand-600);
+  --dmui-focus-ring-color-rgb: var(--dmui-color-brand-600-rgb);
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -16,10 +158,8 @@
    Compiled by Tailwind v3 to static/app.css (npm run build:css).
    Fonts (Fraunces / Manrope) are self-hosted via @font-face above (static/fonts/).
 
-   Brand colors are defined in tailwind.config.js with an <alpha-value>
-   placeholder so utility opacity modifiers (e.g. bg-brand-900/35) compile.
-   That placeholder makes theme() unsafe in raw CSS properties below, so the
-   handful of base-layer rules use literal oklch values (kept in sync). */
+   Shared role utilities come from dotmac-ui's installed Tailwind preset. The
+   legacy brand/sand/ink/clay class names are compatibility aliases only. */
 
 @layer base {
   html { -webkit-text-size-adjust: 100%; }
@@ -41,29 +181,24 @@
 
   a { @apply text-brand-700; }
 
-  /* Refined, brand-tinted focus ring (keyboard users only). */
-  :focus-visible {
-    outline: 2px solid oklch(0.52 0.12 161);
-    outline-offset: 2px;
-    border-radius: 3px;
-  }
+  /* dotmac-ui owns :focus-visible; retain mouse-focus suppression locally. */
   *:focus:not(:focus-visible) { outline: none; }
 
   /* Form base — sand fields, emerald focus. */
   input, select, textarea {
     @apply bg-sand-50 text-ink;
     font-family: inherit;
-    border: 1px solid oklch(0.905 0.019 117);
+    border: 1px solid var(--dmui-border-default);
     border-radius: 0.6rem;
   }
-  input::placeholder, textarea::placeholder { color: oklch(0.46 0.022 162); opacity: 0.7; }
+  input::placeholder, textarea::placeholder { color: var(--dmui-text-secondary); opacity: 0.7; }
   input:focus, select:focus, textarea:focus {
     outline: none;
-    border-color: oklch(0.60 0.13 160);
-    box-shadow: 0 0 0 3px color-mix(in oklch, oklch(0.60 0.13 160) 22%, transparent);
+    border-color: var(--dmui-color-brand-500);
+    box-shadow: 0 0 0 3px rgb(var(--dmui-color-brand-500-rgb) / 0.22);
   }
 
-  ::selection { background: color-mix(in oklch, oklch(0.60 0.13 160) 28%, transparent); }
+  ::selection { background: rgb(var(--dmui-color-brand-500-rgb) / 0.28); }
 }
 
 @layer components {
@@ -170,12 +305,12 @@
     padding: 1rem 1.15rem; border-radius: 0.75rem; overflow-x: auto; font-size: 0.86rem; line-height: 1.55;
   }
   .prose pre code { background: transparent; padding: 0; color: inherit; }
-  .prose img { border-radius: 0.75rem; border: 1px solid oklch(0.905 0.019 117); }
+  .prose img { border-radius: 0.75rem; border: 1px solid var(--dmui-border-default); }
   .prose table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
-  .prose th, .prose td { border: 1px solid oklch(0.905 0.019 117); padding: 0.5rem 0.7rem; text-align: left; }
+  .prose th, .prose td { border: 1px solid var(--dmui-border-default); padding: 0.5rem 0.7rem; text-align: left; }
   .prose blockquote {
-    border-left: 3px solid oklch(0.70 0.12 159);
-    padding-left: 1rem; color: oklch(0.46 0.022 162); font-style: italic;
+    border-left: 3px solid var(--dmui-color-brand-400);
+    padding-left: 1rem; color: var(--dmui-text-secondary); font-style: italic;
   }
 }
 
@@ -185,7 +320,7 @@
 /* heading anchor links */
 .prose h2, .prose h3 { scroll-margin-top: 5rem; }
 .heading-anchor {
-  margin-left: 0.4rem; color: oklch(0.70 0.12 159); opacity: 0;
+  margin-left: 0.4rem; color: var(--dmui-color-brand-400); opacity: 0;
   text-decoration: none; font-weight: 400; transition: opacity .15s;
 }
 .prose h2:hover .heading-anchor, .prose h3:hover .heading-anchor { opacity: 0.7; }
@@ -195,25 +330,25 @@
 #chapter-toc li.toc-sub { padding-left: 0.85rem; }
 #chapter-toc a {
   display: block; padding: 0.2rem 0.6rem; border-left: 2px solid transparent;
-  color: oklch(0.46 0.022 162); font-size: 0.85rem; line-height: 1.35;
+  color: var(--dmui-text-secondary); font-size: 0.85rem; line-height: 1.35;
   text-decoration: none; transition: color .12s, border-color .12s;
 }
-#chapter-toc a:hover { color: oklch(0.44 0.10 161); }
+#chapter-toc a:hover { color: var(--dmui-color-brand-700); }
 #chapter-toc a.active {
-  color: oklch(0.44 0.10 161); border-left-color: oklch(0.52 0.12 161); font-weight: 600;
+  color: var(--dmui-color-brand-700); border-left-color: var(--dmui-color-brand-600); font-weight: 600;
 }
 
 /* scroll-progress bar */
 #reading-progress {
   position: fixed; top: 0; left: 0; height: 3px; width: 0;
-  background: oklch(0.52 0.12 161); z-index: 50; transition: width .1s linear;
+  background: var(--dmui-color-brand-600); z-index: 50; transition: width .1s linear;
 }
 
 /* figure lightbox */
 .prose img.zoomable { cursor: zoom-in; }
 .lightbox {
   position: fixed; inset: 0; display: none; place-items: center;
-  background: oklch(0.20 0.02 160 / 0.82); z-index: 60; padding: 2rem; cursor: zoom-out;
+  background: rgb(var(--dmui-color-semantic-neutral-950-rgb) / 0.82); z-index: 60; padding: 2rem; cursor: zoom-out;
 }
 .lightbox.open { display: grid; }
 .lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 0.5rem; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
@@ -223,8 +358,8 @@
   position: absolute; top: 0.5rem; right: 0.5rem;
   padding: 0.15rem 0.6rem; border-radius: 0.4rem; cursor: pointer;
   font-size: 0.72rem; font-weight: 600; font-family: inherit;
-  color: oklch(0.94 0.04 156); background: oklch(0.985 0.006 95 / 0.14);
-  border: 1px solid oklch(0.985 0.006 95 / 0.22); opacity: 0; transition: opacity .15s;
+  color: var(--dmui-color-brand-100); background: rgb(var(--dmui-color-semantic-neutral-50-rgb) / 0.14);
+  border: 1px solid rgb(var(--dmui-color-semantic-neutral-50-rgb) / 0.22); opacity: 0; transition: opacity .15s;
 }
 .prose pre:hover .code-copy { opacity: 1; }
-.code-copy:hover { background: oklch(0.985 0.006 95 / 0.24); }
+.code-copy:hover { background: rgb(var(--dmui-color-semantic-neutral-50-rgb) / 0.24); }
