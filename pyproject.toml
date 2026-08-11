@@ -43,6 +43,12 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # had `audit-banks` reporting a clean estate it could not see.
 dotmac-kernel = { version = "0.1.0a32", source = "forgejo" }
 
+# Shared presentation contract. Pinned exactly for the same reason as the
+# kernel: token/API adoption is reviewed deliberately, never pulled in by an
+# unrelated lock refresh. a3 is the first release whose Tailwind preset keeps
+# opacity modifiers working against channel-form colour tokens.
+dotmac-ui = { version = "0.1.0a3", source = "forgejo" }
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 pytest-asyncio = "^1.4.0"
