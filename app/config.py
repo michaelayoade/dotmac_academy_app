@@ -1,32 +1,26 @@
-"""Application configuration.
-
-Read from environment. Fail-closed in production for required values.
-"""
+"""Academy product configuration layered on the kernel settings contract."""
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotmac_kernel.config import Settings as KernelSettings
+from dotmac_kernel.config import validate_settings as validate_kernel_settings
+
+# Academy currently contains inline scripts and WebSocket lab consoles. This
+# product default is declared by app.assembly's ProductSecurityPolicy;
+# CONTENT_SECURITY_POLICY can still override it at deployment time.
+ACADEMY_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+    "form-action 'self'; object-src 'none'; img-src 'self' data:; "
+    "font-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
+)
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+class Settings(KernelSettings):
+    """Kernel settings plus values owned only by the Academy product."""
 
-    environment: str = "dev"
-    database_url: str = ""
-    platform_database_url: str = ""
-    migration_database_url: str = ""
-    platform_root_domain: str = "localhost"
     # IANA zone for instructor-entered wall-clock times (sessions/timetables).
     academy_timezone: str = "Africa/Lagos"
-    trusted_hosts: str = ""
-    jwt_secret: str = "dev-insecure-change-me"
-    session_hash_secret: str = "dev-insecure-change-me"
-    jwt_ttl_seconds: int = 3600
-    csrf_enabled: bool = True
-    rate_limit_enabled: bool = True
-    rate_limit_requests: int = 120
-    rate_limit_window_seconds: int = 60
-    trust_inbound_request_id: bool = False
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20
     lab_workdir: str = "/home/dotmac/labs"
@@ -82,31 +76,17 @@ settings = Settings()
 
 def validate_settings(s: Settings) -> list[str]:
     """Return list of fatal errors (empty if OK). Caller raises if non-empty in prod."""
-    errors: list[str] = []
-    if not s.database_url:
-        errors.append("DATABASE_URL is required")
-    if s.is_production and not s.platform_database_url:
-        errors.append("PLATFORM_DATABASE_URL is required in production")
-    if s.is_production and not s.trusted_hosts:
-        errors.append("TRUSTED_HOSTS is required in production")
-    if s.is_production and s.platform_root_domain in {"localhost", ""}:
-        errors.append("PLATFORM_ROOT_DOMAIN must be a real domain in production")
+    errors = validate_kernel_settings(s)
     # Single-tenancy is the kernel's control now (TENANCY=single, which makes it
     # assert at startup that exactly one tenant row exists and bind to it). This
     # repo used to name the slug itself in ACADEMY_TENANT_SLUG; that duplicated
     # an identity the database already holds. Production must still declare the
     # posture, so the requirement moves rather than disappearing.
-    from dotmac_kernel.config import settings as kernel_settings
-
-    if s.is_production and kernel_settings.tenancy != "single":
+    if s.is_production and s.tenancy != "single":
         errors.append(
             "TENANCY must be 'single' in production — this is a single-tenant "
             "deployment and the kernel's startup assertion is what enforces it"
         )
-    if s.is_production and s.jwt_secret == "dev-insecure-change-me":  # noqa: S105
-        errors.append("JWT_SECRET must be set in production")
-    if s.is_production and s.session_hash_secret == "dev-insecure-change-me":  # noqa: S105
-        errors.append("SESSION_HASH_SECRET must be set in production")
     if s.is_production and not s.csrf_enabled:
         errors.append("CSRF_ENABLED must be true in production")
     if s.is_production and not s.rate_limit_enabled:

@@ -11,6 +11,7 @@ does not expose public tenant provisioning or public account registration.
 
 Architecture:
 
+- [ADR 0007 — Academy Is a Kernel Product Assembly](docs/adr/0007-academy-is-a-kernel-assembly.md)
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
 - [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
@@ -21,7 +22,8 @@ Architecture:
 - Academy management APIs require tenant-bound admin authentication.
 - Accounts are created through admin invitations or accepted-applicant
   activation; `/auth/register` does not exist.
-- Production host resolution is restricted by `ACADEMY_TENANT_SLUG`.
+- Production declares `TENANCY=single`; the kernel binds host resolution to the
+  sole tenant identity stored in the database.
 - Applicant placement references an active cohort/track pair. Free-text
   `program` is display-only.
 - Entrance-assessment time is derived from an explicit server-stamped start.

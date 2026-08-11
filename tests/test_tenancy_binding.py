@@ -1,10 +1,9 @@
 """The single-tenant lockdown must actually be armed, not merely configured.
 
-This exists because it once wasn't. `TENANCY=single` was set, config validation
-demanded and got it, and everything looked right — while
-`single_tenant_binding()` returned `None` and `TenantResolverMiddleware` passed
-every tenant through. The kernel performs the assertion inside `create_app`'s
-lifespan, and this app is built by hand, so none of it ran.
+This exists because it once wasn't. ``TENANCY=single`` was set, but Academy
+hand-built its lifespan and therefore never ran the kernel assertion. These
+tests exercise the lifespan installed by ``create_app`` through Academy's real
+ASGI app, so reading the setting without adopting the behavior cannot recur.
 
 A control that is configured but not armed is worse than one that is absent:
 the configuration is evidence that someone thought about it.
@@ -14,8 +13,9 @@ from __future__ import annotations
 
 import pytest
 from dotmac_kernel.tenancy import clear_single_tenant_binding, single_tenant_binding
+from fastapi.testclient import TestClient
 
-from app.main import _bind_single_tenant_or_fail
+from app.main import app
 
 
 @pytest.fixture(autouse=True)
@@ -25,24 +25,26 @@ def _unbound():
     clear_single_tenant_binding()
 
 
-def test_single_tenancy_binds_at_startup(admin_session, tenant_a, monkeypatch) -> None:
+def test_single_tenancy_binds_at_startup(monkeypatch) -> None:
     """The property the outage lacked: after startup, the binding is set."""
     from dotmac_kernel.config import settings as kernel_settings
 
     monkeypatch.setattr(kernel_settings, "tenancy", "single", raising=False)
-    monkeypatch.setattr(
-        "dotmac_kernel.db.resolver_session", _fake_resolver(["academy"]), raising=False
-    )
-    assert _bind_single_tenant_or_fail() == []
-    assert single_tenant_binding() == "academy"
+    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
+    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
+    monkeypatch.setattr("dotmac_kernel.db.resolver_session", _fake_resolver(["academy"]), raising=False)
+    with TestClient(app):
+        assert single_tenant_binding() == "academy"
 
 
 def test_multi_tenancy_binds_nothing(monkeypatch) -> None:
     from dotmac_kernel.config import settings as kernel_settings
 
     monkeypatch.setattr(kernel_settings, "tenancy", "multi", raising=False)
-    assert _bind_single_tenant_or_fail() == []
-    assert single_tenant_binding() is None
+    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
+    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
+    with TestClient(app):
+        assert single_tenant_binding() is None
 
 
 def test_two_tenants_is_fatal_and_binds_nothing(monkeypatch) -> None:
@@ -50,14 +52,18 @@ def test_two_tenants_is_fatal_and_binds_nothing(monkeypatch) -> None:
     from dotmac_kernel.config import settings as kernel_settings
 
     monkeypatch.setattr(kernel_settings, "tenancy", "single", raising=False)
+    monkeypatch.setattr(kernel_settings, "environment", "production", raising=False)
+    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
+    monkeypatch.setattr("dotmac_kernel.app_factory.validate_settings", lambda _settings: [], raising=False)
+    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
     monkeypatch.setattr(
         "dotmac_kernel.db.resolver_session",
         _fake_resolver(["academy", "someone-else"]),
         raising=False,
     )
-    errors = _bind_single_tenant_or_fail()
-    assert len(errors) == 1
-    assert "someone-else" in errors[0], "the message must name what it found"
+    with pytest.raises(RuntimeError, match="someone-else"):
+        with TestClient(app):
+            pass
     assert single_tenant_binding() is None
 
 
