@@ -75,9 +75,11 @@ parallel compatibility response maintained by Academy.
 
 This change intentionally does not migrate `Base`, `Tenant`, `Role`,
 `UserCredential`, `AuthSession`, `PersonRole`, or the Academy migration lineage.
-Those changes affect database identity and require their own ownership ledger,
-schema verification, cutover, and rollback plan. The duplication ratchet keeps
-the remaining seven model collisions visible and prevents new ones.
+ADR 0008 now accepts the separate ownership ledger, schema verification,
+expand/shadow/cutover sequence, independent assembly rebaseline, and rollback
+plan for that work. Its inventory keeps the seven name collisions plus the
+semantic `Person`, `PersonRole`, and audit-actor edges visible. No database
+authority changes until ADR 0008's PostgreSQL rehearsals pass.
 
 Kernel 0.1.0a38 completed the former platform-surface, startup-hook, and product
 security-policy follow-ups. The a32 compatibility adapters are retired in this

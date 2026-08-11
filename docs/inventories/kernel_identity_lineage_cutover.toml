@@ -1,0 +1,309 @@
+schema_version = 1
+status = "design_only"
+decision = "docs/adr/0008-kernel-identity-and-lineage-cutover.md"
+kernel_distribution = "dotmac-kernel"
+kernel_version = "0.1.0a38"
+
+[current_lineage]
+owner = "academy_legacy"
+root = "0001_initial_tenant_schema"
+head = "0053_entrance_defaults"
+root_file = "alembic/versions/20260504_0001_initial_tenant_schema.py"
+shares_kernel_root_id = true
+
+[target_kernel_lineage]
+owner = "kernel"
+root = "0001_initial_tenant_schema"
+head = "0020_delivery_receipts"
+branch_label = "kernel"
+
+[target_assembly_lineage]
+owner = "assembly"
+root = "a001_adopt_academy"
+branch_label = "assembly"
+depends_on = "0020_delivery_receipts"
+
+[[model_edge]]
+academy_entry = "app/models/base.py:Base"
+academy_symbol = "Base"
+kernel_symbol = "Base"
+kind = "same_name_collision"
+disposition = "import_kernel"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/base.py:TimestampMixin"
+academy_symbol = "TimestampMixin"
+kernel_symbol = "TimestampMixin"
+kind = "same_name_collision"
+disposition = "import_kernel"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/tenant.py:Tenant"
+academy_symbol = "Tenant"
+kernel_symbol = "Tenant"
+academy_table = "tenants"
+kernel_table = "tenants"
+kind = "same_name_collision"
+disposition = "adopt_rows_in_place"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/tenant.py:TenantDomain"
+academy_symbol = "TenantDomain"
+kernel_symbol = "TenantDomain"
+academy_table = "tenant_domains"
+kernel_table = "tenant_domains"
+kind = "same_name_collision"
+disposition = "adopt_rows_in_place"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/rbac.py:Role"
+academy_symbol = "Role"
+kernel_symbol = "Role"
+academy_table = "roles"
+kernel_table = "roles"
+kind = "same_name_collision"
+disposition = "adopt_rows_in_place"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/auth.py:UserCredential"
+academy_symbol = "UserCredential"
+kernel_symbol = "UserCredential"
+academy_table = "user_credentials"
+kernel_table = "user_credentials"
+kind = "same_name_collision"
+disposition = "expand_in_place_to_party_id"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/auth.py:AuthSession"
+academy_symbol = "AuthSession"
+kernel_symbol = "AuthSession"
+academy_table = "auth_sessions"
+kernel_table = "auth_sessions"
+kind = "same_name_collision"
+disposition = "expand_in_place_to_party_id"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/person.py:Person"
+academy_symbol = "Person"
+kernel_symbol = "Party+PartyPerson"
+academy_table = "people"
+kernel_table = "parties+party_persons"
+kind = "semantic_replacement"
+disposition = "identity_map_preserve_uuid"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/rbac.py:PersonRole"
+academy_symbol = "PersonRole"
+kernel_symbol = "PartyRole"
+academy_table = "person_roles"
+kernel_table = "party_roles"
+kind = "semantic_replacement"
+disposition = "copy_preserve_uuid_then_retire"
+target_owner = "kernel"
+
+[[model_edge]]
+academy_entry = "app/models/rbac.py:AuditEvent.actor_person_id"
+academy_symbol = "AuditEvent.actor_person_id"
+kernel_symbol = "AuditEvent.actor_party_id"
+academy_table = "audit_events"
+kernel_table = "audit_events"
+kind = "dependent_identity_edge"
+disposition = "shadow_column_then_rename"
+target_owner = "kernel"
+
+[[product_state]]
+source = "people.avatar_path"
+target = "academy_person_profiles.avatar_path"
+owner = "assembly"
+
+[[product_state]]
+source = "people.prefs"
+target = "academy_person_profiles.prefs"
+owner = "assembly"
+
+[[product_state]]
+source = "user_credentials.failed_login_attempts"
+target = "academy_login_security.failed_login_attempts"
+owner = "assembly"
+
+[[product_state]]
+source = "user_credentials.locked_until"
+target = "academy_login_security.locked_until"
+owner = "assembly"
+
+# Every current SQLAlchemy column carrying human identity. Twenty-four contain
+# `person` in their name; the three actor/assignee aliases at the end are easy
+# for a name scan to miss. `strong` means a database FK currently points to
+# people; `logical` means application joins/validation carry the relationship
+# today. Both classes are verified at cutover. Product-human columns retain
+# their names; the platform identity columns contract to the kernel spelling.
+
+[[identity_reference]]
+table = "account_tokens"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "activity_attempts"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "announcements"
+column = "author_person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "applicants"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "attempt_grants"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "audit_events"
+column = "actor_person_id"
+current_integrity = "logical"
+disposition = "rename_to_actor_party_id"
+
+[[identity_reference]]
+table = "auth_sessions"
+column = "person_id"
+current_integrity = "strong"
+disposition = "rename_to_party_id"
+
+[[identity_reference]]
+table = "certificates"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "chapter_bookmarks"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "chapter_notes"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "chapter_reads"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "class_sessions"
+column = "instructor_person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "course_completions"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "enrollments"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "lab_instances"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "learning_events"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "notifications"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "person_roles"
+column = "person_id"
+current_integrity = "strong"
+disposition = "rename_to_party_id"
+
+[[identity_reference]]
+table = "reminder_log"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "reminder_preferences"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "submissions"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "subtopic_reads"
+column = "person_id"
+current_integrity = "logical"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "success_queue_entries"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "user_credentials"
+column = "person_id"
+current_integrity = "strong"
+disposition = "rename_to_party_id"
+
+[[identity_reference]]
+table = "attempt_grants"
+column = "granted_by"
+current_integrity = "logical"
+disposition = "retain_human_semantics"
+
+[[identity_reference]]
+table = "success_queue_entries"
+column = "assigned_to"
+current_integrity = "logical"
+disposition = "retain_human_semantics"
+
+[[identity_reference]]
+table = "success_queue_entries"
+column = "resolved_by"
+current_integrity = "logical"
+disposition = "retain_human_semantics"
