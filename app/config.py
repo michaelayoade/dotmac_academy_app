@@ -25,11 +25,17 @@ class Settings(KernelSettings):
     max_concurrent_labs: int = 20
     lab_workdir: str = "/home/dotmac/labs"
     lab_idle_minutes: int = 60
-    # Address the ttyd consoles bind to on the LAB host, and the address the app
-    # reaches them at. Same-host deployments keep the loopback default; when the
-    # lab worker runs on a separate KVM host, set this on BOTH sides to that
-    # host's private/tunnel address (e.g. its WireGuard IP).
+    # Address the app DIALS to reach a lab console. Same-host deployments keep the
+    # loopback default; when the lab worker runs on a separate KVM host, set this
+    # to that host's private/tunnel address (e.g. its WireGuard IP).
     lab_console_host: str = "127.0.0.1"
+    # Address ttyd BINDS when this process spawns a console. Deliberately a
+    # SEPARATE knob from ``lab_console_host``: on the app host the dial address is
+    # REMOTE, and ttyd cannot bind an address the local host does not own — it
+    # retries the bind forever at 100% CPU and never listens. Empty means "same as
+    # ``lab_console_host``", which is correct on a single-host deployment and on
+    # the lab host itself, where the tunnel address IS local.
+    lab_console_bind_host: str = ""
     # Port probed on the lab host for the academy_lab_host_up health gauge.
     lab_host_probe_port: int = 22
 

@@ -8,6 +8,8 @@ opening a new admin connection, and clean up by letting ``tenant_a`` CASCADE.
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.config import settings
 from app.models.assessment import Activity
 from app.models.course import Course
@@ -80,3 +82,34 @@ def test_reap_idle_destroys_stale(admin_session, tenant_a):
     admin_session.refresh(inst)
     assert inst.status == "reaped"
     engine.destroy.assert_called_once_with("dal-reap")
+
+
+def test_sweep_kills_consoles_whose_instance_is_not_live(admin_session, tenant_a, monkeypatch):
+    """The backstop: a console outliving its instance gets reaped on the timer."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    live = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-live", seed={"o": 5}, status="active", consoles={})
+    dead = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-dead", seed={"o": 5}, status="reaped", consoles={})
+    admin_session.add_all([live, dead])
+    admin_session.flush()
+
+    monkeypatch.setattr(lab_jobs, "console_pids", lambda: {
+        str(live.id): [111],
+        str(dead.id): [222, 333],
+        "11111111-2222-3333-4444-555555555555": [444],  # no row at all
+    })
+    killed = []
+    monkeypatch.setattr(lab_jobs, "kill_consoles",
+                        lambda pids: killed.extend(pids) or len(killed))
+
+    assert lab_jobs.sweep_orphan_consoles(admin_session) == 3
+    assert sorted(killed) == [222, 333, 444]  # the live instance's console survives
+    admin_session.rollback()
+
+
+def test_sweep_is_a_no_op_when_no_consoles_are_running(admin_session, monkeypatch):
+    monkeypatch.setattr(lab_jobs, "console_pids", lambda: {})
+    monkeypatch.setattr(lab_jobs, "kill_consoles",
+                        lambda pids: pytest.fail("must not kill anything"))
+    assert lab_jobs.sweep_orphan_consoles(admin_session) == 0
