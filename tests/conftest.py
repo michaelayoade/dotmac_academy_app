@@ -40,6 +40,28 @@ def _set_database_url(monkeypatch):
     monkeypatch.setenv("PLATFORM_ROOT_DOMAIN", "localhost")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_console_spawn(monkeypatch):
+    """A test may never launch a real ttyd. Enforced globally, not per-test.
+
+    ``provision`` calls :func:`app.services.lab_lifecycle.start_console`, which
+    ``Popen``s a real ttyd whenever the binary is installed — so on any host that
+    has ttyd, a provision test spawned a daemon that outlived the run, while the
+    test's rollback removed the row that would have identified it. That is exactly
+    how the academy host accumulated 14 orphaned consoles, 4 of them spinning at
+    99% CPU for up to 15 days.
+
+    Patching per-test is not enough: the tests that leaked were the ones that
+    forgot to. This fixture makes forgetting harmless, and the default return of
+    ``None`` matches "console unavailable", which ``provision`` already tolerates.
+    Tests that exercise ``start_console`` itself patch ``subprocess.Popen``
+    directly and are unaffected by this.
+    """
+    from app.services import lab_lifecycle
+
+    monkeypatch.setattr(lab_lifecycle, "start_console", lambda cname, base_path: None)
+
+
 @pytest.fixture
 def admin_session(admin_engine) -> Generator[Session, None, None]:
     """Connection as app_admin — RLS bypassed. Used by fixtures to set up data."""
