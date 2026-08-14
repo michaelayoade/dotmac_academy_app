@@ -12,6 +12,13 @@ from app.models.person import Person
 from app.services import lab_lifecycle
 from app.services.labengine.interface import ExecResult, LabHandle
 
+# The autouse ``_no_real_console_spawn`` fixture in tests/conftest.py replaces
+# ``lab_lifecycle.start_console`` for every test, so nothing can leak a real ttyd.
+# The few tests that exercise start_console ITSELF need the genuine article —
+# captured here at import time, which runs before any fixture. They stub
+# ``subprocess.Popen``, so they still spawn nothing.
+_REAL_START_CONSOLE = lab_lifecycle.start_console
+
 
 def _seed(db, tid):
     c = Course(tenant_id=tid, slug="foundation", title="F",
@@ -224,7 +231,7 @@ def test_start_console_refuses_a_non_local_bind_address(monkeypatch):
     monkeypatch.setattr(lab_lifecycle.subprocess, "Popen",
                         lambda *a, **k: spawned.append(a))
 
-    assert lab_lifecycle.start_console("clab-x-client", "/labs/instances/abc/console/client") is None
+    assert _REAL_START_CONSOLE("clab-x-client", "/labs/instances/abc/console/client") is None
     assert spawned == []
 
 
@@ -236,7 +243,7 @@ def test_start_console_spawns_when_the_bind_address_is_local(monkeypatch):
     monkeypatch.setattr(lab_lifecycle.subprocess, "Popen",
                         lambda argv, **k: spawned.append(argv))
 
-    port = lab_lifecycle.start_console("clab-x-client", "/labs/instances/abc/console/client")
+    port = _REAL_START_CONSOLE("clab-x-client", "/labs/instances/abc/console/client")
     assert port is not None
     assert spawned and spawned[0][:5] == ["ttyd", "-p", str(port), "-i", "127.0.0.1"]
 
@@ -269,3 +276,15 @@ def test_kill_consoles_counts_only_what_it_signalled(monkeypatch):
     monkeypatch.setattr(lab_lifecycle.os, "kill", _kill)
     assert lab_lifecycle.kill_consoles([111, 999, 222]) == 2
     assert signalled == [111, 222]
+
+
+def test_the_no_real_spawn_guard_still_bites():
+    """The guard is about the NEXT forgotten patch, not the last one.
+
+    ``test_provision_sets_consoles_and_active`` calls provision WITHOUT patching
+    start_console, and used to spawn a real ttyd on any host with the binary
+    installed. If the autouse fixture ever stops applying, this fails loudly
+    instead of quietly leaking daemons again.
+    """
+    assert lab_lifecycle.start_console is not _REAL_START_CONSOLE
+    assert lab_lifecycle.start_console("clab-x-client", "/labs/instances/x/console/client") is None
