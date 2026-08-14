@@ -48,8 +48,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      # PINNED, and it must stay in step with the academy production host, which
+      # runs the same version from /usr/local/bin (pipx, PIPX_HOME=/opt/pipx).
+      # Unpinned, CI floats to the latest Poetry and writes a poetry.lock the
+      # host's Poetry cannot read — which fails as "pyproject.toml changed
+      # significantly since poetry.lock was last generated", blaming the repo
+      # rather than the toolchain. Bump both sides together or not at all.
       - name: Install Poetry
-        run: pipx install poetry
+        run: pipx install poetry==2.4.1
 
       - name: Install dependencies
         run: poetry install --no-interaction --no-root

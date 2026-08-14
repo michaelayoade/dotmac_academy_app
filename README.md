@@ -38,8 +38,15 @@ Architecture:
 
 ## Local development
 
-Requirements: Python 3.12 or 3.13, Poetry, Node.js 20, Docker, and PostgreSQL
-client tools.
+Requirements: Python 3.12 or 3.13, **Poetry 2.4.1**, Node.js 20, Docker, and
+PostgreSQL client tools.
+
+Poetry's version is pinned — in CI and on the production host alike — because
+`poetry.lock` is only readable by the Poetry major that wrote it. An older
+Poetry reports the mismatch as *"pyproject.toml changed significantly since
+poetry.lock was last generated"*, blaming the repository for what is really a
+toolchain problem; do not run `poetry lock` in response. Bump CI, the host, and
+this line together or not at all.
 
 ```bash
 poetry install
