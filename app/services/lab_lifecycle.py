@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 from datetime import datetime, timezone
@@ -29,6 +31,10 @@ from app.services.lab_seed import generate_seed, interpolate
 from app.services.labengine.interface import LabEngine, LabHandle
 
 _ACTIVE_STATUSES = ("provisioning", "active")
+
+#: URL prefix under which every console is served. Defined once: it is both the
+#: ttyd ``-b`` base path and the pattern the orphan sweep matches on.
+_CONSOLE_BASE = "/labs/instances/"
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +55,51 @@ def _is_linux_kind(kind) -> bool:
     return not str(kind or "").startswith("vr")
 
 
+def console_bind_host() -> str:
+    """Address a locally spawned ttyd binds — see ``LAB_CONSOLE_BIND_HOST``."""
+    return settings.lab_console_bind_host or settings.lab_console_host
+
+
+def _is_local_address(host: str) -> bool:
+    """True when this host owns ``host`` and ttyd could actually bind it.
+
+    ttyd (libwebsockets) does NOT exit when its ``-i`` address is not local: it
+    retries the bind in a tight loop, burning a whole core and never listening.
+    Probing the bind ourselves turns that silent runaway into a refusal we log.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, 0))
+        return True
+    except OSError:
+        return False
+
+
 def start_console(cname: str, base_path: str) -> int | None:
     """Launch a ttyd browser terminal for a Linux container; return its port.
 
-    ttyd serves an HTTP page + a WebSocket on ``127.0.0.1:<port>``. ``-b`` sets
+    ttyd serves an HTTP page + a WebSocket on ``<bind host>:<port>``. ``-b`` sets
     the URL base path so ttyd's internal links (index, /token, /ws) resolve under
     the auth-gated app proxy path; ``-W`` makes the terminal writable.
 
-    Tolerant by design: if ttyd is not installed or the launch fails we log and
-    return ``None`` so a missing console binary never blocks provisioning.
+    Tolerant by design: if ttyd is missing, the bind address is not local, or the
+    launch fails we log and return ``None`` so a console problem never blocks
+    provisioning.
     """
     if shutil.which("ttyd") is None:
         logger.warning("ttyd not installed; skipping console for %s", cname)
+        return None
+    bind_host = console_bind_host()
+    if not _is_local_address(bind_host):
+        # Refusing is the whole point: spawning here would leak a process that
+        # spins on an impossible bind until someone kills it by hand.
+        logger.error(
+            "console bind host %s is not local to this machine; refusing to spawn "
+            "ttyd for %s (set LAB_CONSOLE_BIND_HOST, or run the lab worker on the "
+            "host that owns that address)",
+            bind_host,
+            cname,
+        )
         return None
     port = _free_port()
     argv = [
@@ -68,7 +107,7 @@ def start_console(cname: str, base_path: str) -> int | None:
         "-p",
         str(port),
         "-i",
-        settings.lab_console_host,
+        bind_host,
         "-b",
         base_path,
         "-W",
@@ -86,14 +125,55 @@ def start_console(cname: str, base_path: str) -> int | None:
     return port
 
 
-def stop_consoles(instance: LabInstance) -> None:
-    """Kill any ttyd processes serving this instance's console base paths."""
-    pattern = f"ttyd .* /labs/instances/{instance.id}/console/"
-    argv = ["pkill", "-f", pattern]
+def console_pids(instance_id=None) -> dict[str, list[int]]:
+    """Map instance id -> PIDs of the ttyd consoles currently serving it.
+
+    Reads the process table via ``pgrep -af`` and parses the ``-b`` base path,
+    which carries the instance id. Passing ``instance_id`` narrows the scan to
+    one instance. Returns ``{}`` when nothing matches or ``pgrep`` is absent.
+    """
+    scope = str(instance_id) if instance_id is not None else r"[0-9a-f-]+"
+    pattern = rf"ttyd .* -b {_CONSOLE_BASE}{scope}/console/"
     try:
-        subprocess.run(argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.run(
+            ["pgrep", "-af", pattern], check=False, capture_output=True, text=True
+        )
     except Exception as exc:
-        logger.warning("stop_consoles failed for %s: %s", instance.id, exc)
+        logger.warning("console_pids scan failed: %s", exc)
+        return {}
+    found: dict[str, list[int]] = {}
+    for line in proc.stdout.splitlines():
+        pid_text, _, cmdline = line.partition(" ")
+        match = re.search(rf"-b {_CONSOLE_BASE}([0-9a-f-]+)/console/", cmdline)
+        if match is None or not pid_text.isdigit():
+            continue
+        found.setdefault(match.group(1), []).append(int(pid_text))
+    return found
+
+
+def stop_consoles(instance: LabInstance) -> int:
+    """Kill the ttyd processes serving this instance's consoles; return the count.
+
+    Returns a count rather than ``None`` so callers (and the orphan sweep) can log
+    what actually happened — a silent no-op here is how consoles leaked before.
+    """
+    return kill_consoles(
+        pid for pids in console_pids(instance.id).values() for pid in pids
+    )
+
+
+def kill_consoles(pids) -> int:
+    """SIGTERM each console PID, tolerating one that already exited."""
+    killed = 0
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed += 1
+        except ProcessLookupError:
+            continue  # already gone — nothing to do
+        except OSError as exc:
+            logger.warning("could not kill console pid %s: %s", pid, exc)
+    return killed
 
 
 def _set_topology_name(topology_text: str, name: str) -> str:
@@ -196,7 +276,7 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
             if _is_linux_kind(kind):
                 spec["port"] = start_console(
                     handle.nodes[node],
-                    f"/labs/instances/{instance.id}/console/{node}",
+                    f"{_CONSOLE_BASE}{instance.id}/console/{node}",
                 )
             consoles[node] = spec
         instance.consoles = consoles

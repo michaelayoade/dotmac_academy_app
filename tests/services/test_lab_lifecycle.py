@@ -193,3 +193,79 @@ def test_destroy_marks_reaped(admin_session, tenant_a):
     assert out.status == "reaped"
     engine.destroy.assert_called_once_with("dal-destroy")
     admin_session.rollback()
+
+
+# --- console bind guard + orphan bookkeeping -------------------------------
+# Regression cover for the leak found on the academy host 2026-08-14: 14 ttyd
+# processes spinning at ~99% CPU each for up to 15 days, spawned with an ``-i``
+# address the host did not own. ttyd never exits in that case — it retries the
+# bind forever — so the guard has to refuse BEFORE spawning.
+
+
+def test_console_bind_host_defaults_to_the_dial_host(monkeypatch):
+    monkeypatch.setattr(settings, "lab_console_host", "10.99.0.2")
+    monkeypatch.setattr(settings, "lab_console_bind_host", "")
+    assert lab_lifecycle.console_bind_host() == "10.99.0.2"
+
+
+def test_console_bind_host_is_independent_of_the_dial_host(monkeypatch):
+    monkeypatch.setattr(settings, "lab_console_host", "10.99.0.2")
+    monkeypatch.setattr(settings, "lab_console_bind_host", "127.0.0.1")
+    assert lab_lifecycle.console_bind_host() == "127.0.0.1"
+
+
+def test_start_console_refuses_a_non_local_bind_address(monkeypatch):
+    """The whole bug in one test: a remote bind address must not spawn ttyd."""
+    monkeypatch.setattr(lab_lifecycle.shutil, "which", lambda _: "/usr/bin/ttyd")
+    monkeypatch.setattr(settings, "lab_console_bind_host", "10.99.0.2")
+
+    spawned = []
+    monkeypatch.setattr(lab_lifecycle, "_is_local_address", lambda host: False)
+    monkeypatch.setattr(lab_lifecycle.subprocess, "Popen",
+                        lambda *a, **k: spawned.append(a))
+
+    assert lab_lifecycle.start_console("clab-x-client", "/labs/instances/abc/console/client") is None
+    assert spawned == []
+
+
+def test_start_console_spawns_when_the_bind_address_is_local(monkeypatch):
+    monkeypatch.setattr(lab_lifecycle.shutil, "which", lambda _: "/usr/bin/ttyd")
+    monkeypatch.setattr(settings, "lab_console_bind_host", "127.0.0.1")
+
+    spawned = []
+    monkeypatch.setattr(lab_lifecycle.subprocess, "Popen",
+                        lambda argv, **k: spawned.append(argv))
+
+    port = lab_lifecycle.start_console("clab-x-client", "/labs/instances/abc/console/client")
+    assert port is not None
+    assert spawned and spawned[0][:5] == ["ttyd", "-p", str(port), "-i", "127.0.0.1"]
+
+
+def test_is_local_address_accepts_loopback_and_rejects_a_foreign_address():
+    assert lab_lifecycle._is_local_address("127.0.0.1") is True
+    # 192.0.2.0/24 is TEST-NET-1 (RFC 5737) — never assigned to a real interface.
+    assert lab_lifecycle._is_local_address("192.0.2.1") is False
+
+
+def test_console_pids_parses_the_instance_id_out_of_the_base_path(monkeypatch):
+    out = (
+        "111 ttyd -p 40000 -i 127.0.0.1 -b /labs/instances/aaaa-1/console/client -W docker exec -it c sh\n"
+        "222 ttyd -p 40001 -i 127.0.0.1 -b /labs/instances/aaaa-1/console/r1 -W docker exec -it c sh\n"
+        "333 ttyd -p 40002 -i 127.0.0.1 -b /labs/instances/bbbb-2/console/client -W docker exec -it c sh\n"
+    )
+    monkeypatch.setattr(lab_lifecycle.subprocess, "run",
+                        lambda *a, **k: MagicMock(stdout=out))
+    assert lab_lifecycle.console_pids() == {"aaaa-1": [111, 222], "bbbb-2": [333]}
+
+
+def test_kill_consoles_counts_only_what_it_signalled(monkeypatch):
+    signalled = []
+
+    def _kill(pid, sig):
+        if pid == 999:
+            raise ProcessLookupError  # already exited between scan and kill
+        signalled.append(pid)
+
+    monkeypatch.setattr(lab_lifecycle.os, "kill", _kill)
+    assert lab_lifecycle.kill_consoles([111, 999, 222]) == 2
+    assert signalled == [111, 222]

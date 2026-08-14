@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.models  # noqa: F401  # ensure all FK target tables are registered for CLI workers
 from app.config import settings
 from app.models.lab import LabInstance, LabTemplate
-from app.services.lab_lifecycle import destroy, provision
+from app.services.lab_lifecycle import console_pids, destroy, kill_consoles, provision
 from app.services.labengine.interface import LabEngine
 
 
@@ -115,3 +115,33 @@ def reap_idle(db: Session, engine: LabEngine) -> int:
         db.commit()
         reaped += 1
     return reaped
+
+
+def sweep_orphan_consoles(db: Session) -> int:
+    """Kill ttyd consoles whose instance is no longer live; return the count.
+
+    Per-instance teardown is best effort — the process outlives its instance
+    whenever ``destroy`` is skipped, the row is deleted, or the killing process
+    lacks permission. Nothing then reaps it, so consoles accumulate: this sweep is
+    the backstop that makes the leak self-correcting rather than permanent.
+
+    A console is an orphan when its instance id (parsed from the ttyd ``-b`` base
+    path) has no ``provisioning``/``active`` row. Cross-tenant, so it needs the
+    ``app_admin`` session :func:`admin_session` yields — a tenant-scoped session
+    would see another tenant's live console as an orphan and kill it.
+    """
+    running = console_pids()
+    if not running:
+        return 0
+    live = {
+        str(row)
+        for row in db.scalars(
+            select(LabInstance.id).where(LabInstance.status.in_(("provisioning", "active")))
+        ).all()
+    }
+    return kill_consoles(
+        pid
+        for instance_id, pids in running.items()
+        if instance_id not in live
+        for pid in pids
+    )

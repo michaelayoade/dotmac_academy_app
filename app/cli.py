@@ -879,8 +879,14 @@ def _reap_labs(args: argparse.Namespace) -> None:
     engine = ContainerlabEngine(settings.lab_workdir)
     with lab_jobs.admin_session() as db:
         reaped = lab_jobs.reap_idle(db, engine)
+        # After reaping, so a console this run just tore down is already gone and
+        # only genuine leftovers remain.
+        orphans = lab_jobs.sweep_orphan_consoles(db)
         provisioned = lab_jobs.drain_once(db, engine)
-    print(f"reaped {reaped} idle lab(s); provisioned {provisioned} pending lab(s)")
+    print(
+        f"reaped {reaped} idle lab(s); killed {orphans} orphan console(s); "
+        f"provisioned {provisioned} pending lab(s)"
+    )
 
 
 def _load_curriculum(args: argparse.Namespace) -> None:
@@ -1162,11 +1168,14 @@ def main() -> None:
 
     rl = sub.add_parser(
         "reap-labs",
-        help="One-shot: destroy idle lab instances, then drain pending ones.",
+        help="One-shot: destroy idle lab instances, sweep orphan consoles, drain pending.",
         description=(
             "Reap active lab instances idle longer than LAB_IDLE_MINUTES (marking "
-            "them 'reaped'), then drain any pending instances. Intended to run on a "
-            "timer (academy-reap-labs.timer → academy-reap-labs.service oneshot)."
+            "them 'reaped'), kill any ttyd console whose instance is no longer live, "
+            "then drain any pending instances. Intended to run on a timer "
+            "(academy-reap-labs.timer → academy-reap-labs.service oneshot). The "
+            "console sweep is why this timer must be ENABLED on every host that "
+            "spawns consoles, not only the one running the lab worker."
         ),
     )
     rl.set_defaults(func=_reap_labs)
