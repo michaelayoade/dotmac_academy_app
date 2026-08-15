@@ -39,3 +39,5 @@ class CourseCompletion(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When this completion was pushed to dotmac_erp HR (null = not yet synced).
     erp_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Last progress fraction explicitly accepted by ERP.
+    erp_synced_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
