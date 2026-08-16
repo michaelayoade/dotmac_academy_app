@@ -1,0 +1,65 @@
+{
+  "schema_version": 9,
+  "profile_id": "dotmac-academy-engineering-standards",
+  "repository": {
+    "canonical_url": "https://github.com/michaelayoade/dotmac_academy_app",
+    "default_branch": "main"
+  },
+  "governance_model": {
+    "kind": "pinned",
+    "canonical_url": "https://github.com/michaelayoade/dotmac_governance",
+    "revision": "4f6fbf98c25f7cfbb3dacc4f3d2f5fd7e473f193",
+    "source": "docs/adr/0006-cross-repository-engineering-conformance.md",
+    "status": "accepted"
+  },
+  "enforcement_mode": "required",
+  "authorities": [
+    {
+      "authority_id": "erp-applicant-assessment-registration",
+      "subject": "Creation and idempotent re-issue of an ERP-originated applicant assessment link, and the assessment state it reports back.",
+      "protected_resources": [
+        "erp-applicant-assessment-registration-decision",
+        "erp-applicant-assessment-link-projection"
+      ],
+      "owner_component": "erp-applicant-assessment-service",
+      "owner_implementation": "app/services/erp_applicant_assessments.py",
+      "decision_interface": "app.services.erp_applicant_assessments.register",
+      "canonical_writer_paths": ["app/services/erp_applicant_assessments.py"],
+      "adapter_paths": ["app/api/erp_applicant_assessments.py"],
+      "drift_test_paths": ["tests/test_erp_applicant_assessment_api.py"]
+    }
+  ],
+  "typed_contract_surfaces": [
+    {
+      "surface_id": "erp-inbound-authenticity-contract",
+      "paths": ["app/services/erp_integration_security.py"],
+      "require_public_annotations": true,
+      "forbid_any": true,
+      "require_immutable_records": true
+    }
+  ],
+  "module_declared_vocabularies": [],
+  "testing_kit_boundary": {
+    "test_roots": ["tests"],
+    "kit_source_roots": [],
+    "conformance_probes": []
+  },
+  "external_connector_surface": {
+    "baselines": {
+      "outbound_transport": 3,
+      "webhook_surface": 0,
+      "provider_credential": 3,
+      "connector_task": 0,
+      "sync_checkpoint": 0,
+      "delivery_retry": 0
+    },
+    "conserved_exclusions": [
+      {
+        "path": "app/web/labs.py",
+        "symbol": "_proxy_http",
+        "category": "outbound_transport",
+        "fingerprint": "a3838b848c3a881e35d9cac84fd38e7b5c7924c9b564c59ce8f8ed34341a478d"
+      }
+    ]
+  }
+}
