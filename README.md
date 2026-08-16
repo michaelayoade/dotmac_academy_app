@@ -15,6 +15,8 @@ Architecture:
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
 - [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
+- [Direct external-connector surface](docs/external-connector-surface.md) — the
+  measured baselines the accepted Governance ratchet freezes
 - [ADR 0001 — historical multi-tenant foundation](docs/adr/0001-multi-tenant-architecture.md)
 
 ## Security and ownership
