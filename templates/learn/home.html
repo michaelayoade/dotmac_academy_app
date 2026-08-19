@@ -70,6 +70,15 @@
       {% endif %}
       {% if c.state == 'locked' %}
       <p class="text-xs text-ink-soft">{{ c.locked_reason or 'Complete the previous course to unlock this course.' }}</p>
+      {% if c.request_status == 'pending' %}
+      <p class="text-xs font-semibold text-amber-700">Access request pending</p>
+      {% elif c.request_status == 'denied' %}
+      <a class="btn-ghost mt-1 text-xs" href="/courses/{{ c.course.slug }}">Request access again</a>
+      {% elif c.request_status == 'approved' %}
+      <a class="btn-ghost mt-1 text-xs" href="/courses/{{ c.course.slug }}">Open course</a>
+      {% else %}
+      <a class="btn-ghost mt-1 text-xs" href="/courses/{{ c.course.slug }}">Request access</a>
+      {% endif %}
       {% elif c.next_activity and c.state == 'in_progress' %}
       <span class="text-xs text-ink-soft">Next up: {{ c.next_activity.title }}</span>
       {% endif %}

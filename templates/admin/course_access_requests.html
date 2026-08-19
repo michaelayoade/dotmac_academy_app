@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Course access requests - {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content %}
+<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Administration</p>
+<h1 class="mt-1.5 text-3xl tracking-tight">Course access requests</h1>
+<p class="mt-2 text-ink-soft">Approve or deny learner unlock requests for locked courses.</p>
+
+<div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+  {% set all_filters = [
+    ("", "All"),
+    ("pending", "Pending"),
+    ("approved", "Approved"),
+    ("denied", "Denied"),
+    ("cancelled", "Cancelled"),
+  ] %}
+  {% for filter_value, filter_label in all_filters %}
+  <a class="rounded-full px-3 py-1 {% if status_filter == filter_value %}bg-brand-600 text-white{% else %}bg-sand-200 text-ink-soft hover:bg-sand-300{% endif %}"
+     href="/admin/course-access-requests{% if filter_value %}?status_filter={{ filter_value }}{% endif %}">
+    {% if filter_value %}
+    {{ filter_label }} ({{ counts.get(filter_value, 0) }})
+    {% else %}
+    {{ filter_label }} ({{ total_requests }})
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+
+<div class="card mt-8 overflow-x-auto">
+  {% if requests %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-sand-200 text-left text-ink-soft">
+        <th class="px-4 py-3">Requested</th>
+        <th class="px-4 py-3">Learner</th>
+        <th class="px-4 py-3">Course</th>
+        <th class="px-4 py-3">Reason</th>
+        <th class="px-4 py-3">Status</th>
+        <th class="px-4 py-3">Decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in requests %}
+      <tr class="border-b border-sand-100 align-top">
+        <td class="whitespace-nowrap px-4 py-3">{{ row.request.created_at | localtime }}</td>
+        <td class="px-4 py-3">
+          <div class="font-medium text-ink">{{ row.person.email }}</div>
+          <div class="text-xs text-ink-soft">{{ row.requester_name }}</div>
+        </td>
+        <td class="px-4 py-3">
+          <a class="font-medium text-brand-700 hover:underline" href="/courses/{{ row.course.slug }}">{{ row.course.title }}</a>
+        </td>
+        <td class="max-w-sm px-4 py-3">
+          {% if row.request.requested_reason %}
+            <p class="text-ink-soft">{{ row.request.requested_reason }}</p>
+          {% else %}
+            <p class="text-ink-soft">No reason provided.</p>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          <span class="inline-flex rounded-full bg-sand-100 px-2 py-0.5 text-xs font-semibold
+            {% if row.request.status == 'approved' %}text-brand-800
+            {% elif row.request.status == 'denied' %}text-clay-600
+            {% elif row.request.status == 'pending' %}text-amber-700
+            {% else %}text-ink-soft{% endif %}">
+            {{ row.request.status }}
+          </span>
+          {% if row.request.reviewed_at %}
+          <p class="mt-1 text-xs text-ink-soft">Reviewed {{ row.request.reviewed_at | localtime }}</p>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          {% if row.request.status == 'pending' %}
+          <div class="flex flex-wrap gap-2">
+            <form method="post" action="/admin/course-access-requests/{{ row.request.id }}/review">
+              <input type="hidden" name="status_value" value="approved">
+              <button type="submit" class="btn-primary text-xs">Approve</button>
+            </form>
+            <form method="post" action="/admin/course-access-requests/{{ row.request.id }}/review">
+              <input type="hidden" name="status_value" value="denied">
+              <button type="submit" class="btn-ghost text-xs">Deny</button>
+            </form>
+          </div>
+          {% elif row.request.status == 'denied' %}
+          <form method="post" action="/admin/course-access-requests/{{ row.request.id }}/review">
+            <input type="hidden" name="status_value" value="approved">
+            <button type="submit" class="btn-ghost text-xs">Re-approve</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="p-6 text-ink-soft">No access requests match this view.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -8,7 +8,7 @@ from itertools import groupby
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,10 @@ from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.person import Person
+from app.services.course_access_requests import (
+    create_or_reopen_request,
+    status_by_courses,
+)
 from app.services import announcements as ann_svc
 from app.services import learning_events, management_inquiries
 from app.services.agenda import upcoming_for_person
@@ -30,6 +34,7 @@ from app.services.entitlements import course_access_states, open_course_ids
 from app.services.localtime import to_local
 from app.services.roles import role_slugs
 from app.services.settings_store import effective
+from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
@@ -68,6 +73,9 @@ def courses_list(
 
     enrolled = my_courses(db, tenant_id=tenant.id, person_id=person.id)
     access_states = course_access_states(db, tenant_id=tenant.id, person_id=person.id)
+    request_statuses = status_by_courses(
+        db, tenant_id=tenant.id, person_id=person.id, course_ids=[c.id for c in enrolled]
+    )
     my: list[dict] = []
     for c in enrolled:
         state = access_states.get(c.id)
@@ -77,6 +85,7 @@ def courses_list(
                 "pct": course_completion(db, tenant_id=tenant.id, person_id=person.id, course_id=c.id),
                 "locked": state.locked if state else False,
                 "locked_reason": state.locked_reason if state else None,
+                "request_status": request_statuses.get(c.id),
             }
         )
 
@@ -95,6 +104,46 @@ def courses_list(
             "is_staff": staff,
         },
     )
+
+
+@router.post("/courses/{slug}/request-access", response_class=HTMLResponse)
+def request_course_access(
+    slug: str,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+    requested_reason: str = Form(""),
+) -> HTMLResponse:
+    """Create or reopen a locked-course access request for approval."""
+    tenant = require_tenant(request)
+    course = db.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant.id)
+        .where(Course.slug == slug)
+    ).first()
+    if course is None:
+        raise HTTPException(status_code=404)
+
+    state = course_access_states(db, tenant_id=tenant.id, person_id=person.id).get(course.id)
+    if state is None:
+        raise HTTPException(status_code=403, detail="You are not enrolled in this course.")
+    if not state.locked:
+        return RedirectResponse(f"/courses/{course.slug}", status_code=303)
+
+    try:
+        create_or_reopen_request(
+            db,
+            tenant_id=tenant.id,
+            person_id=person.id,
+            course_id=course.id,
+            requested_reason=requested_reason,
+        )
+    except ConflictError:
+        return RedirectResponse(f"/courses/{course.slug}", status_code=303)
+    except (BadRequestError, NotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RedirectResponse(f"/courses/{course.slug}", status_code=303)
 
 
 @router.get("/management-enrollment", response_class=HTMLResponse)
@@ -211,6 +260,7 @@ def course_landing(
             "structure": structure,
             "pct": pct,
             "is_staff": staff,
+            "request_status": structure.get("request_status"),
         },
     )
 

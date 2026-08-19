@@ -11,6 +11,22 @@
 <div class="card mt-6 border border-clay-500/30 bg-clay-500/5 p-5">
   <p class="font-medium text-clay-700">Prerequisite not yet completed</p>
   <p class="mt-1 text-sm text-ink-soft">Finish the required prerequisite course(s) before accessing this content.</p>
+  {% if request_status == 'pending' %}
+  <p class="mt-2 text-sm font-semibold text-amber-700">Access request submitted</p>
+  <p class="mt-1 text-xs text-ink-soft">An admin is reviewing your request.</p>
+  {% elif request_status == 'denied' %}
+  <p class="mt-2 text-sm font-semibold text-clay-700">Your request was denied</p>
+  <p class="mt-1 text-xs text-ink-soft">If your situation changed, request access again.</p>
+  <form method="post" action="/courses/{{ course.slug }}/request-access" class="mt-3">
+    <input type="hidden" name="requested_reason" value="Re-open denied request">
+    <button class="btn-ghost text-xs" type="submit">Request access again</button>
+  </form>
+  {% else %}
+  <p class="mt-2 text-xs text-ink-soft">Request admin approval to unlock this locked course.</p>
+  <form method="post" action="/courses/{{ course.slug }}/request-access" class="mt-3">
+    <button class="btn-primary text-xs" type="submit">Request access</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 

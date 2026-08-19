@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.course_access_request import CourseAccessRequest, REQUEST_STATUS_APPROVED
 from app.models.offering import CourseOffering
 from app.models.prerequisite import CoursePrerequisite
 from app.models.track import TrackCourse
@@ -86,6 +87,15 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
     if not rows:
         return {}
 
+    approved_requests = set(
+        db.scalars(
+            select(CourseAccessRequest.course_id)
+            .where(CourseAccessRequest.tenant_id == tenant_id)
+            .where(CourseAccessRequest.person_id == person_id)
+            .where(CourseAccessRequest.status == REQUEST_STATUS_APPROVED)
+        ).all()
+    )
+
     completed = set(
         db.scalars(
             select(CourseCompletion.course_id)
@@ -108,8 +118,15 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
     states: dict[UUID, CourseAccessState] = {
         course_id: CourseAccessState(course_id=course_id, locked=False) for course_id in legacy_courses
     }
+    # Admin approvals are explicit overrides: the learner is treated as unlocked for
+    # this course while the request remains approved.
+    for course_id in approved_requests:
+        if course_id in states:
+            states[course_id] = CourseAccessState(course_id=course_id, locked=False)
     for sequence in track_sequences.values():
         for index, course_id in enumerate(sequence):
+            if course_id in approved_requests:
+                continue
             previous_course_id = sequence[index - 1] if index > 0 else None
             state = (
                 CourseAccessState(course_id=course_id, locked=False)
@@ -137,6 +154,8 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
     ).all()
     for course_id, requires_course_id in prereq_rows:
         if requires_course_id in completed:
+            continue
+        if course_id in approved_requests:
             continue
         current = states.get(course_id)
         if current is not None and current.locked:

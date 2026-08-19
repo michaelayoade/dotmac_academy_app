@@ -37,6 +37,7 @@ from app.services.assessment import (
     best_scores_for_person,
     reveal_feedback,
 )
+from app.services.course_access_requests import status_by_courses
 from app.services.entitlements import course_access_states, visible_course_ids
 from app.services.gradebook import grade_from
 
@@ -374,6 +375,12 @@ def _dashboard_context(db: Session, tenant_id: UUID, person_id: UUID, now: datet
         "next_session_by_cohort": next_session_by_cohort,
         "activities_by_course": _activities_by_course(db, tenant_id, course_ids),
         "best": best_scores_for_person(db, tenant_id=tenant_id, person_id=person_id, course_ids=course_ids),
+        "request_statuses": status_by_courses(
+            db,
+            tenant_id=tenant_id,
+            person_id=person_id,
+            course_ids=course_ids,
+        ),
         "bundle": _touch_bundle(db, tenant_id, person_id, course_ids),
         "chapters_by_course": _chapters_by_course(db, tenant_id, course_ids),
         "due_by_offering": _due_by_offering(db, tenant_id, offering_ids),
@@ -405,6 +412,7 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
     activities_by_course = ctx["activities_by_course"]
     best = ctx["best"]
     bundle = ctx["bundle"]
+    request_statuses = ctx["request_statuses"]
     chapters_by_course = ctx["chapters_by_course"]
     due_by_offering = ctx["due_by_offering"]
     last_touch = bundle["last_touch"]
@@ -477,6 +485,7 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
                     now,
                 ),
                 "starts_at": offering.starts_at,
+                "request_status": request_statuses.get(course.id),
                 "last_read": (
                     {"number": read_row[0], "title": read_row[1]}
                     if read_row is not None

@@ -26,6 +26,7 @@ from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.lab import LabInstance
 from app.models.person import Person
+from app.services.course_access_requests import status_counts
 from app.services.web_auth import require_web_role
 from app.web.templating import templates
 
@@ -50,6 +51,7 @@ def admin_console(request: Request, db: Session = Depends(get_db)):
         "cohorts": _count(Cohort),
         "courses": _count(Course),
         "labs": _count(LabInstance, LabInstance.status.in_(("active", "provisioning"))),
+        "pending_requests": status_counts(db, tenant_id=tenant.id).get("pending", 0),
     }
     return templates.TemplateResponse(
         request,

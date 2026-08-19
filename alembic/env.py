@@ -16,6 +16,7 @@ from app.models import (  # noqa: F401  (register models for autogenerate)
     assessment,
     auth,
     class_session,
+    course_access_request,
     cohort,
     course,
     onboarding,

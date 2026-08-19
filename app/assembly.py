@@ -37,6 +37,7 @@ from app.web.auth import router as web_auth_router
 from app.web.bookmarks import router as web_bookmarks_router
 from app.web.calendar_feed import router as web_calendar_feed_router
 from app.web.catalog import router as web_catalog_router
+from app.web.course_access_requests import router as web_course_access_requests_router
 from app.web.gradebook import router as web_gradebook_router
 from app.web.instructor import router as web_instructor_router
 from app.web.lab_admin import router as web_lab_admin_router
@@ -105,6 +106,7 @@ academy_feature = FeatureManifest(
         web_account_router,
         web_reminders_admin_router,
         web_bookmarks_router,
+        web_course_access_requests_router,
         web_success_queue_router,
     ),
 )

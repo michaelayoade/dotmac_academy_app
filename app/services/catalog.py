@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity
 from app.models.course import Chapter, Course
+from app.services.course_access_requests import status_for_course
 from app.services.assessment import best_scores_for
 from app.services.entitlements import unmet_prerequisites, visible_course_ids
 
@@ -119,6 +120,9 @@ def course_structure(
     locked = bool(
         unmet_prerequisites(db, tenant_id=tenant_id, person_id=person_id, course_id=course.id)
     )
+    request_status = status_for_course(
+        db, tenant_id=tenant_id, person_id=person_id, course_id=course.id
+    )
     best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course.id)
 
     chapters = list(
@@ -192,4 +196,5 @@ def course_structure(
         "course_activities": course_activities,
         "continue_target": continue_target,
         "locked": locked,
+        "request_status": request_status,
     }
