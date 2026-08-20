@@ -539,7 +539,7 @@ def _at_risk_sweep(args: argparse.Namespace) -> None:
 
 
 def _erp_training_sync(args: argparse.Namespace) -> None:
-    """Cross-tenant: push completed courses to dotmac_erp HR (training reports).
+    """Cross-tenant: project changed staff course progress to dotmac_erp HR.
 
     BYPASSRLS admin session; idempotent — only unsynced completions are pushed
     and ERP dedups on the certificate ref, so re-runs are safe. Inert unless
@@ -1272,7 +1272,7 @@ def main() -> None:
     )
     ar.set_defaults(func=_at_risk_sweep)
 
-    ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
+    ets = sub.add_parser("erp-training-sync", help="Project staff training progress to dotmac_erp HR")
     ets.set_defaults(func=_erp_training_sync)
 
     seb = sub.add_parser("set-entrance-bank", help="Designate a cohort's entrance-assessment bank")
