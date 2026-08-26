@@ -75,9 +75,7 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
 
     - RouterOS (kind == "vr-ros" or starting with "vr-") → webfig at the node's
       mgmt address: ``http://{mgmt}/``.
-    - Linux → ttyd on the LAB host: ``http://{LAB_CONSOLE_HOST}:{port}/``
-      (loopback when the worker is co-located; the lab host's tunnel address
-      when it runs on a separate KVM host).
+    - Linux → ttyd, exposed locally on the lab host: ``http://127.0.0.1:{port}/``.
     """
     spec = (instance.consoles or {}).get(node)
     if not spec:
@@ -87,10 +85,12 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
         mgmt = spec.get("mgmt")
         return f"http://{mgmt}/" if mgmt else None
     port = spec.get("port")
-    return f"http://{settings.lab_console_host}:{port}/" if port else None
+    return f"http://127.0.0.1:{port}/" if port else None
 
 
-def _require_instance_entitlement(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> None:
+def _require_instance_entitlement(
+    db: Session, tenant: Tenant, person: Person, instance: LabInstance
+) -> None:
     """Re-check the owner is STILL entitled to the lab's course.
 
     Ownership alone is not enough: a learner who launched a lab while entitled may
@@ -99,7 +99,9 @@ def _require_instance_entitlement(db: Session, tenant: Tenant, person: Person, i
     the lab and holding a live console until the instance is reaped.
     """
     act = db.scalars(
-        select(Activity).where(Activity.id == instance.activity_id).where(Activity.tenant_id == tenant.id)
+        select(Activity)
+        .where(Activity.id == instance.activity_id)
+        .where(Activity.tenant_id == tenant.id)
     ).first()
     if act is None:
         raise HTTPException(status_code=404)
@@ -123,7 +125,9 @@ def _authorize_console(
     id can never be resolved.
     """
     instance = db.scalars(
-        select(LabInstance).where(LabInstance.id == instance_id).where(LabInstance.tenant_id == tenant.id)
+        select(LabInstance)
+        .where(LabInstance.id == instance_id)
+        .where(LabInstance.tenant_id == tenant.id)
     ).first()
     if instance is None:
         raise HTTPException(status_code=404)
@@ -138,7 +142,9 @@ def _authorize_console(
 
 async def _proxy_http(request: Request, target: str) -> Response:
     """Reverse-proxy an HTTP request to `target`, streaming the response back."""
-    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    fwd_headers = {
+        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
     body = await request.body()
     client = httpx.AsyncClient(timeout=30.0)
     upstream_req = client.build_request(
@@ -149,7 +155,9 @@ async def _proxy_http(request: Request, target: str) -> Response:
         params=request.query_params,
     )
     upstream = await client.send(upstream_req, stream=True)
-    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
+    resp_headers = {
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
 
     async def _body_iter():
         try:
@@ -190,14 +198,18 @@ def _lab_activity(db: Session, tenant: Tenant, activity_id: UUID) -> Activity:
 def _lab_template(db: Session, tenant: Tenant, activity_id: UUID) -> LabTemplate:
     """Load the LabTemplate for a tenant-scoped activity or 404."""
     tpl = db.scalars(
-        select(LabTemplate).where(LabTemplate.activity_id == activity_id).where(LabTemplate.tenant_id == tenant.id)
+        select(LabTemplate)
+        .where(LabTemplate.activity_id == activity_id)
+        .where(LabTemplate.tenant_id == tenant.id)
     ).first()
     if tpl is None:
         raise HTTPException(status_code=404)
     return tpl
 
 
-def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: UUID) -> LabInstance | None:
+def _current_instance(
+    db: Session, tenant: Tenant, person: Person, activity_id: UUID
+) -> LabInstance | None:
     """Latest non-reaped instance for this person+activity, if any."""
     return db.scalars(
         select(LabInstance)
@@ -209,11 +221,15 @@ def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: 
     ).first()
 
 
-def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UUID) -> LabInstance:
+def _owned_instance(
+    db: Session, tenant: Tenant, person: Person, instance_id: UUID
+) -> LabInstance:
     """Load a tenant-scoped instance, assert ownership (404/403) AND current
     entitlement to the lab's course (so revocation propagates to live instances)."""
     inst = db.scalars(
-        select(LabInstance).where(LabInstance.id == instance_id).where(LabInstance.tenant_id == tenant.id)
+        select(LabInstance)
+        .where(LabInstance.id == instance_id)
+        .where(LabInstance.tenant_id == tenant.id)
     ).first()
     if inst is None:
         raise HTTPException(status_code=404)
@@ -259,8 +275,13 @@ def lab_launch(
     act = _lab_activity(db, tenant, activity_id)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
-    instance = lab_lifecycle.request_lab(db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    instance = lab_lifecycle.request_lab(
+        db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl
+    )
+    return templates.TemplateResponse(
+        request,
+        "labs/_status.html", {"request": request, "instance": instance}
+    )
 
 
 @router.get("/labs/instances/{instance_id}/status", response_class=HTMLResponse)
@@ -273,7 +294,10 @@ def lab_status(
     """htmx polling target — current instance status + console links when active."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    return templates.TemplateResponse(
+        request,
+        "labs/_status.html", {"request": request, "instance": instance}
+    )
 
 
 @router.post("/labs/instances/{instance_id}/check", response_class=HTMLResponse)
@@ -289,7 +313,10 @@ def lab_check(
     tpl = _lab_template(db, tenant, instance.activity_id)
     handle = lab_lifecycle.handle_for(instance)
     score = lab_lifecycle.grade(db, instance, _engine(), tpl, handle)
-    return templates.TemplateResponse(request, "labs/_checks.html", {"request": request, "score": score})
+    return templates.TemplateResponse(
+        request,
+        "labs/_checks.html", {"request": request, "score": score}
+    )
 
 
 @router.post("/labs/instances/{instance_id}/reset", response_class=HTMLResponse)
@@ -304,7 +331,10 @@ def lab_reset(
     instance = _owned_instance(db, tenant, person, instance_id)
     tpl = _lab_template(db, tenant, instance.activity_id)
     lab_lifecycle.reset(db, instance, _engine(), tpl)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    return templates.TemplateResponse(
+        request,
+        "labs/_status.html", {"request": request, "instance": instance}
+    )
 
 
 @router.get("/labs/instances/{instance_id}/console/{node}")
@@ -332,7 +362,7 @@ def _subpath_target(target: str, instance_id: UUID, node: str, subpath: str) -> 
     RouterOS webfig is served at the mgmt root, so its sub-resources hang off ``/``.
     """
     base = target.rstrip("/")
-    if target.startswith(f"http://{settings.lab_console_host}:"):
+    if target.startswith("http://127.0.0.1:"):
         return f"{base}/labs/instances/{instance_id}/console/{node}/{subpath}"
     return f"{base}/{subpath}"
 
@@ -422,7 +452,9 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
             text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
             {"tenant_id": str(tenant.id)},
         )
-        person = web_auth._current_person(db, tenant.id, websocket.cookies.get(web_auth.COOKIE))
+        person = web_auth._current_person(
+            db, tenant.id, websocket.cookies.get(web_auth.COOKIE)
+        )
         if person is None:
             await websocket.close(code=1008)
             return
@@ -435,5 +467,7 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
     finally:
         db.close()
 
-    upstream_url = f"ws://{settings.lab_console_host}:{port}" f"/labs/instances/{instance_id}/console/{node}/ws"
+    upstream_url = (
+        f"ws://127.0.0.1:{port}/labs/instances/{instance_id}/console/{node}/ws"
+    )
     await _proxy_ws(websocket, upstream_url)

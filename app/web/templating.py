@@ -13,13 +13,3 @@ templates = Jinja2Templates(
 )
 # Render stored-UTC datetimes as academy wall-clock (see app/services/localtime).
 templates.env.filters["localtime"] = to_local
-
-
-def _datefmt(dt):
-    """Compact human date-time for dashboard chips, e.g. 'Aug 03, 14:00'."""
-    if dt is None:
-        return ""
-    return dt.strftime("%b %d, %H:%M")
-
-
-templates.env.filters["datefmt"] = _datefmt

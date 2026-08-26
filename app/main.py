@@ -43,7 +43,6 @@ from app.web.apply import router as web_apply_router
 from app.web.audit import router as web_audit_router
 from app.web.auth import router as web_auth_router
 from app.web.bookmarks import router as web_bookmarks_router
-from app.web.calendar_feed import router as web_calendar_feed_router
 from app.web.catalog import router as web_catalog_router
 from app.web.gradebook import router as web_gradebook_router
 from app.web.instructor import router as web_instructor_router
@@ -59,7 +58,6 @@ from app.web.search import router as web_search_router
 from app.web.settings import router as web_settings_router
 from app.web.teaching import router as web_teaching_router
 from app.web.timetable import router as web_timetable_router
-from app.web.todo import router as web_todo_router
 
 logger = logging.getLogger(__name__)
 
@@ -168,8 +166,6 @@ app.include_router(web_labs_ws_router)
 app.include_router(web_catalog_router)
 app.include_router(web_search_router)
 app.include_router(web_learn_router)
-app.include_router(web_todo_router)
-app.include_router(web_calendar_feed_router)
 app.include_router(web_reports_router)
 app.include_router(web_gradebook_router)
 app.include_router(web_settings_router)

@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabTemplate
 from app.services.checks.engine import run_checks
@@ -64,22 +63,13 @@ def start_console(cname: str, base_path: str) -> int | None:
         return None
     port = _free_port()
     argv = [
-        "ttyd",
-        "-p",
-        str(port),
-        "-i",
-        settings.lab_console_host,
-        "-b",
-        base_path,
-        "-W",
-        "docker",
-        "exec",
-        "-it",
-        cname,
-        "sh",
+        "ttyd", "-p", str(port), "-i", "127.0.0.1", "-b", base_path, "-W",
+        "docker", "exec", "-it", cname, "sh",
     ]
     try:
-        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
     except Exception as exc:  # never fail provision on a console launch error
         logger.warning("ttyd launch failed for %s: %s", cname, exc)
         return None
@@ -91,7 +81,9 @@ def stop_consoles(instance: LabInstance) -> None:
     pattern = f"ttyd .* /labs/instances/{instance.id}/console/"
     argv = ["pkill", "-f", pattern]
     try:
-        subprocess.run(argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
     except Exception as exc:
         logger.warning("stop_consoles failed for %s: %s", instance.id, exc)
 
@@ -145,7 +137,8 @@ def _attempt_seed_id(person_id, activity_id, n: int) -> int:
     return int(h[:8], 16)
 
 
-def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, template: LabTemplate) -> LabInstance:
+def request_lab(db: Session, *, tenant_id, person_id, activity: Activity,
+                template: LabTemplate) -> LabInstance:
     """Create a LabInstance for the next attempt — does NOT deploy.
 
     Queued if at/over ``MAX_CONCURRENT_LABS``, else marked ``provisioning`` for
@@ -177,10 +170,13 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     return inst
 
 
-def provision(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
+def provision(db: Session, instance: LabInstance, engine: LabEngine,
+              template: LabTemplate) -> LabInstance:
     """Deploy the topology for ``instance`` and record consoles / activate it."""
     try:
-        topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
+        topology_text = _set_topology_name(
+            interpolate(template.topology, instance.seed), instance.instance_name
+        )
         handle = engine.deploy(topology_text, instance.instance_name)
         consoles: dict = {}
         for node in handle.nodes:
@@ -205,7 +201,8 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     return instance
 
 
-def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate, handle: LabHandle) -> Score:
+def grade(db: Session, instance: LabInstance, engine: LabEngine,
+          template: LabTemplate, handle: LabHandle) -> Score:
     """Run the template checks against the live instance and write Submission+Score.
 
     The caller supplies ``handle`` (the live :class:`LabHandle` — see the web/CLI
@@ -220,7 +217,9 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     threshold = template.limits.get("pass_threshold")
     if threshold is None:
         act = db.scalars(
-            select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
+            select(Activity)
+            .where(Activity.tenant_id == instance.tenant_id)
+            .where(Activity.id == instance.activity_id)
         ).first()
         threshold = act.pass_threshold if act is not None else 0.0
 
@@ -259,7 +258,9 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
         from app.services.email import notify_score_if_first_pass
 
         act = db.scalars(
-            select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
+            select(Activity)
+            .where(Activity.tenant_id == instance.tenant_id)
+            .where(Activity.id == instance.activity_id)
         ).first()
         person = db.get(Person, instance.person_id)
         if act is not None:
@@ -269,7 +270,8 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     return score
 
 
-def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
+def reset(db: Session, instance: LabInstance, engine: LabEngine,
+          template: LabTemplate) -> LabInstance:
     """Tear down and redeploy the instance topology in place (fresh state)."""
     engine.reset(interpolate(template.topology, instance.seed), instance.instance_name)
     instance.last_active_at = _now()
