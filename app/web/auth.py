@@ -12,21 +12,27 @@ POST /logout  — revoke session, clear cookie, 303 → /login
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.services import web_auth
+from app.config import settings
+from app.services import oidc_login, web_auth
 from app.services.roles import role_slugs
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
+OIDC_STATE_COOKIE = "academy_oidc_state"
 
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"request": request, "error": None, "oidc_enabled": bool(settings.oidc_issuer)},
+    )
 
 
 @router.post("/login")
@@ -45,7 +51,11 @@ def login(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"request": request, "error": "Invalid credentials"},
+            {
+                "request": request,
+                "error": "Invalid credentials",
+                "oidc_enabled": bool(settings.oidc_issuer),
+            },
             status_code=401,
         )
     token = web_auth.start_session(db, tenant.id, person.id)
@@ -62,6 +72,77 @@ def login(
         secure=request.url.scheme == "https",
     )
     return resp
+
+
+@router.post("/login/oidc")
+def oidc_start(request: Request, db: Session = Depends(get_db)):
+    tenant = require_tenant(request)
+    try:
+        started = oidc_login.begin_login(db, tenant_id=tenant.id)
+    except oidc_login.LoginRefused:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "request": request,
+                "error": "External sign-in is unavailable.",
+                "oidc_enabled": bool(settings.oidc_issuer),
+            },
+            status_code=503,
+        )
+    response = hx_redirect(request, started.url)
+    response.set_cookie(
+        OIDC_STATE_COOKIE,
+        started.state,
+        max_age=settings.oidc_ceremony_ttl_seconds,
+        path="/login/callback",
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+@router.get("/login/callback")
+def oidc_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    try:
+        completed = oidc_login.complete_login(
+            db,
+            tenant_id=tenant.id,
+            code=code,
+            state=state,
+            stored_state=request.cookies.get(OIDC_STATE_COOKIE),
+        )
+    except oidc_login.LoginRefused:
+        failed_response = templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "request": request,
+                "error": "External sign-in could not be completed.",
+                "oidc_enabled": bool(settings.oidc_issuer),
+            },
+            status_code=401,
+        )
+        failed_response.delete_cookie(OIDC_STATE_COOKIE, path="/login/callback")
+        return failed_response
+
+    success_response = RedirectResponse("/", status_code=303)
+    success_response.set_cookie(
+        web_auth.COOKIE,
+        completed.token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    success_response.delete_cookie(OIDC_STATE_COOKIE, path="/login/callback")
+    return success_response
 
 
 @router.post("/logout")

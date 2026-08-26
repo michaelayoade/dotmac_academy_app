@@ -52,6 +52,20 @@ class AuthSession(Base, TimestampMixin):
             ondelete="CASCADE",
             name="fk_auth_sessions_tenant_person",
         ),
+        # Provenance is absent for password sessions, never unknown. RESTRICT
+        # prevents a binding delete from silently converting known provenance
+        # into NULL while leaving the session live. Carrying person_id prevents
+        # a session from citing another person's binding in the same tenant.
+        ForeignKeyConstraint(
+            ["tenant_id", "person_id", "external_identity_binding_id"],
+            [
+                "external_identity_bindings.tenant_id",
+                "external_identity_bindings.person_id",
+                "external_identity_bindings.id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_auth_sessions_tenant_person_external_identity_binding",
+        ),
     )
 
     id: Mapped[UUID] = uuid_pk()
@@ -69,3 +83,4 @@ class AuthSession(Base, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_identity_binding_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)

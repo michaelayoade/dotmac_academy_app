@@ -18,6 +18,8 @@ from app.models import (  # noqa: F401  (register models for autogenerate)
     class_session,
     cohort,
     course,
+    external_identity,
+    managed_application_lifecycle,
     onboarding,
     person,
     rbac,
@@ -34,11 +36,7 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return (
-        os.getenv("MIGRATION_DATABASE_URL")
-        or os.getenv("DATABASE_URL")
-        or ""
-    )
+    return os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
 
 
 def run_migrations_offline() -> None:

@@ -220,7 +220,13 @@ def set_account_status(db: Session, *, tenant_id: UUID, person_id: UUID, status:
     """Suspend or reactivate an account (status in {active, suspended})."""
     if status not in {"active", "suspended"}:
         raise BadRequestError(f"invalid account status: {status}")
-    person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.id == person_id)).first()
+    person = db.scalars(
+        select(Person)
+        .where(Person.tenant_id == tenant_id)
+        .where(Person.id == person_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
     if person is None:
         raise BadRequestError("person not found")
     person.status = status

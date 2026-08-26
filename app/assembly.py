@@ -21,6 +21,7 @@ from dotmac_ui import static_dir
 from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
 from app.api.erp_applicant_assessments import router as erp_applicant_assessments_router
+from app.api.managed_application_lifecycle import router as managed_application_lifecycle_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.config import ACADEMY_CONTENT_SECURITY_POLICY, settings, validate_settings
@@ -70,9 +71,11 @@ def _initialize_error_tracking() -> None:
 
 academy_feature = FeatureManifest(
     name="academy",
+    capabilities=("academy.application.lifecycle",),
     routers=(
         auth_router,
         erp_applicant_assessments_router,
+        managed_application_lifecycle_router,
         persons_router,
         admissions_router,
         rbac_router,

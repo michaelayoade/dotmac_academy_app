@@ -63,7 +63,13 @@ def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Per
     return person
 
 
-def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
+def start_session(
+    db: Session,
+    tenant_id: UUID,
+    person_id: UUID,
+    *,
+    external_identity_binding_id: UUID | None = None,
+) -> str:
     """Create an AuthSession and return the raw token to set as the cookie value."""
     token, expires_at = issue_access_token(person_id, tenant_id)
     db.add(
@@ -72,6 +78,7 @@ def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
             person_id=person_id,
             token_hash=hash_token(token),
             expires_at=expires_at,
+            external_identity_binding_id=external_identity_binding_id,
         )
     )
     db.flush()
@@ -105,6 +112,10 @@ def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person |
         .where(AuthSession.expires_at > datetime.now(UTC))
     ).first()
     if session is None:
+        return None
+    from app.services.external_identity import session_provenance_is_active
+
+    if not session_provenance_is_active(db, session):
         return None
     person = db.scalars(
         select(Person).where(Person.id == session.person_id).where(Person.tenant_id == tenant_id)

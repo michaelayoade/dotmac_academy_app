@@ -63,9 +63,13 @@ def require_user_auth(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     if session.person_id != person_id or session.tenant_id != tenant.id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    from app.services.external_identity import session_provenance_is_active
+
+    if not session_provenance_is_active(db, session):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
     person = db.get(Person, person_id)
-    if person is None:
+    if person is None or person.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return person
 
@@ -83,8 +87,7 @@ def require_role(role_slug: str):
             select(PersonRole)
             .join(
                 Role,
-                (Role.id == PersonRole.role_id)
-                & (Role.tenant_id == PersonRole.tenant_id),
+                (Role.id == PersonRole.role_id) & (Role.tenant_id == PersonRole.tenant_id),
             )
             .where(PersonRole.tenant_id == tenant.id)
             .where(PersonRole.person_id == person.id)
@@ -96,6 +99,7 @@ def require_role(role_slug: str):
         return person
 
     return _dependency
+
 
 __all__ = [
     "Depends",

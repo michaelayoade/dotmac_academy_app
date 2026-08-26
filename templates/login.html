@@ -104,6 +104,17 @@
           </button>
         </form>
 
+        {% if oidc_enabled %}
+        <div class="my-5 flex items-center gap-3 text-xs uppercase tracking-[0.12em] text-ink-soft">
+          <span class="h-px flex-1 bg-ink-soft/20"></span><span>or</span><span class="h-px flex-1 bg-ink-soft/20"></span>
+        </div>
+        <form hx-post="/login/oidc">
+          <button type="submit" class="w-full rounded-md border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-700">
+            Sign in with your organization
+          </button>
+        </form>
+        {% endif %}
+
         <p class="mt-8 text-xs text-ink-soft/80">
           Trouble signing in? Use password reset or ask your cohort instructor to reset your access.
         </p>

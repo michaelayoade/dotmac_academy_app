@@ -15,6 +15,33 @@
   "enforcement_mode": "required",
   "authorities": [
     {
+      "authority_id": "academy-external-identity-authority",
+      "subject": "Exact Academy-local external identity binding, federated session provenance, issuance and revocation decisions.",
+      "protected_resources": [
+        "academy-external-identity-binding-decision",
+        "academy-federated-session-provenance",
+        "academy-session-revocation-decision"
+      ],
+      "owner_component": "academy-external-identity-service",
+      "owner_implementation": "app/services/external_identity.py",
+      "decision_interface": "app.services.external_identity",
+      "canonical_writer_paths": [
+        "app/services/external_identity.py",
+        "app/services/lifecycle.py",
+        "app/services/web_auth.py"
+      ],
+      "adapter_paths": [
+        "app/services/managed_application_lifecycle.py",
+        "app/services/oidc_login.py",
+        "app/web/auth.py"
+      ],
+      "drift_test_paths": [
+        "tests/architecture/test_external_identity_authority.py",
+        "tests/services/test_external_identity.py",
+        "tests/test_external_identity_rls.py"
+      ]
+    },
+    {
       "authority_id": "erp-applicant-assessment-registration",
       "subject": "Creation and idempotent re-issue of an ERP-originated applicant assessment link, and the assessment state it reports back.",
       "protected_resources": [
@@ -27,12 +54,47 @@
       "canonical_writer_paths": ["app/services/erp_applicant_assessments.py"],
       "adapter_paths": ["app/api/erp_applicant_assessments.py"],
       "drift_test_paths": ["tests/test_erp_applicant_assessment_api.py"]
+    },
+    {
+      "authority_id": "academy-managed-application-lifecycle",
+      "subject": "Exact-plan activation or suspension of an existing Academy person, plus the immutable local plan/result evidence for that transition.",
+      "protected_resources": [
+        "academy-managed-account-state-decision",
+        "academy-managed-lifecycle-operation-evidence"
+      ],
+      "owner_component": "academy-account-lifecycle-service",
+      "owner_implementation": "app/services/managed_application_lifecycle.py",
+      "decision_interface": "app.services.managed_application_lifecycle.apply",
+      "canonical_writer_paths": [
+        "app/services/lifecycle.py",
+        "app/services/managed_application_lifecycle.py"
+      ],
+      "adapter_paths": ["app/api/managed_application_lifecycle.py"],
+      "drift_test_paths": [
+        "tests/architecture/test_managed_application_lifecycle_boundary.py",
+        "tests/services/test_managed_application_lifecycle.py",
+        "tests/test_managed_application_lifecycle_api.py"
+      ]
     }
   ],
   "typed_contract_surfaces": [
     {
       "surface_id": "erp-inbound-authenticity-contract",
       "paths": ["app/services/erp_integration_security.py"],
+      "require_public_annotations": true,
+      "forbid_any": true,
+      "require_immutable_records": true
+    },
+    {
+      "surface_id": "academy-managed-application-lifecycle-contract",
+      "paths": ["app/services/managed_application_lifecycle.py"],
+      "require_public_annotations": true,
+      "forbid_any": true,
+      "require_immutable_records": true
+    },
+    {
+      "surface_id": "academy-external-identity-contract",
+      "paths": ["app/services/external_identity.py"],
       "require_public_annotations": true,
       "forbid_any": true,
       "require_immutable_records": true

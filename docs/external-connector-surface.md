@@ -14,6 +14,20 @@ Governance engine derives the universe from Git-tracked Python, proves
 test-only reachability centrally, and reports every untracked Python file as an
 error.
 
+The managed application lifecycle port added under ADR 0009 is an authenticated
+inbound product API, not provider transport: it performs no external I/O and
+contains no provider SDK or provider branch. Its one held HMAC key authenticates
+Integrator requests; the accepted ratchet remains the authority on whether that
+new identifier changes a measured category and must be regenerated rather than
+hand-adjusted.
+
+ADR 0010's exact-pinned OIDC protocol adapter is likewise not an external
+business connector or a second identity owner. Academy holds one relying-party
+client registration, verifies the provider protocol through the published
+adapter, and writes only Academy-owned binding/session rows. The existing
+`app/config.py` provider-credential file remains one measured file; a Governance
+run, not a hand-edited count, must confirm the conserved baseline.
+
 ## Accepted baseline
 
 Measured on 2026-08-16 with the accepted schema-9 engine: 156 tracked Python

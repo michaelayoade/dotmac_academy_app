@@ -44,6 +44,11 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # silently skip included-route permission/capability validation on FastAPI 0.140.
 dotmac-kernel = { version = "0.1.0a38", source = "forgejo" }
 
+# Stateless protocol adapter only. Academy still owns Person, binding and
+# AuthSession persistence locally; this package performs discovery, PKCE and
+# ID-token verification and returns an exact issuer/subject pair.
+dotmac-auth-oidc = { version = "0.1.0a1", source = "forgejo" }
+
 # Shared presentation contract. Pinned exactly for the same reason as the
 # kernel: token/API adoption is reviewed deliberately, never pulled in by an
 # unrelated lock refresh. a3 is the first release whose Tailwind preset keeps

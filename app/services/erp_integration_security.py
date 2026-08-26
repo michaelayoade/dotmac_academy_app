@@ -42,7 +42,45 @@ def verify_request(
     now: int | None = None,
 ) -> None:
     """Fail closed on missing, malformed, stale, or incorrectly signed input."""
-    if not settings.erp_inbound_hmac_secret:
+    verify_signed_request(
+        body=body,
+        timestamp=timestamp,
+        signature=signature,
+        secret=settings.erp_inbound_hmac_secret,
+        max_skew_seconds=settings.erp_inbound_hmac_max_skew_seconds,
+        now=now,
+    )
+
+
+def verify_managed_lifecycle_request(
+    *,
+    body: bytes,
+    timestamp: str | None,
+    signature: str | None,
+    now: int | None = None,
+) -> None:
+    """Verify Integrator -> Academy lifecycle authentication."""
+    verify_signed_request(
+        body=body,
+        timestamp=timestamp,
+        signature=signature,
+        secret=settings.managed_lifecycle_inbound_hmac_secret,
+        max_skew_seconds=settings.managed_lifecycle_inbound_hmac_max_skew_seconds,
+        now=now,
+    )
+
+
+def verify_signed_request(
+    *,
+    body: bytes,
+    timestamp: str | None,
+    signature: str | None,
+    secret: str,
+    max_skew_seconds: int,
+    now: int | None = None,
+) -> None:
+    """Fail closed for one held key without choosing the integration owner."""
+    if not secret:
         raise IntegrationAuthError("integration_disabled")
     if len(body) > MAX_SIGNED_BODY_BYTES:
         raise IntegrationAuthError("request_too_large")
@@ -54,12 +92,12 @@ def verify_request(
     if str(parsed) != timestamp:
         raise IntegrationAuthError("invalid_timestamp")
     current = int(time.time()) if now is None else now
-    if abs(current - parsed) > settings.erp_inbound_hmac_max_skew_seconds:
+    if abs(current - parsed) > max_skew_seconds:
         raise IntegrationAuthError("stale_timestamp")
     if not _SIGNATURE_RE.fullmatch(signature):
         raise IntegrationAuthError("invalid_signature")
     expected = sign_request(
-        secret=settings.erp_inbound_hmac_secret,
+        secret=secret,
         timestamp=timestamp,
         body=body,
     )

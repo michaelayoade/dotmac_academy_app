@@ -60,6 +60,26 @@ class Settings(KernelSettings):
     erp_allowed_return_origins: str = ""
     academy_public_base_url: str = ""
 
+    # Integrator -> Academy managed application lifecycle.  This is a distinct
+    # trust direction from the ERP assessment integration and must never reuse
+    # its key. Empty means the service port is disabled.
+    managed_lifecycle_inbound_hmac_secret: str = ""
+    managed_lifecycle_inbound_hmac_max_skew_seconds: int = 300
+
+    # One process-held OIDC provider registration. Empty issuer means the
+    # federated login surface is disabled. The protocol is delegated to the
+    # exact-pinned dotmac-auth-oidc adapter; authorization remains local.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_url: str = ""
+    oidc_provider_binding: str = "primary"
+    oidc_scopes: str = "openid"
+    oidc_discovery_url: str = ""
+    oidc_http_timeout_seconds: float = 10.0
+    oidc_ceremony_ttl_seconds: int = 600
+    oidc_clock_skew_seconds: int = 60
+
     # Email / SMTP (inert by default — empty smtp_host disables sending).
     smtp_host: str = ""
     smtp_port: int = 587
@@ -103,6 +123,25 @@ def validate_settings(s: Settings) -> list[str]:
         errors.append("SMTP_STARTTLS must be true when SMTP is configured in production")
     if s.erp_inbound_hmac_max_skew_seconds <= 0:
         errors.append("ERP_INBOUND_HMAC_MAX_SKEW_SECONDS must be positive")
+    if s.managed_lifecycle_inbound_hmac_max_skew_seconds <= 0:
+        errors.append("MANAGED_LIFECYCLE_INBOUND_HMAC_MAX_SKEW_SECONDS must be positive")
+    oidc_values = (s.oidc_issuer, s.oidc_client_id, s.oidc_client_secret, s.oidc_redirect_url)
+    if any(oidc_values) and not all(oidc_values):
+        errors.append(
+            "OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URL " "must be configured together"
+        )
+    if s.oidc_issuer and not s.oidc_issuer.startswith("https://"):
+        errors.append("OIDC_ISSUER must use HTTPS")
+    if s.oidc_redirect_url and not s.oidc_redirect_url.startswith("https://"):
+        errors.append("OIDC_REDIRECT_URL must use HTTPS")
+    if s.oidc_discovery_url and not s.oidc_discovery_url.startswith("https://"):
+        errors.append("OIDC_DISCOVERY_URL must use HTTPS")
+    if "openid" not in s.oidc_scopes.split():
+        errors.append("OIDC_SCOPES must include openid")
+    if not s.oidc_provider_binding.strip():
+        errors.append("OIDC_PROVIDER_BINDING must not be blank")
+    if s.oidc_http_timeout_seconds <= 0 or s.oidc_ceremony_ttl_seconds <= 0 or s.oidc_clock_skew_seconds < 0:
+        errors.append("OIDC timeout/ceremony TTL must be positive and clock skew non-negative")
     if s.erp_inbound_hmac_secret:
         if not s.erp_assessment_token_secret:
             errors.append("ERP_ASSESSMENT_TOKEN_SECRET is required when ERP inbound integration is enabled")
@@ -112,6 +151,11 @@ def validate_settings(s: Settings) -> list[str]:
             errors.append("ACADEMY_PUBLIC_BASE_URL is required when ERP inbound integration is enabled")
         if s.erp_webhook_secret and s.erp_inbound_hmac_secret == s.erp_webhook_secret:
             errors.append("ERP inbound and outbound HMAC secrets must be distinct")
+    if s.managed_lifecycle_inbound_hmac_secret and s.managed_lifecycle_inbound_hmac_secret in {
+        s.erp_inbound_hmac_secret,
+        s.erp_webhook_secret,
+    }:
+        errors.append("managed lifecycle and ERP HMAC secrets must be distinct")
     if s.is_production and s.academy_public_base_url and not s.academy_public_base_url.startswith("https://"):
         errors.append("ACADEMY_PUBLIC_BASE_URL must use HTTPS in production")
     return errors

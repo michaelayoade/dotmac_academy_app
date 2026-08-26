@@ -7,7 +7,9 @@ and SMTP are adapters around these owners.
 | Domain/state | Authoritative input and owner | Canonical writer | Derived/projection state | Reconciler/backstop |
 |---|---|---|---|---|
 | Academy deployment identity | Sole offline-created `Tenant` row plus `TENANCY=single` topology | Offline bootstrap owns identity; kernel startup owns binding | `request.state.tenant` | Startup rejects zero/multiple tenants; resolver rejects any slug other than the database-owned binding; RLS fails closed |
-| User identity and roles | `Person`, `UserCredential`, `Role`, `PersonRole` | Account/lifecycle services | Auth sessions and navigation permissions | Tenant-bound token/session checks; admin invitation workflow |
+| User identity and roles | Academy `Person`, `UserCredential`, `Role`, `PersonRole` | Academy account/lifecycle services | Academy auth sessions and navigation permissions | Tenant-bound token/session checks; admin invitation workflow; no Starter identity-table import |
+| Managed Academy account state | Academy capability desired document over an existing tenant/person plus desired `active`/`suspended` state; Vendor/Integrator execution metadata is a separate envelope | `managed_application_lifecycle.apply` delegates the one local transition to `lifecycle.set_account_status` | Immutable local operation PLAN/result evidence; Integrator signed receipt is the cross-system projection | Exact HTTP-ledger idempotency/target/state digests; capability inputs contain no orchestrator fields; OBSERVE re-reads the local person; CANCEL never guesses an inverse |
+| External login binding and session provenance (ADR 0010) | Approved exact `(tenant, provider_binding, issuer, subject)` over an existing Academy `Person`; `dotmac-auth-oidc` supplies only a verified issuer/subject | `external_identity.bind_external_identity` and locked `finalize_external_login`; `web_auth.start_session` is the one Academy session issuer | `ExternalIdentityBinding`, nullable `AuthSession.external_identity_binding_id`, last-authenticated evidence | Disable takes the same binding lock and selectively revokes; suspension revokes all; every refresh re-checks binding/account/session; no email/JIT/provider-role fallback |
 | Login abuse state | Credential failure count and `locked_until` | `web_auth.authenticate` | Login response | Credential row lock and successful-login reset |
 | Applicant intake | Public `/apply` facts | `admissions.submit_application` | Applicant profile completeness and display `program` | Idempotent email-key intake; admin review for legacy gaps |
 | Curriculum placement | Active `Track` + `CohortTrack` | Public canonical selection or audited `assign_applicant_intake` | `Applicant.track_id`, `Enrollment.track_id`, `program` snapshot | Composite FKs; acceptance/enrolment gate; admin placement correction |
@@ -36,8 +38,10 @@ and SMTP are adapters around these owners.
 
 - Public and admin web routes validate input, call the owning service, and
   render its result. They do not duplicate transition or delivery policy.
-- API routes require a tenant-bound authenticated admin for management data.
-  Public intake exists only at `/apply`.
+- Human management API routes require a tenant-bound authenticated admin.
+  The Integrator lifecycle port instead requires its own exact-byte service
+  signature and is disabled without its distinct held key. Public intake
+  exists only at `/apply`.
 - CLI commands do not print raw invite, reset, assessment, or onboarding
   tokens. They request a queued consequence and report counts.
 - Email templates and SMTP do not decide business outcomes.
