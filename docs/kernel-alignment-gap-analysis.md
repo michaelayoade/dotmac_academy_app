@@ -1,7 +1,16 @@
 # Aligning `dotmac_academy_app` with the platform kernel — gap analysis
 
-**Status:** analysis, not a decision. No work is authorised by this document.
+**Status:** Superseded by ADR 0007 and ADR 0008. Do not use this document as a
+current sequence or ownership decision.
 **Date:** 2026-08-09. **Kernel surveyed:** `dotmac-kernel` 0.1.0a28.
+
+> **Superseded 2026-08-11.** ADR 0007 accepted Academy as a kernel product
+> assembly on kernel 0.1.0a38. ADR 0008 subsequently accepted the database
+> direction: kernel `Party`/`PartyPerson` becomes identity authority, Academy's
+> human-domain references preserve their UUIDs and semantics, and the product
+> schema is rebaselined onto an independent assembly lineage. The partial
+> `Person`-beside-`Party` strategy and sequencing below would leave parallel
+> identity owners and are rejected.
 
 > **Corrected 2026-08-09.** The first version of this document claimed the
 > `Person` → `Party` migration was a prerequisite for kernel-owned roles, and

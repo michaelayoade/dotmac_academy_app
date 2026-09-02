@@ -7,8 +7,8 @@ and SMTP are adapters around these owners.
 | Domain/state | Authoritative input and owner | Canonical writer | Derived/projection state | Reconciler/backstop |
 |---|---|---|---|---|
 | Academy deployment identity | Sole offline-created `Tenant` row plus `TENANCY=single` topology | Offline bootstrap owns identity; kernel startup owns binding | `request.state.tenant` | Startup rejects zero/multiple tenants; resolver rejects any slug other than the database-owned binding; RLS fails closed |
-| User identity and roles | `Person`, `UserCredential`, `Role`, `PersonRole` | Account/lifecycle services | Auth sessions and navigation permissions | Tenant-bound token/session checks; admin invitation workflow |
-| Login abuse state | Credential failure count and `locked_until` | `web_auth.authenticate` | Login response | Credential row lock and successful-login reset |
+| User identity and roles (current, before ADR 0008 cutover) | `Person`, `UserCredential`, `Role`, `PersonRole` | Account/lifecycle services | Auth sessions and navigation permissions | Tenant-bound token/session checks; admin invitation workflow; ADR 0008 shadow verifier is the gate to kernel `Party` authority |
+| Login abuse state (current, before ADR 0008 cutover) | Credential failure count and `locked_until` | `web_auth.authenticate` | Login response | Credential row lock and successful-login reset; ADR 0008 moves the state to Academy-owned `academy_login_security`, not into the kernel credential |
 | Applicant intake | Public `/apply` facts | `admissions.submit_application` | Applicant profile completeness and display `program` | Idempotent email-key intake; admin review for legacy gaps |
 | Curriculum placement | Active `Track` + `CohortTrack` | Public canonical selection or audited `assign_applicant_intake` | `Applicant.track_id`, `Enrollment.track_id`, `program` snapshot | Composite FKs; acceptance/enrolment gate; admin placement correction |
 | Admissions decision | Applicant facts, assessment validity, configured threshold | `admissions.transition_applicant` / `apply_assessment_policy` | Current applicant status | `AuditEvent` transition ledger; admin detail history |
@@ -20,6 +20,7 @@ and SMTP are adapters around these owners.
 | SMTP delivery | One outbox row | `email_outbox.deliver_pending` | `sent_at`, sanitized error class, invite delivery projection | `academy-email-outbox.timer`; SMTP is transport only |
 | Academy settings | Environment defaults plus `platform_settings` overrides | Academy admin settings route using restricted settings-writer role | Effective SMTP/branding/policy/lab config | DB-over-env resolver; blank secret fields preserve existing value |
 | Application runtime | `app.assembly` product declaration | `dotmac_kernel.create_app` | FastAPI app, lifespan, tenancy binding, generic middleware and liveness | Architecture tests forbid a parallel app factory and copied middleware |
+| Database schema lineage (current, before ADR 0008 cutover) | Academy's local `0001_initial_tenant_schema` ... `0053_entrance_defaults` graph | Academy Alembic revisions | `alembic_version` current head | Migration graph tests require one root/head; ADR 0008 forbids direct composition with the duplicate kernel root and defines the verified kernel + independent assembly rebaseline |
 | Official operational history | Domain service facts | `write_audit_event` | Admin audit and applicant decision history | Migration baseline plus append-only application behavior |
 | Student reminder consequence | Canonical enrollment/deadline/session/grade/completion state + `ReminderPreference` | `reminders.sweep` (sole decision owner; ledger `ReminderLog` enforces once-per-occurrence) | In-app notification + outbox email (immediate/digest/quiet-hours pacing) | `academy-reminders.timer` re-sweeps idempotently; admin history + audited resend; outbox stays delivery owner |
 | Public catalog visibility | `Course.listed` + `status='published'` (ADR 0003) | Course import/authoring services | Anonymous landing and `/courses` projection | `catalog.public_catalog` is the only reader; routes add no extra filters; external marketing pages are 301 redirects, never copies |
@@ -50,3 +51,22 @@ Any future move to multi-customer hosting, a different admissions owner, an
 external LMS decision engine, or an external notification control plane must
 name the old and new owner, shadow verification, cutover gate, drift repair,
 fallback retirement, and boundary tests in an ADR before cutover.
+
+ADR 0008 is an accepted authority migration that has **not** cut over yet. The
+current identity and lineage rows above remain authoritative until its gates
+pass. Its target is kernel ownership of tenancy, party identity, credentials,
+sessions, roles, role grants, and audit identity, plus an independent `assembly`
+lineage for Academy product state. It names the directional shadow projectors,
+zero-drift cutover, legacy-release rollback, fallback retirement, and fresh/
+adopt/rollback rehearsals. Updating documentation alone does not flip those
+owners.
+
+ADR 0008 composes, but does not copy, the fleet's proven identity-adoption
+patterns: kernel owns the target security identity; Starter supplies the
+create-or-adopt catalog/lineage rehearsal; Sub supplies evidence-bound
+audit/adjudication/backfill and durable receipts; ERP supplies the replaceable
+external-authentication boundary. Starter is never an identity system of
+record, and product identity schemas do not enter kernel. Accepted Starter ADR
+0017 keeps Academy's lineage activation blocked until Sub's reference
+product-database lineage gate completes and its reusable findings are reflected
+in Academy's pinned contract.
