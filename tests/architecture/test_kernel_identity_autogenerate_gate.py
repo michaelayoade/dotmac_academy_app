@@ -70,15 +70,33 @@ holds the difference in place.
 
 ## Why these detectors are not vacuous
 
-The forbidden set is derived, never hardcoded: it is *the installed kernel's own
-tables* minus the tables the duplication baseline says Academy legitimately
-shares. It tracks the kernel's surface as it moves — `party_roles` became
-`party_role_grants` and `external_identity_bindings` appeared between a38 and
-a100, and neither needed an edit here.
+Forbidden sets are derived from the *installed* kernel, never hardcoded, so they
+track its surface as it moves: `party_roles` became `party_role_grants` and
+`external_identity_bindings` appeared between a38 and a100, and neither needed
+an edit here.
 
-It is also deliberately not `kernel_tables - academy_target_tables`, which would
-be self-defeating: adopting the kernel's `Base` makes those two sets equal and
-the check would pass at the exact moment it should fail.
+There are TWO of them, and the difference is load-bearing, because a forbidden
+set built from the same artefact the check polices is erased by the very offence
+it should catch. Both failure modes were observed here, not reasoned about:
+
+  * `kernel_tables - academy_target_tables` is self-defeating for the metadata
+    check — adopting the kernel's `Base` makes those sets equal, so the check
+    passes exactly when it should fail; and
+  * `kernel_tables - lineage_tables` is self-defeating for the migration check —
+    a migration that creates `parties` puts `parties` into the lineage and
+    erases the evidence of itself. That version shipped, and its own sensitivity
+    proof caught it.
+
+So the metadata check subtracts the migration lineage, the migration check
+subtracts Academy's mapped tables, and neither reference set can be moved by the
+offence it detects. Defeating either requires committing the offence the other
+one watches. `test_the_two_forbidden_sets_cannot_be_erased_by_the_offence_they
+_detect` holds that property in place.
+
+A third attempt, `kernel_tables - ratchet_tables`, was wrong in a quieter way:
+the ratchet reads `dotmac_kernel.models.__all__`, which does not carry
+`AuditEvent` (it lives in `dotmac_kernel.audit`), so `audit_events` — a table
+Academy's own `0001` creates — was reported as a phantom. CI caught that one.
 
 Every detector is a module-level function taking its input as an argument, so
 the sensitivity tests can aim it at a synthetic offender. A guard never observed
@@ -168,14 +186,66 @@ def shared_identity_tables() -> set[str]:
     return tables
 
 
-def kernel_only_tables() -> set[str]:
-    """Kernel tables Academy's lineage has never created.
+def kernel_table_names() -> set[str]:
+    """Every table the installed kernel defines, across all its model modules.
 
-    Derived from the *installed* kernel so it tracks that package's surface, and
-    subtracted from the ratchet rather than from Academy's own metadata, which
-    would make the check pass exactly when the fork was retired.
+    `dotmac_kernel.audit` is imported deliberately. `AuditEvent` is NOT in
+    `dotmac_kernel.models.__all__` — it lives in `audit` as a cross-cutting
+    write-side concern — so a set built from `models` alone still gains
+    `audit_events` here only once something imports that module. Naming it
+    explicitly keeps the set the same whether or not another test imported it
+    first, which is the kind of ordering dependence that makes a gate flap.
     """
-    return set(kernel_models.Base.metadata.tables) - shared_identity_tables()
+    try:
+        import dotmac_kernel.audit  # noqa: F401  (registers audit_events)
+    except ImportError:  # pragma: no cover - a kernel without the audit module
+        pass
+    return set(kernel_models.Base.metadata.tables)
+
+
+def lineage_tables() -> set[str]:
+    """Every table Academy's own migration lineage creates."""
+    found: set[str] = set()
+    for source in _migration_sources().values():
+        found |= created_tables(source)
+    return found
+
+
+def kernel_tables_outside_the_lineage() -> set[str]:
+    """Kernel tables Academy's MIGRATIONS never create — the metadata check's set.
+
+    Used to police the autogenerate target. Independent of that target: swapping
+    `Base` changes what Academy maps, never what its migration files created.
+
+    Deliberately NOT `kernel_tables - academy_target_tables` here, which would be
+    self-defeating for this direction: adopting the kernel's `Base` makes those
+    two sets equal, so the check would pass at the exact moment it should fail.
+
+    Also NOT `kernel_tables - ratchet_tables`, the first attempt, which was
+    wrong: the ratchet is built from `dotmac_kernel.models.__all__` and so cannot
+    see `audit_events` — a table Academy's `0001` creates and legitimately owns.
+    Subtracting the ratchet called it a phantom, and CI said so.
+    """
+    return kernel_table_names() - lineage_tables()
+
+
+def kernel_tables_academy_does_not_map() -> set[str]:
+    """Kernel tables Academy's MODELS never map — the migration scanner's set.
+
+    A different reference set from the one above, and that difference is
+    load-bearing. Policing migrations with `kernel_tables - lineage_tables` is
+    self-defeating in this direction: a migration that creates `parties` thereby
+    puts `parties` into the lineage and erases the evidence of itself. Observed
+    doing exactly that before this split — see
+    `test_the_two_forbidden_sets_cannot_be_erased_by_the_offence_they_detect`.
+
+    Academy's mapped tables are the right reference here for the mirror-image
+    reason: writing a rogue migration does not add anything to `Base.metadata`.
+
+    The two checks interlock. Defeating this one requires swapping `Base`, which
+    is what the other one detects.
+    """
+    return kernel_table_names() - set(Base.metadata.tables)
 
 
 def phantom_tables(target_metadata: MetaData, forbidden: set[str]) -> set[str]:
@@ -383,7 +453,7 @@ def test_this_gate_watches_the_same_models_autogenerate_does() -> None:
 
 def test_the_autogenerate_target_holds_no_kernel_only_identity_table() -> None:
     """No table in Academy's autogenerate target that its lineage never created."""
-    found = phantom_tables(Base.metadata, kernel_only_tables())
+    found = phantom_tables(Base.metadata, kernel_tables_outside_the_lineage())
     assert not found, (
         "These kernel tables are in Academy's autogenerate target but were never "
         "created by an Academy migration:\n  " + "\n  ".join(sorted(found)) + "\n\n"
@@ -407,7 +477,7 @@ def test_the_shared_identity_tables_keep_their_academy_shape() -> None:
 
 def test_no_migration_creates_a_kernel_only_identity_table() -> None:
     """The output half: nothing may hand-write or autogenerate the cutover."""
-    forbidden = kernel_only_tables()
+    forbidden = kernel_tables_academy_does_not_map()
     offenders = {
         path.name: sorted(created_tables(source) & forbidden)
         for path, source in _migration_sources().items()
@@ -575,16 +645,61 @@ def test_the_drop_column_scanner_sees_a_wrapped_destructive_drop() -> None:
     assert dropped_columns('op.drop_column("courses", "subtitle")\n') == {("courses", "subtitle")}
 
 
+def test_the_two_forbidden_sets_cannot_be_erased_by_the_offence_they_detect() -> None:
+    """Each reference set must be immovable by the offence its check catches.
+
+    A set derived from the artefact being policed is not a guard; it is a
+    tautology waiting to be discovered. Both directions shipped broken here
+    before this assertion existed.
+    """
+    # The migration scanner's set must be computed WITHOUT reading migrations,
+    # or creating `parties` would delete `parties` from its own forbidden set.
+    assert kernel_tables_academy_does_not_map() == kernel_table_names() - set(Base.metadata.tables), (
+        "the migration check's forbidden set must subtract Academy's MAPPED "
+        "tables. Subtracting the migration lineage makes the offence erase "
+        "itself: a migration creating `parties` puts `parties` in the lineage."
+    )
+
+    # The metadata check's set must be computed WITHOUT reading that metadata,
+    # or adopting the kernel's Base would delete every phantom from the set.
+    assert kernel_tables_outside_the_lineage() == kernel_table_names() - lineage_tables(), (
+        "the metadata check's forbidden set must subtract the migration "
+        "LINEAGE. Subtracting Academy's metadata makes the sets equal the "
+        "moment `Base` is swapped, which is when it must fail."
+    )
+
+    # ...and the two references really are different artefacts.
+    assert set(Base.metadata.tables) != lineage_tables()
+
+    # The metadata detector still fires on a target that maps a phantom.
+    adopted_target = MetaData()
+    Table("parties", adopted_target, Column("id", SAUuid(), primary_key=True))
+    assert phantom_tables(adopted_target, {"parties"}) == {"parties"}
+
+
 def test_the_comparison_tracks_the_installed_kernel_and_is_not_empty() -> None:
     """A check over an empty set passes for the wrong reason."""
-    assert kernel_models.Base.metadata.tables, "installed kernel defines no tables"
+    assert kernel_table_names(), "installed kernel defines no tables"
     assert Base.metadata.tables, "Academy's autogenerate target is empty"
-    assert shared_identity_tables() == {
+    assert _migration_sources(), "no migrations found to scan"
+
+    # The ratchet's table-backed entries must all be tables Academy's lineage
+    # owns, or the two guards disagree about who owns what.
+    ratchet_tables = shared_identity_tables()
+    assert ratchet_tables == {
         "tenants",
         "tenant_domains",
         "roles",
         "user_credentials",
         "auth_sessions",
     }, "the ratchet's table-backed entries have moved; re-read the baseline"
-    assert "parties" in kernel_only_tables(), "the forbidden set has stopped naming the identity core"
-    assert _migration_sources(), "no migrations found to scan"
+    assert ratchet_tables <= lineage_tables(), "the ratchet names a table Academy's lineage never creates"
+
+    # `audit_events` is the case that caught this gate out: Academy's 0001
+    # creates it, but it is absent from `dotmac_kernel.models.__all__`.
+    assert "audit_events" in lineage_tables(), "Academy's lineage no longer creates audit_events"
+    assert "audit_events" not in kernel_tables_outside_the_lineage(), "audit_events is Academy's, not a phantom"
+    assert "audit_events" not in kernel_tables_academy_does_not_map(), "Academy maps audit_events"
+
+    assert "parties" in kernel_tables_outside_the_lineage(), "forbidden set lost the identity core"
+    assert "parties" in kernel_tables_academy_does_not_map(), "forbidden set lost the identity core"
