@@ -224,13 +224,20 @@ def build_watermark(max_width: int) -> Image.Image:
 def compose(border: Image.Image) -> Image.Image:
     out = border.convert("RGBA")
 
+    # 0.28*H centers the watermark's ink (vertically centered within its own
+    # band, see build_watermark's anchor="lm" at h*0.5) on ~76mm -- where the
+    # recipient name's cell in certificates.py actually puts its ink -- so
+    # the name sits over the wordmark, not the divider/caption below it
+    # (the original 0.36 centered the watermark on ~93mm instead, behind
+    # "has completed the course" rather than the name).
     wm = build_watermark(int(W * 0.72))
-    out.alpha_composite(wm, ((W - wm.width) // 2, int(H * 0.36)))
+    out.alpha_composite(wm, ((W - wm.width) // 2, int(H * 0.28)))
 
-    # Top of the seal graphic (medallion+tails) at 0.566*H puts its bottom
-    # right around the footer rule certificates.py draws at 140mm -- keep
-    # the two in sync by hand if either the seal proportions above or the
-    # footer's rule y in certificates.py change.
+    # Top of the seal graphic at 0.566*H puts the ribbon tail tips at
+    # ~141mm -- just past the footer rule certificates.py draws at 140mm,
+    # like a real hanging medal. Keep the two in sync by hand if either the
+    # seal proportions above or the footer's rule y in certificates.py
+    # change; there's no shared source of truth between the two files.
     seal = build_ribbon_seal(int(W * 0.062))
     out.alpha_composite(seal, ((W - seal.width) // 2, int(H * 0.566)))
 

@@ -113,7 +113,7 @@ def issue_certificate(
 
 
 def _tracked(pdf: FPDF, *, y: float, text: str, size: float, spacing: float,
-             color: tuple[int, int, int], font: str = "Manrope") -> None:
+             color: tuple[int, int, int], font: str) -> None:
     """One line of letter-spaced small caps, centered in the content area --
     the supporting-text treatment used throughout the certificate (labels,
     dividers' captions)."""
@@ -140,14 +140,18 @@ def render_certificate_pdf(
         pdf.set_line_width(2)
         pdf.rect(10, 10, 277, 190)
 
-    if _FRAUNCES.exists():
+    # All four or none: a partial set (e.g. Fraunces present but Manrope
+    # missing) previously still hardcoded "Manrope" for every label below,
+    # which fpdf2 raises on ("Undefined font") since add_font was never
+    # called for it -- that's not the graceful degrade the comment promised.
+    if all(p.exists() for p in (_FRAUNCES, _MANROPE, _MANROPE_SEMIBOLD, _PACIFICO)):
         pdf.add_font("Fraunces", "", str(_FRAUNCES))
         pdf.add_font("Manrope", "", str(_MANROPE))
         pdf.add_font("Manrope", "B", str(_MANROPE_SEMIBOLD))
         pdf.add_font("Pacifico", "", str(_PACIFICO))
-        display_font, script_font = "Fraunces", "Pacifico"
+        display_font, script_font, label_font = "Fraunces", "Pacifico", "Manrope"
     else:  # fonts not vendored (e.g. a stripped checkout) -- degrade gracefully
-        display_font, script_font = "Helvetica", "Helvetica"
+        display_font = script_font = label_font = "Helvetica"
 
     # Title in the script face, natural mixed case with no letter-spacing --
     # a connected cursive font reads as broken with tracking applied.
@@ -156,7 +160,8 @@ def render_certificate_pdf(
     pdf.set_xy(_CONTENT_X0, 34)
     pdf.cell(_CONTENT_W, 18, "Certificate of Completion", align="C")
 
-    _tracked(pdf, y=58, text="This is to certify that", size=10.5, spacing=0.8, color=_MUTED)
+    _tracked(pdf, y=58, text="This is to certify that", size=10.5, spacing=0.8,
+             color=_MUTED, font=label_font)
 
     # Recipient name -- bold serif, sitting over the background's faint
     # "Dotmac Academy" watermark, with a plain rule underneath.
@@ -170,9 +175,9 @@ def render_certificate_pdf(
     pdf.line(_CONTENT_CX - 45, 90, _CONTENT_CX + 45, 90)
 
     _tracked(pdf, y=98, text="has successfully completed the course",
-             size=10.5, spacing=0.8, color=_MUTED)
+             size=10.5, spacing=0.8, color=_MUTED, font=label_font)
 
-    pdf.set_font("Manrope", "B", 15)
+    pdf.set_font(label_font, "B", 15)
     pdf.set_text_color(*_CHARCOAL)
     pdf.set_xy(_CONTENT_X0, 108)
     pdf.cell(_CONTENT_W, 10, course_title, align="C")
@@ -186,7 +191,7 @@ def render_certificate_pdf(
     left_x = _CONTENT_X0 + 8
     right_x = _CONTENT_X1 - 8 - col_w
 
-    pdf.set_font("Manrope", "B", 11)
+    pdf.set_font(label_font, "B", 11)
     pdf.set_text_color(*_CHARCOAL)
     pdf.set_xy(right_x, 128)
     pdf.cell(col_w, 7, f"{issued_at:%d %B %Y}", align="C")
@@ -197,13 +202,13 @@ def render_certificate_pdf(
     pdf.line(right_x, 140, right_x + col_w, 140)
 
     for x, label in ((left_x, "Academy Director"), (right_x, "Date")):
-        pdf.set_font("Manrope", "", 9)
+        pdf.set_font(label_font, "", 9)
         pdf.set_text_color(*_MUTED)
         pdf.set_xy(x, 142.5)
         pdf.cell(col_w, 5, label, align="C")
 
     _tracked(pdf, y=165, text=f"Certificate Serial  ·  {serial}", size=8,
-             spacing=0.4, color=_MUTED)
+             spacing=0.4, color=_MUTED, font=label_font)
 
     out = pdf.output()  # fpdf2 >= 2.7 returns a bytearray
     return bytes(out)
