@@ -180,27 +180,29 @@ def render_certificate_pdf(
     # Signature / seal / date footer -- the background's ribbon seal is
     # centered between these two columns (see generate_cert_frame.py), so
     # they stop well short of the middle rather than spanning full width.
+    # The rule's y (140) is matched by hand to the seal's baked-in vertical
+    # position there -- keep the two in sync if either moves.
     col_w = 62.0
     left_x = _CONTENT_X0 + 8
     right_x = _CONTENT_X1 - 8 - col_w
 
     pdf.set_font("Manrope", "B", 11)
     pdf.set_text_color(*_CHARCOAL)
-    pdf.set_xy(right_x, 133)
+    pdf.set_xy(right_x, 128)
     pdf.cell(col_w, 7, f"{issued_at:%d %B %Y}", align="C")
 
     pdf.set_draw_color(*_EMERALD)
     pdf.set_line_width(0.25)
-    pdf.line(left_x, 145, left_x + col_w, 145)
-    pdf.line(right_x, 145, right_x + col_w, 145)
+    pdf.line(left_x, 140, left_x + col_w, 140)
+    pdf.line(right_x, 140, right_x + col_w, 140)
 
     for x, label in ((left_x, "Academy Director"), (right_x, "Date")):
         pdf.set_font("Manrope", "", 9)
         pdf.set_text_color(*_MUTED)
-        pdf.set_xy(x, 147.5)
+        pdf.set_xy(x, 142.5)
         pdf.cell(col_w, 5, label, align="C")
 
-    _tracked(pdf, y=172, text=f"Certificate Serial  ·  {serial}", size=8,
+    _tracked(pdf, y=165, text=f"Certificate Serial  ·  {serial}", size=8,
              spacing=0.4, color=_MUTED)
 
     out = pdf.output()  # fpdf2 >= 2.7 returns a bytearray

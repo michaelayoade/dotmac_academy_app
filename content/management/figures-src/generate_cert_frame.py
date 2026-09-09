@@ -147,7 +147,10 @@ def build_ribbon_seal(diam: int) -> Image.Image:
     ribbon, but carrying the actual brand mark instead of clip art."""
     ss = 3
     d = diam * ss
-    tail_h = int(d * 0.85)
+    # Short tails, deliberately: at 0.85 (the first cut) the ribbon hung well
+    # past the footer rule/labels it sits beside, so the medal looked like it
+    # was sinking below the row instead of sitting level with it.
+    tail_h = int(d * 0.42)
     canvas = Image.new("RGBA", (d, d + tail_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     cx, cy = d // 2, d // 2
@@ -224,8 +227,12 @@ def compose(border: Image.Image) -> Image.Image:
     wm = build_watermark(int(W * 0.72))
     out.alpha_composite(wm, ((W - wm.width) // 2, int(H * 0.36)))
 
+    # Top of the seal graphic (medallion+tails) at 0.566*H puts its bottom
+    # right around the footer rule certificates.py draws at 140mm -- keep
+    # the two in sync by hand if either the seal proportions above or the
+    # footer's rule y in certificates.py change.
     seal = build_ribbon_seal(int(W * 0.062))
-    out.alpha_composite(seal, ((W - seal.width) // 2, int(H * 0.623)))
+    out.alpha_composite(seal, ((W - seal.width) // 2, int(H * 0.566)))
 
     return out.convert("RGB")
 
