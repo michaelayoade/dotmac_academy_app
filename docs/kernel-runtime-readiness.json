@@ -1,0 +1,56 @@
+{
+  "schema": "kernel-runtime-readiness.v1",
+  "product": "dotmac_academy_app",
+  "subject": "a strict product runtime binds while the reference runtime remains unavailable",
+  "requirements": [
+    {
+      "id": "no-module-scope-kernel-db-import-in-api-deps",
+      "statement": "app/api/deps.py imports dotmac_kernel.db only inside a function body, never at module scope, so loading it does not eagerly claim the reference assembly's runtime.",
+      "satisfied": false,
+      "source_reference": "app/api/deps.py:8"
+    },
+    {
+      "id": "no-module-scope-kernel-db-import-in-cli",
+      "statement": "app/cli.py imports dotmac_kernel.db only inside a function body, never at module scope, so loading it does not eagerly claim the reference assembly's runtime.",
+      "satisfied": false,
+      "source_reference": "app/cli.py:27"
+    },
+    {
+      "id": "no-module-scope-kernel-db-import-in-web-context",
+      "statement": "app/web/context.py imports dotmac_kernel.db only inside a function body, never at module scope, so loading it does not eagerly claim the reference assembly's runtime.",
+      "satisfied": false,
+      "source_reference": "app/web/context.py:11"
+    },
+    {
+      "id": "no-module-scope-kernel-db-import-in-web-labs",
+      "statement": "app/web/labs.py imports dotmac_kernel.db only inside a function body, never at module scope, so loading it does not eagerly claim the reference assembly's runtime.",
+      "satisfied": false,
+      "source_reference": "app/web/labs.py:24"
+    },
+    {
+      "id": "product-owned-runtime-bound-before-any-kernel-db-import",
+      "statement": "Somewhere on Academy's import path, dotmac_kernel.session_runtime.bind_database_runtime is called with a product-owned DatabaseRuntime before any dotmac_kernel module that would otherwise claim the reference assembly's engines is imported.",
+      "satisfied": false,
+      "source_reference": "app/kernel_runtime.py:70"
+    }
+  ],
+  "composition": [
+    {
+      "declaration": "Academy's runtime units are 9 systemd .service files and 8 systemd .timer files under deploy/, each invoking .venv/bin/python -m app.cli <subcommand> as ExecStart — there is no Dockerfile and no container entrypoint in this tree.",
+      "source_reference": "deploy/academy-lab-worker.service:11"
+    },
+    {
+      "declaration": "The only container image this tree declares is docker-compose.yml's single db service (postgres, for local development), not an application image — Academy's application process is the bare-metal systemd shape above, not a containerized one.",
+      "source_reference": "docker-compose.yml:2"
+    }
+  ],
+  "source_references": [
+    "app/api/deps.py",
+    "app/cli.py",
+    "app/web/context.py",
+    "app/web/labs.py",
+    "app/kernel_runtime.py",
+    "deploy/academy-lab-worker.service",
+    "docker-compose.yml"
+  ]
+}
