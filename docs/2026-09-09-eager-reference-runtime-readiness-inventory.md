@@ -333,38 +333,72 @@ Observed behavior, precisely:
   self-documented (`app/cli.py:39-51`, quoted above) — `tenant_session_by_slug`
   returns the KERNEL's `Tenant`, read for `.id`/`.slug` only.
 
-## The ratchet (in progress)
+## The ratchet
 
-Not yet written to disk as of this commit — the design (per-family baseline
-file + a subprocess-isolated import probe per family for transitive reach,
-plus an AST-based direct-import count, both compared two-directionally
-against a pinned baseline the same way
-`tests/architecture/test_kernel_duplication.py` already does for model
-names) is decided; the test file and its plant/near-miss proof are the next
-commit. Recording the design here so it survives if this session ends first:
+Written as `tests/architecture/test_eager_reference_runtime_reach.py` +
+`tests/architecture/eager_reference_runtime_reach_baseline.txt`.
 
-- File: `tests/architecture/test_eager_reference_runtime_reach.py` +
-  `tests/architecture/eager_reference_runtime_reach_baseline.txt`.
-- Per family (`boot`, `api_deps`, `cli`, `web`, `scripts_tasks`): a fixed list
-  of the representative files identified above, AST-parsed for direct
-  `dotmac_kernel.db` imports (count), plus — where the family's own file does
-  not already prove it — a `subprocess.run([sys.executable, "-c", ...])`
-  probe that imports the family's real entry module and checks
-  `"dotmac_kernel.db" in sys.modules` afterward, to prove transitive reach
-  without trusting a hand-maintained chain description to stay current
-  against kernel releases.
-- Two-directional like the existing model-duplication ratchet: fails if a
-  family's count RISES above baseline (new reach) OR FALLS below baseline
-  without the baseline being edited in the same change (silent shrink —
-  which is exactly the "looks retired, isn't" failure mode this whole task
-  exists to prevent, per the brief's framing that a Kernel seam landing does
-  not by itself mean Academy stopped executing the eager runtime).
-- Plant: temporarily add `from dotmac_kernel.db import get_db` to a file in
-  the `scripts_tasks` family (currently baselined at 0) and show the test
-  fails, naming that family and the new count.
-- Near-miss: a comment/docstring line containing the literal string
-  `dotmac_kernel.db` (several already exist, e.g.
-  `dotmac_kernel/errors.py:167-182`, `app/models/entrance_defaults.py:5`)
-  must NOT trip the direct-import AST check, since AST-based detection only
-  matches actual `Import`/`ImportFrom` nodes, not string/comment content —
-  needs a demonstration test asserting exactly this, not just an assumption.
+Per family (`boot`, `api_deps`, `cli`, `web`, `scripts_tasks`): a fixed list
+of the representative files identified above, AST-parsed for direct
+`dotmac_kernel.db` imports (count), plus a
+`subprocess.run([sys.executable, "-c", ...])` probe that imports the
+family's real entry module in a CLEAN child process and checks
+`"dotmac_kernel.db" in sys.modules` afterward — a same-process check would
+be contaminated, since `tests/architecture/test_kernel_assembly.py` already
+imports `app.main` at module scope, so `dotmac_kernel.db` is in `sys.modules`
+for the whole pytest run regardless of any one family's own behavior.
+
+Two-directional, matching the existing model-duplication ratchet's shape:
+fails if a family's count RISES above baseline (new reach) OR FALLS below
+baseline without the baseline file being edited in the same change (a silent
+shrink — exactly the "looks retired, isn't" failure mode this task exists to
+prevent, since a Kernel seam landing elsewhere does not by itself mean
+Academy stopped executing the eager runtime).
+
+Direct-import counts were hand-verified against the actual files with a
+standalone AST walk before being pinned (`boot`=0, `api_deps`=1, `cli`=1,
+`web`=2, `scripts_tasks`=0 — matches every count in the reach table above).
+
+Sensitivity proof (both directions, both encoded as tests in the file,
+verified by hand against the detector function before being committed):
+
+- **Plant** — `test_the_ast_detector_bites_a_planted_direct_import` parses
+  all three real import shapes (`from dotmac_kernel.db import get_db`,
+  `from dotmac_kernel import db`, `import dotmac_kernel.db`) and asserts the
+  detector names each one. Confirmed by hand: all three return `True`.
+- **Near-miss** — `test_the_ast_detector_does_not_flag_a_comment_or_docstring_near_miss`
+  parses a synthetic module whose docstring, comment, and a string literal
+  all contain the literal text `dotmac_kernel.db`, and asserts the detector
+  does NOT fire, since AST detection matches only real `Import`/`ImportFrom`
+  nodes. This mirrors real files already in this repo and the pinned kernel
+  that name `dotmac_kernel.db` in prose without importing it (e.g.
+  `dotmac_kernel/errors.py:167-182`'s comments, this repo's own
+  `app/models/entrance_defaults.py:5`) — confirmed by hand: returns `False`.
+
+Not run here (no pytest, no install, per the task's constraints) — the
+subprocess-based transitive-reach assertions require the pinned kernel to be
+installed (`poetry install`) and can only be exercised by CI.
+
+## Static checks
+
+CI runs `poetry run ruff check .` and `poetry run mypy` (`.github/workflows/ci.yml`).
+Neither `ruff` nor `mypy` is installed anywhere on this machine (`command -v
+ruff mypy` finds nothing; no poetry-managed virtualenv exists for this
+worktree — `poetry env info -p` returns empty; no other checkout on this
+machine has a matching installed `ruff`/`mypy` binary I could invoke by
+absolute path). Per the task's constraint, I did not install either. Gap to
+close on CI, not locally:
+
+- `tests/architecture/test_eager_reference_runtime_reach.py` was checked by
+  hand instead: `python3 -m py_compile` (passes), a manual line-length sweep
+  (no line exceeds the repo's configured 120, `pyproject.toml`'s
+  `[tool.ruff] line-length = 120`), and the `subprocess.run` call carries a
+  `# noqa: S603` matching the exact precedent already in this repo
+  (`tests/services/test_bank_lint_standalone.py:60,93`, same
+  sys.executable-plus-fixed-string shape).
+- The AST-detection logic and the sensitivity-proof assertions were run
+  standalone with the system `python3` (no `dotmac_kernel`/`sqlalchemy`
+  needed for that half — only the transitive-reach probe needs the real
+  package installed, and that only happens inside CI's subprocess calls).
+- I did not verify mypy type-correctness of the new test file by any means;
+  report this as an open gap rather than an inferred pass.
