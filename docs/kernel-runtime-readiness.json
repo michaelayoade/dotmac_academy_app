@@ -1,7 +1,7 @@
 {
   "schema": "kernel-runtime-readiness.v1",
   "product": "dotmac_academy_app",
-  "subject": "a strict product runtime binds while the reference runtime remains unavailable",
+  "subject": "academy-kernel-successor-readiness",
   "requirements": [
     {
       "id": "no-module-scope-kernel-db-import-in-api-deps",
@@ -36,11 +36,11 @@
   ],
   "composition": [
     {
-      "declaration": "Academy's runtime units are 9 systemd .service files and 8 systemd .timer files under deploy/, each invoking .venv/bin/python -m app.cli <subcommand> as ExecStart — there is no Dockerfile and no container entrypoint in this tree.",
+      "declaration": "Academy's runtime units are 9 systemd .service files and 8 systemd .timer files under deploy/, each invoking .venv/bin/python -m app.cli <subcommand> as ExecStart \u2014 there is no Dockerfile and no container entrypoint in this tree.",
       "source_reference": "deploy/academy-lab-worker.service:11"
     },
     {
-      "declaration": "The only container image this tree declares is docker-compose.yml's single db service (postgres, for local development), not an application image — Academy's application process is the bare-metal systemd shape above, not a containerized one.",
+      "declaration": "The only container image this tree declares is docker-compose.yml's single db service (postgres, for local development), not an application image \u2014 Academy's application process is the bare-metal systemd shape above, not a containerized one.",
       "source_reference": "docker-compose.yml:2"
     }
   ],

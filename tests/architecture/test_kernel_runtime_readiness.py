@@ -35,7 +35,11 @@ RECORD_PATH = ROOT / "docs" / "kernel-runtime-readiness.json"
 
 EXPECTED_SCHEMA = "kernel-runtime-readiness.v1"
 EXPECTED_PRODUCT = "dotmac_academy_app"
-EXPECTED_SUBJECT = "a strict product runtime binds while the reference runtime remains unavailable"
+#: Canonical, owned by Starter's `PRODUCT_SPECS` -- NOT a phrase this record
+#: coins. The richer semantics belong in `requirements[]`; encoding them into
+#: the subject makes one identifier answer two questions and lets three
+#: repositories drift into three different answers.
+EXPECTED_SUBJECT = "academy-kernel-successor-readiness"
 EXPECTED_TOP_LEVEL_KEYS = {
     "schema",
     "product",
