@@ -71,6 +71,19 @@ priority = "explicit"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+# Strict-JSON evidence documents are outside Ruff's formatting ownership.
+# `ruff format` (0.6.9, confirmed by direct execution) rewrites these into
+# trailing-comma pseudo-JSON that `json.load` then rejects — see
+# tests/architecture/test_strict_json_evidence_documents.py, the validator
+# that runs after formatting and would fail on exactly that mangling.
+# `force-exclude = true` makes this bite even when a hook (e.g. pre-commit)
+# passes one of these paths explicitly on the command line, which an
+# `exclude`/`extend-exclude` entry alone does not stop.
+force-exclude = true
+extend-exclude = [
+    "docs/kernel-runtime-composition.json",
+    "docs/kernel-runtime-readiness.json",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "S", "RUF"]
