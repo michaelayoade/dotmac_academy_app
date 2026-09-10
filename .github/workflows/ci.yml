@@ -99,18 +99,39 @@ jobs:
       # never itself skipped on a docs-only change, and there is no existing
       # narrowing mechanism for this step to sit outside of.
       #
-      # DELIBERATELY carries no `if:` guard at all — unlike its neighbours
-      # in this job, all of which run `if: '!cancelled()'` (continue past an
-      # earlier gate's failure so one lint error can't mask a broken test;
-      # see the banner above "Lint (ruff)"). That is a failure-propagation
-      # guard, not a change-scope one, and would be harmless to copy here —
-      # but a sibling repository in this fleet (Sub) copied a DIFFERENT
-      # neighbouring guard, a docs-only/changed-files `if:` condition, onto
-      # its equivalent step, and that guard skips the step on exactly the
-      # pull request this step exists to catch: one that changes only the
-      # composition record under `docs/`. Do not "tidy" this step by adding
-      # a guard to match its neighbours; a guard whose entire subject is a
-      # docs file must not defer to a docs-only classifier.
+      # This step's `if:` carries exactly one kind of guard and deliberately
+      # excludes the other — the two look alike in the YAML and are opposite
+      # in effect, so both halves of the rule are stated together:
+      #
+      # * Failure-propagation guard (`if: '!cancelled()'`) — KEEP. It makes
+      #   this step report even when an earlier step in this job (e.g.
+      #   "Lint (ruff)") already failed. Every neighbour in this job carries
+      #   it for the same reason (see the banner above "Lint (ruff)": "so a
+      #   lint error can't mask a broken test"), and it applies to this step
+      #   with MORE force than to theirs: this is the only step in the job
+      #   that validates the artefact a docs-only pull request exists to
+      #   add, so without it, a `ruff check` failure would silently skip the
+      #   one diagnostic that pull request most needs. Dropping it does not
+      #   change the job's PASS/FAIL outcome (the job is already red from
+      #   the earlier failure either way) — it loses the diagnostic exactly
+      #   when a run is already going wrong, which is the shape this whole
+      #   round of fixes exists to remove.
+      # * Change-scope guard (a docs-only classifier, a `paths:`/
+      #   `paths-ignore:` filter, a changed-files action) — NEVER ADD. It
+      #   would skip this step on exactly the pull requests that change the
+      #   document under test: a sibling repository in this fleet (Sub)
+      #   copied exactly this kind of guard from a neighbouring Python-lint
+      #   step onto its equivalent JSON step, and it skipped the check on a
+      #   pull request that changed only the composition record under
+      #   `docs/`. Checked explicitly for this repository (not assumed):
+      #   this whole workflow file carries no `paths:`/`paths-ignore:`
+      #   filter (`on:` above is bare `push:`/`pull_request:`), no
+      #   docs-only classifier job, and no changed-files action anywhere in
+      #   `.github/workflows/` — so there is no existing narrowing
+      #   mechanism to place this step outside of, and none should be added.
+      #
+      # Do not "tidy" this step's guard to match a neighbour without first
+      # asking which of the two kinds above that neighbour's guard is.
       #
       # Uses only `json` and stdlib `open()` — no Poetry, no installed
       # dependency, no project virtualenv — so nothing this step needs can
@@ -125,6 +146,7 @@ jobs:
       # (a hand edit, an editor's own auto-format, a bad merge) on any run,
       # including one where this CI step itself was skipped or changed.
       - name: Strict-JSON evidence documents parse
+        if: '!cancelled()'
         run: |
           python3 -c "
           import json
