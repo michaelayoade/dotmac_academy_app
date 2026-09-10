@@ -91,7 +91,31 @@ jobs:
       #
       # Same job, same runner as any future format step — deliberately not a
       # separate job with a `needs:` edge, which would serialise the graph
-      # and make unrelated jobs hostage to this one.
+      # and make unrelated jobs hostage to this one. This whole workflow file
+      # carries no `paths:`/`paths-ignore:` filter (checked: `on:` above is
+      # bare `push:`/`pull_request:` with no path scoping), no docs-only
+      # classifier job, and no changed-files action anywhere in
+      # `.github/workflows/` — so the `test` job that hosts this step is
+      # never itself skipped on a docs-only change, and there is no existing
+      # narrowing mechanism for this step to sit outside of.
+      #
+      # DELIBERATELY carries no `if:` guard at all — unlike its neighbours
+      # in this job, all of which run `if: '!cancelled()'` (continue past an
+      # earlier gate's failure so one lint error can't mask a broken test;
+      # see the banner above "Lint (ruff)"). That is a failure-propagation
+      # guard, not a change-scope one, and would be harmless to copy here —
+      # but a sibling repository in this fleet (Sub) copied a DIFFERENT
+      # neighbouring guard, a docs-only/changed-files `if:` condition, onto
+      # its equivalent step, and that guard skips the step on exactly the
+      # pull request this step exists to catch: one that changes only the
+      # composition record under `docs/`. Do not "tidy" this step by adding
+      # a guard to match its neighbours; a guard whose entire subject is a
+      # docs file must not defer to a docs-only classifier.
+      #
+      # Uses only `json` and stdlib `open()` — no Poetry, no installed
+      # dependency, no project virtualenv — so nothing this step needs can
+      # itself be skipped by a narrowing mechanism aimed at the Python
+      # toolchain.
       #
       # A second copy of this same check lives at the architecture-test
       # level (tests/architecture/test_strict_json_evidence_documents.py)
@@ -101,17 +125,13 @@ jobs:
       # (a hand edit, an editor's own auto-format, a bad merge) on any run,
       # including one where this CI step itself was skipped or changed.
       - name: Strict-JSON evidence documents parse
-        if: '!cancelled()'
         run: |
           python3 -c "
           import json
-          from pathlib import Path
-          paths = [
-              Path('docs/kernel-runtime-composition.json'),
-              Path('docs/kernel-runtime-readiness.json'),
-          ]
+          paths = ['docs/kernel-runtime-composition.json', 'docs/kernel-runtime-readiness.json']
           for path in paths:
-              json.loads(path.read_text(encoding='utf-8'))
+              with open(path, encoding='utf-8') as handle:
+                  json.load(handle)
           print(f'{len(paths)} strict-JSON evidence document(s) parse cleanly')
           "
 
