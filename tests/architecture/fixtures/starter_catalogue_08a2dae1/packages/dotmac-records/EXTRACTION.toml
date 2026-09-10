@@ -1,0 +1,128 @@
+schema_version = 1
+package = "dotmac-records"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "Managed-record declaration snapshots, retention schedules/triggers, legal holds, preservation/custody and disposition authority"
+contract = "Define immutable tenant record-series and retention-schedule versions; explicitly declare one exact source artifact and optional Files evidence as a record; deduplicate authoritative trigger observations and calculate retention deterministically; return Durable Timer review requests; place/release independent record/series/snapshotted-cohort holds; evaluate disposition with source-state and all-hold rechecks; freeze batch membership and bind Approvals digest; authorize Files destruction and finalize only from matching physical confirmation; record preservation/fixity/custody and append-only events. NOT source-domain meaning, ordinary undeclared attachment retention, bytes/provider deletion, approval decisions, scheduling mechanics, OCR/search authority or external archive delivery."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac-academy",
+  "dotmac_academy_app",
+  "dotmac_workspace",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_sub:91c1ec477b3af37931424bced856a16bbc2c6d3f",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+  "dotmac-academy:71b87b2abfb1dc5c1db540faca257004a8c2bf9c",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_vendor_control_plane:e6b2bbee815cf9fd3ce99ceed0ff3a1f5763f057",
+  "dotmac_starter_mt:68939275174885fa9d673c1778e6fd03b11b9f2f",
+]
+revalidation_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/people/hr/handbook.py",
+  "dotmac_sub:app/models/legal.py",
+  "dotmac_sub:app/services/account_deletion.py",
+  "dotmac_sub:app/services/web_system_restore_tool.py",
+  "dotmac_crm:app/models/legal.py",
+  "dotmac_vendor_control_plane:docs/design/domain-foundation.md",
+  "dotmac_starter_mt:docs/adr/0022-files-own-stored-bytes-not-domain-meaning.md",
+  "dotmac_starter_mt:packages/dotmac-records/src/dotmac_records",
+]
+preserved_tests = [
+  "dotmac_erp:tests/people/hr/test_employee_document_upload.py",
+  "dotmac_sub:tests/test_quote_documents_and_delivery.py",
+  "dotmac_crm:tests/test_legal_services.py",
+  "dotmac_starter_mt:tests/unit/test_records_lifecycle.py",
+  "dotmac_starter_mt:tests/architecture/test_records_module.py",
+  "dotmac_starter_mt:tests/test_documents_records_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+inventory_evidence = [
+  "docs/inventories/documents-records-sources.md",
+  "docs/inventories/subscriber-account-disposition-sources.md",
+  "docs/adr/0049-documents-own-controlled-versions-records-own-declared-evidence.md",
+]
+composition_boundary = "ADR-0024/0033: each product installs its own tenant-only re lineage. Records imports the kernel but no Documents/Files/Approvals/Timers/product package. Sources arrive as typed opaque snapshots and versioned observations; outputs are timer requests, disposition decisions and exact Files authorizations. No cross-application database, module FK or fallback writer."
+first_cutover = "ERP is the first declaration candidate because its HR and finance attachment surfaces create the clearest compliance demand, but only after a checked-in writer inventory identifies every current retention/deletion/hold path. Sub follows as independent reuse proof. No existing product is credited as a qualifying implementation source."
+shadow_and_drift = "ERP replays exact declarations and domain trigger events into a consequence-free shadow; compare source/file/schedule snapshots, calculated dates, active-hold sets and eligibility fingerprints. Destructive execution stays disabled. The last full-column comparison, ADR-0031 authority switch and locks over every legacy retention writer occur together; after cutover, drift repair replays authoritative observations into Records rather than writing parallel state."
+local_copy_retirement = "For each adopted ERP domain, remove local retention/hold/disposition columns, jobs and deletion decisions after the sealed switch and rollback window; the domain keeps attachment/business meaning and a Records deletion gate. A two-directional caller/table ratchet reaches zero. Sub repeats per domain. Files never gains a retention fallback and Records never writes source-domain lifecycle."
+next_action = "Sub's account-disposition inventory is DONE (docs/inventories/subscriber-account-disposition-sources.md, measured at dotmac_sub@883a0ff1a): retention is one unversioned integer setting with no record series, schedule version, trigger observation, legal hold, approval or disposition evidence, and `purge_expired_from_recovery_queue` DESTROYS NOTHING \u2014 it stamps a flag whose only effect is that restore then refuses, while the code's own docstring and comment claim a personal-data purge that exists nowhere. ERP's focused writer follow-up is also DONE (docs/inventories/documents-records-sources.md, measured at dotmac_erp@0f4b1698): mutable finance-report retention is the one overlapping legacy writer; its row cleanup consequence has no caller, and operational-store TTLs remain outside Records. Both adoption paths need characterization before shadowing. Complete exact-commit Observer validation, then write the per-domain backfill, comparison and cutover plans. Keep kernel a84 and Records a1 unpublished until package, lineage and adopter gates are green; keep destructive execution disabled until one sealed product cutover."
+
+# Typed product claims. Sub and ERP both have focused writer inventories: Sub's
+# account-disposition path and ERP's mutable finance-report retention path are
+# legacy writers requiring explicit retirement. The broader audit supports the
+# other inventory-only claims. Academy's earlier partial-clone caveat is
+# resolved in
+# docs/inventories/documents-records-sources.md before its row is asserted.
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/services/account_deletion.py",
+  "app/services/web_system_restore_tool.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = [
+  "app/models/finance/rpt/report_schedule.py",
+  "app/services/finance/rpt/report_scheduler.py",
+  "app/services/finance/rpt/report_instance.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c64b5aa0f7902b52e7ef73cf26f3f88687ed849d"
+evidence_paths = [
+  "app/models/legal.py",
+  "app/services/legal.py",
+]
+
+[[product_writers]]
+product = "dotmac-academy"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "71b87b2abfb1dc5c1db540faca257004a8c2bf9c"
+evidence_paths = ["README.md"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = [
+  "app/models/certificate.py",
+  "app/services/certificates.py",
+]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "e6b2bbee815cf9fd3ce99ceed0ff3a1f5763f057"
+evidence_paths = ["docs/design/domain-foundation.md"]

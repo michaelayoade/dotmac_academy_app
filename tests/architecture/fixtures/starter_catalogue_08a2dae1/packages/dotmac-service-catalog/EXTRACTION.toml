@@ -1,0 +1,50 @@
+schema_version = 1
+package = "dotmac-service-catalog"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Stable technical service specifications and plan families, their effective versions and typed characteristic values, plus eligibility-input declarations"
+contract = "Own provider-neutral stable service-specification and plan-family identities, their effective-dated evidenced published versions, typed characteristic definitions and values, and the input vocabulary a qualification decision may consume. NOT offers, prices, discounts, contracts, subscriptions, billing cycles, tax, fixed recurrence, provisioning, or qualification decisions."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:943bc59f8e4ca0849c7de578bc9dbc17c57b116f",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_starter_mt:5876ffd0bce17172fa2dc6ac6d09b48d877fadf8",
+]
+source_paths = [
+  "dotmac_sub:app/models/catalog.py",
+  "dotmac_sub:app/services/catalog/validation.py",
+  "dotmac_sub:app/services/web_catalog_offers.py",
+  "dotmac_sub:alembic/versions/113_add_catalog_offer_plan_family.py",
+  "dotmac_sub:docs/PLAN_FAMILY_ARCHITECTURE.md",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_catalog_contracts.py",
+  "dotmac_sub:tests/test_backfill_plan_families.py",
+  "dotmac_sub:tests/test_catalog_services.py",
+  "dotmac_sub:tests/test_connection_type_provisioning.py",
+  "dotmac_sub:tests/test_radius_committed_rate.py",
+  "dotmac_starter_mt:tests/unit/test_service_catalog_service.py",
+  "dotmac_starter_mt:tests/architecture/test_service_catalog_module.py",
+  "dotmac_starter_mt:tests/test_service_catalog_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Each adopter pins the package and composes the sc lineage locally. Products hold offers and prices and reference catalogue ids opaquely; Qualification consumes declared inputs through a typed API, never a sibling import."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains catalogue writer through backfill and read-only shadow; a separately authorized zero-drift cutover makes this module the technical catalogue owner."
+shadow_and_drift = "Compare stable specification/family identity, effective version, source evidence, characteristic type/value/requiredness, and eligibility-input declarations. Commercial fields are excluded rather than shadowed."
+local_copy_retirement = "After cutover, reduce Sub technical catalogue writers and fallback readers to zero while leaving offer/price/contract ownership in the product commercial domain."
+next_action = "Complete the first-release Observer proof, publish the exact package, then compose it in Sub for versioned technical-catalogue backfill and shadow comparison."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "943bc59f8e4ca0849c7de578bc9dbc17c57b116f"
+evidence_paths = ["app/models/plan_family_catalogue.py", "app/models/catalog.py", "app/services/catalog/plan_family_catalogues.py", "app/services/catalog/validation.py"]

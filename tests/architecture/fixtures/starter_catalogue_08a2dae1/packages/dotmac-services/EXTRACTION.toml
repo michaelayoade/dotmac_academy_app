@@ -1,0 +1,48 @@
+schema_version = 1
+package = "dotmac-services"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant service-instance identity and lifecycle transitions"
+contract = "Own service instances, their current lifecycle status and immutable transition history. Customer, specification and qualification identities are opaque references. NOT customer identity, catalogue, qualification, fulfillment, network/access enforcement, subscription contracts, usage, rating, invoicing or accounting."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/subscription_engine.py",
+  "dotmac_sub:app/models/subscription_change.py",
+  "dotmac_sub:app/services/subscription_lifecycle.py",
+  "dotmac_sub:app/services/subscription_lifecycle_commands.py",
+  "dotmac_sub:app/services/subscription_lifecycle_evidence.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_subscription_lifecycle_contract.py",
+  "dotmac_sub:tests/test_subscription_lifecycle_commands.py",
+  "dotmac_sub:tests/architecture/test_generic_subscription_lifecycle_boundary.py",
+  "dotmac_starter_mt:tests/unit/test_services_service.py",
+  "dotmac_starter_mt:tests/architecture/test_services_module.py",
+  "dotmac_starter_mt:tests/test_services_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Adopters compose se locally and pass opaque customer/catalogue/qualification references. The module imports no sibling module and reads no foreign application database."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains service lifecycle owner until backfill, read-only shadow and transition/status comparison complete and a separately authorized writer switch occurs."
+shadow_and_drift = "Compare service identity, opaque references, current status, transition ordering, reason and occurrence time. Fulfillment and network observations stay outside."
+local_copy_retirement = "After cutover, reduce Sub service-status writers and fallback readers to zero; keep adapters that request transitions from this owner."
+next_action = "Compose in Sub and implement history backfill plus a zero-drift lifecycle shadow reader."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/subscription_engine.py", "app/models/subscription_change.py", "app/services/subscription_lifecycle.py", "app/services/subscription_lifecycle_commands.py"]

@@ -1,0 +1,67 @@
+schema_version = 1
+package = "dotmac-inventory"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Dotmac inventory stock ledger, traceability, reservation, and valuation"
+contract = "Tenant-local SKU and warehouse identity; immutable stock movements; rebuildable on-hand/reserved/value projections; reservation lifecycle; lot/serial traceability; and inventory valuation. Excludes procurement sourcing/approval, product work, finance journals, assets, and provider transport."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_erp:app/models/inventory",
+  "dotmac_erp:app/services/inventory",
+  "dotmac_erp:tests/ifrs/inv",
+  "dotmac_sub:app/models/field_material.py",
+  "dotmac_sub:app/services/field/inventory.py",
+  "dotmac_crm:app/models/inventory.py",
+  "dotmac_crm:app/services/inventory.py",
+  "dotmac_crm:app/services/dotmac_erp/inventory_sync.py",
+  "dotmac_starter_mt:packages/dotmac-inventory/src/dotmac_inventory",
+]
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/inv/test_inv_transaction_service.py",
+  "dotmac_erp:tests/ifrs/inv/test_fifo_valuation_service.py",
+  "dotmac_erp:tests/ifrs/inv/test_wac_valuation.py",
+  "dotmac_erp:tests/ifrs/inv/test_stock_reservation_service.py",
+  "dotmac_erp:tests/ifrs/inv/test_lot_serial_service.py",
+  "dotmac_erp:tests/inventory/test_missing_serials_workflow.py",
+  "dotmac_starter_mt:tests/architecture/test_inventory_module.py",
+  "dotmac_starter_mt:tests/unit/test_inventory_valuation.py",
+  "dotmac_starter_mt:tests/unit/test_inventory_service.py",
+  "dotmac_starter_mt:tests/test_inventory_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+authority_boundary = "ADR-0036: each adopter installs one tenant-only lineage and the module is the sole writer of local stock movements, balances, reservations, lots/serials, and valuation facts. Procurement/Payables decide authorisation and accounting; product work owners link opaquely; Assets owns durable-asset lifecycle; Integrator owns provider transport."
+inventory_evidence = [
+  "docs/inventories/inventory-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/inventories/module-extraction-sources.md",
+]
+first_cutover = "dotmac_erp after the Organization-to-Tenant mapping gate. Replay the production-used ERP ledger, prove quantity/value/reservation/lot/serial parity, compose the module lineage, then retire the old inventory writers."
+shadow_and_drift = "Rebuild stock and valuation projections from immutable module movements plus active reservations; compare them per tenant/item/warehouse/lot/serial against ERP's current ledger during shadow. Any unexplained quantity or value delta blocks cutover."
+local_copy_retirement = "ERP retires app/models/inventory and app/services/inventory writers after parity. CRM retires its mutable inventory_stock authority/sync copy or deliberately reclassifies it as an observation projection; Sub keeps product-owned material-request and asset/network rows outside the package."
+next_action = "Land canary-first 0.1.0a1 in Starter without composing it into the reference assembly; validate its tenant lineage on Observer; then prepare ERP's Organization-to-Tenant mapping and shadow replay. No release, product adoption, or production cutover is authorized by this dossier."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/inventory.py", "app/services/inventory.py", "app/services/dotmac_erp/inventory_sync.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/inventory", "app/services/inventory"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/field_material.py", "app/services/field/inventory.py"]

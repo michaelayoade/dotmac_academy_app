@@ -1,0 +1,97 @@
+schema_version = 1
+package = "dotmac-payables"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant supplier invoice, credit-note, liability and payment-obligation lifecycle"
+contract = "Create, submit, approve and void draft supplier invoices/credit notes from opaque supplier/procurement evidence; recognize approved liabilities/credits; materialize due-date obligations; apply supplier credit without double-recognizing it; accept deduplicated external settlement observations; produce typed balanced accounting consequences and record immutable accounting receipts. NOT supplier identity/compliance/bank details, procurement commitments/receipts, tax policy, inventory valuation, approval decisions, numbering, journal posting, bank/payment execution, provider I/O or retry."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_vendor_control_plane", "dotmac_academy_app", "dotmac_workspace", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_erp:4aab56812d6fb243c814ada15c13fabea6234da8",
+  "dotmac_sub:feea715927942d77acf5f214d7960ea01a905b24",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_vendor_control_plane:2c4d88ab877aeae1c8d5aef0637bc013edf07aa9",
+  "dotmac_academy_app:a5e25e4e829350e503e66a03d73739529ba7da7f",
+  "dotmac_workspace:a158846c97e39b007724584244cb1ed4f9e6e58f",
+  "dotmac_starter_mt:f7d69f7d3db6a36dcccaa847dff7a37e9c3cd685",
+]
+revalidation_revisions = [
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/ap/supplier_invoice.py",
+  "dotmac_erp:app/models/finance/ap/supplier_invoice_line.py",
+  "dotmac_erp:app/models/finance/ap/supplier_invoice_line_tax.py",
+  "dotmac_erp:app/models/finance/ap/ap_payment_allocation.py",
+  "dotmac_erp:app/models/finance/ap/supplier_payment.py",
+  "dotmac_erp:app/services/finance/ap/supplier_invoice.py",
+  "dotmac_erp:app/services/finance/ap/payment_status.py",
+  "dotmac_erp:app/services/finance/ap/posting/invoice.py",
+  "dotmac_erp:app/services/finance/ap/posting/reversal.py",
+  "dotmac_crm:app/models/vendor.py",
+  "dotmac_crm:app/services/vendor.py",
+  "dotmac_crm:app/services/dotmac_erp/purchase_invoice_sync.py",
+  "dotmac_starter_mt:packages/dotmac-payables/src/dotmac_payables",
+]
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/ap/test_supplier_invoice_service.py",
+  "dotmac_erp:tests/ifrs/ap/test_payment_status.py",
+  "dotmac_erp:tests/ifrs/ap/test_ap_posting_adapter.py",
+  "dotmac_erp:tests/ifrs/ap/test_supplier_payment_service.py",
+  "dotmac_erp:tests/ifrs/ap/test_ap_multi_tenant_security.py",
+  "dotmac_starter_mt:tests/unit/test_payables_service.py",
+  "dotmac_starter_mt:tests/architecture/test_payables_module.py",
+  "dotmac_starter_mt:tests/test_accounting_payables_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp"]
+composition_boundary = "Each adopter runs the independent pa lineage in its own database. The package imports only dotmac-kernel. An assembly supplies supplier/procurement/approval/tax facts, translates the provider-neutral accounting consequence into the locally composed Accounting contract, and accepts Treasury settlement observations over a versioned API/outbox boundary; neither business module imports the other."
+inventory_evidence = ["docs/inventories/accounting-payables-sources.md", "docs/adr/0042-payables-owns-supplier-liabilities-not-payment-execution.md"]
+first_cutover = "ERP is source and first exact-pin adopter after its Accounting cutover. Backfill and shadow invoice/credit lifecycle, recognized liability, obligation due/outstanding state, credit availability/application, settlement observations and accounting receipt reconciliation while legacy AP is sole writer; switch and retire legacy AP writers in a separately authorized sealed cutover."
+shadow_and_drift = "Compare tenant/supplier/document identity, dates/currency/exchange rate, immutable line totals/account references, approval references, liability events, obligation schedules/outstanding values, supplier-credit availability/applications, settlement source fingerprints and accounting consequence/receipt fingerprints. Product supplier, tax, procurement and bank ids are adapter evidence, not module foreign keys."
+local_copy_retirement = "ERP removes supplier-invoice, credit-note, liability, payment-allocation and coverage decision writers after the sealed switch. CRM's project-bound VendorPurchaseInvoice lifecycle is also a legacy supplier-invoice writer: it must retire into the owning product/module boundary, including its ERP push path, rather than remain as a second invoice-status authority. Purchase-order/goods-receipt, supplier-directory, tax, inventory and bank/payment execution services remain independent and call typed ports only. No legacy invoice-status or GL-posting adapter remains as a second Payables writer."
+next_action = "Complete the Starter package/canaries and exact-commit Observer validation, then publish only with the ERP Accounting prerequisite and Payables cutover slice ready. Keep the package audit-complete and unallowlisted before adoption."
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["README.md", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/vendor.py", "app/services/vendor.py", "app/services/dotmac_erp/purchase_invoice_sync.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/ap/supplier_invoice.py", "app/services/finance/ap/supplier_invoice.py", "app/services/finance/ap/payment_status.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

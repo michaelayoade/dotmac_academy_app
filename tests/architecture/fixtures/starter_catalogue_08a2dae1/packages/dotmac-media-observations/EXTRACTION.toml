@@ -1,0 +1,96 @@
+schema_version = 1
+package = "dotmac-media-observations"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral external media observation facts and rebuildable projections"
+contract = "Record tenant-scoped immutable external media entity, hierarchy and aggregate period-metric facts with source/receipt provenance, exact replay/conflict/restatement semantics, exact typed values, drift detection and rebuildable projections. Preserve provider-reported conversion claims only. NOT provider transport, credentials or raw payloads; NOT Lead/Party/customer identity, official attribution, campaign effectiveness, revenue or any business consequence."
+source_repositories = [
+  "dotmac_mkt",
+  "dotmac_crm",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_integrator",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_mkt:7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_starter_mt:c6ef6cd7b13105bd95c3faf354ffee9032077625",
+]
+source_paths = [
+  "dotmac_mkt:app/models/ad_campaign.py",
+  "dotmac_mkt:app/models/channel_metric.py",
+  "dotmac_mkt:app/services/ad_sync_service.py",
+  "dotmac_mkt:app/tasks/ad_sync.py",
+  "dotmac_mkt:app/tasks/analytics_sync.py",
+  "dotmac_crm:app/models/crm/sales.py",
+  "dotmac_crm:app/services/crm/campaigns.py",
+  "dotmac_crm:app/services/meta_webhooks.py",
+  "dotmac_sub:app/models/sales.py",
+  "dotmac_sub:app/services/sales/lifecycle.py",
+  "dotmac_sub:docs/designs/SALES_TO_SERVICE_LIFECYCLE_SOT.md",
+  "dotmac_starter_mt:packages/dotmac-integration/src/dotmac_integration/spi.py",
+  "dotmac_starter_mt:packages/dotmac-integration/src/dotmac_integration/capability_registry.py",
+]
+preserved_tests = [
+  "dotmac_mkt:tests/test_ad_sync_service.py",
+  "dotmac_mkt:tests/test_analytics_daily_totals.py",
+  "dotmac_mkt:tests/test_analytics_sync.py",
+  "dotmac_crm:tests/test_campaign_lead_attribution.py",
+  "dotmac_sub:tests/test_customer_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_media_observations.py",
+  "dotmac_starter_mt:tests/architecture/test_media_observations_module.py",
+  "dotmac_starter_mt:tests/test_media_observations_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+authority_boundary = "ADR-0034. The module owns only provider-neutral immutable aggregate external-media observations and rebuildable projections. Integrator and connector plugins own every provider transport concern. Sub owns immutable Lead origin and the customer lifecycle. CRM's Lead/ROI writers are negative evidence, not behavior to port. Provider conversion claims remain provider_reported and never become official acquisition, customer identity or authoritative revenue."
+inventory_evidence = [
+  "docs/inventories/media-observations-sources.md",
+  "docs/inventories/module-extraction-sources.md",
+]
+first_cutover = "PAUSED by Michael on 2026-08-18. The Dotmac ERP product remains the recommended first adopter only after it has a real remote/CI and pins the exact released kernel/module. If a named runtime audit later proves dotmac_mkt is the production writer, Backoffice must shadow it, reconcile divergences and retire that writer explicitly before it becomes a contract consumer. Sub adopts the same exact release independently later. No product composition or writer retirement is authorized by this package change."
+shadow_and_drift = "The future Backoffice shadow compares Mkt's three-level normalized hierarchy, idempotent repeat sync and daily aggregate totals against immutable entity/hierarchy/metric facts and deterministic current projections. Missing parent, cycle, unit/type, exact-money, replay conflict, restatement and out-of-order divergences are reported by stable codes. Projection rebuild must reproduce the same digests before cutover. Shadowing is paused and no current product is counted."
+local_copy_retirement = "No retirement is authorized yet. If Mkt production authority is proven, its mutable AdCampaign/AdGroup/Ad/AdMetric writer and provider sync tasks retire only after Backoffice has pinned the exact release, completed shadow/reconciliation and cut over. Provider I/O moves to separately released Integrator connector plugins; CRM/Sub Lead-origin and attribution owners do not move."
+next_action = "Michael authorized release on 2026-08-20 without resuming adoption, and the release is complete: kernel a81 and media-observations 0.1.0a1 are registry-verified and tagged from the exact protected-main commit. The adoption pause remains in force unchanged: Backoffice and Sub are candidate consumers only, no product composes the tenant-only lineage, and no shadow, cutover, Mkt writer retirement or connector work begins from publication. Resuming adoption needs separate authorization, not a released artifact."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d"
+evidence_paths = [
+  "app/models/ad_campaign.py",
+  "app/services/ad_sync_service.py",
+  "app/tasks/ad_sync.py",
+]
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/product_port.py", "src/dotmac_integrator/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/sales.py", "app/services/meta_webhooks.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/sales.py", "app/services/sales/lifecycle.py", "docs/designs/SALES_TO_SERVICE_LIFECYCLE_SOT.md"]

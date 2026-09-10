@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-network-assurance"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Network incident/outage, maintenance, impact classification, notification evidence, SLA evidence and escalation recommendation lifecycle"
+contract = "Open/update/resolve incidents, classify opaque impacted subjects, record maintenance/notification/SLA evidence and recommend escalation. NOT ticket/work-order decisions, measurement collection, topology or delivery."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/network_monitoring.py", "dotmac_sub:app/services/topology/outage.py", "dotmac_sub:app/services/topology/outage_operations.py", "dotmac_sub:docs/designs/NETWORK_OUTAGE_RESPONSE_LIFECYCLE.md", "dotmac_starter_mt:packages/dotmac-network-assurance/src/dotmac_network_assurance"]
+preserved_tests = ["dotmac_sub:tests/services/topology/test_outage_lifecycle_chain.py", "dotmac_sub:tests/services/topology/test_service_impact.py", "dotmac_sub:tests/test_outage_sla_combined_flow.py", "dotmac_sub:tests/architecture/test_outage_lifecycle_chain_boundary.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Sub supplies typed observation/topology inputs and consumes evidence/recommendations while retaining ticket/work-order authority. No sibling imports or product FKs."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover."
+shadow_and_drift = "Replay outage chains and compare incident state, impact, intervals, SLA and escalation digests against Sub."
+local_copy_retirement = "Sub removes outage writers after sealed suite cutover but retains operational ticket/work-order decisions and evidence adapters."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network_monitoring.py", "app/services/topology/outage.py", "app/services/topology/outage_operations.py", "docs/designs/NETWORK_OUTAGE_RESPONSE_LIFECYCLE.md"]

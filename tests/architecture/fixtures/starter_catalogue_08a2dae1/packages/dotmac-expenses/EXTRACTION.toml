@@ -1,0 +1,78 @@
+schema_version = 1
+package = "dotmac-expenses"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant expense requests, incurred claims, receipt meaning, effective-dated limit evaluation, guarded lifecycle and derived reimbursement eligibility"
+contract = "Own intended-spend requests and immutable submitted lines; incurred-expense claims and claimed/approved line amounts; tenant category and receipt-domain metadata around opaque file ids; immutable published policy revisions, limit rules and evaluation evidence; guarded submission/decision transitions that apply an opaque Approvals decision; and a computed answer whether an approved claim is eligible to be presented to Finance. NOT Party/employee identity, approval quorum, stored bytes, numbering, projects/work orders, advances/cards, AP/GL/tax, bank details, disbursement, settlement or payment coverage."
+source_repositories = ["dotmac_erp", "dotmac_crm", "dotmac_sub", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_erp:b969a889e8aba7255e32aa466960c22347c02fd8",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_sub:510b80ca7fab4f54a57f261872f94b5e972c8eb6",
+  "dotmac_starter_mt:300ebd7523e85dff7e94efcdf81d8c1f34b80de5",
+]
+revalidation_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/expense/expense_claim.py",
+  "dotmac_erp:app/models/expense/limit_rule.py",
+  "dotmac_erp:app/services/expense/service_claims.py",
+  "dotmac_erp:app/services/expense/limit_service.py",
+  "dotmac_erp:app/services/expense/approval_service.py",
+  "dotmac_crm:app/models/expense_request.py",
+  "dotmac_crm:app/services/expense_requests.py",
+  "dotmac_sub:app/models/field_expense.py",
+  "dotmac_sub:app/services/field/expense_requests.py",
+]
+preserved_tests = [
+  "dotmac_erp:tests/test_expense_approval_workflow.py",
+  "dotmac_erp:tests/services/test_expense_withdraw_approval.py",
+  "dotmac_erp:tests/services/test_expense_approve_error_handling.py",
+  "dotmac_erp:tests/finance/test_expense_transfer_lifecycle.py",
+  "dotmac_crm:tests/test_expense_request_services.py",
+  "dotmac_sub:field_mobile/test/expenses_test.dart",
+  "dotmac_starter_mt:tests/unit/test_expenses_service.py",
+  "dotmac_starter_mt:tests/architecture/test_expenses_module.py",
+  "dotmac_starter_mt:tests/test_expenses_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac-erp", "dotmac_crm", "dotmac_sub"]
+composition_boundary = "Each adopter pins the released package, installs the ex lineage in its own database and supplies product adapters for approvals, stored files, numbering and Finance. The module imports only dotmac-kernel, never an assembly, product ORM or sibling module. Independent applications synchronize typed commands and observations; none shares the module's rows."
+inventory_evidence = ["docs/inventories/expenses-sources.md", "docs/adr/0047-expenses-own-spend-evidence-not-payment.md"]
+first_cutover = "dotmac_erp is the qualifying source and first exact-pin adopter. ERP installs the released lineage locally, backfills and shadows categories, policy revisions/rules, requests, claims, lines, receipt metadata, lifecycle and evaluation evidence while the legacy path remains sole writer, then performs one explicitly authorized switch and retires the old writers. Backoffice is a later independent consumer of that proven release."
+shadow_and_drift = "Compare tenant counts and stable references plus requester/claimant, status, claimed/approved totals, category, receipt completeness, exact policy revision/rule outcome and reimbursement eligibility. Report missing, extra and conflicting rows. Shadow reads never write either owner."
+local_copy_retirement = "After the sealed switch, two-directional ratchets reach zero for ERP category/claim/line/receipt-policy/limit/lifecycle writers and CRM/Sub request/line writers plus ERP-state mirrors. Finance handoff, compatibility reads and audit export have separate ratchets. A row deletion or a remote-status mirror is never authority-cutover evidence."
+next_action = "Run the package architecture/unit/PostgreSQL canaries on Observer from an exact committed branch revision, then check in ERP's exact kernel/module pins plus its versioned backfill/shadow/cutover adapter. Keep Backoffice uncomposed until ERP proves the first adoption."
+
+# Typed product claims. Governance cites these across the repository boundary,
+# so they are declarations rather than prose: `source_repositories` above says
+# who was INVENTORIED, and these say what each one DOES.
+#
+# Sub was rostered in Governance as having "no ISP writer in scope". It has
+# two, and `local_copy_retirement` already required their ratchet to zero.
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/expense/expense_claim.py", "app/services/expense/service_claims.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/models/field_expense.py",
+  "app/services/field/expense_requests.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/expense_request.py", "app/services/expense_requests.py"]

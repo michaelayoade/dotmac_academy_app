@@ -1,0 +1,55 @@
+schema_version = 1
+package = "dotmac-numbering"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Concurrency-safe allocation and formatting of explicitly configured document series on separate tenant and platform planes, with one counter per (scope, series, period) and one append-only receipt per allocation"
+contract = "Given a required TenantScope or PlatformScope, an open registered series_code, an explicit business reference_date and an idempotency key, reserve the next value of a configured series under a row lock, format it from validated configuration, and record one immutable allocation receipt. Replay, fingerprint comparison and the concurrent-key race are delegated to dotmac_kernel.idempotency (hard rule 23), which returns the original formatted number on replay and conflicts on a reused key carrying a different request; the receipt is domain evidence, never a second replay mechanism. A resetting series has one counter per period, so a backdated allocation reads its own period's counter rather than the period the series last advanced into. Allocation participates in the caller's transaction and rolls back with it. Configuration, allocation and repair lock the series row FOR UPDATE before deciding, then the period counter — series-then-counter, everywhere — so a first allocation cannot render from a configuration a concurrent update has replaced. After a series has allocated, the identity-shaping fields (prefix, suffix, separator, digit width, year/month inclusion, year width, reset policy) are frozen by the service and again by a database trigger, because the online roles can write the configuration tables directly. start_value remains mutable: it is a prospective seed for periods that have not opened, never part of the rendered identity, so it leaves an open period unchanged, seeds an unopened future period, and cannot move the single '*' counter of a non-resetting series. Repair names the period it advances, moves that counter to caller-supplied proven evidence, records immutable repair evidence naming actor and reason, and may never rewind or delete committed allocation history — receipts and repair evidence are append-only at the database, by grant and by trigger. NOT what a number means, which documents require one, legal gaplessness policy, fiscal periods, invoice issuance, document rendering, or any product's series vocabulary."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+]
+source_revisions = [
+  "dotmac_erp:7fc1111f73ca926eb8729a0dff589a3dfad896a8",
+  "dotmac_sub:65f6cb06d6e2beba61266368f4073f9df55197ca",
+]
+revalidation_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/core_config/numbering_sequence.py",
+  "dotmac_erp:app/services/finance/common/numbering.py",
+  "dotmac_erp:app/services/finance/common/sequence_utils.py",
+  "dotmac_sub:app/models/sequence.py",
+  "dotmac_sub:app/services/numbering.py",
+]
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/common/test_numbering_service.py",
+  "dotmac_sub:tests/test_numbering_defaults.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub", "dotmac_vendor_control_plane"]
+composition_boundary = "ADR-0024: each adopter installs its own nu lineage and owns its own series configuration, counters and receipts. Applications share the package contract, never a mod_numbering schema, a counter row or a receipt table. ADR-0023: tables (tenant, tenant_id NOT NULL, FORCE RLS) and platform_tables (no tenant column, REVOKEd from the tenant app role) are declared, not inferred; no foreign key crosses the planes and there is no nullable tenant_id, sentinel tenant or polymorphic scope column. series_code is an open registered string, never a closed enum; no product vocabulary (invoice_number, project_number, SequenceType members) enters the module. The module performs no settings lookup and reads no clock: configuration is passed in and reference_date is a required business input."
+inventory_evidence = [
+  "docs/inventories/numbering-sources.md",
+  "docs/inventories/numbering-source-variance.md",
+  "docs/adr/0017-adoption-is-the-scarce-resource.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+]
+first_cutover = "dotmac_erp, tenant plane, one series family at a time, ordered by whether the caller can name its business date rather than by volume. Slice 1 is app/services/finance/banking/bank_statement.py:877, the only production caller that already passes a real reference_date (statement_date or period_start). Slice 2 is app/services/dotmac_sub/sync/_base.py:286,294,302, which already threads an optional date. Only then the sixteen SequenceService.get_next_number callsites, each of which must first choose and thread an explicit business date, because SequenceService.get_next_number (app/services/finance/platform/sequence.py:37-69) has no reference_date parameter and silently allocates against date.today(). dotmac_sub follows on the tenant plane for invoice, credit-note, sales-order, project and support-ticket series after ERP's tenant plane is proven; its cutover retires three caller-side reconcilers and two ten-thousand-iteration collision-retry loops. dotmac_vendor_control_plane is the first platform-plane adopter through Billing; the platform plane has no product-first source and is written fresh against the same behaviour suite."
+shadow_and_drift = "Neither source has a real-database test, so the shadow phase is the first genuine evidence. For each ERP series family: seed the module series explicitly from the existing numbering_sequence row (there is no auto-create in the module and no default-prefix dictionary), then run the module allocator in shadow inside the same transaction as the legacy allocator and compare the formatted string, the counter delta and the reset decision for every allocation, recording divergence rather than failing. Shadow must be driven with the business date the caller will use in production, not date.today(), because that substitution is the change most likely to move a number across a reset boundary. Backfill one receipt per historically issued number where the number is recoverable from the consuming table, and reconcile the module counter forward to that proven maximum using the caller-supplied proven-minimum repair path; never rewind. Divergence classes to expect and adjudicate before cutover: (a) reference_date substitution moving an allocation across a yearly or monthly boundary; (b) the ERP backdating rewind (sequence_utils.should_reset compares period inequality, not ordering) producing a legacy value the module refuses; (c) preview divergence, since NumberingSequence.preview hardcodes a four-digit sequence segment and disagrees with allocation for every min_digits != 4 series; (d) auto-created legacy series that were never configured and carry an invented DOC- prefix. For Sub, shadow against the existing consuming-table uniqueness check: the module's receipt must be authoritative before the retry loops are removed, so run both and assert the retry loop never fires."
+local_copy_retirement = "ERP retires, in order: SequenceService (app/services/finance/platform/sequence.py) including configure_sequence and reset_sequence; the async NumberingService; SyncNumberingService; NumberingSequence.preview and NumberingService.preview_format, both replaced by one module formatter called with an explicit date; PayrollNumberingService and the residual people.payroll_number_sequence table; and app/services/careers/careers_service.py:318-342, an unregistered sixth allocator that MAX-scans a table-wide-unique column with no lock and must first have its cross-organization series scope decided. sequence_utils.format_number and should_reset are the extraction source and are deleted with their callers. The core_config.numbering_sequence table's native sequence_type PostgreSQL enum becomes the module's open series_code string through an expand/contract migration with a recorded, reversible value mapping. Sub retires generate_number, generate_required_number, generate_number_with_config, the dead reconcile_next_value, the document_sequences table, the three caller-side reconcilers (projects.py:176-193, support.py:1029-1045, sales_orders.py:289-293) and the two collision-retry loops (projects.py:195-213, support.py:987-1004). A two-directional import/caller ratchet reaches zero in each repository before its local owner is deleted. No permanent mirrored counter or parallel allocator is allowed in either product."
+next_action = "Land the eight PostgreSQL proofs in this document's test matrix as the module's first commit, before any caller is touched, because neither source contributes a single real-database test. Then seed and shadow ERP's bank-statement series as slice 1. Do not begin any SequenceService callsite until its business date is chosen and threaded."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/core_config/numbering_sequence.py", "app/services/finance/common/numbering.py", "app/services/finance/common/sequence_utils.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/sequence.py", "app/services/numbering.py"]

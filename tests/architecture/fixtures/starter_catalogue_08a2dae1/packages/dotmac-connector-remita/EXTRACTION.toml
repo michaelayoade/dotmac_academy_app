@@ -1,0 +1,118 @@
+schema_version = 1
+package = "dotmac-connector-remita"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "Remita transport: authenticated RRR ISSUANCE and RRR status polling, provider response parsing, provider-neutral status observation translation, and typed outbound outcome classification."
+
+contract = "Implement dotmac-integration SPI >=1.4,<2.0 for connector key remita: capability payments.reference.status.observation.v1 in POLL mode, and payments.reference.issuance.v1 in DELIVERY mode. Issuance authenticates with the provider SHA-512 contract sha512(merchantId + serviceTypeId + orderId + amount + apiKey), posts the seven-field paymentinit body, carries the product-minted orderId verbatim, and returns the minted RRR as Outcome.provider_reference on every outcome. Carry provider status, message, amount, reference, transaction and date evidence verbatim. Own no RRR lifecycle, biller policy, payment-state mapping, source linkage, tenant, product identity, ledger, journal, checkpoint, retry engine, session or product database."
+
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+
+source_paths = [
+  "dotmac_erp@c656bb9070b7f35659f1968e44823e4727b309b9:app/services/remita/client.py",
+  "dotmac_erp@c656bb9070b7f35659f1968e44823e4727b309b9:app/services/remita/rrr_service.py",
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:app/services/remita/client.py",
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:app/services/remita/rrr_service.py",
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:docs/inventories/payment-connector-extraction-dossier.md",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_remita_connector.py",
+  "dotmac_starter_mt:tests/unit/test_remita_outbound.py",
+  "dotmac_starter_mt:tests/architecture/test_remita_connector_boundary.py",
+]
+
+# ERP ships NO test for the issuance hash — `grep -rl remita tests/` in
+# dotmac_erp returns only `test_dependency_health.py`, which monkeypatches the
+# health probe away. So there was no parity test to port, and the ordering
+# proofs in `test_remita_outbound.py` are written here for the first time:
+# a golden vector, an adjacent-swap permutation proof, and a proof that the
+# issuance order is NOT the status order. Recorded because "ported with its
+# parity tests" would be false otherwise.
+ported_behaviour = [
+  "sha512(merchantId + serviceTypeId + orderId + amount + apiKey), hex, UTF-8, no separator (client.py:106-118, 226-232)",
+  "Authorization: remitaConsumerKey=<merchant>,remitaConsumerToken=<hash> (client.py:119-122)",
+  "POST /remita/exapp/api/v1/send/api/echannelsvc/merchant/api/paymentinit (client.py:73)",
+  "the seven-field string body with payerPhone and description degrading to \"\" (client.py:234-242)",
+  "the amount as a single formatted string shared by the payload and the hash (client.py:222)",
+  "the jsonp(...) wrapper unwrapped, with bare JSON also accepted (client.py:170-192)",
+  "statuscode 025 as the only success code (client.py:269-278)",
+  "demo.remita.net / login.remita.net selected by environment (client.py:22-23, 93)",
+]
+
+port_deltas = [
+  "orderId is the PRODUCT's stable opaque string, not a fresh uuid4 per call (rrr_service.py:136) — a retry must not mint a second reference for one obligation",
+  "021 duplicate order is RECONCILIATION_REQUIRED, not the generic error ERP raises for every non-025 code (client.py:283-290) — a reference exists and must be found, not retried and not dead-lettered",
+  "025 with no RRR field is RECONCILIATION_REQUIRED, not the unguarded KeyError at client.py:275 on the far side of a provider effect",
+  "a connect failure is retryable and every later transport failure is ambiguous; ERP has no retry classification and no retry at all",
+  "the currency is declared by the installation and stated by the command, and a mismatch is refused; ERP assumes naira by omission",
+  "the amount is exact Decimal quantized to the exponent the product declares, refused rather than rounded when it does not fit; ERP hardcodes f\"{amount:.2f}\"",
+  "no provider call during validate_connection: the only issuance call there is MINTS a reference",
+]
+
+provider_idempotency = "NONE. Remita accepts no Idempotency-Key or X-Idempotency-Key header; verified by inventory across dotmac_erp and dotmac_sub. Its only natural key is orderId, answered with statuscode 021 when reused. The connector therefore carries the product's orderId verbatim and mints nothing; the engine's DispatchRequest.idempotency_key remains the at-most-once record in dotmac_kernel.idempotency and is not sent, because there is nowhere to send it."
+
+# ── ADR-0024 §§ 8-9 (2026-08-24): one contract per act, and parity is measured
+# against Dotmac's capabilities ──────────────────────────────────────────────
+#
+# `payments.reference.issuance.v1` is a genuinely distinct business act — asking
+# a biller to MINT a payment reference — and not a provider-shaped alias of
+# `payments.intent.v1`. It keeps its own id for that reason, not because Remita
+# has an endpoint called paymentinit.
+#
+# DIVERGENCE, recorded so the doc is actionable (ADR-0061 § 4 D3). This
+# connector's command payload matches dotmac-connector-flutterwave's family and
+# NOT dotmac-connector-paystack's: flat and per-capability rather than an
+# `{"action", "params"}` envelope, a PRODUCT-minted reference (`orderId`,
+# carried verbatim — the connector mints nothing), and a REQUIRED
+# `currency_minor_units` exponent supplied by the product from
+# dotmac_kernel.money. Paystack derives its reference and refuses an exponent.
+# Whichever payload the declared `payments.payout.v1` contract ends up taking
+# (ADR-0061 § 5 step 1), this connector's issuance capability adopts the same
+# conventions for reference and money, so a product reads one set of rules
+# across every payment connector rather than one per binding.
+#
+# Remita's absent idempotency header is NOT a divergence to close: it is a
+# provider fact, and `orderId` being the only natural key is why an ambiguous
+# `paymentinit` is classified reconciliation-required instead of retried. Under
+# ADR-0061 § 1 that classification is a transport statement; whether to ask
+# again is the product owner's decision.
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator", "dotmac_erp"]
+
+inventory_evidence = [
+  "docs/inventories/payment-connector-sources.md",
+  "docs/inventories/payment-connector-extraction-dossier.md",
+  "docs/superpowers/plans/2026-08-21-integration-ecosystem-programme.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+]
+
+first_cutover = "ERP RRR status observations through dotmac_integrator. Run the Integrator poll beside ERP's status refresh and compare the provider reference, status, amount, transaction id and payment date while ERP remains the only writer of RRR and accounting state."
+
+shadow_and_drift = "For every configured reference compare authenticated provider responses and the ERP-recorded source evidence. Require stable event identity for an unchanged response, one new observation for each changed provider fact, and no unexplained field drift. Provider status codes are compared verbatim because ERP's current status comments disagree with the provider's current contract."
+
+local_copy_retirement = "Delete ERP's Remita status HTTP transport, provider credential reader and polling schedule after cutover, lowering the external-connector ratchet in the same change. ERP keeps RRR intent and lifecycle, biller/service selection, source linkage, payment decisions and every accounting consequence."
+
+next_action = "DECLARED AS 0.1.0a2, NOT YET RELEASED: this tree extends the manifest of the already-tagged 0.1.0a1, and a published version's manifest digest must not change. The published poll-only shape is preserved as POLL_ONLY_MANIFEST in historical_manifests and its digest is recorded in docs/inventories/released-manifest-digests.json, so a pinned adopter still resolves. Then validate on Observer and GitHub CI, exact-pin dotmac-integration >=0.1.0a14 (SPI 1.4, and ig_0012_delivery_evidence for the durable command-response seam that unblocked issuance) in dotmac_integrator, and execute the ERP shadow/cutover. Issuance shadow: run the connector beside ERP RemitaRRRService.generate_rrr and compare the request hash, the seven-field body and the returned RRR while ERP remains the only writer of RRR and accounting state."
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/remita/client.py", "app/services/remita/rrr_service.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

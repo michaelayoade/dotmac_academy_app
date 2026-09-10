@@ -1,0 +1,273 @@
+schema_version = 1
+package = "dotmac-deployment-foundation"
+classification = "universal-facility"
+status = "adopted"
+source_mode = "product-first"
+owner = "Build- and deploy-time execution for a Dotmac product assembly: the versioned deployment descriptor and its refusals, the deterministic renderer for Compose/ingress/collector/alert assets, the hardened OCI image contract and its audit, the ordered deployment state machine and its gates, backup/restore and their evidence including the PostgresRecoveryBundle.v1 role-closure contract, ingress providers, telemetry resource attributes and deployment annotations, the common infrastructure alert catalogue, and the reusable conformance kit a product runs in its own CI"
+contract = "Read `deploy/product.toml` as ProductDeploymentSpec.v1 or .v2, preserving v1 bytes and refusals while v2 requires typed database-catalogue coordinates whenever `[database]` exists; refuse an unknown schema, an unknown key, a secret-shaped value, a mutable image tag, a runtime role holding the migration owner material, an ingress role with no readiness probe, a role pointing liveness and readiness at one path, a websocket/SSE route with a proxy read timeout that severs it, `static = \"volume\"`, a relaxed security default with no declared exception, and a backup dataset with no checksum; RENDER deterministic Compose, Nginx, collector and alert assets from it so that `render --check` is a byte comparison a reviewer reads as a diff; BUILD an ordered deployment plan whose gate half mutates nothing, which backs up before any DDL, verifies the backup, refuses the online path for a `maintenance_required` release, gates a warm candidate on READINESS rather than a timer, and permits an image rollback only when the release's own compatibility declaration permits it; AUDIT a built image against the hardened contract; and EXPOSE all of it through the `dotmac-deploy` CLI and a conformance kit. NOT desired fleet state, deployment plans as durable records, approvals, rollout decisions, acknowledgements or drift-as-authority (those are dotmac-deployment-control); NOT normalized health observations or their projection (dotmac-platform-health); NOT log/metric/trace storage, queries, dashboards, alert delivery or operator access (the external Observability platform); NOT any in-process runtime contract, session, transaction, tenant, ORM or web framework (dotmac-kernel); and NOT any product's own topology, commands, queues, ports, hooks or domain alert rules, which stay declarative in the product's descriptor."
+
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_vendor_control_plane",
+  "dotmac_workspace",
+  "dotmac_integrator",
+  "dotmac_erp",
+  "dotmac_starter_mt",
+]
+
+source_revisions = [
+  "dotmac_sub:1a3edf0eb567fe02665606d368f8f342536f548c",
+  "dotmac_integrator:78bcaebf4692fbde298ef2107b231d983e04a5c6",
+  "dotmac_erp:7b62974b366eead1b32bead380e47d9cf10ec4c7",
+  "dotmac_starter_mt:ac5e439e622ec5adba94cf52f4f961f2c39a2d30",
+  # Read for the recovery-bundle contract (ADR-0071). Vendor CP and CRM as
+  # evidence of the role-blind dump; Workspace as the product-first reference
+  # for "a binding is a claim, not a fact" - and as the counter-example whose
+  # direct-grant revocation assertions produced EffectivePrivilegeFact.
+  "dotmac_vendor_control_plane:ebbf6b2fa2e225c9c3afaa57cd58cd761343e2a5",
+  "dotmac_workspace:4c97dda18f6f6a8000ba2ade64f59210508b1d46",
+]
+
+source_paths = [
+  # ── Sub: the deployment state machine. The ORDER and the REFUSALS are what
+  # is ported; the shell is not, because an 880-line script cannot be tested
+  # without a host, so the only way to learn whether a gate fires is to break
+  # production and watch. `engine/plan.py` is that sequence as data.
+  "dotmac_sub:scripts/deploy.sh",
+  "dotmac_sub:scripts/deploy_production.sh",
+  "dotmac_sub:scripts/deploy_staging.sh",
+  "dotmac_sub:scripts/db_backup.sh",
+  "dotmac_sub:scripts/docker_image_retention.sh",
+  "dotmac_sub:scripts/release_backup_policy.py",
+  # The canonical warm-candidate ingress, NOT the older divergent copy at
+  # deploy/nginx/selfcare.dotmac.io. Told apart three ways: it is what
+  # nginx/setup-nginx.sh:35 installs; it alone carries the `backup` upstream
+  # member that deploy.sh's assert_proxy_handoff_contract regex-matches; and
+  # the other file has no upstream block at all.
+  "dotmac_sub:nginx/selfcare.dotmac.io.conf",
+  "dotmac_sub:nginx/setup-nginx.sh",
+  "dotmac_sub:.github/workflows/release-candidate.yml",
+  "dotmac_sub:.github/workflows/release-promotion.yml",
+  "dotmac_sub:docker-compose.yml",
+  # ── Integrator: the image and migration-ordering contract.
+  "dotmac_integrator:Dockerfile",
+  "dotmac_integrator:docker-compose.yml",
+  "dotmac_integrator:scripts/audit_image.sh",
+  "dotmac_integrator:src/dotmac_integrator/health.py",
+  "dotmac_integrator:.github/workflows/release-image.yml",
+  "dotmac_integrator:deploy/alerts/ingress.rules.yml",
+  # ── ERP: production-used preflight, backup and static synchronization.
+  "dotmac_erp:scripts/deploy.sh",
+  "dotmac_erp:scripts/backup_erp_db.sh",
+  "dotmac_erp:scripts/restore_from_backup.py",
+  "dotmac_erp:scripts/sync-static.sh",
+  "dotmac_erp:scripts/bootstrap_database_roles.py",
+  # The recovery-bundle inputs. Read as EVIDENCE of the defect, not as code to
+  # port: every one of these captures a database and no roles, so what was
+  # extracted is the shape of the failure and the closure that repairs it.
+  "dotmac_vendor_control_plane:scripts/deploy_production.sh",
+  "dotmac_sub:scripts/backup/backup_dotmac_sub_dbs_to_rclone.sh",
+  # The product-first reference for "a binding is a claim, not a fact", and the
+  # counter-example that produced EffectivePrivilegeFact: these assert
+  # revocations through information_schema.table_privileges, which sees only
+  # direct grants.
+  "dotmac_workspace:src/dotmac_workspace/migration_bindings.py",
+  "dotmac_workspace:tests/db/test_login_state_isolation.py",
+  "dotmac_workspace:tests/db/test_tenant_isolation.py",
+  # ── Starter: the self-declared hand-port that motivated the extraction.
+  "dotmac_starter_mt:scripts/deploy.sh",
+  "dotmac_starter_mt:Dockerfile",
+  "dotmac_starter_mt:docker-compose.yml",
+  "dotmac_starter_mt:packages/dotmac-deployment-foundation/src/dotmac_deployment_foundation",
+]
+
+preserved_tests = [
+  # Sub and ERP ship no test for their deployment engines — the scripts are
+  # shell and are exercised only by deploying. That absence is itself the
+  # extraction's strongest argument and is recorded rather than glossed:
+  # `docs/inventories/deployment-foundation-sources.md` § 7.
+  # Integrator is the exception and its image audit IS a test, with its own
+  # sensitivity proof; it is the parity obligation this package inherits.
+  "dotmac_integrator:scripts/audit_image.sh",
+  "dotmac_integrator:tests/architecture/test_the_assembly_stays_thin.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_secrets_guard.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_failure_injection.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_nginx.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_alerts.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_compose.py",
+  "dotmac_starter_mt:tests/unit/test_deployment_foundation_image_audit.py",
+  "dotmac_starter_mt:tests/architecture/test_deployment_foundation_facility.py",
+  "dotmac_starter_mt:tests/architecture/test_deployment_image_audit_collector.py",
+]
+
+inventory_evidence = [
+  "docs/inventories/deployment-foundation-sources.md",
+  "docs/adr/0070-deployment-is-a-stateless-versioned-foundation.md",
+  "docs/adr/0003-unified-deployment-profiles.md",
+]
+
+contract_consumers = ["dotmac_erp"]
+candidate_consumers = [
+  "dotmac_starter_mt",
+  "dotmac_integrator",
+  "dotmac_sub",
+]
+# What ERP actually runs, by references a later reader can re-read. The consumer
+# count above is what pins `status`; this is what makes that claim checkable
+# rather than merely true.
+# Immutable coordinates only. The first version of this list cited
+# `dotmac_erp:main@<sha>` plus the version that branch pinned AT THAT MOMENT,
+# and it was stale within hours: ERP merged #415 and repinned. A branch tip is
+# a snapshot presented as a standing fact, so the evidence now cites the merged
+# pull request and its merge commit, which do not move.
+adoption_evidence_schema = "v1"
+
+composition_boundary = "ADR-0070. This package is a UNIVERSAL FACILITY and not a module: no ModuleManifest, no models, no migrations, no short_code, no migration_prefix, no tenant or business state, and therefore no MIGRATION_OWNER_LEDGER row — `check_allocation_serialized.py` exempts this classification for exactly that reason. It declares ZERO runtime dependencies: not dotmac-kernel, not SQLAlchemy, not FastAPI, not Jinja, not a YAML library. That is the same shape as dotmac-ui and it exists for the same reason — a build runner that renders a Compose file has no database and no web framework and must not acquire them in order to validate a descriptor. Rendering is explicit Python emitting text rather than a template engine, so `render --check` compares bytes. Two import-linter contracts hold the boundary in both directions: the facility imports neither the kernel nor the assembly, and no application code imports the facility. Against dotmac-deployment-control the split is WHAT versus HOW: that module owns desired state, immutable plans, approvals, rollout decisions, attempts, acknowledgements and drift-as-authority, and gains no Docker, Nginx, SSH, cloud-provider, migration, backup or monitoring implementation; this facility owns the execution of one release on one host and holds no durable fleet record. Against dotmac-platform-health the split is observation versus infrastructure: that module may own authenticated normalized health observations and their projection; this facility deploys the collectors, injects the resource attributes and emits the deployment annotations, and owns no health status. Against the external Observability platform: it owns storage, queries, dashboards, alert delivery and operator access; this facility owns the alert DEFINITIONS and the pipeline that feeds them. ADR-0062's rule that modules own metric definitions and assemblies own exporters is unchanged and this facility is the exporter-deployment half of it."
+
+first_cutover = "dotmac_erp, and deliberately so: it holds the most defects (D1-D7 in the inventory) and therefore the most value, and it is the only product where the cutover retires a real second engine rather than filling a vacuum. The cutover is one product branch — `deploy/product.toml` plus rendered assets plus a CI conformance job — and it retires nothing until parity is proven against the existing `scripts/deploy.sh`. ADOPTED, and precisely this far. On ERP `main` at e1402902 the product declares `deploy/product.toml`, commits the rendered assets the facility produces (Compose, the Nginx vhost, the collector and the alert rules under `deploy/rendered/`), carries a `deployment-conformance` workflow whose runs pass today, and installs the published distribution in CI to run `dotmac-deploy image-audit`. The pin is the exact published 0.2.0a2, whose tag peels to 55750e10, and ERP's conformance workflow is pinned to that same revision. An earlier version of this row said 0.2.0a1; it was read at ERP main 63c59133 and was already stale when it merged, because ERP had repinned in #415. Citing a branch tip is how that happens. What is NOT yet true and must not be read into that: ERP has not deployed to a host THROUGH this facility. `scripts/deploy.sh` is still the executor and is not retired, and no environment has been cut over. The facility is adopted as declarative input and as a CI gate, not yet as the deployment engine — which is the distinction `local_copy_retirement` turns on. This row previously read 'NOT STARTED as an adoption' and forbade reading the dossier as evidence that ERP runs the facility; that was true when written and is now false."
+
+shadow_and_drift = "There is no data to shadow — this package holds no rows and decides no business fact — so the drift that matters is between a RENDERED asset and the descriptor that produced it, and between a RUNNING deployment and the plan that was approved. Both are checkable and both are owed at composition. (1) `dotmac-deploy render --check` re-renders every asset from `deploy/product.toml` and fails on a byte difference; a product's CI runs it, so a hand-edited Compose file on a branch fails review rather than a host. (2) `dotmac-deploy drift` compares the observed image digest, the observed configuration digest and the observed product-manifest digest against the approved plan; this is the check that would have caught the host-side script drift recorded twice in `seabone-staging-dotmac-sub-deploy-landmines`, where the live `scripts/deploy.sh` was traced to a commit that was not the deployed release. (3) Every guard in this package carries an ADR-0018 sensitivity proof — a negative control proving the checker passes a conforming input, and a planted-defect case per property proving it fails a violating one. A scanner over a clean tree passes for the wrong reason otherwise, and this package is almost entirely scanners."
+
+local_copy_retirement = "Three products hold a local engine and each retires on proven parity, never before, and never in the same change that adopts. dotmac_sub: `scripts/deploy.sh`, `deploy_production.sh`, `deploy_staging.sh`, `db_backup.sh`, `docker_image_retention.sh` and the SECOND Nginx copy at `deploy/nginx/selfcare.dotmac.io` — Sub adopts LAST because its 22-service topology and its two genuinely privileged WireGuard roles need explicit declared exceptions, and because it is the only one of the four whose engine is currently protecting a production deployment. dotmac_erp: `scripts/deploy.sh`, `scripts/backup_erp_db.sh` and `scripts/sync-static.sh`. dotmac_starter_mt: `scripts/deploy.sh`, which is a self-declared hand-port (`:4`) and is the cheapest retirement of the three because nothing depends on it. dotmac_integrator retires ONE thing and it is a narrow one: `scripts/audit_image.sh`, which `dotmac-deploy image-audit` replaces and whose sensitivity proof the replacement inherits as a parity obligation. Its Dockerfile does NOT retire — an image's system packages are product-owned declarative input under ADR-0070 § 2, so the facility supplies the contract the Dockerfile must satisfy rather than the Dockerfile itself. It has no deployment engine, backup or ingress to retire because it never had any, so the rest of its adoption is a filling rather than a replacement. RESTORE JOINS THE LIST, 2026-09-03, and it is a new KIND of obligation rather than another script: `recovery_execution.RecoveryExecutor` is the first shared thing in this facility that can perform a restore, so every product-local restore path it could displace now has a named owner to retire TOWARD. Nothing retires yet and nothing may: the executor has never run against a real cluster, and the parity gate is the same one every other row here turns on -- proven parity first, never in the change that adopts. What it displaces when that gate is met is the restore half of dotmac_sub's `db_backup.sh` and dotmac_erp's `scripts/backup_erp_db.sh`; the BACKUP half of both is untouched, because taking a backup and restoring one are different acts and this executor performs only the second. THE GENERAL RULE, because a future retirement decision will meet it here: a HALF-DISPLACED WRITER PASSES EVERY PRESENCE CHECK AND FAILS ONLY AT THE MOMENT IT IS NEEDED. A backup script whose restore half was displaced and whose backup half was retired alongside it still exists, still runs, still appears in every inventory and every 'does this exist' check -- and is discovered to be missing its other half at the one moment nobody can afford to discover it. So displacement is recorded per RESPONSIBILITY rather than per file, and a retirement claim names which responsibility it retires; a claim that names only the script is not specific enough to be true. dotmac_starter_mt and dotmac_integrator have no local restore path to retire. Recording the obligation at the moment the capability lands is deliberate: an executor that quietly acquires the ability to displace a writer, without the displacement being written down, is how a local copy survives a cutover nobody realised had superseded it. Retirement is gated per product on proven parity, never on the consumer count. This clause previously read 'nothing is retired while this package has zero contract_consumers', which stopped being the operative test the moment ERP became one: a consumer that adopts the facility as declarative input and a CI gate has proven nothing about its ability to replace an executor. ERP is the live case — it is a contract consumer and its `scripts/deploy.sh` retires no sooner for it."
+
+next_action = "CURRENT STATE, 2026-09-05. 0.4.0a1 was built exactly once by candidate run 33920058598 from protected-main source 753a004e7f8dbab034d5d6ca565c680d931a5309 as artifact 9954731961. Its CandidateArtifact.v1 receipt never entered the repository, and #628 plus #631 changed the facility's importable source under the same version. The external-oracle candidate-window baseline therefore records both unrecorded and drifted. These bytes are not an admissible rehearsal or publication coordinate; 0.4.0a1 must not be rebuilt or published. The latest published Foundation remains 0.2.0a2. Michael has not authorized committing the old receipt, writing its disposition, or allocating a successor; those are separate lifecycle decisions. Before any successor candidate, close the Rule 49 composition gaps: exposure must cease to be a direct second execution authority, the dispatcher must retain the exact pre-observation and plan Control authorizes, one caller-held lock must cover all mutation, the Control-owned rehearsal/provocation grant must exist, Foundation's HostSource provider must bind its own artifact digest, and generic profile admission must be reached through installed artifacts. Then allocate a successor, build it once, run Lane 3 against those exact recorded bytes, publish those same bytes, cut over one application through Executor, and retire the corresponding local execution responsibility only after receipts prove replacement. ERP currently adopts this facility as descriptor input and a CI gate; scripts/deploy.sh remains its executor. No production executor or restore responsibility is retired. Historical facts remain unchanged: 0.3.0a5 is recorded superseded and publishable=false at CandidateDisposition.v1 sequence 4; 0.3.0a6 was never built and is a separate name spent by documents; recover remains absent from authorization.OPERATIONS and a Control recover authorization is refused here at AuthorizationReceipt construction before any effect."
+
+source_mode_note = "product-first, and the qualifying sources are three rather than one. Rule 24 asks for THE qualifying production-used implementation; this surface has three disjoint ones, each mature in a different half, and taking any single one would have imported that one's defects wholesale. Sub supplies the state machine's order and its refusals and is production-used on selfcare.dotmac.io. Integrator supplies the image contract, the one-shot migration service and the readiness shape, and its `audit_image.sh` is the only test any product has for deployment behaviour. ERP supplies the migration-role preflight, backup-before-migrate and static synchronization, all production-used. What each also supplies is a defect list, recorded as eighteen numbered rows in the inventory, so that the extraction can be audited for faithfulness in both directions — what was taken and what was deliberately left. This is NOT greenfield-after-inventory: real, load-bearing, production-proven prior art exists and Starter's own script already cites Sub as the source of truth, so claiming greenfield would misrepresent the prior art as absent."
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "1a3edf0eb567fe02665606d368f8f342536f548c"
+evidence_paths = [
+  "scripts/deploy.sh",
+  "scripts/deploy_production.sh",
+  "scripts/db_backup.sh",
+  "nginx/selfcare.dotmac.io.conf",
+]
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "78bcaebf4692fbde298ef2107b231d983e04a5c6"
+evidence_paths = [
+  "Dockerfile",
+  "docker-compose.yml",
+  "scripts/audit_image.sh",
+  "src/dotmac_integrator/health.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "7b62974b366eead1b32bead380e47d9cf10ec4c7"
+evidence_paths = [
+  "scripts/deploy.sh",
+  "scripts/backup_erp_db.sh",
+  "scripts/sync-static.sh",
+  "docker-compose.yml",
+]
+
+# ADOPTION ITSELF, at the commit where the property FIRST HELD. #407 is where
+# the descriptor, the conformance workflow and the pin all landed; an earlier
+# version of this list cited ERP's branch tip at reading time instead, which is
+# a timestamp presented as a fact.
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+# Its deploy path takes the backup that PostgresRecoveryBundle.v1 replaces:
+# `pg_dump --dbname ... --format custom`, role-blind. It is the writer the
+# bundle retires, and it is first in the adoption order precisely because its
+# restore proof gates the authorization issuer. Measured 2026-08-30: that dump
+# restored with 114 missing-role errors and still produced 45 tables.
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "ebbf6b2fa2e225c9c3afaa57cd58cd761343e2a5"
+evidence_paths = [
+  "scripts/deploy_production.sh",
+]
+
+[[product_writers]]
+product = "dotmac_workspace"
+# Read as the product-first reference for the role closure and it writes
+# NOTHING of this capability - it has no backup, restore, dump or bundle code
+# at all. `inventory_only` rather than `no_writer` because somebody looked, and
+# what the looking established is itself load-bearing: no product in the fleet
+# derives a role closure, so the closure was written here rather than ported.
+# What it did contribute is the idiom ("a binding is a claim, not a fact"),
+# snapshot-then-pure-decision, and - by counter-example - the direct-grant trap
+# that produced EffectivePrivilegeFact.
+writer_state = "inventory_only"
+retirement_required = false
+revision = "4c97dda18f6f6a8000ba2ade64f59210508b1d46"
+evidence_paths = [
+  "src/dotmac_workspace/migration_bindings.py",
+  "tests/db/test_login_state_isolation.py",
+  "tests/db/test_tenant_isolation.py",
+]
+
+[[adoption_evidence]]
+kind = "adopted"
+repository = "dotmac_erp"
+commit = "c0de423c2899f9372d70f6b20bd994de5b3e7ab5"
+path = "deploy/product.toml"
+field = "schema"
+expected = "ProductDeploymentSpec.v1"
+locator = "dotmac_erp:pull/407"
+note = "Adopted as declarative input and a CI gate, NOT as the deployment engine. The absence of a `deploy_run` row below IS that claim, checkably."
+
+# The a1 era. Superseded, never deleted: a1 carried the image-audit collector
+# defect a2 fixed, so 'ERP once ran a1' is a fact with consequences. The
+# free-text list destroyed it by overwriting the value in place.
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_erp"
+commit = "c0de423c2899f9372d70f6b20bd994de5b3e7ab5"
+path = "pyproject.toml"
+field = "tool.poetry.group.dev.dependencies.dotmac-deployment-foundation.version"
+expected = "0.2.0a1"
+locator = "dotmac_erp:pull/407"
+
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_erp"
+commit = "e1402902b7ce88e222269695155398b1929f8293"
+path = "pyproject.toml"
+field = "tool.poetry.group.dev.dependencies.dotmac-deployment-foundation.version"
+expected = "0.2.0a2"
+locator = "dotmac_erp:pull/415"
+note = "The dev group, deliberately: the facility never ships in ERP's runtime image. The free-text `dependency:...==0.2.0a2` string could not say that."
+
+# Rule 28: an independently released caller bound to a pinned published
+# revision, and the binding can fail. 55750e10 is the peeled tag of
+# dotmac-deployment-foundation-v0.2.0a2. Whether that tag exists is the release
+# oracle's question; this row asserts only what ERP's own file says.
+[[adoption_evidence]]
+kind = "contract_binding"
+repository = "dotmac_erp"
+commit = "e1402902b7ce88e222269695155398b1929f8293"
+path = ".github/workflows/deployment-conformance.yml"
+field = "jobs.deployment.uses"
+expected = "michaelayoade/dotmac_starter_mt/.github/workflows/deployment-conformance.yml@55750e104df3dd94b6f9f70bf8c8db53986394c7"
+locator = "dotmac_erp:pull/415"
+
+[[adoption_evidence]]
+kind = "workflow_run"
+repository = "dotmac_erp"
+commit = "e1402902b7ce88e222269695155398b1929f8293"
+run_id = "33251009129"
+observed = "success"
+observed_at = "2026-08-29"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS e1402902. The list previously carried run 33248839031, whose head_sha is d1d0c0e8 — the pull-request preview run, not the merged tree. A bare run id cannot show that difference."
+
+# The live pin lives in ERP's bill of materials and this dossier holds NO copy.
+# A copied value fails silently — it reads fine long after it stopped being
+# true. A pointer fails loudly: if ERP renames the file, it 404s.
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_erp"
+paths = ["pyproject.toml", "poetry.lock", ".github/workflows/deployment-conformance.yml"]
+field = "tool.poetry.group.dev.dependencies.dotmac-deployment-foundation.version"
+note = "ERP owns the consistency of its own two surfaces (the pin and the workflow's `with.foundation-version`). This dossier does not hold a third copy. Re-deriving the present tense from here is the scheduled external check that is NOT built."

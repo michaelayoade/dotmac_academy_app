@@ -1,0 +1,249 @@
+schema_version = 1
+package = "dotmac-kernel"
+classification = "universal-facility"
+status = "historical-pre-rule"
+source_mode = "historical-mixed"
+source_mode_note = "Two things a reader needs, and one field says both. The PACKAGE-LEVEL mode is `historical-mixed` and stays that way: the machine-credentials, credential-lifecycle and settings lanes genuinely are product-first, and relabelling the dossier to suit one lane would make a false claim about the others. SEMANTIC ENCODING (2026-09-02) is the lane that is not mixed and not product-first: it is greenfield after inventory, licensed by the negative inventory in docs/inventories/semantic-encoder-sources.md, which audits seven repositories at immutable origin/main revisions and finds no encoder anywhere with all four qualifying properties. CORRECTED on the day the lane landed: it had been recorded as a product-first extraction with Orders as the qualifying source. That was wrong. Orders and Refund Warrants are LOCAL INCUBATION SLICES, and rule 24 requires a qualifying product-first source to be a PRODUCTION implementation, so neither can be one. The two convergent implementations are evidence the DESIGN is right; they are not a source it was ported from, and neither is recorded as one. A lane whose mode differs from the package's is explained HERE and nowhere else: `source_mode_note` is the single narrative field for a source-mode choice, and a per-lane key would be a second vocabulary for one job."
+owner = "Dotmac platform foundation"
+contract = "Universal assembly facilities and versioned cross-product contracts"
+source_repositories = ["dotmac_starter_mt", "dotmac_erp", "dotmac_sub"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+# Slice-specific pins. These do not claim the older kernel dossier's other
+# product audits were all rerun at these revisions.
+# Human credential lifecycle (2026-08-30). Sub is the qualifying product-first
+# source: it is the only product running the full lifecycle in production.
+# Siblings were read through `git ls-tree`/`git show` at these exact commits; no
+# sibling working tree was touched.
+credential_lifecycle_source_revisions = [
+  "dotmac_sub:7b5a7220a90a3c86b4afd339a1e3950dbcfddf2b",
+  "dotmac_erp:01b1d6758ea2d5926eaf68f4bf40e3a67a15f2e8",
+  "dotmac_vendor_control_plane:36ff215be5a80bd84d31b6642b68f52097e9aeec",
+]
+permission_provisioning_source_revisions = [
+  "dotmac_sub:1a3edf0eb567fe02665606d368f8f342536f548c",
+  "dotmac_erp:623c6d588c9b6df4ed9a162d5b0f07155c0f7314",
+]
+# Request evidence context (2026-09-04). ERP is the qualifying product-first
+# source; Sub is inventoried for two anti-patterns and qualifies for nothing.
+# The ERP pin is a COMMIT and not a path on purpose: the checked-out ERP branch
+# predated both repairs, so reading the working tree would have inventoried the
+# defective version. `e286636b` descends from `b917e787` (verified with
+# `git merge-base --is-ancestor`), so one pin carries the trusted-proxy repair
+# and the request-context repair together.
+request_evidence_context_source_revisions = [
+  "dotmac_erp:e286636baea382e3978e779acd3155cea27e82b8",
+  "dotmac_sub:7c1d271dad54ad178fb90083305363f855622175",
+]
+source_paths = [
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel",
+  "dotmac_sub:app/composition.py",
+  "dotmac_erp:app/models/domain_settings.py",
+  "dotmac_erp:app/services/domain_settings.py",
+  "dotmac_sub:app/models/domain_settings.py",
+  "dotmac_sub:app/services/domain_settings.py",
+  "dotmac_sub:app/models/notification.py",
+  "dotmac_sub:app/services/communication_eligibility.py",
+  "dotmac_sub:app/services/notification.py",
+  "dotmac_sub:app/tasks/notifications.py",
+  # Recurring-commerce vocabulary declarations (2026-08-23). The generic
+  # manifest seam follows the kernel's existing registry pattern; business
+  # members and behavior remain product-first in dotmac-subscriptions.
+  "dotmac_sub:app/services/billing/contracts.py",
+  "dotmac_sub:app/services/billing/obligations.py",
+  "dotmac_sub:app/services/catalog/offers.py",
+  # Machine credentials (2026-08-22). Two independent X-Api-Key
+  # implementations that DISAGREE about what an empty scope list means;
+  # see inventory_evidence below.
+  "dotmac_sub:app/services/auth.py",
+  "dotmac_sub:app/services/auth_dependencies.py",
+  "dotmac_sub:app/models/auth.py",
+  "dotmac_erp:app/services/auth.py",
+  "dotmac_erp:app/api/service_principal.py",
+  "dotmac_erp:app/models/auth.py",
+  # Attribution + rotation (2026-08-24). Sub is the only source with either
+  # concept, and neither survives unchanged. `crm.py` identifies its caller by
+  # the presence of an `integration:crm` scope, so identity is a side effect of
+  # authorization; `web_system_api_key_mutations.rotate_api_key` overwrites
+  # `key_hash` in place, so the old secret dies at once.
+  "dotmac_sub:app/api/crm.py",
+  "dotmac_sub:app/services/web_system_api_key_mutations.py",
+  "dotmac_sub:app/services/owner_commands.py",
+  # Tenant-scope lifecycle (2026-08-26, `session_runtime.DatabaseRuntime`).
+  # ERP is the only source with a scope that SURVIVES a commit without also
+  # surviving the session: transaction-local priming plus an `after_begin`
+  # listener that re-arms each later transaction. The kernel had the two halves
+  # separately and each carried the other's hazard — a session-level setting
+  # that rides a pooled connection out, or a SET LOCAL that dies at the first
+  # commit inside a CLI loop. Ported at ERP
+  # 24dc218afae60cb6ec41fce641fe99512984767b; the dual-GUC prime in `rls.py` is
+  # the reason `legacy_tenant_settings` exists at all.
+  "dotmac_erp:app/db/session_context.py",
+  "dotmac_erp:app/rls.py",
+  # Permission provisioning (2026-08-26): declarations/route stamps come from
+  # Starter, persistence behavior from Sub, and the first persistence cutover
+  # from ERP Expense. Starter supplies the exact compatibility-shadow profile.
+  # The normalized planner itself is the evidenced greenfield gap; see the
+  # inventory below.
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/permissions.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/app_factory.py",
+  "dotmac_erp:app/models/rbac.py",
+  "dotmac_erp:app/services/rbac.py",
+  "dotmac_erp:scripts/seed_rbac.py",
+  "dotmac_erp:app/authz/expense.py",
+  "dotmac_erp:app/authz/payment_execution.py",
+  "dotmac_erp:app/authz/profile.py",
+  "dotmac_erp:app/startup.py",
+  "dotmac_erp:alembic/versions/20260826_provision_expense_permissions.py",
+  "dotmac_sub:app/services/rbac_catalog.py",
+  "dotmac_sub:scripts/seed/seed_rbac.py",
+  # Human credential lifecycle (2026-08-30). Sub's FOUR verification owners and
+  # its eleven `hash_password` caller files, measured by call graph — the two
+  # seed scripts are why the guard enumerates entry-point families rather than
+  # `app/`. `UserCredential` (app/models/auth.py) is the human model;
+  # `AccessCredential` and `SnmpCredential` are device/service credentials and
+  # are EXCLUDED, see the inventory.
+  "dotmac_sub:app/models/auth.py",
+  "dotmac_sub:app/services/auth_flow.py",
+  "dotmac_sub:app/services/web_customer_auth.py",
+  "dotmac_sub:app/services/web_system_db_inspector.py",
+  "dotmac_sub:app/services/web_system_profiles.py",
+  "dotmac_sub:app/services/credential_recovery.py",
+  "dotmac_sub:app/services/customer_credential_enrollment.py",
+  "dotmac_sub:app/services/reseller_onboarding.py",
+  "dotmac_sub:app/services/staff_provisioning.py",
+  "dotmac_sub:app/services/vendor_user_provisioning.py",
+  "dotmac_sub:app/services/web_customer_user_access.py",
+  "dotmac_sub:app/services/web_subscriber_forms.py",
+  "dotmac_sub:app/services/web_system_user_mutations.py",
+  "dotmac_sub:scripts/seed/seed_admin.py",
+  "dotmac_sub:scripts/seed/seed_test_fixtures.py",
+  "dotmac_erp:app/services/auth_flow_api.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/platform_admin.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/security.py",
+  # Request evidence context (2026-09-04). ERP's `net.py` is the qualifying
+  # source and `observability.py` is the context creator whose `if actor_id:`
+  # leak the kernel shape exists to prevent. The two Sub paths are inventoried
+  # as ANTI-PATTERNS, not as sources: `audit_helpers.py` recovers an actor kind
+  # by splitting an identifier on a separator, and `crm.py` identifies its
+  # caller by the presence of a scope, making identity a side effect of
+  # authorization. Neither is carried forward.
+  "dotmac_erp:app/net.py",
+  "dotmac_erp:app/observability.py",
+  "dotmac_sub:app/services/audit_helpers.py",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/architecture/test_kernel_public_surface.py",
+  "dotmac_starter_mt:tests/unit/test_settings_service.py",
+  "dotmac_starter_mt:tests/unit/test_setting_scopes.py",
+  "dotmac_starter_mt:tests/test_settings_isolation.py",
+  "dotmac_erp:tests/test_domain_settings_services.py",
+  "dotmac_sub:tests/test_domain_settings_services.py",
+  "dotmac_starter_mt:tests/unit/test_consent.py",
+  "dotmac_starter_mt:tests/unit/test_delivery.py",
+  "dotmac_starter_mt:tests/unit/test_delivery_providers.py",
+  "dotmac_starter_mt:tests/unit/test_channel_policy.py",
+  "dotmac_starter_mt:tests/test_consent_isolation.py",
+  "dotmac_starter_mt:tests/test_delivery_isolation.py",
+  "dotmac_sub:tests/test_communication_eligibility.py",
+  "dotmac_sub:tests/test_notification_queue_suppression.py",
+  "dotmac_sub:tests/test_email_services.py",
+  "dotmac_sub:tests/test_domain_settings_scope.py",
+  "dotmac_sub:tests/test_domain_settings_tenant_fk_migration.py",
+  "dotmac_sub:tests/architecture/test_composition.py",
+  "dotmac_starter_mt:tests/unit/test_product_manifest.py",
+  "dotmac_starter_mt:tests/unit/test_product_database_catalog.py",
+  "dotmac_starter_mt:tests/unit/test_modules.py",
+  "dotmac_starter_mt:tests/unit/test_subscriptions_contracts.py",
+  "dotmac_starter_mt:tests/unit/test_machine_credentials.py",
+  "dotmac_starter_mt:tests/unit/test_machine_attribution.py",
+  "dotmac_sub:tests/test_api_key_scopes.py",
+  "dotmac_sub:tests/test_api_key_principal.py",
+  "dotmac_sub:tests/test_api_key_hmac_hashing.py",
+  "dotmac_sub:tests/test_web_system_api_keys_service.py",
+  "dotmac_sub:tests/test_crm_service_auth.py",
+  "dotmac_starter_mt:tests/unit/test_permission_provisioning.py",
+  "dotmac_starter_mt:tests/architecture/test_permission_plan_adoption.py",
+  "dotmac_erp:tests/test_rbac_services.py",
+  "dotmac_erp:tests/architecture/test_authz_declarations_are_pure.py",
+  "dotmac_erp:tests/migrations/test_expense_permission_provisioning.py",
+  "dotmac_sub:tests/test_rbac_catalog_owner.py",
+  "dotmac_sub:tests/architecture/test_rbac_catalog_boundary.py",
+  # Human credential lifecycle. The Starter tests are the facility's own; the
+  # Sub tests are the PARITY set a Sub cutover must run against the facility,
+  # with the departures asserted rather than skipped.
+  "dotmac_starter_mt:tests/unit/test_credential_lifecycle.py",
+  "dotmac_starter_mt:tests/architecture/test_credential_lifecycle_ratchet.py",
+  "dotmac_sub:tests/test_auth_flow.py",
+  "dotmac_sub:tests/test_auth_flow_helpers.py",
+  "dotmac_sub:tests/test_web_customer_auth.py",
+  "dotmac_sub:tests/test_staff_provisioning_owner.py",
+  "dotmac_sub:tests/test_reseller_onboarding.py",
+  "dotmac_sub:tests/architecture/test_credential_recovery_boundary.py",
+  "dotmac_sub:tests/architecture/test_credential_literals.py",
+  # Request evidence context. The two ERP suites are the PARITY set, written
+  # against the shipped ERP implementation before the port existed — which is
+  # what makes them parity tests rather than a port agreeing with itself. The
+  # Starter test is the facility's own, and it carries the ERP assertions
+  # across alongside the properties the port adds.
+  "dotmac_erp:tests/test_net_trusted_proxy.py",
+  "dotmac_erp:tests/test_observability_request_context.py",
+  "dotmac_starter_mt:tests/unit/test_request_evidence.py",
+  # Semantic encoding (2026-09-02). The Orders and Refund Warrants slice
+  # suites are the parity set, but they live on unpushed incubation
+  # branches and are therefore not addressable from this tree — see the
+  # SEMANTIC ENCODING note in shadow_and_drift. This is the facility's own
+  # test, and it pins the cv1 bytes as literals.
+  "dotmac_starter_mt:tests/unit/test_semantic_encoding.py",
+]
+contract_consumers = ["dotmac_starter_mt"]
+candidate_consumers = [
+  # Pulled the machine-auth facility: it must serve an authenticated
+  # destination descriptor to the Integrator (Vendor ADR-0010 gate 2b) and
+  # runs with platform_surface_enabled=False, so no existing kernel guard
+  # fits. A third local implementation was refused on 2026-08-22.
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_vendor_control_plane",
+  "dotmac_academy_app",
+]
+inventory_evidence = [
+  # Semantic encoding (2026-09-02). The negative inventory licensing the
+  # greenfield classification: seven repositories at immutable origin/main
+  # revisions, no qualifying encoder in any of them, every near-miss
+  # recorded with the exact property it fails on.
+  "docs/inventories/semantic-encoder-sources.md",
+  "docs/inventories/machine-credential-sources.md",
+  "docs/inventories/starter-surfaces.md",
+  "docs/inventories/branding-settings.md",
+  "docs/inventories/module-extraction-sources.md",
+  "docs/inventories/consent-suppression-sources.md",
+  "docs/inventories/delivery-outbox-sources.md",
+  "docs/inventories/channel-policy-sources.md",
+  "docs/inventories/product-manifest-sources.md",
+  "docs/inventories/subscriptions-sources.md",
+  "docs/inventories/subscriptions-extraction-dossier.md",
+  "docs/inventories/permission-provisioning-sources.md",
+  "docs/inventories/credential-lifecycle-sources.md",
+  "docs/inventories/request-evidence-context-sources.md",
+]
+first_cutover = "The starter reference assembly consumes the extracted settings, consent, delivery, and channel-policy facilities; product-by-product released-pin cutovers follow the existing-product adoption plan. MACHINE CREDENTIALS (2026-08-22): not started. dotmac_sub is the first cutover and the licence destination, so its descriptor route (Vendor ADR-0010 gate 2b) is the first caller. It did not PULL the facility: the demand came from a separate ISP assembly that needed an authenticated descriptor route and had no kernel guard that fitted, and ADR 0012's conversion amendment then ended that assembly. The distinction is worth keeping — a facility attributed to whoever adopts it first loses the reason it exists, and the reason is what a later reader checks the design against. CORRECTED the same day: this said dotmac-isp composes the released kernel greenfield and \"has no legacy verifier to retire, so its cutover proves the facility rather than a migration\". Governance ADR 0012's conversion amendment ended the separate ISP assembly — Sub is not retired, it becomes the thin assembly in place — and Sub DOES hold a legacy verifier. So this is a migration, not a greenfield proof, and it inherits the Sub reissuance gate recorded in local_copy_retirement below: Sub's verification key is derived from the connector-credential encryption key, so every credential must be reissued before app/services/auth.py's hash_api_key, hash_api_key_candidates, _maybe_upgrade_api_key_hash and _touch_api_key_last_used can retire. PERMISSION PROVISIONING (2026-08-26): the Starter assembly is the compatibility-shadow consumer; ERP PR #370 at commit 623c6d588c9b6df4ed9a162d5b0f07155c0f7314 is the first merged persistence implementation, through a self-contained additive Alembic migration rather than a startup writer or full-seed deployment step. It is not a production cutover until deployed, and it does not consume the shared package. CREDENTIAL LIFECYCLE (2026-08-30): not started, and deliberately sequenced behind two gates that are not this lane's to open. dotmac_sub is the named first adopter, beginning with app/services/auth_flow.py (the de facto canonical owner on every axis), and its cutover cannot begin until (1) the Sub containment lane releases the Sub writer lease and (2) Michael authorizes a kernel release whose version is DERIVED from immutable tags at that time. No kernel version is allocated by the change that added the facility. Nothing composes it today: this is an extraction with a named first adopter, not an adoption. REQUEST EVIDENCE CONTEXT (2026-09-04): NOT STARTED, and deliberately not declared. `dotmac_kernel.request_evidence` implements the Foundation's `request_evidence_context` concern, extracted product-first from ERP (app/net.py and app/observability.py at e286636baea382e3978e779acd3155cea27e82b8). dotmac_erp is the named first adopter and dotmac_sub follows. NO profile binding is registered, no provider entry point is declared, and the Platform CP verifier is untouched: a binding whose only consumer is a test is absent, so the declaration belongs to the change that brings an installed artifact and real assembly wiring with it. Nothing composes the facility today. dotmac_sub is inventoried and qualifies for nothing here — it has no trusted-proxy resolver and no request evidence context, and its two inventoried paths are anti-patterns the extraction refuses to reproduce. SEMANTIC ENCODING (2026-09-02): NO CUTOVER HAS OCCURRED, published or otherwise. What happened is COORDINATED INCUBATION COMMITS — three local commits on unpushed branches (this one, `incubate/orders/slice-1`, `incubate/refund-warrants/slice-1`) that add the kernel owner and delete both local copies together, so the facility gains an owner rather than a third writer. That is a local sequencing property, not an adoption: nothing composes these branches, nothing runs this encoder in production, and a cutover is a claim about production that three unpushed commits cannot make. CORRECTED the same day: this said \"both consumers cut over in the SAME change\" and named Orders \"the qualifying product-first source\". Both were wrong. Orders and Refund Warrants are LOCAL INCUBATION SLICES, and rule 24 requires a qualifying product-first source to be a production implementation, so neither slice can be one. This lane is `greenfield-after-inventory` (see source_mode_note above), licensed by the negative inventory in docs/inventories/semantic-encoder-sources.md, and INFORMED BY two independently convergent implementations that are evidence the design is right rather than a source it was ported from. The first cutover is therefore not yet named and cannot be until a kernel release exists and a consumer is promoted with a sufficient dependency floor."
+shadow_and_drift = "Each product must run parity, profile, migration, and product behaviour tests before removing its local implementation. MACHINE CREDENTIALS: the parity set is Sub's own api-key suite (test_api_key_scopes, test_api_key_principal, test_api_key_hmac_hashing, test_web_system_api_keys_service, test_crm_service_auth) run against the kernel facility, with the DEPARTURES asserted rather than skipped — a wildcard scope authorizes nothing, an empty scope list authorizes nothing, a rotated-away key keeps working until complete_rotation, and an un-attributed credential does not authenticate. A parity run that merely passes Sub's suite unchanged would prove the extraction had reacquired the defects. PERMISSION PROVISIONING: compare the schema-versioned plan digest and the complete declared role-grant profile against product catalogue rows; prove missing additions, inactive conflicts, idempotence, and preservation of every extra role, permission, description, membership, direct grant, and role-permission link. CREDENTIAL LIFECYCLE: the parity set is Sub's own auth suite (test_auth_flow, test_auth_flow_helpers, test_web_customer_auth, test_staff_provisioning_owner, test_reseller_onboarding, test_credential_recovery_boundary, test_credential_literals) run against the kernel facility with the DEPARTURES asserted rather than skipped: lifecycle state disclosed only after the password matches, a missing credential costing the same work as a live one, provisioning accepting no material at all, and generated material reaching no return type, log, exception, repr, receipt or audit row. A parity run that merely passes Sub's suite unchanged would prove the extraction had reacquired the shape it exists to prevent. Drift is measured continuously rather than at cutover: scripts/credential_lifecycle_sweep.py counts direct hash_password/verify_password/password_needs_rehash CALLS across every Python entry-point family in four repositories at immutable commits, and docs/inventories/credential-lifecycle-baseline.json freezes the result two-directionally. REQUEST EVIDENCE CONTEXT: the parity set is ERP's own two suites (tests/test_net_trusted_proxy.py, tests/test_observability_request_context.py) run against the kernel facility, with the DEPARTURES asserted rather than skipped: the trusted set is typed configuration rather than an import-time os.getenv read, the actor arrives through a product resolver rather than a JWT decoded inside the middleware, and the actor kind is declared rather than absent. Two ERP repairs are parity behaviour and not tidying — a bare address derives its prefix from the address family (fail-OPEN before: a bare ::1 parsed to ::/32 and trusted 7.9e28 hosts) and an explicit prefix survives as written (the near-miss a refuse-all-IPv6 fix would satisfy while deleting real configuration). Drift on the concurrency proof is measured rather than asserted: asyncio runs every task in a COPY of the context, so a task-based concurrency test cannot fail, and test_the_concurrency_proof_alone_would_pass_against_the_broken_shape drives the planted broken creator through the same assertion and REQUIRES it to pass, so that fact cannot quietly stop being true. The proofs that can fail are the sequential anonymous-after-authenticated leak and the nested overlap inside a single context; both are run against a planted _ErpShapedContextCreator and required to fail there. SEMANTIC ENCODING: there is no product-local implementation to run parity AGAINST, which is the inventory's finding rather than a gap in this lane — docs/inventories/semantic-encoder-sources.md audits seven repositories at immutable origin/main revisions and finds no encoder anywhere with all four qualifying properties (length-prefixed framing, a TYPED absence sentinel, exact money at currency scale, a domain-separated digest), and records that NOT ONE audited implementation has the typed sentinel. What was run instead is a byte-parity shadow against the two incubation copies. It was run BEFORE unification rather than after, because the risk here is a byte change and not a behaviour change. Three implementations — Orders' identity.py, Refund Warrants' identity.py and the kernel module — were loaded side by side and driven over one 76-case corpus covering every encodable scalar type, every refusal, both container orders, the absence sentinel and both digest domains, comparing raw BYTES rather than digests; zero mismatches. Independently, the three parse to an identical AST once docstrings are stripped (sha256 c56642b3163de6941f6e707896e7e232a7b09a7768b727c99c75d4c724772aa6), which is also the proof the two local copies had NOT drifted from each other before unification. Ongoing drift is prevented by construction rather than measured: there is one implementation and no local copy left to drift from it, and tests/unit/test_semantic_encoding.py pins the cv1 bytes as LITERALS so a change to the encoder cannot be absorbed by an expectation the encoder computes."
+local_copy_retirement = "A product-local owner is removed only after its released kernel cutover and parity gate; task #22 owns the outstanding ERP/Sub settings-domain repair, while Sub's communication eligibility, notification receipt, and channel-policy paths retire only after their kernel adapters pass the preserved behavior proofs. MACHINE CREDENTIALS: adoption is credential REISSUANCE, never a hash migration — a stored digest holds neither the raw key nor material to re-key from, so no conversion or backfill exists. Sub: scope semantics already match, but its verification key is derived from the connector-credential encryption key, so every credential must be reissued before app/services/auth.py's hash_api_key, hash_api_key_candidates, _maybe_upgrade_api_key_hash and _touch_api_key_last_used retire. ERP: gated on resolving every active null/empty-scoped key — inventory by IDENTIFIER only, assign an owner and explicit minimum scopes, revoke unused and reissue retained, and treat every unresolved active key as a CUTOVER BLOCKER. An empty scope list may never be translated into a wildcard or all-current-permissions. ERP runs a bounded old/new verification transition with a checked retirement deadline; that legacy verifier stays in ERP and never enters the kernel, which has one scheme and no fallback. PERMISSION PROVISIONING: `PermissionSpec.default_roles` retires only after every adopting product persists its assembly profile, proves decision parity, and changes authorization to the product-owned catalogue. Seed-owned role mappings retire only after the product service or migration adapter is the named writer; no destructive convergence is allowed before a multi-owner claim ledger exists. CREDENTIAL LIFECYCLE: a product-local verification or hashing owner is removed only when every verification path in that product returns a facility verdict and none re-derives active/locked/reset-required from raw fields; every credential-creating path calls provision and none accepts caller material (the parameter GONE from the signature, not merely unused); reset completion runs behind a single-use recovery authorization; the parity set above passes with its departures asserted; and the baseline is lowered in the SAME commit so the retirement is reviewable as a diff. Sub retires four verification owners (auth_flow, web_system_db_inspector, web_system_profiles, web_customer_auth) and eleven hash_password caller files including two seed scripts. ERP follows under its own gate; the vendor control plane has no reset-required concept at all and adopts the verdict type before it adopts anything else. AccessCredential and SnmpCredential are device/service credentials and are never in scope. REQUEST EVIDENCE CONTEXT: ERP's app/net.py and its ObservabilityMiddleware context creation retire only after ERP composes a released kernel, all six consumers of the client address (rate limiting, CSRF, the password-reset URL, the HR API, the employee web surface and the audit listener) read the facility's evidence, and the parity set above passes with its departures asserted. ERP's request-path helpers get_request_scheme/get_request_host are ported and retire with net.py. Two retirements are owed INSIDE this repository as well, and neither is done: dotmac_kernel.middleware.observability.ObservabilityMiddleware writes the same dotmac_kernel.logging.request_id_var this facility bridges to, so the two are ALTERNATIVES rather than layers and an assembly must never install both — no guard catches that today, and none is claimed; and nothing compares a declared [ingress] trusted_proxies with the policy the process actually constructed, which is the readback hole ERP recorded at docs/inventories/2026-09-04-erp-proxy-trust-readback-hole.md, reachable with no typo at all because unset is empty and empty is valid by design. SEMANTIC ENCODING: both local copies are GONE across the coordinated incubation commits, not deprecated and not aliased. Retiring two local incubation copies is not a product cutover and is not recorded as one — no product owner is retired by this lane, because the inventory found no product owner to retire. Each slice's own architecture test proves the absence structurally rather than by filename — it AST-scans every module in the slice for a local length-prefixed framing implementation and for a redefinition of any name the kernel facility owns — so re-adding the encoder under a different filename fails the slice. `fingerprints.fingerprint_of` is deliberately NOT retired and NOT changed: its bytes are a compatibility contract compared against fingerprints already persisted in idempotency_records, so framing or type fidelity there would move every stored value and turn live replays into conflicts. The two facilities are documented side by side in COMPATIBILITY.md so a later reader does not harmonise them."
+next_action = "Publish the demand-pulled product-manifest contract, make Sub's release path emit it from SUB_ASSEMBLY, and replace Vendor's configured capability lists and duplicate catalogue protocol with digest-verified snapshots before the Entitlement Allocation writer cutover. The broader adoption sequence remains Sub settings first, then ERP. MACHINE CREDENTIALS: release the hardened facility (tenant-scoped RLS-protected credential, X-Api-Key against a dedicated held key, exact scopes with empty authorizing nothing, active/expiry/revocation, typed MachinePrincipal, require_machine_scope inside an established tenant scope, and no admin access, wildcard, human-user requirement, commit, rollback or authentication-time telemetry write), then pin it in dotmac_sub under the reissuance gate above; ERP adopts separately under its own. There is no separate ISP assembly to pin it in. ATTRIBUTION + ROTATION (2026-08-24, unreleased, migration 0028_machine_attribution): the facility now carries a source application on the credential, the principal, every CommandEnvelope and every audit row, and a rotation window in which two secrets authenticate to the same principal until an explicit complete_rotation. Sub owes TWO follow-ups before it can pin this kernel: (1) its migration 551 transcribed machine_credentials from the a90 model, so the 0028 columns are a further migration there; (2) an operator must attribute every credential row, because source_application is nullable for one release only and an un-attributed row does not authenticate. Sub must ALSO reconcile its own scope enforcement: has_permission expands the required permission through _wildcard_ancestors and _permission_domain_aliases, so a Sub key holding network:* or * has authority the kernel facility will not reproduce — each such key needs explicit leaf scopes assigned before reissuance, and translating a wildcard into all-current-permissions is refused for the same reason ERP's empty-means-everything is. CREDENTIAL LIFECYCLE (2026-08-30, unreleased, no version allocated): wait for the Sub writer lease and Michael's release authorization, then pin the released kernel in dotmac_sub and route app/services/auth_flow.py verification through the facility, keeping Sub's own HTTP mapping and session issuance. The other three verification owners follow, then the eleven hash_password callers. No production account reset belongs to this extraction lane. REQUEST EVIDENCE CONTEXT (2026-09-04, unreleased, no version allocated): confirm what `scope` means in the actor triple before any binding is declared — it is implemented as the actor's AUTHORIZATION SCOPE SET, carried as evidence and given no meaning here, and the alternative reading (tenant scope) was not chosen by a record. Then land assembly wiring plus an installed artifact, declare the profile binding in that same change, and pin the released kernel in dotmac_erp as the first adopter. Sub follows and must additionally retire the two inventoried anti-patterns (app/services/audit_helpers.py deriving an actor kind by splitting an identifier, app/api/crm.py deriving caller identity from the presence of a scope) rather than adapting them onto the facility. SEMANTIC ENCODING (2026-09-02, unreleased, NO VERSION ALLOCATED — and no pin either). The next step is an ORDERED RELEASE TRAIN, set by Michael, and nothing later in it can start before the step above it: (1) repair this dossier and its inventory evidence — DONE by this change; (2) merge the kernel stack 3224eb15 -> 1d00567b -> 575b7506 -> 1e214679; (3) publish the derived kernel version, DERIVED from immutable tags at that time and never invented here; (4) verify the registry artifact — a published version is a claim an external oracle has to confirm; (5) raise the exact consumer floors to that verified version; (6) run the Orders, Refund Warrants and catalogue suites AGAINST the published artifact, since none of their counts today were measured against one; (7) promote the consumers and repin Suite. Two facts belong with that train. FIRST: the consumer branches may remain deliberately unimportable during incubation — their suites fail at collection against any kernel on an index and that is a recorded state, not a broken checkout — but they must NOT be promoted with an insufficient dependency floor; step 5 is the gate, and a promotion that skips it ships a package that cannot import what it binds to. SECOND: this train is not the encoder's alone. The same kernel release also unblocks the SEVEN managed-capability contract catalogues importing canonical_json_bytes (commit 3224eb15), so the release is shared and its sequencing is not this lane's to reorder. The pin question stays REFUSED, and the distinction is the point: the inventory evidence IS citable at immutable revisions — every row in docs/inventories/semantic-encoder-sources.md names a commit reachable on its repository's origin/main — while the incubation branches are NOT. Both slice branches have a push remote that deliberately does not exist (LANE.md), so neither head is fetchable, tagged or resolvable by any reader but this workstation. So no source_revisions entry names an incubation head, no pinned_at is recorded, no source_paths entry is added (those must resolve in this tree and the slice paths do not exist on this branch), and no version floor is invented: the floor a consumer would need does not exist on any index, and naming one would assert a release no oracle can confirm — the claim rule 26 and Governance ADR 0013 forbid. An inventory can be pinned; an unpushed branch cannot."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/domain_settings.py", "app/services/domain_settings.py", "app/services/auth.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/composition.py", "app/models/domain_settings.py", "app/services/domain_settings.py", "app/models/notification.py"]

@@ -1,0 +1,75 @@
+schema_version = 1
+package = "dotmac-ai-operations"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral AI intake policy, transcription/model-execution evidence, resumable operator workflow state and advisory insight lifecycle"
+contract = "Version and activate product-authored intake policies; record opaque input observations and immutable transcription/model-execution attempts; advance a provider-neutral workflow through typed outcomes; create advisory insights and record acknowledgement/action evidence without executing a domain consequence. Provider/model/request names are observation strings only. NOT provider selection, credentials, endpoints, APIs, wire formats, prompts owned by a product domain, connector retries, domain mutation or autonomous decisions."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt", "dotmac_integrator", "dotmac_vendor_control_plane", "dotmac_workspace", "dotmac_academy_app"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = ["dotmac_sub:app/models/ai_intake.py", "dotmac_sub:app/models/ai_insight.py", "dotmac_sub:app/services/ai_conversation_intake.py", "dotmac_sub:app/services/ai_operations.py", "dotmac_integrator:src/dotmac_integrator/product_port.py"]
+preserved_tests = ["dotmac_sub:tests/architecture/test_ai_boundaries.py", "dotmac_sub:tests/test_ai_intake.py", "dotmac_crm:tests/test_voice_transcription.py", "dotmac_starter_mt:tests/unit/test_ai_operations.py", "dotmac_starter_mt:tests/test_sub_vnext_modules_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+adoption_evidence = []
+composition_boundary = "The module emits execution intents and accepts typed observations. Integrator connector plugins alone know provider identity, credentials, endpoints, wire schemas and I/O. Products own prompts/domain context and every action taken from an insight. No HTTP/SDK/provider import, secret reference or product mode exists here."
+inventory_evidence = ["docs/inventories/sub-vnext-parity-sources.md", "docs/inventories/sub-vnext-parity-dispositions.toml", "docs/adr/0040-sub-vnext-parity-capabilities-have-narrow-independent-owners.md"]
+first_cutover = "Sub is cutover 1. Migrate policy versions, sessions, attempts and insights while mapping provider telemetry to opaque observations; route the first model/transcription intent through one Integrator plugin before disabling the corresponding Sub client."
+shadow_and_drift = "Compare policy-version digests, workflow checkpoints, execution attempt identity/outcome and insight lifecycle. Provider payloads and credentials are deliberately excluded and must be proven absent."
+local_copy_retirement = "Retire Sub and CRM AI state writers after their own cutovers and move each product-local provider gateway/client/transcription I/O path into an Integrator connector plugin. Product domain context builders may remain as typed input producers."
+next_action = "Implement the tenant-only ao lineage from Sub policy/session/attempt/insight behavior and preserve provider-neutrality with import and vocabulary canaries."
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/product_port.py", "pyproject.toml"]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/services/insights.py", "app/services/learning_events.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/ai_insight.py", "app/services/ai/engine.py", "app/services/ai/insights.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/ai_intake.py", "app/models/ai_insight.py", "app/services/ai_conversation_intake.py", "app/services/ai_operations.py"]

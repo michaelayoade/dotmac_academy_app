@@ -1,0 +1,42 @@
+schema_version = 1
+package = "dotmac-fiber-plant"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Outside-plant structures, cables, strands, splices, terminations, continuity, field evidence and controlled as-built changes"
+contract = "Register plant identities, record splice/termination/field evidence, resolve continuity and approve/accept as-built changes. NOT projects, work orders, tickets, customer/service lifecycles, generic inventory or provider GIS clients."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = ["dotmac_sub:app/models/network.py", "dotmac_sub:app/models/fiber_physical.py", "dotmac_sub:app/models/fiber_topology_connectivity.py", "dotmac_sub:app/services/fiber_topology.py", "dotmac_sub:app/services/network/fiber_topology_connectivity.py", "dotmac_crm:app/models/network.py", "dotmac_starter_mt:packages/dotmac-fiber-plant/src/dotmac_fiber_plant"]
+preserved_tests = ["dotmac_sub:tests/test_fiber_plant_integrity.py", "dotmac_sub:tests/test_fiber_physical_continuity.py", "dotmac_sub:tests/test_fiber_topology_connectivity.py", "dotmac_sub:tests/architecture/test_fiber_operational_path_boundary.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Sub is the primary code source; CRM is conflict/retirement evidence, not a co-owner. Products correlate projects/work orders opaquely. No sibling/provider imports or cross-module FKs."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover, blocked until CRM outside-plant authority is consolidated into Sub."
+shadow_and_drift = "Compare the complete Sub/CRM cohort, then backfill and compare structure, strand, splice, termination, continuity and accepted-change digests."
+local_copy_retirement = "CRM's outside-plant tables/writers and Sub's local plant owner are retired after sealed suite cutover and rollback window."
+next_action = "Build from audited Sub code, but do not adopt until CRM consolidation and complete Observer proof are green."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/network.py", "app/services/fiber_plant.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network.py", "app/models/fiber_physical.py", "app/models/fiber_topology_connectivity.py", "app/services/fiber_topology.py"]

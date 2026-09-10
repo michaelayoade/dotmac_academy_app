@@ -1,0 +1,121 @@
+schema_version = 1
+package = "dotmac-licensing"
+classification = "optional-module"
+status = "adopted"
+source_mode = "product-first"
+owner = "The licences that translate an active agreement's allocated entitlement into signed, versioned, revocable software-use authority: the lineage, each immutable issued version and its lifecycle, the acknowledgements a deployment reports, and the revocation record and published revocation lists"
+contract = "Issue the next version of a lineage from a caller-supplied LicensableGrant (opaque subject, product, capabilities with limits, validity window, grace days, optional deployment binding, opaque agreement and allocation references); sign the payload bytes ONCE through a caller-supplied LicenceSigner sequence, where more than one signer is a rotation overlap; register every signer's PUBLIC half before signing; round-trip the envelope through the pinned kernel verifier and refuse to record anything it would reject; freeze digest, key_id and envelope immutably, one issued version per allocation and per digest; move issued -> active -> suspended -> reinstated, and issued|active|suspended -> revoked | expired, plus replaced on supersession; refuse a stale expected status or record version; record installation acknowledgements only after matching their licence/version/digest against an issuance this module produced; revoke by LINEAGE, permanently, minting a new generation as the contracted recovery path; publish immutable signed revocation lists that must be a SUPERSET of the previous published list; and expose a typed inspection API that answers what a deployment would see. NOT the product catalogue, commercial negotiation, entitlement arithmetic, deployment orchestration, signing secret material, application authentication or authorization, billing, or provider delivery."
+source_repositories = [
+  "dotmac_vendor_control_plane",
+  # ERP is a SOURCE-SHAPED absence worth listing: dotmac_erp/app/licensing/ is
+  # 1,030 LOC and every line of it is RECEIVER-side — validate, enforce,
+  # fingerprint, hold state. It issues nothing and signs nothing, so it is a
+  # retirement target for the kernel receiver rather than a source for this
+  # issuer. Knowledge `dotmac-kernel-build-once-scope-map` already records it as
+  # a second incompatible licence format in the fleet.
+  "dotmac_erp",
+  # Sub was inventoried and holds no licensing implementation of either half.
+  "dotmac_sub",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+]
+source_paths = [
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/service.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/revocation.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/revocation_models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/signer.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/ops.py",
+  "dotmac_vendor_control_plane:alembic/versions/v006_licences.py",
+  "dotmac_vendor_control_plane:alembic/versions/v008_licence_revocation.py",
+  "dotmac_vendor_control_plane:docs/design/licence-service.md",
+  "dotmac_starter_mt:packages/dotmac-licensing/src/dotmac_licensing",
+]
+preserved_tests = [
+  "dotmac_vendor_control_plane:tests/unit/test_licence_issuance.py",
+  "dotmac_vendor_control_plane:tests/unit/test_licence_revocation.py",
+  "dotmac_starter_mt:tests/unit/test_licensing_issuance.py",
+  "dotmac_starter_mt:tests/unit/test_licensing_lifecycle.py",
+  "dotmac_starter_mt:tests/architecture/test_licensing_module.py",
+  "dotmac_starter_mt:tests/test_licensing_platform_isolation.py",
+]
+contract_consumers = ["dotmac_vendor_control_plane"]
+candidate_consumers = []
+adoption_evidence_schema = "v1"
+composition_boundary = "ADR-0024: the vendor control plane installs its own li lineage and owns its own licence rows; no application shares a mod_licensing schema. ADR-0057 s8: the module imports no sibling — agreement and allocation facts arrive as a LicensableGrant value from the assembly. ADR-0006 D2/D4: kernel WS8 is the sole target licence protocol and the dotmac-* schema ids are permanent, so this module issues what dotmac_kernel.licensing already verifies and introduces no second format; the round-trip check makes that structural rather than aspirational. ADR-0009 / hard rule 20: LicenceSigner is a port with no implementation in this package and signing_keys has no private-key column, so custody stays with the product. ADR-0024 / hard rule 28: transport, connection refs, attempt counters, retry outcomes and error codes stayed with the Integrator — this module ends at a signed envelope and resumes at an acknowledgement. ADR-0023 / ADR-0057 s7: platform plane only, and here the plane is a security boundary — issuance must not live inside the deployment it authorises, and the receiving half verifies offline."
+inventory_evidence = [
+  "docs/inventories/vendor-cp-gap-sources.md",
+  "docs/adr/0057-the-vendor-control-plane-composes-existing-owners.md",
+]
+first_cutover = "Completed GREENFIELD on 2026-08-21 in dotmac_vendor_control_plane. v016_licensing_authority rechecks all five local issuer tables under ACCESS EXCLUSIVE and aborts on any row, because a populated cutover must preserve signed envelopes byte-for-byte, move only public key material and continue the revocation-list lineage. Vendor exact-pins dotmac-licensing 0.1.0a1, composes the platform-only manifest and li_0001_licensing lineage, and retains one typed grant/signer adapter plus product-held private-key custody. Verified directly against the production database at 2026-08-21T14:17:32Z: mod_licensing live with six tables, all five local issuer tables ABSENT, app_user holding zero privileges on any mod_* schema."
+shadow_and_drift = "No shadow phase is owed: the capability exists in exactly one product, so there is no second writer to reconcile against and no parallel evaluator to compare. What IS owed at cutover is a data-bearing migration under three constraints that have no equivalent in the other modules. (1) Every issued digest and envelope must be preserved BYTE-FOR-BYTE. An envelope is signed; re-serialising it changes the digest, which invalidates the signature and turns every deployed licence into one the receiver rejects. The migration copies bytes and never rebuilds a payload. (2) Signing keys migrate as PUBLIC material only, and the private half is re-installed through the product's secret seam at the new composition — never read, exported or copied by the migration. (3) The revocation list lineage must continue at the existing list_version, and the first list published after cutover must be a superset of the last one published before it; the cumulative rule spans the cutover, because the fleet's imported state does not reset when the issuer's code does. A populated legacy table encountered at cutover must fail the migration, not be silently skipped."
+local_copy_retirement = "Complete for cutover 1 on 2026-08-21: the issuer half of src/vendor_cp/licensing/ and the five local issuer tables (licences, licence_issuances, licence_signing_keys, licence_revocation_lists, licence_revocation_entries) are gone, verified absent on the production database. Original audit text follows. Owed by dotmac_vendor_control_plane at cutover: the ISSUER half of src/vendor_cp/licensing/ — service.py, models.py, revocation.py, revocation_models.py, signer.py, ops.py — plus the licences, licence_issuances, licence_signing_keys, licence_revocation_entries and licence_revocation_lists tables. The vendor keeps its routes, its console screens, and a thin adapter that builds a LicenceSigner from OpenBao-materialised key files. It also keeps, unchanged and NOT retired by this extraction, the DELIVERY half — transport.py, delivery_models.py and the delivery portion of projection.py — until that capability is composed onto the Integrator under ADR-0024; conflating the two retirements would strand delivery with no owner. No product may keep a compatibility licences table or a parallel issuer."
+next_action = "Hold at `adopted`; `reuse-proven` requires a second real control plane. The DELIVERY half is a separate, still-open cutover: Vendor ADR-0010 moves transport, retries, health and repair to dotmac-integration in the Integrator. Gate 2a landed 2026-08-22 (Vendor PR #72) — three authenticated source ports, a digest-pinned licence-source contract and correlated idempotent acknowledgement, with NO activation. Gate 2b (deployment-owned destination descriptor, Integrator reconciliation, a real connector, mirror mode) is outstanding. This module owns valid acknowledgements and the licence lifecycle throughout; Vendor's remaining delivery tables are the estate ADR-0010 retires, not this module's concern."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/licensing/adapter.py", "src/vendor_cp/licensing_authority.py", "src/vendor_cp/licensing/transport.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]
+
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-licensing.version"
+expected = "0.1.0a1"
+
+[[adoption_evidence]]
+kind = "deploy_run"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+run_id = "32485479666"
+observed = "success"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS the commit above. 'Deploy immutable image to production'."
+
+[[adoption_evidence]]
+kind = "image_digest"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+digest = "sha256:45715e425dc248d85fe374fa5d347087328a445cf7ead1f8abc29f05f0117b0d"
+observed = "deployed to production by the run above"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "The registry path used to sit in the `repository` slot, where a machine reading this file would look for a repository name. `repository` now names the PRODUCING product and the content address is the digest."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+subject = "mod_licensing"
+observed = "v016_licensing_authority applied by the production deploy run above"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "One dated row replaces the two undated strings that used to make this claim twice. Derived from the deploy run rather than from a direct read of the production database, which is why it is an attestation and not an assertion."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_vendor_control_plane"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-licensing.version"
+note = "The rows above are history. The Vendor control plane's BOM is the only authority for what it installs today, and this dossier holds no copy of it — at commit af9fcf6d the plane had already moved past several of the versions recorded above."

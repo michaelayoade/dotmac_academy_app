@@ -1,0 +1,124 @@
+schema_version = 1
+package = "dotmac-analytics"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Immutable declared aggregate metric evidence and the deterministic rebuildable current-point projection for one application's tenants"
+contract = "Given an installed immutable metric declaration and a typed tenant-scoped aggregate batch from that declaration's named domain owner, validate exact Decimal values and bounded dimensions, delegate replay/fingerprint conflict/concurrent-key handling to dotmac_kernel.idempotency, preserve an append-only domain receipt and observation evidence, maintain one deterministic rebuildable winning-point projection, and provide bounded latest/history/explicit-period comparison reads plus digest-backed repair evidence. The receipt is not a second replay ledger. NOT source-domain calculations or lifecycle decisions, raw rows/events, arbitrary SQL, subject identity, web analytics, provider media observations, attribution, observability, saved dashboards, report scheduling/rendering/delivery, connector transport, or transaction control."
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_academy_app",
+  "dotmac_mkt",
+  "dotmac-insights",
+]
+source_revisions = [
+  "dotmac_starter_mt:97cb096d9dd19ac66829a3a259bfcfd107b20cc5",
+  "dotmac_erp:dd6416cd981ffdf48564e2770b87d3cd7201186c",
+  "dotmac_sub:510b80ca7fab4f54a57f261872f94b5e972c8eb6",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_academy_app:a5e25e4e829350e503e66a03d73739529ba7da7f",
+  "dotmac_mkt:1a185b47164e34601769c84976e95578996c4523",
+  "dotmac-insights:fa67dd5105b4349ced926e052286911d7b671908",
+]
+revalidation_revisions = [
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/analytics/org_metric_snapshot.py",
+  "dotmac_erp:app/services/analytics/base_computer.py",
+  "dotmac_erp:app/services/analytics/metric_store.py",
+  "dotmac_erp:app/services/analytics/dashboard_metrics.py",
+  "dotmac_erp:app/services/analytics/computers",
+  "dotmac_erp:app/tasks/analytics.py",
+  "dotmac_sub:app/models/analytics.py",
+  "dotmac_sub:app/services/analytics.py",
+  "dotmac_crm:app/models/analytics.py",
+  "dotmac_crm:app/services/analytics.py",
+  "dotmac_crm:app/api/analytics.py",
+  "dotmac-insights:app/api/analytics.py",
+  "dotmac-insights:app/api/data_explorer.py",
+  "dotmac-insights:app/api/reports.py",
+  "dotmac_starter_mt:packages/dotmac-analytics/src/dotmac_analytics/contracts.py",
+  "dotmac_starter_mt:packages/dotmac-analytics/src/dotmac_analytics/service.py",
+]
+preserved_tests = [
+  "dotmac_erp:tests/services/test_metric_store.py",
+  "dotmac_erp:tests/services/test_cash_flow_computer.py",
+  "dotmac_erp:tests/services/test_compliance_computer.py",
+  "dotmac_erp:tests/services/test_efficiency_computer.py",
+  "dotmac_erp:tests/services/test_revenue_computer.py",
+  "dotmac_erp:tests/services/test_supply_chain_computer.py",
+  "dotmac_erp:tests/services/test_workforce_computer.py",
+  "dotmac_starter_mt:tests/unit/test_analytics_contracts.py",
+  "dotmac_starter_mt:tests/unit/test_analytics_service.py",
+  "dotmac_starter_mt:tests/test_analytics_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac-erp", "dotmac_crm", "dotmac_academy_app"]
+composition_boundary = "ADR-0024: each application pins the package, runs its own ay lineage and owns its local mod_analytics rows. Domain owners calculate metrics and publish typed aggregate facts through local adapters or versioned APIs/webhooks; Integrator may transport remote facts but owns no metric meaning or product projection. The module imports no assembly, sibling module, product or provider. TenantScope is structural: every table has tenant_id NOT NULL, tenant-composite identity and FORCE RLS. No platform adopter exists, so the manifest declares no platform plane."
+inventory_evidence = [
+  "docs/inventories/analytics-sources.md",
+  "docs/adr/0043-analytics-owns-projections-not-domain-facts.md",
+]
+first_cutover = "dotmac_erp is first. Declare the exact legacy dashboard vocabulary, adapt each ERP-owned computer to dual-write a typed batch while OrgMetricSnapshot remains live, compare latest/history/explicit-period results and projection digests, move DashboardMetricsService and coach readers, then cut over one computer family at a time. Backoffice follows on the same released package to prove an independent second consumer."
+shadow_and_drift = "For every ERP legacy metric coordinate, compare legacy and module values, missingness, dimensions, ordering, exact-period delta and zero-prior behavior. Corrections must create new observations and choose the same deterministic winner after rebuild. Record digest differences and classify declaration, calculation, period, dimension, decimal or replay variance; do not silently fall back to source-table queries. Run the rebuild against retained observations before any reader cutover and prove its digest equals the live projection."
+local_copy_retirement = "After each ERP metric family passes shadow, delete that family's OrgMetricSnapshot upsert and direct MetricStore read paths. Once all families are cut over, retire OrgMetricSnapshot, the shared BaseComputer store/upsert behavior and MetricStore, guarded by a two-directional caller/import ratchet. ERP domain computers remain with their owning domains. Sub's inert KPIConfig/KPIAggregate generic path is retired only when its callers are proven absent or migrated; operational domain reports remain local. CRM's active, tested KPIConfig/KPIAggregate CRUD and API are a legacy mutable aggregate writer, not merely report prose: they must be drained or migrated and their writer paths ratcheted to zero before CRM can be called clean. dotmac-insights direct cross-domain ORM queries and hardcoded data explorer are decomposed into typed source feeds and local projection reads rather than copied. No permanent dual writer, source-table fallback or second analytical projection owner remains."
+next_action = "Obtain exact-revision Observer evidence for the contract, service, architecture, migration, FORCE-RLS and live-catalog canaries; then implement ERP's declaration registry and shadow adapter without moving any ERP domain computer into the package."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "1a185b47164e34601769c84976e95578996c4523"
+evidence_paths = [
+  "app/models/channel_metric.py",
+  "app/models/ad_campaign.py",
+  "app/services/analytics_service.py",
+  "app/services/ad_sync_service.py",
+]
+
+[[product_writers]]
+product = "dotmac-insights"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "fa67dd5105b4349ced926e052286911d7b671908"
+evidence_paths = [
+  "app/api/analytics.py",
+  "app/api/data_explorer.py",
+  "app/api/reports.py",
+]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = [
+  "app/services/analytics.py",
+  "app/services/insights.py",
+  "app/services/learning_events.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/analytics.py", "app/services/analytics.py", "app/api/analytics.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/analytics/org_metric_snapshot.py", "app/services/analytics/metric_store.py", "app/services/analytics/dashboard_metrics.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/analytics.py", "app/services/analytics.py"]

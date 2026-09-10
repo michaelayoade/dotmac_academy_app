@@ -1,0 +1,97 @@
+schema_version = 1
+package = "dotmac-accounting"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant chart, fiscal periods, accounting dimensions, balanced journal posting, reversal and immutable ledger evidence"
+contract = "Configure a tenant chart, fiscal years/periods and open accounting dimensions; create draft journals from typed source facts; decide balanced posting against an admissible period and posting accounts; append immutable ledger/dimension evidence; correct with a linked opposite-side reversal; close, reopen with explicit authority, and irreversibly lock periods while appending transition evidence. NOT receivables/payables documents, supplier/customer identity, procurement, assets, inventory, tax calculation/filing, banking/payment execution, budgets, exchange-rate sourcing, numbering, approvals, report presentation, or provider I/O."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_vendor_control_plane", "dotmac_academy_app", "dotmac_workspace", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_erp:4aab56812d6fb243c814ada15c13fabea6234da8",
+  "dotmac_sub:feea715927942d77acf5f214d7960ea01a905b24",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_vendor_control_plane:2c4d88ab877aeae1c8d5aef0637bc013edf07aa9",
+  "dotmac_academy_app:a5e25e4e829350e503e66a03d73739529ba7da7f",
+  "dotmac_workspace:a158846c97e39b007724584244cb1ed4f9e6e58f",
+  "dotmac_starter_mt:f7d69f7d3db6a36dcccaa847dff7a37e9c3cd685",
+]
+revalidation_revisions = [
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/gl/account.py",
+  "dotmac_erp:app/models/finance/gl/account_category.py",
+  "dotmac_erp:app/models/finance/gl/fiscal_year.py",
+  "dotmac_erp:app/models/finance/gl/fiscal_period.py",
+  "dotmac_erp:app/models/finance/gl/journal_entry.py",
+  "dotmac_erp:app/models/finance/gl/journal_entry_line.py",
+  "dotmac_erp:app/models/finance/gl/posted_ledger_line.py",
+  "dotmac_erp:app/services/finance/gl/ledger_posting.py",
+  "dotmac_erp:app/services/finance/gl/period_guard.py",
+  "dotmac_erp:app/services/finance/gl/reversal.py",
+  "dotmac_sub:app/models/customer_subledger.py",
+  "dotmac_starter_mt:packages/dotmac-accounting/src/dotmac_accounting",
+]
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/gl/test_chart_of_accounts_service.py",
+  "dotmac_erp:tests/ifrs/gl/test_fiscal_period_service.py",
+  "dotmac_erp:tests/ifrs/gl/test_period_guard_service.py",
+  "dotmac_erp:tests/ifrs/gl/test_period_overlap_guardrails.py",
+  "dotmac_erp:tests/ifrs/gl/test_journal_service.py",
+  "dotmac_erp:tests/ifrs/gl/test_ledger_posting_service.py",
+  "dotmac_erp:tests/ifrs/gl/test_reversal_service.py",
+  "dotmac_starter_mt:tests/unit/test_accounting_service.py",
+  "dotmac_starter_mt:tests/architecture/test_accounting_module.py",
+  "dotmac_starter_mt:tests/test_accounting_payables_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp"]
+composition_boundary = "Each adopter pins the released package, runs the independent ac lineage in its own database, binds tenant/role/idempotency prerequisites to its own qualifying providers, and supplies approval, numbering and producer facts through typed assembly adapters. The module imports only dotmac-kernel, never an assembly, sibling module or product ORM."
+inventory_evidence = ["docs/inventories/accounting-payables-sources.md", "docs/adr/0041-accounting-owns-posting-and-ledger-evidence.md"]
+first_cutover = "ERP is source and first exact-pin adopter. Its clean installation starts from reviewed masters, explicitly admitted live operational items and one Finance-approved governed opening state; it never replays legacy journal, posted-ledger or posting-batch history. Legacy ERP remains the read-only owner of pre-cutover history. Behavioural rehearsal and writer retirement precede a separately authorized switch; the cross-database sealing protocol is an explicit unresolved gate under ADR-0031."
+shadow_and_drift = "On independently migrated clean databases, compare governed-opening counts, exact totals and content digests plus versioned business-fixture journal, line, account, dimension, lifecycle and refusal outcomes. Prove retry no-op, changed-fingerprint conflict and synthetic-second-tenant isolation. Legacy full-history digests remain forensic evidence, not import or parity targets; a rehearsal report never authorizes a switch."
+local_copy_retirement = "An ERP writer ratchet reaches zero for chart, fiscal period, journal, posting, reversal and ledger mutation paths at the sealed cutover. Ledger query/report adapters move to the module contract. Fixed-asset, AP, AR, inventory and tax owners retain only typed consequence production and cannot write GL tables. No permanent mirror or fallback writer remains."
+next_action = "ERP implements the governed clean-bootstrap manifest and module adapters, proves two fresh-database rehearsals, then retires its writer/caller ratchets in coherent domain slices. Finance approval of the opening pack and an accepted cross-database sealing protocol remain final cutover gates."
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["README.md", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/gl/account.py", "app/models/finance/gl/fiscal_period.py", "app/models/finance/gl/journal_entry.py", "app/services/finance/gl/ledger_posting.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/customer_subledger.py"]

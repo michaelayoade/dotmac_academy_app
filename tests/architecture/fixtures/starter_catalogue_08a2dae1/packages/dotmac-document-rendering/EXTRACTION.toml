@@ -1,0 +1,68 @@
+schema_version = 1
+package = "dotmac-document-rendering"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Stateless selection, semantic projection, exact formatting, and renderer provenance for issued billing documents"
+contract = "Accept one complete immutable InvoiceDocumentFactV1 by value; select one immutable template through an assembly-declared document-profile binding; produce one canonical semantic projection; and render complete HTML or PDF bytes with stable provenance and typed permanent/retryable failures. Billing remains authoritative for document meaning, numbering, frozen facts, and the official artifact relation; dotmac-files owns bytes at rest; the consuming assembly owns orchestration, idempotency, retry, and reconciliation. The renderer owns no rows, transactions, clocks, external I/O, delivery, numbering, invoice decisions, or storage."
+
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/services/billing/invoice_document.py",
+  "dotmac_sub:app/services/billing/quote_document.py",
+  "dotmac_sub:app/services/billing/statement_document.py",
+  "dotmac_sub:app/services/billing/receipt_document.py",
+  "dotmac_sub:app/services/billing/document_storage.py",
+  "dotmac_sub:app/services/billing/display_format.py",
+  "dotmac_erp:app/services/automation/document_generator.py",
+  "dotmac_erp:app/models/automation/generated_document.py",
+  "dotmac_erp:app/models/automation/document_template.py",
+  "dotmac_starter_mt:docs/superpowers/specs/2026-08-14-document-rendering-contracts.md",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/idempotency.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/fingerprints.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_billing_invoice_pdf_storage.py",
+  "dotmac_sub:tests/test_billing_quote_documents.py",
+  "dotmac_sub:tests/test_customer_portal_billing_routes.py",
+  "dotmac_sub:tests/test_billing_display_format.py",
+  "dotmac_sub:tests/test_billing_statement_document.py",
+  "dotmac_sub:tests/architecture/test_quote_document_boundary.py",
+  "dotmac_erp:tests/integration/services/test_document_generator.py",
+  "dotmac_starter_mt:tests/unit/test_document_rendering.py",
+  "dotmac_starter_mt:tests/unit/test_fingerprints.py",
+  "dotmac_starter_mt:tests/unit/test_idempotency.py",
+  "dotmac_starter_mt:tests/architecture/test_document_rendering_module.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_vendor_control_plane", "dotmac_sub"]
+authority_boundary = "ADR-0017 P11 as amended on 2026-08-17 and ADR-0030. Billing publishes immutable InvoiceDocumentFactV1 and owns the official-artifact relation. dotmac-document-rendering owns only deterministic stage-two semantic projection and stage-three byte rendering. dotmac-files stores opaque bytes. An assembly reconciler composes those owners; no renderer looks up live invoice, customer, settings, template, brand, payment, tax, FX, or storage state."
+inventory_evidence = [
+  "docs/inventories/document-rendering-sources.md",
+  "docs/inventories/document-rendering-extraction-dossier.md",
+  "docs/inventories/billing-source-variance.md",
+  "docs/inventories/billing-extraction-dossier.md",
+]
+first_cutover = "Vendor Control Plane invoice rendering is the first candidate because ADR-0030 already requires the shared owner and no product-local renderer should be created. Compose a released renderer with Billing facts and dotmac-files through one assembly reconciler. Sub is the parity cutover after its billing authority transition; it must replace the f-string invoice, quote, statement and receipt paths without moving official-artifact authority out of Billing. Starter itself is not a consumer."
+shadow_and_drift = "For identical fact, immutable template, profile binding, and renderer version, compare canonical projection digest, every projected source field, ordered rows, exact currency/scale/text, omission decisions, byte length, checksum, and typed refusal class. The canary fixture contains nine lines to expose Sub's seven-row fallback truncation. Layout-only byte changes are allowed when the semantic projection remains identical; missing, reordered, rounded, live-looked-up, silently truncated, or synthetic values block cutover."
+local_copy_retirement = "At first adoption, forbid new product-local renderers and remove the displaced local document-generation path only after semantic parity and stored-artifact reconciliation pass. Sub retires app/services/billing/{invoice_document,quote_document,statement_document,receipt_document}.py and rebinds storage through Billing's official-artifact relation plus dotmac-files. ERP's automation generator is not a billing authority and is not copied; any later generic-template adoption needs a separate typed contract and must retire its DB-bound mutation/storage owner rather than coexist."
+next_action = "Publish the authorized 0.1.0a1 through the installable-module lane's explicit stateless profile, then exact-pin it only in the first Vendor Control Plane cutover slice that also binds Billing facts to dotmac-files through an assembly-owned idempotent reconciler. The compatible kernel fingerprint seam is published in a88. Publication is not adoption: do not claim Sub or Vendor Control Plane as a consumer, move official-artifact authority, or retire an old writer until that product's parity and reconciliation gates pass."
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/automation/document_generator.py", "app/models/finance/automation/generated_document.py", "app/models/finance/automation/document_template.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/sales/quote_documents.py", "app/services/billing_invoice_pdf.py", "app/services/billing_payment_receipts.py", "app/services/display_format.py"]

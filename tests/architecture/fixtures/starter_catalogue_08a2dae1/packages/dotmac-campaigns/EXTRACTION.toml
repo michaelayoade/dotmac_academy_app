@@ -1,0 +1,89 @@
+schema_version = 1
+package = "dotmac-campaigns"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral outbound campaign identity, immutable audience/recipient evidence and ordered recipient progression"
+contract = "Create and revise a tenant campaign; freeze one active revision, its ordered one-time/nurture steps, its audience and recipient snapshots when sending begins; record consent decisions without making policy; schedule due work through a typed Durable Timers seam; publish one provider-neutral delivery intent per recipient/step through the kernel outbox; consume deduplicated delivery/open/click/reply facts without regressing terminal state; record unsubscribe and response/correlation facts; rebuild counters, report drift, reconcile missing publication and scrub PII at explicit retention deadlines. NOT Party/customer identity, audience business rules, Leads/Sales conversion, orders/subscriptions/billing/collections, consent policy, Inbox messages/conversations, provider I/O/retry/credentials, templates, advertising hierarchy/raw metrics, attribution, retention cases or service cancellation."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_mkt",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_mkt:7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d",
+  "dotmac_starter_mt:c6ef6cd7b13105bd95c3faf354ffee9032077625",
+]
+source_paths = [
+  "dotmac_sub:app/models/comms_campaign.py",
+  "dotmac_sub:app/services/comms_campaigns.py",
+  "dotmac_sub:app/api/campaigns.py",
+  "dotmac_sub:app/tasks/campaigns.py",
+  "dotmac_sub:alembic/versions/259_campaign_ai_workqueue.py",
+  "dotmac_sub:alembic/versions/278_campaign_parity.py",
+  "dotmac_crm:app/models/campaign.py",
+  "dotmac_crm:app/services/campaign_service.py",
+  "dotmac_crm:app/services/campaign_tracking.py",
+  "dotmac_crm:app/tasks/campaigns.py",
+  "dotmac_mkt:app/models/campaign.py",
+  "dotmac_mkt:app/models/ad_campaign.py",
+  "dotmac_starter_mt:packages/dotmac-campaigns/src/dotmac_campaigns",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_campaign_parity.py",
+  "dotmac_sub:tests/test_campaign_financial_segments.py",
+  "dotmac_sub:tests/test_notification_queue_suppression.py",
+  "dotmac_crm:tests/test_campaign_tracking.py",
+  "dotmac_crm:tests/test_campaign_lead_attribution.py",
+  "dotmac_crm:tests/test_api_campaigns.py",
+  "dotmac_starter_mt:tests/unit/test_campaigns_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_campaigns_conformance.py",
+  "dotmac_starter_mt:tests/architecture/test_campaigns_module.py",
+  "dotmac_starter_mt:tests/test_campaigns_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac-erp", "dotmac_crm"]
+inventory_evidence = [
+  "docs/inventories/campaigns-sources.md",
+  "docs/adr/0056-campaigns-own-outbound-progression.md",
+]
+composition_boundary = "ADR-0024/0032: each adopter installs its own tenant-only ca lineage and owns only its local campaign progression rows. The module imports the kernel but no sibling or product. Product assemblies supply typed audience facts and bind Template Studio, Durable Timers, sender resolution, delivery-gate and Sales/Inbox correlation adapters. Applications share contracts and normalized observations through versioned APIs/webhooks, never a mod_campaigns database or ORM model."
+first_cutover = "dotmac_sub is cutover 1, overriding the broad marketing programme's Backoffice-first sequence for this vertical because Sub is the qualifying production source. Backoffice is cutover 2 as the independent greenfield reuse proof on the exact released package. CRM follows after preserving open/click and reply-correlation parity. dotmac_mkt remains the independent editorial/media owner and is not a default adopter."
+shadow_and_drift = "Sub backfills module campaigns/revisions/steps/recipient evidence with source ids and fingerprints, then shadows every audience and due-step decision while the legacy service remains the sole writer. Compare campaign and recipient identity, eligibility/suppression receipts, sender snapshot, send-window result, predecessor resolution, delivery intent and terminal observation; provider ids are provenance and excluded from domain equality. Rehearsal must reach zero unexplained drift. The final comparison, full-column typed digests and authority switch occur in one ADR-0031 transaction under legacy-table write locks; a stored report never authorizes the switch. After cutover, module counter reconciliation and missing-outbox repair remain idempotent operational controls, not a legacy shadow writer."
+local_copy_retirement = "Sub deletes app/services/comms_campaigns.py as owner, app/tasks/campaigns.py's scan/materialized_steps loop, local campaign tables and direct Subscriber/invoice/team/connector/Inbox dependencies after the sealed cutover and rollback window; product-specific candidate builders and adapters stay in Sub. A bidirectional caller/table ratchet reaches zero and no mirrored recipient ledger remains. Backoffice adds no local campaign owner. CRM retires its campaign scheduler/provider configuration/direct notification, Inbox and Lead writes plus mutable audience_snapshot after translating open/click/reply history into observations; its signed tracking edge may remain as a fact adapter. dotmac_mkt retires nothing."
+next_action = "The module, canaries, lineage, API and conformance kit are implemented and exact-commit Observer validation is green. Kernel a73 and Durable Timers a1 are registry-verified; campaigns publication remains closed. Complete Sub's checked-in kernel S7 consent/idempotency/outbox collision dispositions, compose and rehearse exact kernel a73, and retire the superseded local owners; product adapters to those legacy stores are not an admissible fallback. Then compose Durable Timers a1 before activating due-work, release campaigns just in time for the sealed Sub cutover, compose that same campaigns release in Backoffice, and update status to reuse-proven."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d"
+evidence_paths = [
+  "app/models/campaign.py",
+  "app/models/ad_campaign.py",
+  "app/services/campaign_service.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/campaign.py", "app/services/crm/campaigns.py", "app/tasks/campaigns.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/comms_campaign.py", "app/services/comms_campaigns.py", "app/api/campaigns.py", "app/tasks/campaigns.py"]

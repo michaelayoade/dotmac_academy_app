@@ -1,0 +1,170 @@
+schema_version = 1
+package = "dotmac-connector-flutterwave"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "Flutterwave v4 ingress, reconciliation and OUTBOUND-COMMAND transport: exact-byte HMAC-SHA256 authentication, OAuth-authenticated charge-list polling, provider-event identity, charge-completed normalization, acknowledgement bytes, and typed outcome classification for payment initialization and refund requests."
+
+contract = "Implement Flutterwave API v4 through dotmac-integration SPI >=1.4,<2.0 for connector key flutterwave: capability payments.settlement.observation.v1 in INGRESS and POLL modes, and payments.intent.v1 plus payments.refund.v1 in DELIVERY mode. Outbound carries the engine idempotency key to the provider v4 X-Idempotency-Key header, writes every amount as an exact JSON number from a Decimal, requires an explicit currency and minor-unit exponent, and returns the provider transaction reference as Outcome.provider_reference on every outcome including a decline. Verify flutterwave-signature over exact bytes, authenticate reconciliation through v4 OAuth, page only the v4 charge list and accept no v3 fallback. Carry exact amount, currency, provider status, merchant reference and transport evidence. Do not invent provider_fee. Own no product identifier, tenant, allocation, coverage, balance, receivable state, net-amount arithmetic, retry/checkpoint engine, row, session or product database."
+
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+
+source_paths = [
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/services/integrations/payment_capability.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/services/payment_webhook_commands.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/api/billing.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/services/integrations/registry.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/test_payment_webhook_settlement.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/test_web_integrations_payment_gateways.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/architecture/test_payment_webhook_ownership.py",
+  "dotmac_erp@4aab56812d6fb243c814ada15c13fabea6234da8:app/services/finance/payments/webhook_service.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/connectors/payment_gateway.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/payment_gateway_adapter.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/runtime_execution.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_payment_gateway_refunds.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_integration_payment_capability.py",
+  "dotmac_starter_mt@75a26abd3f866ebe24c4881a3958439d423034c7:docs/inventories/payment-connector-extraction-dossier.md",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_flutterwave_connector.py",
+  "dotmac_starter_mt:tests/unit/test_flutterwave_outbound.py",
+  "dotmac_starter_mt:tests/unit/test_payment_reconciliation_connectors.py",
+  "dotmac_starter_mt:tests/architecture/test_flutterwave_connector_boundary.py",
+]
+
+# There is NO v4 outbound implementation anywhere in the fleet to port: ERP has
+# no Flutterwave client at all, and Sub's `payment_gateway.py` is v3 only (its
+# ADR-0005 records that v3 key issuance was withdrawn and a v4 OAuth rewrite is
+# unstarted). So what was ported is Sub's BEHAVIOUR — payload shaping, refund
+# targeting, envelope/status classification and the observed defects — carried
+# onto the v4 endpoints this connector already authenticates against. Recorded
+# plainly because "ported the v4 client" would be false.
+ported_behaviour = [
+  "initialize shapes reference/amount/currency/redirect_url/customer.email/meta (payment_gateway.py:314-351)",
+  "refund targets one provider transaction, omits amount for a full refund, and carries an opaque note (payment_gateway.py:353-385)",
+  "5xx is retryable and a 4xx is rejected, never retried (payment_gateway.py:138-159)",
+  "a status token outside the known vocabulary fails closed to unknown rather than to success (payment_gateway_adapter.py:50-63, 229-237)",
+  "the provider transaction id is required evidence and is bounded (payment_gateway_adapter.py:249-263)",
+]
+
+port_deltas = [
+  "the amount is an exact Decimal written as a JSON number by a hand-written encoder; the source coerces it through a binary floating-point value at payment_gateway.py:331 and :371",
+  "the currency is REQUIRED with no default chain; the source falls back to config default_currency and then to a hardcoded NGN at payment_gateway.py:333",
+  "the minor-unit exponent is stated by the command, so no ISO-4217 table lives in the transport and a non-NGN currency needs no connector change",
+  "idempotency rides the provider X-Idempotency-Key header; the source's only refund dedupe was a request_key stuffed into the free-text comments field and recovered by substring match at payment_gateway_adapter.py:422",
+  "a timeout after send is RECONCILIATION_REQUIRED; the source returns retryable for every httpx.HTTPError including a read timeout, which risks a second charge",
+  "a 409 duplicate reference is RECONCILIATION_REQUIRED, because it is evidence the first attempt landed",
+  "v4 OAuth client_credentials replaces the static secret-key bearer at payment_gateway.py:61-63; there is no v3 path on either leg",
+]
+
+provider_idempotency = "Flutterwave v4 publishes an X-Idempotency-Key request header, and the connector sends the engine's DispatchRequest.idempotency_key on it verbatim. NEITHER product implementation sends any idempotency header today (verified by inventory across dotmac_erp and dotmac_sub), so this is a v4 contract adoption rather than a ported behaviour and MUST be confirmed against the live v4 header contract during the sandbox shadow before cutover. The product's opaque intent_reference is a second natural key: v4 refuses a re-used one, and that refusal is classified ambiguous because it proves the first attempt landed."
+
+# HELD BACK, deliberately: v4 transfers/payouts. No product consumer exists.
+# `tests/unit/test_flutterwave_outbound.py::test_no_transfer_or_payout_command
+# _ships_in_this_release` makes adding one a visible decision rather than a
+# quiet capability. That withholding is CORRECT and stays — ADR-0024 § 9
+# (2026-08-24) makes it the recorded example of capability parity: completeness
+# is measured against Dotmac's contracts and their substitutability, never
+# against the endpoints Flutterwave happens to publish. A provider having a
+# transfer endpoint is not a requirement.
+#
+# CORRECTED 2026-08-24, and the previous value is kept here rather than quietly
+# replaced. This key read:
+#
+#   withheld_capabilities = ["payments.transfer.v1", "payments.payout.batch.v1"]
+#
+# Both ids were minted in this dossier from Flutterwave's vocabulary. Neither
+# exists in the fleet. The business act ERP would command is a PAYOUT, its one
+# contract is `payments.payout.v1` (already served by
+# dotmac-connector-paystack), and "transfer" is this provider's wire word for
+# it — ADR-0024 § 8.1 forbids a provider-shaped sibling id for an act that
+# already has a contract, and ADR-0061 § 2 makes payout specifically one
+# contract with no per-provider variant. A batch payout may earn its own
+# contract later, but only when ERP decides batches as a unit; it is not
+# created because a provider ships a batch endpoint.
+#
+# WHEN THIS IS IMPLEMENTED it must be `payments.payout.v1`, taking the SAME
+# command payload Paystack takes — see ADR-0061 § 4 D3 for the divergence that
+# has to close first (this connector requires a product-minted
+# `intent_reference` and a `currency_minor_units` exponent; Paystack derives its
+# reference from the engine idempotency key and refuses an exponent because its
+# wire scale is fixed at 100 for every currency including zero-exponent XOF).
+# Implementing payout against today's two shapes would make ERP branch on
+# provider, which is the whole thing the binding exists to prevent.
+#
+# REFINED 2026-08-24 (ADR-0061 A2/A3, ADR-0024 §§ 10 and 12). "The divergence
+# has to close first" is right; how it closes is now settled, and it is not the
+# two connectors meeting halfway. The canonical command/result/observation
+# schemas and their digest live on the business-owned
+# `capability_registry.CapabilityContract`, and `payments.payout.v1` exposes
+# only product MEANING — `submit_payout`, a PRODUCT payout reference, exact
+# money, a provider-neutral destination, idempotency and correlation. Every
+# provider particular is an INTERNAL step: Paystack's recipient creation, and
+# this connector's direct-transfer details, are performed behind that one
+# command. When this capability is implemented here, this connector derives its
+# own required fields — including the `currency_minor_units` exponent it needs
+# and the `intent_reference`-shaped natural key its wire wants — from the
+# contract's exact money and stable reference, inside the connector. It does not
+# ask a product to supply a provider-shaped field, and it does not refuse a
+# command for carrying a field another provider needs.
+#
+# REFUND, DECIDED 2026-08-24 (ADR-0061 Amendment A8). `payments.refund.v1` is
+# KEPT — it passes the same test `payments.customer.v1` failed, because a refund
+# is a business act a Dotmac owner DECIDES with its own lifecycle and its own
+# receivable consequence, while a provider-side customer record is a by-product
+# of a charge. Its surface converges on ONE command, `request_refund`, and two
+# things in `outbound.py` are the connector-side work when it does:
+#   * `_refund_body` requires `provider_transaction_id` — a PROVIDER-minted
+#     charge id supplied BY THE PRODUCT. That is the provider-shaped field A3
+#     forbids from the other side. This connector derives the charge id, and the
+#     `currency_minor_units` exponent it needs, from the contract's
+#     original-payment correlation and exact money, INSIDE the connector — and
+#     refuses no command for carrying a field another provider needs.
+#   * a missing `amount` currently MEANS a full refund at the provider.
+#     Absence-as-meaning is how a dropped key becomes "refund everything"; the
+#     contract carries an explicit full-versus-partial discriminator and this
+#     connector reads that instead of an absent field.
+# Refund STATUS reads stay reconciliation internals, never product-visible
+# actions. The refund OWNER is not Treasury by default (ADR-0061 A9).
+
+withheld_capabilities = ["payments.payout.v1"]
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator", "dotmac_sub"]
+
+inventory_evidence = [
+  "docs/inventories/payment-connector-sources.md",
+  "docs/inventories/payment-connector-extraction-dossier.md",
+  "docs/superpowers/specs/2026-08-14-payment-connector-and-settlement-contracts.md",
+  "docs/adr/0017-adoption-is-the-scarce-resource.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+]
+
+first_cutover = "Sub through dotmac_integrator, after the published Paystack evidence. Sub's v3 callback remains authoritative while a separately configured Flutterwave v4 callback feeds Integrator. Only exact-byte HMAC-SHA256 v4 events enter the settlement-observation path; this connector provides no version fallback."
+
+shadow_and_drift = "Run the v4 callback into Integrator while Sub's existing v3 receiver remains the sole producer of financial consequences. Correlate by merchant reference and compare provider-event coverage, terminal status, exact amount, currency and transaction identity; app_fee cannot be compared because v4 does not carry it. Require independent API-v4 charge-list confirmation through the same settlement-observation capability before product acceptance. Cut over only after zero unexplained drift, then remove Sub's v3 verification/normalization and lower its external-connector ratchet in the same change."
+
+local_copy_retirement = "Retire only Flutterwave transport: Sub's provider branch, direct callback, authentication, manifest, paged charge-list client and private checkpoint. Sub keeps payment_provider_events.py, payment_reconciliation.py, every intent service, allocation, coverage and lifecycle decision. Money-moving intent/refund clients remain until their product-owned command contracts exist."
+
+next_action = "DECLARED AS 0.1.0a3, NOT YET RELEASED: this tree extends the manifest of the already-tagged 0.1.0a2, and a published version's manifest digest must not change. The published ingress+poll shape is preserved as INGRESS_POLL_MANIFEST in historical_manifests and its digest is recorded in docs/inventories/released-manifest-digests.json, so a pinned adopter still resolves. Then publish after dotmac-integration 0.1.0a14 (SPI 1.4 per-capability modes; ig_0012_delivery_evidence for the durable provider_reference the outbound leg depends on), exact-pin it in dotmac_integrator, reconcile the payments.settlement.observation.v1 ProductPort, configure the v4 callback and v4 paged poll, then run the Sub v3-to-v4 shadow cutover. Keep status audit-complete until direct v3 transport is retired."
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/finance/payments/webhook_service.py", "docs/SOT_RELATIONSHIP_MAP.md"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/integrations/payment_capability.py", "app/services/integrations/connectors/payment_gateway.py", "app/services/payment_webhook_commands.py"]

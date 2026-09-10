@@ -1,0 +1,186 @@
+schema_version = 1
+package = "dotmac-billing"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "Operational receivables on explicit tenant and platform planes: immutable rated-obligation acceptance, invoice and credit-note meaning, independently confirmed settlement facts, allocation/correction effects, applied tax/FX/party-tax snapshots, separate per-currency account positions and invoice exposures, financial resolution, official document artifact relations and immutable accounting facts"
+contract = "Accept AcceptRatedObligationV1 and AcceptSettlementV1 exactly once; issue immutable invoice/credit-note facts; append allocation, deallocation, reallocation, refund and reversal posting groups; derive collectible_receivable, available_credit and prepaid_funding separately with dotmac_kernel.money.Money; publish account/currency ReceivablePositionV1 and invoice-grained ReceivableExposureV1 facts with Billing-owned financial state; publish InvoiceDocumentFactV1 and AccountingFactV1; record one official opaque file relation through RecordDocumentArtifactV1 and append physical replacements only through RepairDocumentArtifactV1 with strict semantic-digest matching. Reversal is a movement that may reopen a fact, never a steady state. NOT offers/contracts/cadence/proration, collections policy/cases/consequences, PSP clients/credentials/webhook verification/retry/checkpoints, numbering-series state, document rendering/bytes, product access consequences, GL/journals/chart of accounts/fiscal periods/statutory accounting/treasury/tax returns."
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_vendor_control_plane",
+  "dotmac_integrator",
+]
+source_revisions = [
+  "dotmac_starter_mt:7828697ef11fb1ae765a5397dfa7dc221ae6207a",
+  "dotmac_sub:0f3d26ecec4ace6ed7504f17f21aa3d8e3b4107f",
+  "dotmac_erp:2749ec5396cbbd7a1132b394e85855a1d133a7cd",
+  "dotmac_vendor_control_plane:f8f8c3fd636e663e4a17275c19e82fc1667aa52a",
+  "dotmac_integrator:35167813c83ab0ec29c683259ad31479503d812f",
+]
+revalidation_revisions = [
+  "dotmac_starter_mt:c6b403faa5136e06f8219bbbb7cf5e4ddfed724f",
+  "dotmac_sub:a9da920926a9d9212a8cf03a4744b48a1d4e14f2",
+  "dotmac_erp:2749ec5396cbbd7a1132b394e85855a1d133a7cd",
+  "dotmac_vendor_control_plane:f8f8c3fd636e663e4a17275c19e82fc1667aa52a",
+  "dotmac_integrator:35167813c83ab0ec29c683259ad31479503d812f",
+]
+dependency_evidence_revisions = [
+  "dotmac_starter_mt/agent/dotmac-durable-timers:7e0543004864845f0035c9ec325e3f5064c281cc",
+  "dotmac_sub/agent/durable-timers-adoption:4489ca1712f3c263d914f2af0ebfcf044aa70605",
+  "dotmac-kernel:0.1.0a67:outbox_relay.v1",
+]
+durable_timer_disposition = "Revision-pinned read-only prerequisite evidence, not a dotmac-billing runtime or package dependency. Durable Timers must be adopted before Sub enables effective recurring-charge occurrences; Billing, Vendor CP platform adoption and Sub S0/S1 backfill-shadow preparation remain independently testable. Subscriptions owns the occurrence and passes its fully typed RatedObligationOutputV1 through the adopter translation into AcceptRatedObligationV1; Billing never schedules the timer."
+source_paths = [
+  "dotmac_sub:app/services/billing/invoices.py",
+  "dotmac_sub:app/services/billing/credit_notes.py",
+  "dotmac_sub:app/services/billing/payments.py",
+  "dotmac_sub:app/services/billing/ledger.py",
+  "dotmac_sub:app/services/billing/account_credit.py",
+  "dotmac_sub:app/services/billing/adjustments.py",
+  "dotmac_sub:app/services/provider_payment_settlements.py",
+  "dotmac_sub:app/services/billing/obligations.py",
+  "dotmac_sub:app/services/billing/rating.py",
+  "dotmac_sub:app/services/billing/customer_subledger.py",
+  "dotmac_sub:app/models/billing.py",
+  "dotmac_sub:app/models/billing_contract.py",
+  "dotmac_sub:app/models/customer_subledger.py",
+  "dotmac_erp:app/models/finance/ar/invoice.py",
+  "dotmac_erp:app/models/finance/ar/invoice_line.py",
+  "dotmac_erp:app/models/finance/ar/invoice_line_tax.py",
+  "dotmac_erp:app/models/finance/ar/customer_payment.py",
+  "dotmac_erp:app/models/finance/ar/payment_allocation.py",
+  "dotmac_erp:app/services/finance/ar/payment_status.py",
+  "dotmac_erp:app/services/finance/ap/payment_status.py",
+  "dotmac_erp:app/services/finance/coverage.py",
+  "dotmac_erp:app/services/finance/ar/advance_allocation.py",
+  "dotmac_erp:app/services/finance/ar/exact_match_allocation.py",
+  "dotmac_erp:app/services/finance/money_boundary.py",
+  "dotmac_erp:app/models/finance/tax/tax_transaction.py",
+  "dotmac_erp:app/models/finance/core_fx/exchange_rate.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/offers/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/service.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/accounts/models.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_billing_obligations.py",
+  "dotmac_sub:tests/test_payment_allocation_settlement_consequence.py",
+  "dotmac_sub:tests/test_payment_settlement_allocation_evidence.py",
+  "dotmac_sub:tests/test_payment_reallocation.py",
+  "dotmac_sub:tests/test_payment_reversal_evidence.py",
+  "dotmac_sub:tests/test_payment_refund_evidence.py",
+  "dotmac_sub:tests/test_refund_money_correctness.py",
+  "dotmac_sub:tests/test_customer_subledger.py",
+  "dotmac_sub:tests/test_credit_notes.py",
+  "dotmac_sub:tests/integration/test_credit_note_issue_concurrency.py",
+  "dotmac_sub:tests/test_invoice_issued_at_invariant.py",
+  "dotmac_sub:tests/test_invoice_transition_guards.py",
+  "dotmac_sub:tests/test_tax_accounting.py",
+  "dotmac_sub:tests/integration/test_tax_accounting_concurrency.py",
+  "dotmac_erp:tests/integration/test_coverage_parity.py",
+  "dotmac_erp:tests/architecture/test_paid_status_single_owner.py",
+  "dotmac_erp:tests/architecture/test_coverage_is_not_a_lifecycle_status.py",
+  "dotmac_erp:tests/unit/test_payment_coverage.py",
+  "dotmac_erp:tests/finance/test_advance_allocation.py",
+  "dotmac_erp:tests/services/test_exact_match_allocation.py",
+  "dotmac_erp:tests/ifrs/ar/test_customer_payment_service.py",
+  "dotmac_erp:tests/ifrs/ar/test_invoice_service.py",
+  "dotmac_erp:tests/ifrs/tax/test_tax_calculation_service.py",
+  "dotmac_erp:tests/ifrs/platform/test_fx_service.py",
+  "dotmac_erp:tests/finance/test_money_boundary.py",
+  "dotmac_vendor_control_plane:tests/unit/test_offers.py",
+  "dotmac_vendor_control_plane:tests/unit/test_contracts.py",
+  "dotmac_vendor_control_plane:tests/migration/test_replay_concurrency.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_vendor_control_plane", "dotmac_sub"]
+composition_boundary = "ADR-0024: each adopter installs its own selected Billing plane and owns its own rows. Billing imports no assembly, sibling owner, product, provider or ERP. RatedObligationOutputV1 is translated by an assembly to AcceptRatedObligationV1; confirmed Integrator observations become AcceptSettlementV1; Billing facts leave through typed events/APIs. The NumberingProvider is an assembly-supplied protocol, never a dotmac-numbering import. ERP maps immutable AccountingFactV1 values to ERP-owned accounts and periods and never writes operational receivables."
+inventory_evidence = [
+  "docs/inventories/billing-sources.md",
+  "docs/inventories/billing-extraction-dossier.md",
+  "docs/inventories/billing-parity-tests.md",
+  "docs/inventories/billing-source-variance.md",
+  "docs/adr/0020-billing-owns-operational-receivables.md",
+  "docs/adr/0023-dual-plane-modules-declare-both-persistence-planes.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+  "docs/superpowers/specs/2026-08-14-billing-authority-profile-contract.md",
+  "docs/superpowers/plans/2026-08-14-billing-vendor-cp-sub-cutover.md",
+]
+first_cutover = "dotmac_vendor_control_plane, platform plane. Revalidated at f8f8c3fd636e663e4a17275c19e82fc1667aa52a: no invoice, payment, receivable, settlement, credit-note, refund, reversal, subledger or posting writer exists under src/ or tests/; the application has no tenant_id/RLS data plane and must select ModulePlane.PLATFORM without a sentinel tenant. Adoption preparation adds composition, preview/reconciliation and role-isolation proofs only; production activation remains separately authorized. dotmac_sub at 0f3d26ecec4ace6ed7504f17f21aa3d8e3b4107f follows on the tenant plane through isolated backfill/shadow comparison and one coupled invoice/settlement/allocation watermark; its newly merged due-date and money-path constraints are preserved as source canaries, not as a second owner."
+shadow_and_drift = "Vendor CP has no old financial writer: preview one real contract without persisting/numbering, exercise the same-currency scenario suite, prove every platform table is unreachable by app_user and reachable by platform_api, then rebuild each account/currency position and compare its canonical hash. Sub executes Billing against captured immutable inputs in a separate shadow database unreachable from product routes; the legacy writer remains sole production authority and no command is dual-written. Compare exact documents, settlements, allocation edges, three-lane positions, applied snapshots and accounting facts with zero money tolerance. Unknown due-date basis is reported but excluded from automated collections. Three consecutive complete reconciliations with zero unclassified drift gate the coupled watermark."
+local_copy_retirement = "Vendor CP has no local financial owner to retire and may add none. Sub carries two-directional ratchets over invoice/credit-note lifecycle and numbering callers; obligation/rating/tax writers; settlement/allocation/refund/reversal writers; posting groups; mutable/direct balance paths; credit/deposit/adjustment writers; tax/FX decision paths; provider-event money consequences (retire to Integrator); and the invoice artifact relation. Counts fail on rise or unreviewed fall and reach zero before deletion. Historical rows remain labelled read-only evidence, never a fallback writer. ERP and Integrator are read-only integration evidence in this programme and retire nothing to Billing."
+next_action = "The receivable-contract repair landed on main through PR 381 after direct CI run 32659107095 and pull-request CI run 32660183336 passed for head revision 3b9c122940e162d0bf918d42d98c7a1288be483b. Kernel a89 remains the honest minimum: it carries Billing's lineage allocation and every kernel surface this package consumes. Keep the module unallowlisted and never-published while the real Cloud adapter/composition gate is completed; publication still requires separate authorization. Production deployment, authority switching, legacy deletion and destructive retirement remain separately authorized and out of scope."
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "a9da920926a9d9212a8cf03a4744b48a1d4e14f2"
+evidence_paths = [
+  "app/services/billing/invoices.py",
+  "app/services/billing/credit_notes.py",
+  "app/services/billing/payments.py",
+  "app/services/billing/customer_subledger.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "2749ec5396cbbd7a1132b394e85855a1d133a7cd"
+evidence_paths = [
+  "app/services/finance/coverage.py",
+  "app/models/finance/tax/tax_transaction.py",
+  "app/models/finance/core_fx/exchange_rate.py",
+]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+evidence_paths = [
+  "src/vendor_cp/offers/models.py",
+  "src/vendor_cp/contracts/models.py",
+  "src/vendor_cp/accounts/models.py",
+]
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "35167813c83ab0ec29c683259ad31479503d812f"
+evidence_paths = []
+
+[[source_dispositions]]
+path = "dotmac_sub:app/services/billing/cadence.py"
+disposition = "excluded"
+reason = "Subscriptions owns recurrence and period arithmetic."
+
+[[source_dispositions]]
+path = "dotmac_sub:app/services/billing/shadow_verification.py"
+disposition = "scenario-only"
+reason = "Sub-owned cutover harness, not reusable Billing authority."
+
+[[source_dispositions]]
+path = "dotmac_sub:app/services/billing/subledger_opening.py"
+disposition = "excluded"
+reason = "No production callers at the pinned revision."
+
+[[source_dispositions]]
+path = "dotmac_sub:app/services/customer_financial_position.py"
+disposition = "negative-evidence"
+reason = "Live combined-balance shape is replaced by three separate lanes."
+
+[[source_dispositions]]
+path = "dotmac_sub:app/services/invoice_collectibility.py"
+disposition = "negative-evidence"
+reason = "Conflates coverage with lifecycle and must not be ported."
+
+[[source_dispositions]]
+path = "dotmac_integrator"
+disposition = "negative-evidence"
+reason = "Pinned revision contains no payment capability or settlement writer; Integrator remains transport owner only."

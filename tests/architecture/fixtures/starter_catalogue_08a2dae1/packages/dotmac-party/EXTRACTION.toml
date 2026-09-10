@@ -1,0 +1,65 @@
+schema_version = 1
+package = "dotmac-party"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant Party business capacities, exact capacity relationships, organization memberships, reachability evidence, and external-reference provenance"
+contract = "Extend the kernel Party identity with concurrent temporal PartyRole rows, role-to-role PartyRelationship facts, Person-to-Organization PartyMembership context, PartyContactPoint reachability with separate verification/consent, and tenant-scoped external-reference provenance. NOT person/organization identity, authentication, sessions, RBAC grants, accounts, customers, contacts, leads, subscribers, billing, tickets, conversations, or provider transport."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:9f6f9f36b47a8f61773b1756065da22fdfc6d6c4",
+  "dotmac_erp:d8e5bcc076d7284aecf16559149b3853000d4c45",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+  "dotmac_starter_mt:c8237bd991dadc7df7a641ce030e2b799dd2226a",
+]
+revalidation_revisions = [
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_sub:app/models/party.py",
+  "dotmac_sub:app/services/party.py",
+  "dotmac_sub:docs/PARTY_ROLE_RELATIONSHIP_SOT.md",
+  "dotmac_erp:app/models/person.py",
+  "dotmac_erp:app/models/finance/ar/customer.py",
+  "dotmac_crm:app/models/person.py",
+  "dotmac_crm:app/models/organization_membership.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/models.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_party_role_foundation.py",
+  "dotmac_sub:tests/test_sot_relationships.py",
+  "dotmac_sub:tests/test_party_contact_audit.py",
+  "dotmac_sub:tests/test_party_principal_context_bindings.py",
+  "dotmac_starter_mt:tests/unit/test_party_service.py",
+  "dotmac_starter_mt:tests/architecture/test_party_module.py",
+  "dotmac_starter_mt:tests/test_party_module_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac-erp"]
+composition_boundary = "Each application owns its own runtime, database, migration, sessions, authorization and local Party rows. An adopter pins one exact release, binds party_person_catalog.v1 to its local kernel Party provider, declares its open Party vocabularies, and runs the pt lineage in its own tenant database. Applications synchronize only typed observations/correlations through versioned APIs or webhooks; installing the same package never creates a shared customer directory."
+inventory_evidence = ["docs/inventories/party-module-sources.md"]
+first_cutover = "Sub remains the qualifying source and first cutover. Before composition it must complete the reviewed Party backfill and the reader cutovers currently marked pending in PARTY_ROLE_RELATIONSHIP_SOT.md. Shadow compares roles, role relationships, memberships, contact points, consent/verification, and external references. One sealed switch makes the released module the sole writer and retires app.services.party for the transferred facts; kernel Party identity and product account writers remain."
+shadow_and_drift = "Backfill is additive, nullable, provenance-carrying, and digest-bound. Compare missing, extra, conflicting and stale rows; role status/windows/keys; role-to-role relationship endpoints; membership type/status/scope; contact normalization/provider identity/primary/verification/consent; and external-reference ownership. Shadow is read-only and never infers identity from shared email, phone, address, name, reseller owner, or social handle."
+local_copy_retirement = "At cutover the Sub writer ratchet reaches zero for party_roles, party_relationships, party_memberships, party_contact_points and party_external_references, including direct ORM writes, routes, jobs, imports and compatibility fallbacks. CRM's PersonChannel and OrganizationMembership facts and ERP's Person/Customer contact and external-reference facts are legacy requirement inputs, not second sources: each drains with its product or migrates through a named product adapter, and none may survive as contact-point, membership or external-reference writers. Legacy contact/organization/principal projections retire only after their separately named domain readers consume the module and reconciliation is green. public.parties remains kernel-owned and is not retired by this package."
+next_action = "Keep unreleased. Validate the candidate on Observer, update Sub's party relationship target from party-to-party to exact PartyRole endpoints, finish Sub's reviewed backfill and reader cutovers, then prepare one exact-release shadow and sealed writer switch. Backoffice remains only a candidate second consumer until it has a real Party-context demand."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/person.py", "app/models/organization_membership.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/person.py", "app/models/finance/ar/customer.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/party.py", "app/services/party.py", "docs/PARTY_ROLE_RELATIONSHIP_SOT.md"]

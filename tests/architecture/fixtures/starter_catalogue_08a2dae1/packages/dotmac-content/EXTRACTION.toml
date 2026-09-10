@@ -1,0 +1,87 @@
+schema_version = 1
+package = "dotmac-content"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Dotmac editorial content"
+contract = "Tenant-scoped editorial plans, canonical content items, provider-neutral variants, editorial calendar placement and opaque creative-file references. NOT outbound campaign audiences, delivery scheduling, publication state, provider transport, stored bytes, people, permissions or generic work management."
+source_repositories = [
+  "dotmac_mkt",
+  "dotmac_starter_mt",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_crm",
+]
+source_revisions = [
+  "dotmac_mkt:7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d",
+]
+revalidation_revisions = [
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_mkt:app/models/campaign.py",
+  "dotmac_mkt:app/models/post.py",
+  "dotmac_mkt:app/models/asset.py",
+  "dotmac_mkt:app/services/campaign_service.py",
+  "dotmac_mkt:app/services/post_service.py",
+  "dotmac_mkt:app/services/asset_service.py",
+  "dotmac_mkt:app/services/post_asset_service.py",
+  "dotmac_mkt:app/services/campaign_member_service.py",
+  "dotmac_mkt:app/web/campaigns.py",
+]
+preserved_tests = [
+  "dotmac_mkt:tests/test_marketing_models.py",
+  "dotmac_mkt:tests/test_marketing_services.py",
+  "dotmac_mkt:tests/test_web_campaigns.py",
+  "dotmac_starter_mt:tests/architecture/test_content_module.py",
+  "dotmac_starter_mt:tests/unit/test_content_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_content_service.py",
+  "dotmac_starter_mt:tests/test_content_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+authority_boundary = "dotmac-content owns editorial decisions only. Backoffice owns actor authentication, permissions and collaboration policy. dotmac-files owns stored bytes. dotmac-publishing owns target selection, requested delivery time, immutable publication snapshots and reconciled remote publication state. dotmac-campaigns owns audiences, recipients, consent/suppression checks and campaign execution. Integrator owns credentials, OAuth, provider clients, webhooks, retries, checkpoints and remote transport evidence. Applications install independent lineages and synchronize only typed data; no sibling-module import, cross-application database access or shared writer is permitted."
+inventory_evidence = [
+  "docs/inventories/marketing-suite-sources.md",
+  "docs/inventories/content-extraction-dossier.md",
+  "docs/inventories/content-writer-retirement.toml",
+]
+first_cutover = "The Dotmac ERP product is cutover 1. It must pin a released dotmac-content version, compose and migrate its own tenant plane, backfill Mkt editorial rows, shadow every selected read and write, switch one writer at a time, and retire the corresponding Mkt writer. Installing the package without deleting a source writer is not adoption. Sub is a later independent adopter with its own database, rows and lineage."
+shadow_and_drift = "Before writer cutover, compare every Mkt Campaign selected as editorial planning data with one ContentPlan and every non-published Post editorial record with one ContentItem. Prove identifiers, text, dates, editorial state, creator reference, ordering and creative references. Classify every published Post and every channel/delivery field into the publishing migration with no default bucket. Reconcile opaque file references against the files adapter without adding a cross-module foreign key. Run shadow reads for a complete editorial planning cycle and require zero unexplained mismatches."
+local_copy_retirement = "Delete or permanently gate Mkt CampaignService once CNT-R1 passes; delete the editorial half of PostService only after CNT-R2 and the publishing handoff pass; retire campaign_assets/post_assets writers after CNT-R4/CNT-R5; remove the campaign_members authorization query from the content path after Backoffice policy guards replace it. Provider/channel/delivery code retires under dotmac-publishing and Integrator, not this package. The two-directional retirement inventory is docs/inventories/content-writer-retirement.toml."
+next_action = "Michael authorized release on 2026-08-20 without authorizing adoption, and the release is complete: kernel a81 and content 0.1.0a1 are registry-verified and tagged from the exact protected-main commit, so Backoffice can pin an installable artifact once it is authorized to. Publication moved nothing else. Backoffice remains cutover 1, has not composed the module, and every Mkt writer-retirement row remains not-started; do not claim adoption until the shadow cycle, writer switches and retirement gates pass."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d"
+evidence_paths = [
+  "app/models/campaign.py",
+  "app/models/post.py",
+  "app/models/asset.py",
+  "app/services/campaign_service.py",
+  "app/services/post_service.py",
+  "app/services/asset_service.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/campaign.py", "app/services/crm/campaigns.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-network-access"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral access projections, authentication/accounting observations, sessions, reconciliation and drift evidence"
+contract = "Project access state from typed product decisions; ingest deduplicated auth/accounting facts; maintain sessions and reconcile drift. NOT commercial eligibility, IPAM, generic inventory, provider clients or credentials."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/radius.py", "dotmac_sub:app/models/usage.py", "dotmac_sub:app/services/radius.py", "dotmac_sub:app/services/radius_access_state.py", "dotmac_sub:app/services/radius_reconciliation.py", "dotmac_starter_mt:packages/dotmac-network-access/src/dotmac_network_access"]
+preserved_tests = ["dotmac_sub:tests/test_radius_services.py", "dotmac_sub:tests/test_radius_reconciliation.py", "dotmac_sub:tests/test_radius_projection_drift.py", "dotmac_sub:tests/architecture/test_radius_projection_ownership.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Sub decides commercial/customer access and sends typed decisions; Integrator owns RADIUS/router transport. Opaque refs replace product/sibling FKs."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover."
+shadow_and_drift = "Compare policy fingerprints, authentication/accounting receipts, session state and repair outcomes against Sub."
+local_copy_retirement = "Sub removes local access projection/session writers and provider delivery paths after sealed suite cutover."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/radius.py", "app/models/usage.py", "app/services/radius.py", "app/services/radius_access_state.py"]

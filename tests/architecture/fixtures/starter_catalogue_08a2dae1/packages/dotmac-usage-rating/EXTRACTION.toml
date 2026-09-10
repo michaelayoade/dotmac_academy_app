@@ -1,0 +1,44 @@
+schema_version = 1
+package = "dotmac-usage-rating"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Effective usage rating and immutable pre-tax obligations"
+contract = "Own versioned/effective meter rating rules and immutable rated usage obligations. Usage and service identities are opaque references. NOT usage collection, catalogue offers, subscription contracts, invoicing, tax, payment, revenue recognition or general-ledger posting."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/services/billing/rating.py",
+  "dotmac_sub:app/models/usage.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_billing_rating.py",
+  "dotmac_sub:tests/test_usage_rollover.py",
+  "dotmac_starter_mt:tests/unit/test_usage_rating_service.py",
+  "dotmac_starter_mt:tests/architecture/test_usage_rating_module.py",
+  "dotmac_starter_mt:tests/test_usage_rating_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Adopters compose ur locally and submit opaque normalized-usage references and quantities. Billing consumes immutable pre-tax obligations through a typed port; no sibling module import or foreign database read is permitted."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains usage-rating owner until rule and obligation backfill plus pre-tax amount shadow comparison complete."
+shadow_and_drift = "Compare effective rule, meter/unit, quantity, unit price, currency, net amount and rating time. Invoice/tax/GL state is excluded."
+local_copy_retirement = "After cutover, reduce Sub rating-rule and pre-tax-obligation writers to zero while Billing consumes the new typed obligation contract."
+next_action = "Compose in Sub and run rule/obligation shadow rating before switching the sole writer."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/billing/rating.py", "app/models/usage.py"]

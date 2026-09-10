@@ -1,0 +1,47 @@
+schema_version = 1
+package = "dotmac-usage"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Normalized service-usage facts, corrections and rebuildable aggregates"
+contract = "Own normalized meter observations deduplicated by source event, append-only corrections, and rebuildable window aggregates. Service identity is opaque. NOT raw AAA/RADIUS packet/session authority, service lifecycle, tariff selection, monetary rating, invoicing, tax or accounting."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/usage.py",
+  "dotmac_sub:app/services/usage.py",
+  "dotmac_sub:app/services/usage_summary.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_usage_services.py",
+  "dotmac_sub:tests/test_usage_metering.py",
+  "dotmac_sub:tests/test_usage_end_to_end.py",
+  "dotmac_sub:tests/test_usage_summary.py",
+  "dotmac_starter_mt:tests/unit/test_usage_service.py",
+  "dotmac_starter_mt:tests/architecture/test_usage_module.py",
+  "dotmac_starter_mt:tests/test_usage_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Collectors/importers normalize external facts and call us commands; they never assign service, rating, billing or accounting state. Service references are opaque and no sibling module is imported."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains usage owner until observation/correction history backfill, source-event dedupe verification and aggregate shadow comparison complete."
+shadow_and_drift = "Compare source event identity, service/meter/unit, period, quantity, corrections and aggregate windows. Raw AAA remains an upstream observation source."
+local_copy_retirement = "After cutover, reduce Sub normalized-usage writers and aggregate writers to zero while retaining raw AAA collectors as adapters."
+next_action = "Compose in Sub and run normalized observation plus aggregate shadow verification before writer cutover."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/usage.py", "app/services/usage.py", "app/services/usage_summary.py"]

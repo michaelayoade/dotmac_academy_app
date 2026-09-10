@@ -1,0 +1,145 @@
+schema_version = 1
+package = "dotmac-auth-oidc"
+# NOT an optional-module: nothing installs this. It has no ModuleManifest, no
+# namespace or lineage — a consumer constructs one of its server-side protocol
+# objects and calls it. Naming it a module would send a reader looking for a
+# lineage that does not exist.
+classification = "stateless-protocol-adapter"
+status = "adopted"
+
+# NOT "product-first", and the distinction is the whole story of this dossier.
+# ERP once held the fleet's only OIDC implementation, but it qualified on
+# neither required axis: its security-critical validation/exchange methods were
+# mocked out of every test, and the 2026-08-15 production inspection found the
+# feature disabled with no configured provider and zero binding rows. ERP PR
+# #302 deleted that unshipped implementation. At the exact revision recorded
+# below ERP retains only the target contract, an empty-table retirement guard,
+# and explicit must-not-restore checks; it has no protocol reader or writer.
+# The historical design and defect inventory informed this adapter, but the
+# crypto and HTTP code were not ported as trusted source. That is
+# greenfield-after-inventory, and the inventory is what earns it.
+source_mode = "greenfield-after-inventory"
+
+owner = "Server-side OIDC protocol verification: the confidential relying-party ceremony and public-native ID-token verification, sharing discovery, JWKS, the algorithm/key-purpose checks and registered-claim validation — ending at a verified (issuer, subject)."
+
+contract = "Run a confidential OIDC login or verify the ID token a public native client obtained, and say which external subject authenticated. The native backend surface has no secret, code exchange, cookie or StateStore and accepts a typed raw-or-digest nonce binding. NOT which local party that is, NOT whether they may do anything, NOT a session, NOT a user record, and NOT provider-specific behaviour."
+
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_academy_app",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+
+# Sub's first mobile-federation branch created a second JWKS/token verifier.
+# It is reviewed input to a2 and a legacy writer to retire, not adoption: its
+# integrated revision is red and cannot pin an artifact that is not released.
+revalidation_revisions = [
+  "dotmac_sub:aa7dfaf29d64be2de629d2c64a221e6f855a36c1",
+]
+
+source_paths = [
+  "dotmac_erp:app/config.py",
+  "dotmac_erp:app/models/auth.py",
+  "dotmac_erp:docs/oidc_identity_contract.md",
+  "dotmac_erp:tests/architecture/test_identity_protocol_boundary.py",
+  "dotmac_crm:app/services/oauth_state.py",
+  "dotmac_sub:app/services/authentication_mechanism_registry.py",
+  "dotmac_sub:app/services/oidc_mobile_federation.py",
+  "dotmac_sub:app/services/oidc_mobile_jwks.py",
+  "dotmac_sub:tests/test_oidc_mobile_federation.py",
+  "dotmac_starter_mt:packages/dotmac-auth-oidc/src/dotmac_auth_oidc",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_auth_oidc_state.py",
+  "dotmac_starter_mt:tests/unit/test_auth_oidc_id_token.py",
+  "dotmac_starter_mt:tests/unit/test_auth_oidc_native_verifier.py",
+  "dotmac_starter_mt:tests/unit/test_auth_oidc_discovery.py",
+  "dotmac_starter_mt:tests/architecture/test_auth_oidc_public_surface.py",
+]
+
+# Adoption is real and was always documented in `first_cutover`; what was
+# missing is the ADDRESSABLE form of it. Prose a reader must trust is not
+# evidence a reader can check, which is the whole distinction ADR-0031 draws.
+adoption_evidence_schema = "v1"
+
+contract_consumers = ["dotmac_workspace"]
+candidate_consumers = ["dotmac_sub", "dotmac_erp"]
+
+inventory_evidence = [
+  "docs/inventories/external-identity-sources.md",
+  "docs/adr/0021-the-tenant-workspace-is-a-third-plane.md",
+  "docs/adr/0017-adoption-is-the-scarce-resource.md",
+]
+
+first_cutover = "DONE 2026-08-15. `dotmac_workspace` PR #2 (`ef38693`) merged with `dotmac-auth-oidc 0.1.0a1` exact-pinned and its own `identity/oidc.py` DELETED — discovery, JWKS, the algorithm allow-list, PKCE, the exchange and ID-token verification all gone, replaced by an ~80-line `relying_party.py` that decides only which config, which lifetime and where the store comes from. It supplies a production `StateStore`: a PostgreSQL table whose `take` is one `DELETE ... RETURNING`, proven under real concurrency in its own `tests/db/test_state_store_atomicity.py`. The verified subject is resolved through `dotmac_kernel.external_identity.finalize_external_login` and the Workspace issues its OWN `dmws_session` — the package mints nothing. The pilot also CHANGED this package before earning the release (starter PR #194): a database-backed store belongs to one request's transaction, so `state_store` became a per-ceremony argument with a `PER_REQUEST_STATE_STORE` declaration, while the client stays process-lifetime to keep its `ProviderCache`. That gap was only findable by trying to be a consumer, which is the argument for pilot-before-publish stated as evidence rather than as principle. ERP remains a candidate consumer, but ERP PR #302 deleted its disabled implementation after host inspection; deletion removed a bad copy and is not adoption or reuse evidence."
+local_copy_retirement = "DONE for the ERP protocol copy: PR #302 deleted `app/services/sso/oidc.py` after production inspection found no configured provider, sessions or binding rows. OPEN for Sub's unmerged mobile copy at aa7dfaf29: after 0.1.0a2 is published and exact-pinned, `app/services/oidc_mobile_jwks.py` and the local signature/registered-claim validation in `oidc_mobile_federation.py` are deleted; Sub retains only its ceremony rows, local AuthenticationBinding/UserCredential resolution, burn ordering and session issuance. Until that deletion and a green real exchange-path test, Sub is a candidate rather than a consumer. CRM's and Sub's forked `meta_oauth.py` pair is unrelated: Meta OAuth2 for API access has no ID token or JWKS and belongs to the Integrator connector story."
+
+shadow_and_drift = "SETTLED 2026-08-15, and settled by a reading rather than by an argument. This field used to say a shadow comparison was unavailable because ERP's implementation had no VERIFIED production usage, and that if a host inspection later showed it live, a shadow comparison became both possible and necessary before retirement. The inspection happened: on erp.dotmac.io, OIDC_ENABLED is unset in the running dotmac_erp_app container, no issuer/client id/secret is configured, and federated_identities holds zero rows. There is no live behaviour to diff against, so no shadow phase is owed and ERP's retirement is a deletion. What stands in for a shadow is DIFFERENTIAL testing against the source's known gaps — each of the six defects the inventory measured in ERP (no JWKS/discovery caching, no clock-skew leeway, no `azp` check when `aud` is multi-valued, no one-time-use state, a borrowed state-signing key, an old pinned python-jose) is a named test here that fails if the behaviour regresses to ERP's. The FIRST consumer adds a second kind of evidence the differential tests cannot give: dotmac_workspace's suite mints real signed ID tokens against a provider double, so this package's verification runs for real from a consumer's side rather than only from its own. The ongoing drift risk is different in kind — a provider rotating signing keys — and is handled in the code (bounded forced JWKS refetch on an unknown `kid`, rate-limited against amplification) rather than by reconciliation, because there is no local projection to drift."
+
+next_action = "Release exact 0.1.0a2 through the protected adapter lane, then make Sub the honest second consumer: exact-pin it, construct one NativeIDTokenVerifier per registration, pass `NonceBinding.from_sha256_hex(ceremony.nonce_hash)`, delete the local JWKS/verifier copy, and prove the real exchange path. Do not book source presence as adoption. Unchanged and non-negotiable: neither algorithm allowlist is a deployment knob; no `plain` PKCE; no ceremony on the wire; no provider-name branch; the PyJWT >=2.13 security floor stays; and no confidential client or credential enters Flutter."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/api/auth.py", "app/services/identity.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/services/meta_oauth.py", "app/services/oauth_state.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/config.py", "app/models/auth.py", "docs/oidc_identity_contract.md", "tests/architecture/test_identity_protocol_boundary.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "aa7dfaf29d64be2de629d2c64a221e6f855a36c1"
+evidence_paths = ["app/services/oidc_mobile_jwks.py", "app/services/oidc_mobile_federation.py", "tests/test_oidc_mobile_federation.py"]
+
+# `main@ef38693` was seven hex digits AND a branch name — two refusals in one
+# string, and it survived the old gate because it split on a colon. Expanded to
+# the full merge commit of Workspace PR #2, which is what the abbreviation
+# meant; the branch half is deleted rather than demoted, because #415's lesson
+# is that a weaker ROLE for a bad coordinate is still a bad coordinate.
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_workspace"
+commit = "ef386933a511f284b4a18abd168baf114acb4e5f"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-auth-oidc.version"
+expected = "0.1.0a1"
+locator = "dotmac_workspace:pull/2"
+note = "The same commit deleted the Workspace's own identity/oidc.py, and that retirement is the cutover. CORRECTION 2026-08-29: this note used to say the retirement was 'already typed six lines away as [[product_writers]].writer_state'. It is not — dotmac_workspace appears in neither [[product_writers]] nor source_repositories, so the field the note pointed at does not exist. The deletion is a removed Python file, which AdoptionEvidenceV1 cannot address: an assertion may only name a field in a structured file. So this dossier rests on an installation row alone and is recorded in PIN_ONLY_ADOPTION_DEBT until either an audited [[product_writers]] row for the Workspace or a structured composition declaration exists. A pin is installation, not adoption."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_workspace"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-auth-oidc.version"

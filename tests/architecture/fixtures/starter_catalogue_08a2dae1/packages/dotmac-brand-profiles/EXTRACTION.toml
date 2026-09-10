@@ -1,0 +1,76 @@
+schema_version = 1
+package = "dotmac-brand-profiles"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Brand profile DATA: the stable profile identity, display and product names, legal identity, brand colours as two hex values, opaque logo/icon file references, host bindings, sender presentation, support presentation, enabled surfaces, locale and timezone defaults, a mobile build-profile reference, and the per-field precedence and locking that make a multi-layer brand safe"
+contract = "Hold brand profiles on either plane; upsert as DRAFT and make resolvable only by explicit activation; merge an ordered caller-supplied scope chain highest-precedence-first with first-non-null-wins; report the source scope of EVERY resolved field; let a higher layer LOCK a field from LOCKABLE_FIELDS against lower-precedence override, with IDENTITY_FIELDS naming the legal/support/sender subset that ADR-0006 s3 keeps separate from display brand; refuse a lock naming a field that does not participate in precedence; bind an already-NORMALISED host to a platform profile and resolve a brand by host BEFORE any tenant exists; hold the constrained runtime brand/accent values dotmac_ui.BrandOverride accepts, publishing BRAND_OVERRIDE_INPUTS as the allowlist the ASSEMBLY maps through; validate them on write through dotmac-ui's own parser; and translate a legacy brand record onto that allowlist while REPORTING every unsupported value with its disposition rather than dropping it. NOT a design system, not a file store, not a host-to-tenant resolver, not a mobile build pipeline, and not a holder of any CSS, token map, colour parser, file byte, certificate or key."
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_starter_mt",
+  # Inventoried and found to hold no brand-profile record. Vendor CP's
+  # `deployment_profile.py` is ADR-0003 composition (modules, providers, locale
+  # posture), not presentation, and was compared and rejected rather than
+  # assumed different because of its name.
+  "dotmac_vendor_control_plane",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+]
+source_paths = [
+  "dotmac_sub:app/models/branding.py",
+  "dotmac_sub:app/services/brand_profiles.py",
+  "dotmac_sub:app/services/brand_theme.py",
+  "dotmac_sub:app/services/branding_config.py",
+  "dotmac_sub:app/services/branding_storage.py",
+  "dotmac_sub:app/services/public_branding.py",
+  "dotmac_sub:app/schemas/branding.py",
+  "dotmac_erp:app/services/email_branding.py",
+  "dotmac_erp:app/services/branding_assets.py",
+  "dotmac_starter_mt:packages/dotmac-brand-profiles/src/dotmac_brand_profiles",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_brand_profiles.py",
+  "dotmac_sub:tests/test_customer_branding.py",
+  "dotmac_sub:tests/test_branding_storage.py",
+  "dotmac_erp:tests/services/test_branding_no_raw_css.py",
+  "dotmac_erp:tests/web/test_branding_raw_css_route_canaries.py",
+  "dotmac_starter_mt:tests/unit/test_brand_profile_resolution.py",
+  "dotmac_starter_mt:tests/architecture/test_brand_profiles_module.py",
+  "dotmac_starter_mt:tests/test_brand_profiles_dual_plane_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_vendor_control_plane"]
+adoption_evidence = []
+composition_boundary = "ADR-0006 s2: `dotmac-ui` is the ONE cross-package dependency, and it is the permitted direction (assembly -> module -> dotmac-ui -> dotmac-kernel). It is not a sibling module and the `Modules are independent of each other` contract does not name it. Michael 2026-08-19 fixed the three-way boundary: dotmac-ui owns the token vocabulary, projection logic and contrast validation; this module owns the scoped values, provenance, precedence and locks; the ASSEMBLY maps profile values into dotmac_ui.BrandOverride. Constrained runtime brand/accent values are permitted and intended here. ADR-0006 D8: no CSS column, no open-ended token map and no colour parser exist, and unsupported legacy input is REPORTED via translate_legacy_brand_values rather than dropped — which is dotmac_ui.BrandWarning's own rule. The module deliberately exposes no brand_override() constructor, because returning a ready-made override would take the assembly's job back. ADR-0022: dotmac-files owns bytes; the logo/icon columns hold opaque references this module never dereferences. ADR-0023 / hard rule 27: genuinely dual-plane with a named assembly on each side today — Sub on the tenant plane with FORCEd RLS, the vendor control plane on the platform plane with app_user REVOKEd — and NO foreign key crosses the planes. Host bindings exist on the PLATFORM plane only: the kernel's TenantDomain owns host-to-tenant, and a second answer to that question would show up as a tenant resolving one way and its branding another. ADR-0008: scope_type, status and enabled_surfaces are open registered strings; the scope vocabulary and the precedence ORDER belong to the product, and this module owns only the mechanics. ADR-0028: the assembly makes an explicit ModulePlaneSelection; there is no default."
+inventory_evidence = [
+  "docs/inventories/vendor-cp-gap-sources.md",
+  "docs/inventories/branding-settings.md",
+  "docs/adr/0057-the-vendor-control-plane-composes-existing-owners.md",
+]
+first_cutover = "Not started. Sub is the named first adopter and holds the qualifying implementation; the vendor control plane is the second and has no branding record at all, so it composes greenfield on the platform plane. This dossier sits at `audit-complete` rather than `adopted` because no product runs the module yet, and recording adoption evidence it does not have is the defect ADR-0031 seals against."
+shadow_and_drift = "A data-bearing migration is owed at Sub's cutover, and it carries one correction and one RULED reduction. (1) The correction: Sub stores primary_color/secondary_color; this module stores primary_hex/accent_hex and the ASSEMBLY maps them into dotmac_ui.BrandOverride, whose ramp generation and accessibility clamping differ from Sub's own brand_theme.py. The migrated colours are therefore the same VALUES rendered by a different generator, so the cutover renders both and diffs the output rather than assuming parity - ADR-0006 D8 and U1 make dotmac-ui the authority, so where they differ the new rendering is correct and the difference is a deliberate, reviewable change to what customers see. (2) The reduction, RULED by Michael 2026-08-19: Sub's five-tone semantic_colors quintet is NOT carried. It is not an open token map - Sub already constrains it to known tones, 6-digit hex and WCAG AA in both themes - but dotmac_ui.SEMANTIC_INTENTS publishes exactly those five names as tokens with built-in ramps that render_brand_css does not seed, so a per-profile override would be a second authority over a published token. The disposition is executable rather than prose: translate_legacy_brand_values() returns every unsupported value with Disposition.OWNED_BY_PUBLISHED_TOKEN and the reason, so the cutover reports what it did not carry instead of silently dropping it - which is dotmac_ui.BrandWarning's own report-never-drop rule applied to migration. A product that needs a semantic tone changes the published token, not this module. Everything else migrates one-for-one, with source_scope/source_scope_id becoming per-field sources computed at resolution rather than a stored column."
+local_copy_retirement = "Owed by dotmac_sub at cutover: app/models/branding.py::BrandProfile, app/services/brand_profiles.py, branding_config.py, branding_storage.py, public_branding.py and the brand_profiles table. Sub KEEPS its web routes, its /branding/theme.css endpoint and its own scope hierarchy — the module owns the data and the precedence mechanics, not the surface. app/services/brand_theme.py is retired only insofar as it generates colour; any Sub-specific chart/categorical palette that dotmac-ui does not publish stays a Sub concern until it is proposed as a published token. ERP's email_branding.py and branding_assets.py are legacy writers outside Sub's migration: an independent ERP adoption must retire both in its own sealed cutover, and they may not coexist as a second brand-profile authority."
+next_action = "dotmac-brand-profiles 0.1.0a1 and dotmac-kernel 0.1.0a77 are published and registry-verified. Compose in Sub (the semantic_colors reduction is RULED - see shadow_and_drift): exact-pin both releases, select the TENANT plane explicitly, install the bp lineage, migrate the existing brand_profiles rows, render both colour pipelines and review the diff, retire the local copy in the same change, and record the adoption evidence here. The vendor control plane composes the PLATFORM plane independently and needs no migration. Until then this package is released but unadopted."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/email_branding.py", "app/services/branding_assets.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/branding.py", "app/services/brand_profiles.py", "app/services/brand_theme.py", "app/services/branding_config.py"]

@@ -1,0 +1,107 @@
+schema_version = 1
+package = "dotmac-positioning"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral tracked-unit position evidence, projections, collection grants, source assignments, retention, and geofence facts"
+contract = "Tenant-scoped opaque tracked units; temporal source assignments; purpose-bound collection grants; immutable replay-safe observations with device and receipt time, accuracy, source, and opaque context; deterministic current/trail projections; caller-selected retention; and neutral circle/polygon entry/exit facts evaluated only for explicit product-selected opaque fence ids. Products own subject links, fence applicability, authorization, policy defaults, business consequences, transports, and presentation."
+authority_boundary = "dotmac-positioning owns position evidence and rebuildable neutral projections, not vehicle lifecycle, work-order lifecycle, attendance consequences, provider transport, or map presentation. Product owners retain subject links, applicability, policy and every business consequence."
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_erp",
+  "dotmac_workspace",
+  "dotmac_vendor_control_plane",
+  "dotmac_integrator",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/models/field_location.py",
+  "dotmac_sub:app/services/field/location_tracking.py",
+  "dotmac_sub:app/services/field/geofence.py",
+  "dotmac_sub:app/services/field_maps.py",
+  "dotmac_sub:app/services/customer_work_order_selfcare.py",
+  "dotmac_sub:field_mobile/lib/core/location/device_location.dart",
+  "dotmac_sub:field_mobile/lib/features/location/location_ping_service.dart",
+  "dotmac_crm:app/models/field_location.py",
+  "dotmac_crm:app/services/field/location_tracking.py",
+  "dotmac_crm:app/services/field/tracking.py",
+  "dotmac_crm:app/services/field/geofence.py",
+  "dotmac_crm:app/tasks/field.py",
+  "dotmac_erp:app/models/fleet/vehicle.py",
+  "dotmac_erp:app/services/people/attendance/attendance_service.py",
+  "dotmac_starter_mt:packages/dotmac-positioning/src/dotmac_positioning",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_field_location_tracking.py",
+  "dotmac_sub:tests/test_field_location_retention_task.py",
+  "dotmac_sub:tests/test_admin_maps_web.py",
+  "dotmac_sub:tests/test_customer_work_order_selfcare.py",
+  "dotmac_sub:tests/architecture/test_position_observation_boundary.py",
+  "dotmac_crm:tests/test_field_location_tracking.py",
+  "dotmac_crm:tests/test_field_recent_tracks.py",
+  "dotmac_crm:tests/test_field_location_retention_task.py",
+  "dotmac_crm:tests/test_field_geofence.py",
+  "dotmac_starter_mt:tests/unit/test_positioning.py",
+  "dotmac_starter_mt:tests/architecture/test_positioning_module.py",
+  "dotmac_starter_mt:tests/test_positioning_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp"]
+inventory_evidence = [
+  "docs/inventories/positioning-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/inventories/fleet-fact-level-decomposition.md",
+]
+first_cutover = "Dotmac Sub is cutover 1 after its corrected position owner passes the parity suite. Sub composes the tenant plane, creates product-owned technician-to-tracked-unit links, shadows observation dispositions/current/trail/grant/refusal/retention/geofence-fact digests, switches reads and writes, then removes its local position writer and mixed-row location projection. Dotmac ERP is cutover 2 through a product-owned vehicle-to-tracked-unit link while fleet and attendance authority remain in ERP."
+shadow_and_drift = "Feed the same typed Sub observations to the corrected local owner and this module in one bounded shadow. Compare accepted, rejected, replay, and collision dispositions; current observation identity, captured/received time, coordinates and accuracy; ordered trail digests; purpose-grant refusal and expiry; prune outcomes; and neutral geofence facts for the exact product-selected fence ids. Prove unselected fences receive no state and stale observations cannot regress fence state. Product consequences are compared by the product owner and never emitted by this module. Seal full-column digests and effective privileges before cutover, then remove the shadow so it cannot become a permanent second writer."
+local_copy_retirement = "Sub deletes or migration-seals the FieldTechLocationPing writer, removes current coordinates and collection-grant columns from the mixed FieldTechPresence authority, and retains only its product-owned workforce status and disclosure/consequence policies. CRM's fork retires through the existing CRM-to-Sub convergence. ERP must not create a parallel Vehicle location writer after adoption; it replaces those scalar projection columns with a product-owned tracked-unit link while retaining vehicle, dispatch, and attendance decisions."
+next_action = "dotmac-positioning 0.1.0a1 is published, installed back from the private index, conformance-checked and tagged from exact protected-main SHA 75a26ab by release run 32460582571. Publication moved no authority. Before Sub adoption, settle the two source-shape questions: Sub's nullable accuracy_m against this module's NOT NULL column, and replacement of Sub's location_sharing_enabled boolean by a purpose/expiry/revocation grant. Then let Sub compose the exact pin, create its product-owned technician-to-tracked-unit link, shadow the disposition/current/trail/grant/refusal/retention/geofence-fact digests, switch reads and writes, and remove its local position writer and mixed-row location projection. ERP remains cutover 2. Do not claim adoption until the local writer is gone."
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/product_port.py", "src/dotmac_integrator/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/field_location.py", "app/services/field/location_tracking.py", "app/services/field/geofence.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/fleet/vehicle.py", "app/services/people/attendance/attendance_service.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/field_location.py", "app/services/field/location_tracking.py", "app/services/field/geofence.py", "app/services/field_maps.py"]

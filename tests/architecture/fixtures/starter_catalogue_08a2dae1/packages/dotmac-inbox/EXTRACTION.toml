@@ -1,0 +1,89 @@
+schema_version = 1
+package = "dotmac-inbox"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant-scoped conversation identity, lifecycle, message ordering, channel-trait threading, message identity, append-only transport correlations, and per-operator read cursors"
+contract = "Create one durable tenant conversation per declared thread; append ordered inbound, outbound, and internal messages with one canonical identity that replays exact redelivery and rejects key reuse with different content; support opaque product-supplied thread and message references separately from provider transport evidence; bind append-only global- or account-scoped transport message correlations to a tenant message, replaying the exact binding and rejecting reuse by another message, while a channel declaring transport scope none cannot create a correlation key or row; late-bind only an opaque transport observation reference by tenant-scoped message UUID with exact replay and conflict protection; transition open, pending, snoozed, and resolved state through expected-state commands; represent finite snooze with a timezone-aware deadline or explicit indefinite snooze with the typed UNTIL_REPLY value (omitted snoozed_until remains invalid), persisting the latter as status=snoozed and snoozed_until=NULL; wake an indefinite snooze only on inbound module-owned message activity; reopen a resolved thread on a new inbound message; maintain a monotonic opaque-actor read cursor; and expose frozen typed tenant-scoped conversation get/list and ascending message timeline reads, with only declared filters, bounded opaque scope-bound keyset cursors, timezone-aware cursor timestamps, and UUID tie-break ordering. Correlation evidence is not deleted through its message or tenant parent. A product retains subscriber/person and all other domain relationships, must reuse its logical supplied message reference across retries, and owns timed wake scheduling. Every mutation participates in the caller's transaction and flushes without commit or rollback. NOT provider transport, connector installation, webhook authentication, raw provider payloads, delivery/retry, contact resolution, routing, assignment, presence, queues, attachments, realtime, templates, AI intake, tickets, subscribers, leads, customers, or product consequences."
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_erp",
+  "dotmac_vendor_control_plane",
+]
+source_revisions = [
+  "dotmac_sub:3f8d74825bee47b98c3c532229b72f3a8a5b16aa",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_vendor_control_plane:e6b2bbee815cf9fd3ce99ceed0ff3a1f5763f057",
+]
+revalidation_revisions = [
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_sub:app/models/team_inbox.py",
+  "dotmac_sub:app/services/team_inbox_channel_receive.py",
+  "dotmac_sub:app/services/team_inbox_commands.py",
+  "dotmac_sub:app/services/team_inbox_read_state.py",
+  "dotmac_sub:app/services/team_inbox_integrator_envelope.py",
+  "dotmac_sub:docs/designs/TEAM_INBOX_SOURCE_OF_TRUTH.md",
+  "dotmac_sub:docs/INTEGRATOR_MESSAGING_RECEIVE_CUTOVER.md",
+  "dotmac_crm:app/models/crm/conversation.py",
+  "dotmac_crm:app/services/crm/inbox/dedup.py",
+  "dotmac_erp:app/models/support/ticket.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_team_inbox_channel_receive.py",
+  "dotmac_sub:tests/test_team_inbox_receive.py",
+  "dotmac_sub:tests/test_team_inbox_read.py",
+  "dotmac_sub:tests/test_team_inbox_lifecycle_audit.py",
+  "dotmac_sub:tests/test_integrator_observation_port.py",
+  "dotmac_sub:tests/architecture/test_integrator_port_boundary.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_channels.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_threading.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_service.py",
+  "dotmac_starter_mt:tests/architecture/test_inbox_module.py",
+  "dotmac_starter_mt:tests/test_inbox_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp"]
+composition_boundary = "ADR-0024: every adopter installs its own ib lineage and owns only its local conversation rows. The receiving product accepts a typed, provider-neutral Integrator port and asks dotmac-inbox to record domain consequences; dotmac-integration retains connector installations, bindings, inbox/outbox receipts, retries, checkpoints, raw provider evidence, and repair. A message stores only opaque transport correlation references. Product-owned tables link subscribers, customers, tickets, leads, teams, assignments, files, and delivery outcomes; the module imports neither the assembly nor another module."
+inventory_evidence = [
+  "docs/inventories/inbox-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/adr/0052-conversations-own-threads-not-transport-or-workforce-policy.md",
+]
+first_cutover = "dotmac_sub is cutover 1 because it is the only active production conversation owner and has the qualifying SOT registry, behavior tests, operator read-state owner, and Integrator messaging.receive.v1 shadow port. First move product-neutral conversation, message, lifecycle, threading, and read-cursor rows into mod_inbox while Sub retains contact/party links, teams, routing, assignments, presence, media links, realtime, delivery, AI intake, and every ISP consequence. ERP remains cutover 2 only after its support-ticket correspondence adopts a real message record; it is candidate demand, not a current consumer."
+shadow_and_drift = "Sub shadows owner commands against the module in the same transaction and compares thread identity, status/reason, ordered messages, activity clocks, and per-operator read cursors. Channel declarations replace Sub's hardcoded opaque-channel set and global message-id uniqueness; account-scoped provider ids will admit legitimate events the old global constraint drops, so the shadow report must classify and count that expected delta. The Integrator mirror remains the transport cutover proof and is not replaced by module parity. Cutover requires zero unexplained owner differences, a PostgreSQL cross-tenant canary, a sealed one-writer switch, and product consequence adapters proven against the module outputs."
+local_copy_retirement = "After Sub cutover, retire local ownership of inbox_conversations, inbox_messages, inbox_conversation_read_states, the generic lifecycle/threading/dedup writers, and _OPAQUE_CONTACT_CHANNELS. Keep and rebind provider observations until the Integrator producer cutover separately retires them; keep product-owned participant/contact links, teams, routing, assignments, queues, presence, media, realtime, outbound delivery, AI intake, ticket/lead handoff, and product audit consequences. CRM remains retirement evidence under the existing CRM-to-Sub ledger, not a second owner. Two-directional caller/model/table ratchets reach zero before the local conversation owner is declared retired."
+next_action = "Validate this audit-complete package on Observer, then land Sub's expand migration and typed adapter as the first adoption slice. Do not compose or publish dotmac-inbox from Starter before that adopter proof, and do not add routers, provider clients, connector configuration, assignment/routing, attachments, realtime, templates, AI, or product subject columns to make the candidate look complete."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/conversation.py", "app/services/crm/inbox/dedup.py", "app/services/crm/inbox/conversation_status.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/support/ticket.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/team_inbox.py", "app/services/team_inbox_channel_receive.py", "app/services/team_inbox_commands.py", "app/services/team_inbox_read_state.py"]

@@ -1,0 +1,75 @@
+schema_version = 1
+package = "dotmac-referrals"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant referral programmes, invitation/code identity, attribution, qualification and immutable conversion/reward evidence"
+contract = "Create and version referral programmes; issue a stable invitation/code to an opaque referrer; attribute a referred party/prospect without resolving identity from unverified contact data; preserve conversion and reward-request evidence; enforce idempotent capture and terminal rejection/expiry; and emit typed outbox facts. NOT Party/Customer/Lead creation, billing credits, reward payment, campaigns, delivery transport or provider I/O."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt", "dotmac_integrator", "dotmac_vendor_control_plane", "dotmac_workspace", "dotmac_academy_app"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = ["dotmac_sub:app/models/referral_native.py", "dotmac_sub:app/services/referrals.py", "dotmac_sub:app/services/referral_account_conversion.py", "dotmac_crm:app/models/crm/referral.py", "dotmac_crm:app/services/crm/referrals.py"]
+preserved_tests = ["dotmac_sub:tests/test_referrals_native.py", "dotmac_sub:tests/architecture/test_referrals_program_boundary.py", "dotmac_sub:tests/test_referral_account_conversion.py", "dotmac_starter_mt:tests/unit/test_referrals.py", "dotmac_starter_mt:tests/test_sub_vnext_modules_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+adoption_evidence = []
+composition_boundary = "Party, Customers, Sales/Leads and Billing remain named owners. The adopter supplies opaque party/customer/lead references through typed ports and reacts to outbox facts in its own transaction boundary; the module has no sibling import, product FK, cross-lineage FK, contact resolver, credit writer or transport."
+inventory_evidence = ["docs/inventories/sub-vnext-parity-sources.md", "docs/inventories/sub-vnext-parity-dispositions.toml", "docs/adr/0040-sub-vnext-parity-capabilities-have-narrow-independent-owners.md"]
+first_cutover = "Sub is cutover 1. Backfill programme/code/referral rows with exact identities and evidence, quarantine ambiguous contacts, shadow complete referral fingerprints and refusal outcomes, seal Sub's local writer, then lower and ultimately remove CRM/Sub referral-writer ratchets."
+shadow_and_drift = "Compare every programme version, active invitation/code, attribution, state, conversion reference and reward-request reference at one immutable watermark. Zero unexplained rows and byte-identical aggregate fingerprints are required before the writer switch."
+local_copy_retirement = "CRM's direct Referral/ReferralCode service and tables retire after Sub/module authority is sealed; Sub's referral_native tables and mutation adapters retire after its own module cutover. Billing, Party and Lead collaborators remain because they own different facts."
+next_action = "dotmac-referrals 0.1.0a1 is published, installed back from the private index, conformance-checked and tagged from exact protected-main SHA 401f0006 by release run 32473508534, on published kernel a85 (its floor is a85, not the a84 that allocated rf, because a84 was never dispatched). Publication is supply-chain evidence only: status stays audit-complete, contract_consumers stays empty, and Sub's local referral writer remains authoritative. Still owed, unchanged by the release: Sub exact-pins this version, composes the tenant rf lineage, backfills programme-policy versions, codes, attributions and conversion/reward evidence, shadows dispositions against its local owner, switches reads and writes, and only then retires that writer. Do not claim adoption until the local writer is gone."
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/assembly.py", "src/dotmac_integrator/product_port.py"]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["README.md", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/referral.py", "app/services/crm/referrals.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/referral_native.py", "app/services/referrals.py", "app/services/referral_account_conversion.py"]

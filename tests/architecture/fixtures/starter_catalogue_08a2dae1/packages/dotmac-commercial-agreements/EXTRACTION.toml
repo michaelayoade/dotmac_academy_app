@@ -1,0 +1,118 @@
+schema_version = 1
+package = "dotmac-commercial-agreements"
+classification = "optional-module"
+status = "adopted"
+source_mode = "product-first"
+owner = "The durable commercial agreement between the platform operator and a counterparty: its identity and reference, its immutable accepted commercial snapshot, its evidence-bound lifecycle, its amendments and supersession, and the append-only record of every transition"
+contract = "Open a draft against an opaque counterparty reference with promised lines naming a product, an opaque release/offer reference, a capability code and terms frozen as exact text; validate every promised code against the declaring product through a caller-supplied catalogue port; preserve expiry_date as the inclusive final in-term date and derive one explicit end_exclusive boundary for half-open-range consumers; expose the complete platform agreement estate through a bounded deterministic UUID-keyset reader returning detached frozen values with materialized lines; freeze an immutable accepted snapshot and its SHA-256 digest at propose; move draft -> proposed -> approved -> active -> suspended -> terminated | expired, plus reject, cancel and amend; require ApprovalEvidence whose content_digest equals the frozen digest for both approve and activate, and separate ActivationEvidence naming a satisfied rule with a reference; refuse a stale expected status or record version; make every command idempotent through the kernel's one at-most-once owner; append one immutable history row per transition carrying its evidence document; and emit one versioned fact per transition on the platform outbox. NOT product or release definitions, entitlement balances or allocations, licences, deployment state, invoices or collections decisions, approval workflow internals, counterparty master data, or stored bytes."
+source_repositories = [
+  "dotmac_vendor_control_plane",
+  # Inventoried and found EMPTY, which is why they are listed. ERP's
+  # `templates/procurement/contracts` is supplier procurement documents — a
+  # shared word and nothing else — and Sub has no vendor<->operator agreement
+  # at all; what it sells is ISP service to subscribers, a different subject
+  # with a different owner (ruling A2(a)). Recorded per
+  # docs/inventories/vendor-cp-gap-sources.md § 10, so the absence is evidence
+  # rather than an untaken search.
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+]
+source_paths = [
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/service.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/schemas.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/contracts/router.py",
+  "dotmac_vendor_control_plane:alembic/versions/v004_contracts.py",
+  "dotmac_vendor_control_plane:docs/design/contract-service.md",
+  "dotmac_vendor_control_plane:docs/adr/0003-product-qualified-commercial-identity.md",
+  "dotmac_starter_mt:packages/dotmac-commercial-agreements/src/dotmac_commercial_agreements",
+]
+preserved_tests = [
+  "dotmac_vendor_control_plane:tests/unit/test_contracts.py",
+  "dotmac_starter_mt:tests/unit/test_commercial_agreements_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_commercial_agreements_evidence.py",
+  "dotmac_starter_mt:tests/architecture/test_commercial_agreements_module.py",
+  "dotmac_starter_mt:tests/test_commercial_agreements_platform_isolation.py",
+]
+contract_consumers = ["dotmac_vendor_control_plane"]
+candidate_consumers = []
+adoption_evidence_schema = "v1"
+composition_boundary = "ADR-0024: the vendor control plane installs its own cg lineage and owns its own agreement rows; no application shares a mod_agreements schema, an agreement row or a history row. ADR-0057 § 8: the module imports no sibling. dotmac-approvals supplies ApprovalEvidence as a VALUE through the assembly and dotmac-entitlement-allocation consumes agreement.activated.v1 the same way — neither is imported, and the module never executes another owner's consequence (ADR-0026 § 6). ADR-0006 D1: no foreign key leaves mod_agreements; counterparty_ref, release_ref, offer_ref and approval_decision_ref are opaque and unconstrained, so an executed agreement outlives a superseded release, a retired approval policy and a merged counterparty record. ADR-0019 § 1 and ruling A3: the counterparty reference is opaque and this module defines no counterparty master. ADR-0023 / ADR-0057 § 7: platform plane only, declared from the one consumer that exists today; tables is empty and no tenant plane is declared for later use."
+inventory_evidence = [
+  "docs/inventories/vendor-cp-gap-sources.md",
+  "docs/adr/0057-the-vendor-control-plane-composes-existing-owners.md",
+]
+first_cutover = "Completed GREENFIELD on 2026-08-21 in dotmac_vendor_control_plane, not by row migration. The designated production target was measured empty, so v015_agreements_authority rechecks the premise under ACCESS EXCLUSIVE and refuses a populated estate rather than synthesizing contracts, hashes or history. Vendor exact-pins dotmac-commercial-agreements 0.1.0a1, composes the platform-only manifest and cg_0001_agreements lineage, and retains one typed adapter that resolves immutable offers, supplies the product capability catalogue and converts the authoritative Approvals request into content-bound evidence. Verified directly against the production database at 2026-08-21T14:17:32Z: mod_agreements live, public.contracts and public.contract_lines ABSENT, and app_user holding zero privileges on any mod_* schema."
+shadow_and_drift = "No shadow phase is owed, and the reason is measurable rather than convenient. The capability exists in exactly one product (Knowledge `vendor-cp-capability-gaps-and-composable-plan`, Tier B: contracts 972 LOC / 2 tables), so there is no second writer to reconcile against and no parallel evaluator to compare. What IS owed at cutover is a data-bearing migration of the existing vendor_cp.contracts and contract_lines rows, because those rows are real: preserve every content_hash unchanged (an agreement whose digest moves invalidates its own approval), map pending_approval -> proposed, synthesise one AgreementEvent per historical transition from the platform audit log rather than inventing a clean history, and prove the pre- and post-cutover accepted snapshots digest identically. A populated legacy table encountered at cutover must fail the migration, not be silently skipped."
+local_copy_retirement = "Complete for cutover 1 on 2026-08-21: src/vendor_cp/contracts/ service and models, and public.contracts / public.contract_lines are gone, verified absent on the production database. Original audit text follows. Owed by dotmac_vendor_control_plane at cutover: src/vendor_cp/contracts/{models,service,schemas,router,feature}.py, the contracts and contract_lines tables, and the ContractService call sites in the allocations consumer. The vendor keeps its own routes, its console screens and its vendor_accounts binding — a thin adapter that translates its account id into this module's opaque counterparty_ref. No product may keep a compatibility contracts table or a parallel lifecycle evaluator."
+next_action = "Hold at `adopted`. Vendor remains authoritative on its exact published 0.1.0a1 pin; this repository's 0.1.0a2 source declaration is not adoption evidence and does not reopen or weaken the completed a1 greenfield cutover. Release and verify a2 through the protected workflow before Vendor exact-pins it, then use the bounded owner reader plus an assembly-owned sealed-watermark/parity proof before any future data-bearing estate backfill or cutover claim. `reuse-proven` still requires a SECOND real control plane completing its own cutover; there is no second candidate today. Keep the Vendor authority and zero-local-writer ratchets green. Do not add a delivery or acknowledgement concern here — dotmac-licensing owns that lifecycle and ADR-0010 moves its transport half to the Integrator."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/contracts/adapter.py", "src/vendor_cp/contracts_authority.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]
+
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-commercial-agreements.version"
+expected = "0.1.0a1"
+
+[[adoption_evidence]]
+kind = "deploy_run"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+run_id = "32485479666"
+observed = "success"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS the commit above. 'Deploy immutable image to production'."
+
+[[adoption_evidence]]
+kind = "image_digest"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+digest = "sha256:45715e425dc248d85fe374fa5d347087328a445cf7ead1f8abc29f05f0117b0d"
+observed = "deployed to production by the run above"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "The registry path used to sit in the `repository` slot, where a machine reading this file would look for a repository name. `repository` now names the PRODUCING product and the content address is the digest."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "af9fcf6d3fbd259fbef6b589d37b39d548f7ba8e"
+subject = "mod_agreements"
+observed = "v015_agreements_authority applied by the production deploy run above"
+observed_at = "2026-08-21"
+observed_by = "michaelayoade"
+note = "One dated row replaces the two undated strings that used to make this claim twice. Derived from the deploy run rather than from a direct read of the production database, which is why it is an attestation and not an assertion."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_vendor_control_plane"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-commercial-agreements.version"
+note = "The rows above are history. The Vendor control plane's BOM is the only authority for what it installs today, and this dossier holds no copy of it — at commit af9fcf6d the plane had already moved past several of the versions recorded above."

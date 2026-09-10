@@ -1,0 +1,83 @@
+schema_version = 1
+package = "dotmac-connector-nira"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+
+owner = "NiRA .ng registry transport over CoCCA EPP in both directions: TLS framing (RFC 5734), authenticated login/logout, the domain/host/contact check-create-info-renew-update-transfer command frames with the fee-1.0 extension, phase-aware EPP result classification, and the registry message-queue poll that turns queued messages into typed observations."
+
+contract = "Implement dotmac-integration SPI >=1.4,<2.0 for connector key nira. Serve registry.availability.v1, registry.domain_info.v1, registry.domain_register.v1, registry.domain_renew.v1, registry.domain_update.v1, registry.domain_transfer.v1, registry.host_provision.v1 and registry.contact_provision.v1 in DELIVERY, each capability mapped only to DELIVERY so a binding granted one command cannot issue another; and registry.message.v1 in POLL. Carry the engine's idempotency key as EPP clTRID for correlation only, never as an unproved provider deduplication guarantee. Permit only exact manifest-declared OT&E egress and hold the release until production egress, authenticated OT&E and owning-domain command/result contracts are proven. A failure before a business command is retryable; any failure after command attempt, 1001, 2302 or 2303 requires reconciliation; 2201/2202 and client errors are terminal. Until the owning domain publishes its result schema, successful availability/info/check/transfer-query responses require reconciliation rather than being reported without their body. On poll, configuration and login refusals raise into Integration's failure ledger; return at most one queued message with its human text and serialized resData as a typed observation without acknowledging it; only a later call whose Integration-persisted cursor matches that live queue head may acknowledge it before returning the next unacknowledged head. Own no domain lifecycle decision, price or markup, contact/registrant identity, retry curve, checkpoint, outbox, row, session or product database; persist nothing, and never write an authoritative lifecycle field from a poll observation."
+
+# ── Greenfield, not ported ───────────────────────────────────────────────────
+#
+# No qualifying EPP/registrar implementation existed anywhere in the fleet at
+# inventory (measured across the ADR-0030 repositories, 2026-08-15). The wire
+# SHAPE is taken from the CoCCA reference module NiRA distributes to WHMCS
+# registrars (`cocca-whmcs-v9-2026-02-27.zip`), which is a documented registry
+# contract, not a Dotmac source. This distribution is therefore
+# greenfield-after-inventory against that external contract.
+#
+# ── One connector, one binding behind one contract ───────────────────────────
+#
+# The nine `registry.*` capabilities are provider-neutral contracts owned by the
+# domains application (greenfield per ADR-0030), not by this connector. A second
+# registry (a gTLD reseller platform) is a DIFFERENT connector implementing the
+# SAME contracts, selected by a capability binding — never a `.ng` variant of a
+# contract and never a provider name in the owning application.
+
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_erp",
+  "dotmac_sub",
+]
+
+source_revisions = [
+  "dotmac_starter_mt:99c3c580bc4f0aaaca90f4555ff16d14b720454f",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+
+source_paths = [
+  "dotmac_starter_mt:docs/inventories/domains-sources.md",
+  "dotmac_starter_mt:docs/inventories/provider-capability-sources.md",
+  "dotmac_starter_mt:docs/inventories/cloud-commerce-owner-sources.md",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:packages/dotmac-connector-nira/tests/test_connector.py",
+  "dotmac_starter_mt:packages/dotmac-connector-nira/tests/test_delivery_safety.py",
+  "dotmac_starter_mt:packages/dotmac-connector-nira/tests/test_polling_safety.py",
+]
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator", "dotmac_domains"]
+
+inventory_evidence = [
+  "docs/inventories/domains-sources.md",
+  "docs/inventories/provider-capability-sources.md",
+  "docs/inventories/cloud-commerce-owner-sources.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+]
+
+first_cutover = "After dotmac-domains publishes the provider-neutral registrar command and result contracts, publish this connector, exact-pin it in dotmac_integrator, and route one declared Domains binding through Integration while Domains remains the only lifecycle writer."
+
+shadow_and_drift = "Against authenticated NiRA OT&E, compare exact command frames, clTRID correlation, result classifications, and every polled message's human text plus serialized resData. Prove that no provider queue head is acknowledged before Integration durably records the same cursor and observation, including both crash windows and ambiguous acknowledgements."
+
+local_copy_retirement = "No qualifying Dotmac EPP implementation existed at inventory. If a product introduces a direct NiRA/CoCCA client before the first cutover, remove that provider transport, credential access, poll schedule and checkpoint in the adopting change; the product retains only its domain decisions and typed Integration port."
+
+next_action = "Keep release_enabled false. Whitelist the Integrator source IP for NiRA OT&E, prove authenticated login/logout and client-certificate handling, let dotmac-domains publish the command/result contracts, review the exact production egress hostname into a later manifest, then rerun connector conformance and the two-phase poll durability corpus before publication."
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/settings_api.py", "app/api/finance/banking.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["field_mobile/lib/core/push/push_registrar.dart", "config/freeradius/radiusd.conf"]

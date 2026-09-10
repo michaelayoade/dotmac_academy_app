@@ -1,0 +1,52 @@
+schema_version = 1
+package = "dotmac-operational-escalations"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Versioned escalation policy, escalation instances, acknowledgement and cancellation"
+contract = "Own escalation policy identity, immutable policy versions with exactly one active version, raised escalation instances bound to the exact version, cooldown refusal, acknowledgement, resolution and cancellation. Subject and actor identifiers are opaque. NOT ticket/outage/conversation lifecycle, ownership or watcher rosters, room links, scheduling mechanics, message rendering, delivery attempts or delivery outcomes."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:9493ee4eef737f18b4813899a2d8f0537ed6d5c7",
+]
+revalidation_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0e40d7996abf2da68e866b156a56fa1fde1fd56b",
+]
+source_paths = [
+  "dotmac_sub:app/models/operational_escalation.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_operational_escalation.py",
+  "dotmac_starter_mt:tests/unit/test_operational_escalations_service.py",
+  "dotmac_starter_mt:tests/architecture/test_operational_escalations_module.py",
+  "dotmac_starter_mt:tests/test_operational_escalations_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_crm", "dotmac_sub"]
+composition_boundary = "Adopters compose oe locally, raise escalations against opaque subject references, and route the requested channels through their own Messaging/Integrator composition. Durable Timers schedules; this module never delivers. No sibling module import or foreign application database read is permitted."
+inventory_evidence = ["docs/inventories/customer-journey-owner-sources.md"]
+first_cutover = "Sub remains escalation owner until policy history is versioned, backfilled and compared under a read-only shadow with zero decision drift, and a separately authorized writer switch occurs."
+shadow_and_drift = "Compare policy identity and the exact version terms in force at raise time, instance dedup key, level, severity, status transitions, acknowledgement actor and settlement reason; delivery attempts and outcomes remain outside and are compared in Messaging."
+local_copy_retirement = "After cutover, reduce Sub's escalation policy and event writers to zero while its owner/watcher rosters, room links and delivery rows stay with their own owners."
+next_action = "Compose in Sub and CRM, then implement the policy-version backfill plus the zero-drift raise/acknowledge shadow."
+
+# Typed product claim. Sub is the qualifying source — these owners are extracted
+# FROM Sub's implementation, which is what `source_mode = "product-first"` and
+# the Sub source paths above already say. Stating it as a typed field is what
+# lets Governance check a claim about Sub rather than take one on trust.
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/models/operational_escalation.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "no_writer"
+retirement_required = false
+revision = "0e40d7996abf2da68e866b156a56fa1fde1fd56b"
+evidence_paths = []

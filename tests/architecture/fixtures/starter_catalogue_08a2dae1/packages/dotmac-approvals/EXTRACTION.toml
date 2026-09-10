@@ -1,0 +1,127 @@
+schema_version = 1
+package = "dotmac-approvals"
+classification = "optional-module"
+status = "adopted"
+source_mode = "product-first"
+owner = "Whether a required set of eligible actors has approved one exact content digest under one exact immutable policy revision, and whether that decision is still valid"
+contract = "Publish immutable (policy_code, version) revisions with ordered levels; open a request bound to a declared subject type, an opaque subject id and a canonical content digest, idempotent by command key; resolve eligibility by user or role from an Actor value supplied at the call site; enforce per-level distinct-actor quorum, ordered level advancement, separation of duties, self-approval exclusion and MFA; record append-only decisions that a unique constraint makes unrepeatable; evaluate to pending | approved | rejected | cancelled; refuse a decision whose digest no longer matches; fail closed when a policy or version is missing; emit approval.requested/approved/rejected/cancelled as values, with an optional kernel-outbox adapter. Tenant and platform planes are named separately in the API and declared separately in persistence. NOT threshold or FX routing, the subject vocabulary, the business transition, any consuming domain's tables, or transaction control."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_vendor_control_plane",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/audit/approval_workflow.py",
+  "dotmac_erp:app/models/finance/audit/approval_request.py",
+  "dotmac_erp:app/models/finance/audit/approval_decision.py",
+  "dotmac_erp:app/services/finance/platform/approval_workflow.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/approvals/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/approvals/service.py",
+  "dotmac_starter_mt:packages/dotmac-approvals/src/dotmac_approvals",
+]
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/platform/test_approval_workflow_service.py",
+  "dotmac_erp:tests/ifrs/fa/test_fa_gl_reconciliation_package_service.py",
+  "dotmac_vendor_control_plane:tests/unit/test_approvals.py",
+  "dotmac_starter_mt:tests/unit/test_approvals_policy.py",
+  "dotmac_starter_mt:tests/unit/test_approvals_service.py",
+  "dotmac_starter_mt:tests/architecture/test_approvals_module.py",
+  "dotmac_starter_mt:tests/test_approvals_isolation.py",
+  "dotmac_starter_mt:tests/architecture/test_approval_workflow_source_audit.py",
+]
+contract_consumers = ["dotmac_vendor_control_plane"]
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+adoption_evidence_schema = "v1"
+composition_boundary = "ADR-0024: each adopter installs its own ap lineage and owns its own approval records. Applications share the package contract, never a mod_approvals schema, a policy row or a decision row. An approval granted in one application is that application's fact; another app learns of it through the owning app's versioned API/webhook, transported by the Integrator. ADR-0026 § 5: tenant and platform are separately named API surfaces and separately audited persistence planes, with no foreign key across them and none into an adopting product's domain schema — subject_id is an opaque reference. ADR-0026 § 6: the module emits an event and the consuming domain's own authoritative service performs the guarded transition; it never executes the consequence. ADR-0026 § 7a: threshold/FX routing stays with the domain, which selects the exact policy revision and passes it in. ADR-0008: subject types are consuming-module manifest declarations; policy codes are operator-owned runtime data, never declarations."
+inventory_evidence = [
+  "docs/inventories/approvals-workflow-source-audit.md",
+  "docs/inventories/approval-workflow-dispositions.toml",
+  "docs/adr/0026-approvals-decide-approval-never-the-transition.md",
+]
+first_cutover = "Completed greenfield on 2026-08-17 in dotmac_vendor_control_plane. Vendor exact-pins dotmac-approvals 0.1.0a4, explicitly selects only the PLATFORM plane, and migration v013_approvals_authority took ACCESS EXCLUSIVE locks, re-verified the legacy approval tables were empty, transferred effective DML to platform_api, dropped the local tables, and refused a populated estate. vendor_cp.approvals.adapter is the sole typed seam; the old models/service and every local call site are deleted and ratcheted at zero. Production deploy 32022599873 runs main f8f8c3fd636e663e4a17275c19e82fc1667aa52a at immutable image sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc with mod_approvals live and app_user holding no module privileges. ERP remains cutover 2 after its E8 tenant decision; Sub and CRM remain non-candidates because the A1 inventory measured zero approval rows there."
+shadow_and_drift = "Vendor resolved as a measured greenfield switch, not a data-bearing shadow. The target was observed absent before production, and v013 made the premise executable by locking and refusing any non-empty legacy table in the same authority-transfer transaction. No lossy request synthesis, historical import or parity subsystem was built for zero rows. The six safety properties remain part of the Vendor adapter/module tests. ERP's later cutover retains the original data-bearing obligations: preserve immutable policy versions and hashes, reconcile open requests against exact content, compare lifecycle/eligibility/SoD behavior, and surface changed subjects as stale rather than importing them as approved."
+local_copy_retirement = "Complete for Vendor cutover 1: src/vendor_cp/approvals/service.py and models.py, approval_policies / approval_records, shadow-overlap declarations, inventory tooling and the local sealed-cutover implementation are retired. Architecture tests ratchet local writer imports and call sites at zero. ERP still owes its independent retirement: remove the three audit.approval_* writers and direct commit() calls while retaining threshold/FX routing, document vocabulary and downstream consequences in the finance domain. No product may keep a compatibility decision table or parallel evaluator."
+next_action = "Keep the Vendor production authority and zero-local-writer ratchets green. ERP is the only remaining concrete candidate and earns `reuse-proven` only after its E8 decision, exact module pin, tenant-plane migration, data-bearing parity, one-writer switch and local-copy retirement. dotmac-automation and dotmac-forms remain separate product-first audits and are not covered by this dossier."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/approvals/adapter.py", "src/vendor_cp/approvals_authority.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/audit/approval_workflow.py", "app/models/finance/audit/approval_request.py", "app/services/finance/platform/approval_workflow.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]
+
+# CORRECTION found by typing this list: the old string said
+# `migration:v013_approvals_authority`. No revision with that id exists. The
+# real id is `v013_approvals_authority_switch`, and nothing could tell the
+# difference while it was free text.
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-approvals.version"
+expected = "0.1.0a4"
+
+[[adoption_evidence]]
+kind = "deploy_run"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+run_id = "32022599873"
+observed = "success"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS the commit above. 'Deploy immutable image to production'."
+
+[[adoption_evidence]]
+kind = "image_digest"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+digest = "sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc"
+observed = "deployed to production by the run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "The registry path used to sit in the `repository` slot, where a machine reading this file would look for a repository name. `repository` now names the PRODUCING product and the content address is the digest."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+subject = "mod_approvals"
+observed = "v013_approvals_authority_switch applied by the production deploy run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "One dated row replaces the two undated strings that used to make this claim twice. Derived from the deploy run rather than from a direct read of the production database, which is why it is an attestation and not an assertion."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_vendor_control_plane"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-approvals.version"
+note = "The rows above are history. The Vendor control plane's BOM is the only authority for what it installs today, and this dossier holds no copy of it — at commit af9fcf6d the plane had already moved past several of the versions recorded above."

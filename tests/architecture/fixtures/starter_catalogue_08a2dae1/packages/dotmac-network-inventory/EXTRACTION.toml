@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-network-inventory"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Managed sites, nodes, interfaces, ports, VLANs, roles/capabilities, admission, archive and configuration snapshot metadata"
+contract = "Admit and archive managed nodes, register interfaces/ports/VLANs, attach VLANs and record configuration fingerprints through immutable contracts. NOT stock, durable physical lifecycle, IPAM, observations, topology, incidents, commands, RADIUS or PON."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/network.py", "dotmac_sub:app/models/network_monitoring.py", "dotmac_sub:app/models/router_management.py", "dotmac_sub:app/services/web_network_core_devices_inventory.py", "dotmac_sub:app/services/router_management/inventory.py", "dotmac_starter_mt:packages/dotmac-network-inventory/src/dotmac_network_inventory"]
+preserved_tests = ["dotmac_sub:tests/test_network_core_devices_contracts.py", "dotmac_sub:tests/test_router_management_inventory.py", "dotmac_sub:tests/test_device_groups.py", "dotmac_sub:tests/architecture/test_core_device_archive_boundary.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Products correlate Inventory issue and Asset durable-unit evidence opaquely, then call this package's admission contract. No sibling import, cross-module FK, product ORM, or provider client."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover; no early inventory-only adoption."
+shadow_and_drift = "Backfill managed identity and compare full node/interface/port/VLAN/configuration digests plus archive decisions against Sub."
+local_copy_retirement = "After sealed suite cutover, Sub removes generic network inventory writers/tables while product subscriber/service correlations remain local."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network.py", "app/models/network_monitoring.py", "app/models/router_management.py", "app/services/web_network_core_devices_inventory.py"]

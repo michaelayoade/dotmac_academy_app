@@ -1,0 +1,105 @@
+schema_version = 1
+package = "dotmac-web-analytics"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "First-party website observations, property-scoped visitor/session evidence, deterministic analytical projections, retention and drift repair"
+contract = "Register tenant-local analytics properties and streams; accept one versioned first-party event or bounded batch through an origin/rate-limit/privacy-admitted command; validate product event codes against an immutable typed declaration registry; persist append-only privacy-minimised observations with replay/conflict and transport provenance; append classifier evidence; derive reproducible visitor/session, route/source/device/event and funnel projections; expire or privacy-delete raw observations and atomically rebuild projections; detect and repair drift. NOT websites/content, forms, campaigns, provider metrics/credentials/transport, customer identity, attribution, commercial facts, consent policy or dashboards."
+source_repositories = [
+  "dotmac_mkt",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_erp",
+  "dotmac_integrator",
+  "dotmac_academy_app",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_mkt:1a185b47164e34601769c84976e95578996c4523",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_integrator:783baf23cbf5129ef18763f97f646f684e6db3a3",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_starter_mt:4b285cb3b0da82b9a2a3d5f39f4aca7da19105ff",
+]
+source_paths = [
+  "dotmac_starter_mt:docs/inventories/web-analytics-sources.md",
+  "dotmac_mkt:app/adapters/google_analytics.py",
+  "dotmac_mkt:app/tasks/analytics_sync.py",
+  "dotmac_mkt:app/models/channel_metric.py",
+  "dotmac_crm:app/models/crm/chat_widget.py",
+  "dotmac_crm:static/js/chat-widget.js",
+  "dotmac_crm:app/services/crm/campaign_tracking.py",
+  "dotmac_sub:app/api/chat_widget.py",
+  "dotmac_sub:app/services/team_inbox_widget.py",
+  "dotmac_sub:app/models/sales.py",
+  "dotmac_starter_mt:packages/dotmac-integration/src/dotmac_integration/ingress.py",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_web_analytics_contracts.py",
+  "dotmac_starter_mt:tests/unit/test_web_analytics_engine.py",
+  "dotmac_starter_mt:tests/architecture/test_web_analytics_module.py",
+  "dotmac_starter_mt:tests/test_web_analytics_isolation.py",
+]
+inventory_evidence = [
+  "docs/inventories/web-analytics-sources.md",
+  "docs/adr/0055-web-analytics-owns-first-party-observations.md",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+first_cutover = "Compose the exact released tenant-plane package in the Dotmac ERP product for a real first-party website through adopter-owned property/origin/event/privacy/retention configuration. A remote site enters through an Integrator connector and the same versioned collection adapter as a local site; neither the hostname nor the connector is a module branch."
+shadow_and_drift = "Before switching any overlapping tracker, compare accepted, replayed, conflicting and filtered event identities; deterministic sessions; route/source/device/event aggregates; funnel results; retention expiry; and projection digests for a full agreed window. Zero unexplained drift is required. The comparison names protocol, registry, classifier, session-rule and projection versions so matching counts under different rules cannot pass."
+local_copy_retirement = "No qualifying first-party writer exists to port. After Dotmac ERP and Sub independently adopt the release and shadow evidence is clean, retire only the overlapping visitor/session/full-URL/fingerprint analytics behavior in CRM's chat widget. Keep CRM's chat identity/lead workflow and campaigns' delivery/open/click lifecycle with their owners. Mkt's provider aggregate reader stays an external-observation concern and never writes this event ledger."
+next_action = "Validate the a85-restacked release candidate in a fresh isolated Observer worktree, merge only after all required GitHub checks are green, then publish and registry-verify the exact protected-main kernel and module artifacts. Backoffice and Sub adoption remain separate and must pin the exact release independently."
+
+# Typed product claims. `local_copy_retirement` states "No qualifying
+# first-party writer exists to port", and the only behaviour it retires is
+# CRM's chat-widget analytics. Sub is a planned ADOPTER with nothing to retire,
+# which is a different thing from Sub being uninvolved — and it is the shape a
+# `no_product_writer` roster claim is allowed to cite.
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "no_writer"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = []
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/chat_widget.py", "app/services/crm/campaign_tracking.py"]
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "1a185b47164e34601769c84976e95578996c4523"
+evidence_paths = [
+  "app/adapters/google_analytics.py",
+  "app/tasks/analytics_sync.py",
+  "app/models/channel_metric.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "no_writer"
+retirement_required = false
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = []
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "no_writer"
+retirement_required = false
+revision = "783baf23cbf5129ef18763f97f646f684e6db3a3"
+evidence_paths = ["src/dotmac_integrator/product_port.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "no_writer"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = []

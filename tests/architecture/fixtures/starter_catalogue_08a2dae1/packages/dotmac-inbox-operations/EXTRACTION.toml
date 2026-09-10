@@ -1,0 +1,68 @@
+schema_version = 1
+package = "dotmac-inbox-operations"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Staffed inbox queues, routing, agent presence and conversation assignment"
+contract = "Own inbox queues, executable provider-neutral routing rules and immutable decision evidence, inbox-specific agent availability (four agent-chosen states, a state-free browser heartbeat, derived busy, manager override with actor+reason evidence, and durable offline dispositions), durable FIFO queue admission and stored queue position, capacity-safe eligible-agent assignment, and the five distinct ownership commands — claim, cold transfer, warm transfer request/accept/decline/cancel/expire, requeue and escalation REQUEST — each carrying actor, reason and previous/new agent and queue evidence. Eligibility arrives as opaque caller-supplied references; Workforce retains teams, skills, shifts and field availability. NOT conversations/messages/read cursors, tickets/work orders, transport/connectors or AI. NOT the escalation decision: dotmac-operational-escalations owns whether an escalation should exist, under which policy version, at what level and who answered it, and this module emits a typed request plus a declared outbox event. NOT delivery: Messaging/Integrator owns transport and its outcomes."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/models/team_inbox.py",
+  "dotmac_sub:templates/admin/inbox/_sidebar.html",
+  "dotmac_sub:templates/admin/inbox/_conversation.html",
+  "dotmac_crm:app/web/admin/crm_presence.py",
+  "dotmac_sub:app/services/team_inbox_assignment.py",
+  "dotmac_sub:app/services/team_inbox_routing.py",
+  "dotmac_sub:app/services/team_inbox_operations.py",
+  "dotmac_crm:app/models/crm/queue.py",
+  "dotmac_crm:app/models/crm/presence.py",
+  "dotmac_crm:app/models/workqueue.py",
+  "dotmac_crm:app/services/crm/inbox/queue.py",
+  "dotmac_crm:app/services/crm/inbox/routing.py",
+  "dotmac_crm:app/services/crm/presence.py",
+  "dotmac_crm:app/services/workqueue/aggregator.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_team_inbox_assignment.py",
+  "dotmac_sub:tests/test_team_inbox_routing.py",
+  "dotmac_sub:tests/test_team_inbox_complete_ops.py",
+  "dotmac_crm:tests/test_crm_assignment_presence_guards.py",
+  "dotmac_crm:tests/test_two_queue_dispatch.py",
+  "dotmac_crm:tests/services/test_workqueue_aggregator.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_operations_service.py",
+  "dotmac_starter_mt:tests/architecture/test_inbox_operations_module.py",
+  "dotmac_starter_mt:tests/unit/test_inbox_agent_availability.py",
+  "dotmac_starter_mt:tests/test_inbox_operations_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_crm"]
+composition_boundary = "Inbox supplies opaque conversation references; channel traits are provider-neutral routing inputs; assignments never read message content. Workforce identities are opaque Party references and inbox presence is not a shift projection."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub is the first writer cutover after queue/rule/presence/assignment backfill and zero-drift shadow; CRM's duplicate workqueue/assignment paths retire after synchronization proof."
+shadow_and_drift = "Compare queue/rule identity and priority, selected routing rule and queue-entry evidence, eligible-agent cohort, presence state/freshness/capacity and every presence transition with its source and actor, FIFO position, round-robin winner, claim/transfer/requeue/release history with previous and new holder, warm-transfer settlement and expiry, offline disposition outcome, escalation-request dedup key, and workflow event actor and occurrence time; never copy content. Sub currently maps away and break onto one dispatch state via a product-owned away_reason detail — reconcile that duplicate before cutover, since ON_BREAK is now a first-class shared state."
+local_copy_retirement = "Reduce Sub queue/routing/presence/assignment writers to zero at first cutover, then retire CRM's corresponding workqueue and presence decision paths after API synchronization verification."
+next_action = "Run the a5 Postgres RLS, append-only and concurrency canaries on Observer, including the four new tables and the presence/escalation append-only triggers. Then decide Sub's away_reason duplicate, expose the fourth presence state and add the inbox heartbeat, split Sub's single Escalate-to-teammate action into claim/transfer/warm-transfer/requeue/escalate, wire EscalationRequested into dotmac-operational-escalations raise_escalation and the three declared outbox events into delivery, bind the seven declared permissions and retire the support:ticket:update gate, then backfill, shadow, seal the Sub writer switch and migrate CRM as an API consumer — CRM's away-is-dispatchable routing is a deliberate behaviour change at that cutover."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/queue.py", "app/models/crm/presence.py", "app/services/crm/inbox/routing.py", "app/services/workqueue/aggregator.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/team_inbox.py", "app/services/team_inbox_assignment.py", "app/services/team_inbox_routing.py", "app/services/team_inbox_operations.py"]

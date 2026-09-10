@@ -1,0 +1,127 @@
+schema_version = 1
+package = "dotmac-subscriptions"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "The reusable recurring-commercial core on explicit tenant and platform planes: stable offers, immutable offer and price versions, stable subscription contracts with immutable effective-dated versions and lines, composable cadence and calendar arithmetic, declared proration, unique replayable recurring charge occurrences with pre-tax rating provenance, and effective-dated complimentary/sponsored treatment of a contract line with append-only bounded non-cash grant evidence."
+
+contract = "Publish immutable offer versions and price children beneath a stable offer identity; record immutable effective-dated subscription contract versions and stable line lineage; resolve half-open periods, declared proration and rate units from BillingCadence; record fingerprint-bound finite approvals not to collect a strictly positive contracted line price, resolve standard/effective/protected_drift, and record bounded append-only non-cash grants; and emit exact pre-tax RatedObligationOutputV1, money-free CommercialEntitlementProjectionV1 and exact-foregone NonCashGrantOutputV1 facts. NOT invoices, receivables, payments, settlement, allocation, tax, FX, collections policy, product access, entitlements, billing anchors, sponsor receivables, expense or foregone-revenue postings, licences, providers, usage metering, documents, or the general ledger."
+
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_vendor_control_plane",
+]
+source_revisions = [
+  "dotmac_sub:27c76aaeebb792f089000af764d80f4dfe45c104",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_vendor_control_plane:89848017d6b87e82dd4d6ffd0b2c9eaed5f9fee8",
+]
+# Re-audited for the a3 complimentary/sponsored slice. Every ported blob is
+# byte-identical between the G1 audit coordinate
+# (943bc59f8e4ca0849c7de578bc9dbc17c57b116f, recorded in
+# docs/inventories/subscription-billing-treatments-extraction.md) and this
+# revision, except app/services/subscription_billing_grants.py, whose only
+# divergence is Sub's billing-anchor projection consequence — which is
+# deliberately NOT ported and stays in Sub's adapter (ledger item G4).
+revalidation_revisions = [
+  "dotmac_sub:df970604c23d89546b949d8fb28e5230ca61ade7",
+]
+source_paths = [
+  "dotmac_sub:app/services/billing/cadence.py",
+  "dotmac_sub:app/services/billing/contracts.py",
+  "dotmac_sub:app/services/billing/rating.py",
+  "dotmac_sub:app/services/billing/obligations.py",
+  "dotmac_sub:app/models/billing_contract.py",
+  "dotmac_sub:app/models/catalog.py",
+  "dotmac_sub:app/services/catalog/offers.py",
+  "dotmac_sub:app/services/catalog_billing_governance.py",
+  "dotmac_sub:app/models/subscription_billing_treatment.py",
+  "dotmac_sub:app/services/subscription_billing_treatments.py",
+  "dotmac_sub:app/services/subscription_billing_grants.py",
+  "dotmac_sub:alembic/versions/399_subscription_billing_treatments.py",
+  "dotmac_sub:docs/designs/SUBSCRIPTION_BILLING_TREATMENTS.md",
+  "dotmac_erp:app/models/inventory/price_list.py",
+  "dotmac_erp:app/services/inventory/price_list.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/offers/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/offers/service.py",
+  "dotmac_vendor_control_plane:alembic/versions/v002_offer_versions.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_billing_cadence.py",
+  "dotmac_sub:tests/test_subscription_billing_cadence.py",
+  "dotmac_sub:tests/test_billing_contracts.py",
+  "dotmac_sub:tests/test_billing_rating.py",
+  "dotmac_sub:tests/test_billing_obligations.py",
+  "dotmac_sub:tests/test_billing_addon_contract_backfill.py",
+  "dotmac_sub:tests/test_billing_phase2_shadow.py",
+  "dotmac_sub:tests/test_billing_shadow_pipeline.py",
+  "dotmac_sub:tests/architecture/test_billing_target_architecture.py",
+  "dotmac_sub:tests/test_catalog_billing_governance.py",
+  "dotmac_sub:tests/test_offer_contracted_amount.py",
+  "dotmac_sub:tests/test_offer_name_uniqueness.py",
+  "dotmac_sub:tests/test_subscription_billing_treatments.py",
+  "dotmac_sub:tests/test_subscription_billing_treatment_api.py",
+  "dotmac_sub:tests/architecture/test_subscription_billing_treatment_ownership.py",
+  "dotmac_erp:tests/ifrs/inv/test_price_list_service.py",
+  "dotmac_vendor_control_plane:tests/unit/test_offers.py",
+  "dotmac_vendor_control_plane:tests/migration/test_vendor_migration_rehearsals.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_vendor_control_plane", "dotmac_sub"]
+
+composition_boundary = "dotmac-subscriptions, dotmac-billing, dotmac-collections, dotmac-durable-timers and dotmac-orders are peers over dotmac-kernel. No package imports a sibling. Consuming assemblies map versioned commands/events and adapt the timer port. Product-specific capability, ISP service, access, region, usage, SLA, policy and provider semantics stay in product-owned plane-specific link tables. Non-cash treatment adds no exception: the module publishes NonCashGrantOutputV1, and entitlement repair, billing-anchor advance, invoice suppression, sponsor receivable and internal expense/foregone-revenue posting remain the adopting assembly, Sub and Accounting decisions they already were."
+
+inventory_evidence = [
+  "docs/inventories/subscriptions-sources.md",
+  "docs/inventories/subscription-billing-treatments-extraction.md",
+  "docs/inventories/a2-commercial-offer-source-audit.md",
+  "docs/inventories/subscriptions-extraction-dossier.md",
+  "docs/adr/0020-billing-owns-operational-receivables.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+]
+
+first_cutover = "dotmac_vendor_control_plane is cutover 1 on the platform plane; it retires its local offer-version writer and capability-code column. dotmac_sub is cutover 2 on the tenant plane and retires generic offer/price, billing-contract, cadence/proration, and fixed-recurring occurrence owners through measured shadow-and-cutover cohorts."
+
+shadow_and_drift = "Vendor characterizes every offer/version/price/currency/capability reference before backfill and proves exact immutable snapshot parity. Sub writes the cross-tenant canary first, compares effective-at offer and contract resolution over the complete active cohort, accepts the full cadence/proration matrix, and switches recurrence only when duplicate, missing, overlap and fingerprint-conflict counts are zero. Reconciliation repairs only from the named authoritative side."
+
+local_copy_retirement = "Vendor removes vendor_cp.offers writers/models/routes and the local offer_versions table after zero drift. Sub removes generic offer/price writes, billing-contract/version/line writers, nine parallel cadence owners, monthly-only prepaid and separate postpaid recurrence, and legacy invoice-line dedupe. Every retirement uses a two-directional ratchet with sensitivity proof; no permanent parallel writer or fallback remains."
+
+next_action = "0.1.0a3 adds the ported complimentary/sponsored lifecycle (su_0003) and is declared-unpublished in docs/inventories/declared-publication-baseline.json until a release run tags it. The coordinated Subscriptions/Billing/Collections implementation landed on main through PR 381 after direct CI run 32659107095 and pull-request CI run 32660183336 passed for head revision 3b9c122940e162d0bf918d42d98c7a1288be483b. Subscriptions declares kernel a94 as its honest minimum because its guarded write paths consume the manifest-owned charge_models and obligation_sources surface. Keep all three modules unallowlisted and unpublished until the real Cloud assembly is wired and release is separately authorized; then execute Vendor CP followed by Sub shadow/cutover retirement. Do not count a contract consumer until a real adopter has pinned the released package, composed the selected lineage plane, cut over its writer, and removed its local owner. Sub remains the sole writer of its own SubscriptionBillingArrangement/SubscriptionBillingGrant tables; ledger items G5 and G6 own the adjudicated backfill, the invoice/renewal/entitlement/revenue shadow, and the writer cutover, and nothing here has been backfilled or migrated."
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "df970604c23d89546b949d8fb28e5230ca61ade7"
+evidence_paths = [
+  "app/services/billing/cadence.py",
+  "app/services/billing/contracts.py",
+  "app/services/catalog/offers.py",
+  "app/models/subscription_billing_treatment.py",
+  "app/services/subscription_billing_treatments.py",
+  "app/services/subscription_billing_grants.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = [
+  "app/models/inventory/price_list.py",
+  "app/services/inventory/price_list.py",
+  "tests/ifrs/inv/test_price_list_service.py",
+]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "89848017d6b87e82dd4d6ffd0b2c9eaed5f9fee8"
+evidence_paths = [
+  "src/vendor_cp/offers/models.py",
+  "src/vendor_cp/offers/service.py",
+  "alembic/versions/v002_offer_versions.py",
+]

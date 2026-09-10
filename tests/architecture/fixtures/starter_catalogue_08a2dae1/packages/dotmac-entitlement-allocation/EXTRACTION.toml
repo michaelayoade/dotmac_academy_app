@@ -1,0 +1,126 @@
+schema_version = 1
+package = "dotmac-entitlement-allocation"
+classification = "optional-module"
+status = "adopted"
+source_mode = "product-first"
+owner = "Dotmac entitlement allocation"
+# Full audit: docs/inventories/entitlement-allocation-sources.md (2026-08-12).
+# The vendor control plane is the ONLY implementation — the fleet sweep measures
+# entitlement-allocation at 0/0/0 for ERP/CRM/Sub. The kernel's `entitlements`
+# surface is the DATA-PLANE half that ruling C4 deliberately keeps separate: the
+# control plane allocates, the data plane is the only writer of its own
+# tenant_entitlement_grants.
+contract = "An immutable projection of what an activated contract version entitles, validated against the named product's manifest-declared capability catalogue. NOT a grant, NOT a licence, NOT a delivery record, and NOT a place where capability codes are invented."
+source_repositories = ["dotmac_vendor_control_plane", "dotmac_erp", "dotmac_crm", "dotmac_sub", "dotmac_starter_mt"]
+source_paths = [
+  # The qualifying source. Ported with three couplings CUT — see the audit: a
+  # cross-module FK, a direct session.get on another module's Contract model,
+  # and a hard-coded "contract.activated" literal.
+  "dotmac_vendor_control_plane:src/vendor_cp/allocations/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/allocations/service.py",
+  "dotmac_vendor_control_plane:alembic/versions/v005_allocations.py",
+  # The consumer STAYS in the vendor CP as assembly wiring: it names one
+  # product's event vocabulary and one transport. It shrinks rather than moves.
+  "dotmac_vendor_control_plane:src/vendor_cp/allocations/consumer.py",
+  # The kernel's owner-validates pattern, followed here: grant_entitlement takes
+  # a catalogue and raises rather than trusting its caller.
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/entitlements.py",
+  "dotmac_starter_mt:packages/dotmac-entitlement-allocation/src/dotmac_entitlement_allocation",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+preserved_tests = [
+  # The source's behavioural proofs, to port with the cutover. Its idempotency
+  # and activation-projection tests are the parity evidence.
+  "dotmac_vendor_control_plane:tests/unit/test_allocations.py",
+  "dotmac_starter_mt:tests/unit/test_entitlement_allocation_service.py",
+  "dotmac_starter_mt:tests/architecture/test_entitlement_allocation_module.py",
+  "dotmac_starter_mt:tests/test_entitlement_allocation_canaries.py",
+]
+contract_consumers = ["dotmac_vendor_control_plane"]
+candidate_consumers = []
+adoption_evidence_schema = "v1"
+inventory_evidence = [
+  "docs/inventories/entitlement-allocation-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/superpowers/plans/2026-08-12-vendor-cp-composable-parts.md",
+]
+first_cutover = "Completed greenfield on 2026-08-17 in dotmac_vendor_control_plane. Vendor exact-pins dotmac-entitlement-allocation 0.1.0a4 and migration v014_allocations_authority took ACCESS EXCLUSIVE locks, re-verified the legacy allocation tables were empty, transferred effective DML to platform_api, dropped the local tables, and refused a populated estate. allocations.consumer builds the module-owned ContractSnapshot and calls stage_allocation; licensing derives product identity only through allocation_product(). Production deploy 32022599873 runs main f8f8c3fd636e663e4a17275c19e82fc1667aa52a at immutable image sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc with mod_ealloc live and the legacy public tables absent."
+shadow_and_drift = "Resolved as a measured greenfield switch rather than a data-bearing shadow. Before Vendor had a production estate, the target was observed absent; v014 then made that premise executable by locking and refusing any non-empty legacy table in the same transaction as authority transfer. The four known divergences remain refusal behavior for future adopters: product identity is mandatory, capability codes must be manifest-declared, contract_ref is opaque rather than an FK, and duplicate codes are rejected rather than aggregated. No parity subsystem or synthesized history was built for zero rows."
+local_copy_retirement = "Complete for cutover 1. vendor_cp.allocations.models and .service are deleted, the public allocations/allocation_entries tables are dropped, the shadow-overlap waiver is removed, and a two-directional architecture ratchet refuses any reacquired local writer. allocations.consumer is assembly wiring over stage_allocation, not a second owner. Licence issuance no longer accepts a caller-selected product and reads allocation_product() before lineage, payload, audit and outbox construction."
+next_action = "Repin dotmac_vendor_control_plane from published a4 to published a6 and prove both DDL-free prerequisites against its migrated database before deployment. Hold `adopted` until a second real vendor or OEM control plane completes its own cutover; only then may the dossier become `reuse-proven`. Keep the Vendor authority and no-local-writer ratchets green. Do not add delivery or acknowledgement state here: licence issuance owns that lifecycle."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/allocations/adapter.py", "src/vendor_cp/allocations/consumer.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]
+
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-entitlement-allocation.version"
+expected = "0.1.0a4"
+
+[[adoption_evidence]]
+kind = "deploy_run"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+run_id = "32022599873"
+observed = "success"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS the commit above. 'Deploy immutable image to production'."
+
+[[adoption_evidence]]
+kind = "image_digest"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+digest = "sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc"
+observed = "deployed to production by the run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "The registry path used to sit in the `repository` slot, where a machine reading this file would look for a repository name. `repository` now names the PRODUCING product and the content address is the digest."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+subject = "mod_ealloc"
+observed = "v014_allocations_authority applied by the production deploy run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "One dated row replaces the two undated strings that used to make this claim twice. Derived from the deploy run rather than from a direct read of the production database, which is why it is an attestation and not an assertion."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_vendor_control_plane"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-entitlement-allocation.version"
+note = "The rows above are history. The Vendor control plane's BOM is the only authority for what it installs today, and this dossier holds no copy of it — at commit af9fcf6d the plane had already moved past several of the versions recorded above."

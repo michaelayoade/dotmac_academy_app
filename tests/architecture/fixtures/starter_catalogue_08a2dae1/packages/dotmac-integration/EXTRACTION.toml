@@ -1,0 +1,399 @@
+schema_version = 1
+package = "dotmac-integration"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "External connector control plane"
+# ADR-0024 §§ 6-7. "Independently deployed" is a RUNTIME boundary, not a
+# code-location exception to Starter's layering — an earlier reading put this
+# capability outside the module system entirely and had to be corrected. There
+# are two first-party artifacts and this dossier covers only the first:
+#
+#   dotmac-integration  THIS module. The reusable engine and its mod_intg
+#                       schema. Independently versioned, composed by an
+#                       assembly, imports no product.
+#   dotmac_integrator   a thin assembly repository that pins the kernel, this
+#                       module and connector distributions, composes them and
+#                       supplies deployment configuration. It implements no
+#                       second registry, retry engine or persistence model.
+#
+# Products do NOT each compose this module: that would duplicate credential
+# ownership, provider-account rate limiting, backoff and idempotency, which is
+# the entire reason the runtime is separate. The same shape
+# dotmac_vendor_control_plane already uses for dotmac-release-catalog.
+contract = "The generic machinery of running a connector: installations, immutable configuration revisions, capability bindings, authenticated product-port descriptor snapshots, manifest-owned secret binding names and exact egress destinations, secret REFERENCES, inbound receipts and deduplication, outbound delivery with idempotency and retry, polling checkpoints, indexed shadow evidence, health, audit and repair. NOT what a payload means to a product, not a provider's wire format, and not any product's business state."
+
+# PLATFORM-PLANE ONLY (ADR-0023). Declared, not discovered: a connector
+# installation, its config revisions and its delivery evidence are control-plane
+# facts about the fleet's integrations. No product queries these tables — they
+# receive provider-neutral capability messages over their own ports — and none
+# of these rows belongs to a tenant of a product data plane. The manifest will
+# therefore carry `platform_tables` with an EMPTY tenant `tables` tuple, the
+# first module in the fleet to do so.
+#
+# The source agrees: not one of Sub's seven tables carries a tenant_id, because
+# Sub runs one operator tenant and built this control-plane-scoped from the
+# start. This is a port of an existing shape, not a re-scoping.
+planes = "platform-only"
+
+# ERP and CRM are listed because the product-first rule required inventorying
+# them, not because either is the qualifying implementation. Neither references
+# Sub's seven integration tables. CRM nevertheless has an active narrower
+# generic engine of its own -- integration_targets, integration_jobs and
+# integration_runs with mutating APIs and product call sites -- alongside the
+# direct connector surface frozen in external-connector-sources.md. Both are
+# deletion rather than a second extraction source.
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_crm"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  # The seven tables — the mature part, and the reason this is product-first
+  # rather than a design exercise. Leasing, idempotency keys, payload digests,
+  # immutable revisions and optimistic-locked checkpoints already exist here.
+  "dotmac_sub:app/models/integration_platform.py",
+  # The generic engine.
+  "dotmac_sub:app/services/integrations/installations.py",
+  "dotmac_sub:app/services/integrations/manifest.py",
+  "dotmac_sub:app/services/integrations/registry.py",
+  "dotmac_sub:app/services/integrations/inbox.py",
+  "dotmac_sub:app/services/integrations/delivery.py",
+  "dotmac_sub:app/services/integrations/runtime.py",
+  "dotmac_sub:app/services/integrations/runtime_execution.py",
+  "dotmac_sub:app/services/integrations/runner_protocol.py",
+  "dotmac_sub:app/services/integrations/egress_gateway.py",
+  "dotmac_sub:app/services/integrations/egress_policy.py",
+  "dotmac_sub:app/services/integrations/external_runner.py",
+  "dotmac_crm:app/models/integration.py",
+  "dotmac_crm:app/services/integration.py",
+  "dotmac_crm:app/api/integrations.py",
+  # The product-owned comparison contract that supplies the closed verdict,
+  # blocker and field-name vocabulary. Its domain reads stay in Sub; only the
+  # provider-neutral aggregation/refusal shape is ported.
+  "dotmac_sub:app/services/team_inbox_integrator_mirror.py",
+]
+preserved_tests = [
+  # The four that port. Carried WITH the code they prove, slice by slice.
+  "dotmac_sub:tests/test_integration_installations.py",
+  "dotmac_sub:tests/test_integration_manifest_adoption.py",
+  "dotmac_sub:tests/test_integration_delivery.py",
+  "dotmac_sub:tests/test_integration_installation_api.py",
+]
+# The comparison is a later product-first source, separate from the original
+# nine-suite engine extraction accounting below. Its product DB reads stay in
+# Sub; these tests are the parity source for the closed aggregation/refusal
+# contract ported into `shadow.py`.
+shadow_parity_evidence = [
+  "dotmac_sub:tests/test_integrator_observation_mirror.py",
+]
+
+# NOT ported, and named so nobody ports them by reflex:
+#
+#   connectors/*            provider plugins — independently released
+#                           distributions, discovered by package metadata. The
+#                           module core carries no provider enum, import list or
+#                           `if provider == ...` branch.
+#   connectors/dotmac_crm   CRM and ERPNext are RETIRING. Recreating them as
+#   connectors/dotmac_erp   plugins would preserve an architecture being removed.
+#   *_capability.py         Sub business policy: what a message or payment MEANS
+#                           to Sub. Stays with the product that owns the domain.
+#   podman_transport.py     Sub deployment infrastructure.
+not_ported = ["connectors/*", "*_capability.py", "crm_ticket_readiness.py", "backoffice_contracts.py", "podman_transport.py"]
+
+# The thin assembly is the module's one authoritative runtime. It must now
+# repin from published a5 to published a6; the first connector is already on
+# its default branch.
+# Products are deliberately
+# absent from both sets: they consume typed observations over their own ports,
+# never this module, and Sub keeps only its capability handlers after cutover.
+# Demoted from `adopted` on 2026-08-22. The dossier claimed a proven consumer
+# while `first_cutover` described the Meta/WhatsApp capability as INTENDED and
+# `shadow_and_drift` described activation in the future tense — "only then is one
+# binding activated". A status ahead of its own prose is the ADR-0031 overclaim,
+# and this module is about to be cited as a governance prerequisite by Vendor
+# ADR-0010 gate 2b, which is exactly when an overclaim does damage.
+#
+# `dotmac_integrator` returns to CANDIDATE. Gate 2b creates the first addressable
+# adoption evidence; a later change promotes this back with that evidence
+# attached, in that order and not before.
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator"]
+adoption_evidence = []
+inventory_evidence = [
+  "docs/inventories/integration-platform-sources.md",
+  "docs/inventories/external-connector-sources.md",
+]
+
+first_cutover = "A read-only or ingress-only Meta/WhatsApp messaging capability, by Michael's 2026-08-13 direction, and deliberately NOT payments, CRM or ERPNext. It is long-lived rather than retiring, and it exercises exactly the mechanisms that are hard to get right — webhook authentication, inbound deduplication, shared provider rate limits and polling checkpoints — while leaving every message and conversation decision with the receiving product. Payments would put a money decision behind an unproven delivery ledger on its first run; CRM and ERPNext are being retired and must not be rebuilt as plugins to preserve an old architecture."
+
+shadow_and_drift = "Cutover is shadow-first: the Integrator receives the provider traffic while the product still receives only the provider-neutral capability message, and receipts, payload fingerprints, checkpoints and product outcomes are compared until there is ZERO unexplained drift. Only then is one binding activated, and only then are the provider webhook, credentials, client, task, retry and checkpoint removed from the product — lowering the external-connector ratchet baseline in the SAME change, so the retirement is reviewable as a diff rather than asserted."
+
+# Binding multiplicity — RESOLVED 2026-08-13, and the earlier reading here was
+# wrong. This entry records the correction because a dossier that quietly drops
+# a misreading teaches nobody why it was wrong.
+#
+# THE RULE: "Each installation may bind a capability once. Multiple
+# installations may implement it, but every dispatch must identify or resolve
+# exactly one enabled binding; absent, stale, or ambiguous routing fails
+# closed."
+#
+# An earlier revision recorded Sub's (installation_id, capability_id) unique
+# constraint as a DEFECT against ADR-0024 §7. It is not. §7 says "each
+# (installation, capability) has exactly one active connector binding" — the
+# tuple, never a global per-capability constraint — and Sub enforces exactly
+# that tuple. Two distinct concepts were being conflated:
+#
+#   ENABLED   an installation is capable and permitted to implement a
+#             capability. MANY installations may be enabled for one capability.
+#   SELECTED  the single binding chosen for one concrete dispatch. Zero or
+#             multiple matches fail closed.
+#
+# Sub already separates them: `require_enabled_capability_binding` filters
+# enabled bindings, narrows by an optional connector_key, and where several
+# remain requires exactly one `policy_json.default is True` — raising "multiple
+# enabled bindings; exactly one must be default" otherwise. Routing never reads
+# `scope_json`; its only observed consumer displays configured ERP domains.
+#
+# So the module preserves the tuple constraint, does NOT constrain capability_id
+# alone, and does NOT put raw scope_json in any uniqueness constraint. JSON
+# equality cannot detect overlapping scopes, so if scoped routing ever gains a
+# real consumer it needs a separate typed route/assignment contract with
+# canonical keys and overlap rules — not a constraint bolted onto a JSON column.
+binding_multiplicity = "Unique on (installation_id, capability_id). Many installations may implement one capability; dispatch resolves exactly one enabled binding or fails closed."
+
+# CLOSED 2026-08-13: the SPI range is now STORED on the installation
+# (`connector_installations.spi_range`) as well as compared, and checked at
+# discovery, startup and activation. Storing it is what lets a later MODULE
+# upgrade refuse a previously activated binding — the case that bites, where
+# the plugin did not change but the host did.
+#
+# REOPENED 2026-08-24 by the outbound leg, and it is one question rather than a
+# list: A CAPABILITY ID IS NOT YET A CONTRACT. `spi.CapabilityDeclaration`
+# carries `capability_id`, `config_schema` and `modes`; `DispatchRequest.payload`
+# is an unvalidated `dict[str, object]`. Configuration has a declared schema and
+# COMMANDS DO NOT, so each connector settled its command shape locally and two
+# shipped ids grew two dialects each — `payments.*` (Paystack's
+# `{"action","params"}` envelope, derived provider reference and connector-owned
+# wire scale, against Flutterwave's and Remita's flat payload, product-minted
+# reference and required `currency_minor_units`) and `messaging.send.v1`
+# (`meta_whatsapp`'s `send_text|send_template|send_media` with `recipient`,
+# against `meta_social`'s `send_direct_message|reply_to_comment` with
+# `recipient_id`+`channel`). ADR-0024 § 8.1 forbids exactly that, and ADR-0061
+# § 3 cannot be satisfied while it holds: ERP cannot move payout traffic between
+# bindings if the payload changes with the binding.
+#
+# This module owns the closure, because the missing thing is a declaration
+# surface, not a connector fix.
+#
+# CORRECTED 2026-08-24, and the superseded statement is kept rather than quietly
+# replaced. The paragraph above originally continued:
+#
+#   "...: a command payload schema on `CapabilityDeclaration`, validated by the
+#   engine BEFORE dispatch rather than by each connector after."
+#
+# That places the schema on the CONNECTOR's declaration, and it is wrong. If
+# every connector publishes its own schema, drift merely becomes
+# MACHINE-READABLE rather than prevented: two connectors serving one capability
+# id would declare two individually valid schemas and the engine would have no
+# ground to prefer either. The canonical schema belongs to the artifact that
+# owns the capability's MEANING — `capability_registry.CapabilityContract`, the
+# business owner's declaration, of which the registry already permits exactly
+# one per id (DuplicateCapabilityDeclaration). ADR-0024 § 10 / ADR-0061 A2.
+#
+# WHAT `CapabilityContract` GAINS: `command_schema`, `result_schema`,
+# `observation_schema`, a canonical contract digest over the canonicalized
+# schemas, and deprecation/replacement metadata (which capability id replaces
+# this one, and the window after which this one is retired).
+#
+# WHAT `spi.CapabilityDeclaration` KEEPS: `capability_id`, `config_schema` and
+# `modes` — connector CONFIGURATION and executable modes, which are genuinely
+# per-connector facts — plus the ability to CLAIM the domain contract's digest.
+# It never publishes a competing schema. A manifest is a claim to implement,
+# never a claim to define, and that now covers the payload as well as the id.
+#
+# THE GATE, as one unit of work and as an OBLIGATION rather than an existing
+# control (none of it exists today):
+#   1. command validation before enqueue           -> execution.enqueue_delivery
+#   2. digest agreement at COMPOSITION             -> capability_registry
+#                                                     .require_implements_only_declared
+#   3. digest agreement again at BINDING           -> capability_registry
+#                                                     .require_declared_for_binding
+#   4. result validation before settlement         -> dispatch.settle
+#   5. observation validation before inbox record  -> ingress.record_batch
+#                                                     (and the polling settle)
+#   6. a schema change takes a NEW `.vN` capability id; a published contract
+#      version is never redefined in place.
+# Sensitivity proofs are PLANTED, not assumed: digest mismatch, missing schema,
+# invalid payload, invalid result — driven by a deliberately divergent fake
+# connector. Steps 2 and 3 are both required for the same reason the SPI already
+# checks its three declarations three times: a distribution can be installed
+# after composition ran, and a binding can be activated long after startup.
+#
+# It remains an SPI minor version plus a registry minor version and a
+# coordinated connector release wave. See ADR-0061 § 5 and its Amendment A2/A3
+# for the ordered sequence.
+open_questions = [
+  "ConnectorMode is a CLOSED union of INGRESS|POLL|DELIVERY with no REQUEST member, so a caller-initiated read that returns a typed observation (social.profile.read.v1) cannot be served at all (ADR-0024 § 11.3).",
+  "DELIVERY has no durable command-response seam: dispatch returns an Outcome carrying only status, error code, provider reference and HTTP status, so a command whose reply is CONTENT rather than evidence has nowhere to land. dotmac-connector-paystack states the consequence exactly - a checkout URL, a resolved bank-account name and a new transfer-recipient code cannot be persisted, and only commands whose reply is pure evidence (charge, refund, transfer) are usable through DELIVERY at all. This blocks any payment-execution owner from completing its own lifecycle through the sanctioned transport, because binding a payee (resolve_bank_account, create_transfer_recipient) is a content reply. A seam must preserve the reply against the same idempotency key without letting a plugin smuggle a response body through untyped evidence - the boundary Outcome.provider_reference and provider_status_code were deliberately typed to hold (docs/inventories/treasury-payment-execution-sources.md § 4, § 12.3 G1).",
+]
+
+# ── ADR-0062 (2026-08-24): this module names its runtime metrics; the assembly
+# exports them ──────────────────────────────────────────────────────────────
+#
+# `operations.METRIC_NAMES` is the published naming contract — thirteen stable,
+# `integration_`-prefixed, unit-suffixed identifiers returned verbatim by
+# `DispatchMetrics.as_metrics()` and pinned as literals in
+# `tests/unit/test_integration_runtime_safety.py`. There is no metrics client,
+# counter registry or `/metrics` route in this package and there must not be
+# one: several assemblies compose this module, and an exporter here would pick
+# their monitoring stack for them and create a second observability path beside
+# the one each deployment already runs. `dotmac_integrator` owns the exporter.
+#
+# Metric names are therefore part of what COMPATIBILITY.md promises: removing or
+# renaming a declared name is a breaking change to the published surface.
+#
+# DIVERGENCE (ADR-0062 § 5 D2): `HealthReport.as_dict()` — same module, same
+# file, same read-time derivation — returns bare dataclass field names
+# (`dead_letter`, `checkpoints_stale`, `receipts_unprocessed`, …) with no
+# declared tuple and no `integration_` prefix. An assembly exporting the health
+# signals, which is the obvious thing to do with an object whose purpose is "is
+# anything silently stuck?", exports six unprefixed, undeclared names. Closing
+# it is a minor version here: give HealthReport its own declared, prefixed name
+# tuple beside METRIC_NAMES, pinned by a literal test the way METRIC_NAMES
+# already is.
+
+# THE PAYLOAD CONTRACT IS THE DOMAIN'S, and this is where that is recorded for a
+# reviewer who reaches this dossier before the ADR. ADR-0024 §§ 10-12 (2026-08-24)
+# and ADR-0061 A2.
+#
+# The defect: a capability id was one contract with one owner, and its PAYLOAD
+# was nothing. `spi.CapabilityDeclaration` carried `config_schema` and
+# `DispatchRequest.payload` was an unvalidated `dict[str, object]` — configuration
+# had a declared contract and commands did not. Two shipped capability families
+# each grew two dialects behind one id with no gate able to see it.
+#
+# The closure is NOT a command schema on the connector's declaration. If every
+# connector published its own schema, two connectors serving one id would publish
+# two individually valid schemas and the engine would have no ground to prefer
+# either — drift becomes machine-readable rather than prevented. The schema
+# therefore lives on `capability_registry.CapabilityContract`, the declaration the
+# owning business application publishes and of which the registry already permits
+# exactly one per id. A connector may only CLAIM its digest.
+capability_payload_contract = "OWNED BY THE DECLARING DOMAIN. CapabilityContract carries command_schema, result_schema, observation_schema, a canonical contract_digest and ContractDeprecation. CapabilityDeclaration carries only claims_contract_digest. Enforced at four seams: enqueue_delivery (command), require_implements_only_declared and require_declared_for_binding (digest agreement, composition AND binding), dispatch.settle (result), ingress.record_batch (observation, shared by the polling path). A schema change takes a new .vN id; install_capability_registry refuses a redefinition."
+
+# ADOPTION IS A DECLARED, DATED GRACE — not a permanent optional field. Every
+# capability in the fleet predates the rule, so fail-closed on day one would
+# break every binding; but an optional `command_schema` is exactly how the defect
+# returns, because nothing would separate "this owner has not published a payload
+# contract" from "nobody has looked at this capability". A contract must declare a
+# schema OR a SchemaGrace with a reason and a retire_after date; silence is
+# refused at construction, the ungated set is enumerable through
+# `schema_grace_register`, and `require_no_expired_grace` closes the window.
+schema_adoption = "Fail closed on SILENCE, not on absence. A CapabilityContract declares at least one payload schema or an explicit SchemaGrace(reason, retire_after); neither is refused. The ungated set is enumerable with owner and deadline; an expired grace refuses at boot."
+
+# WITHHELD, AND SAID OUT LOUD (ADR-0032; ADR-0024 § 9.4 applied to this module).
+# The gate above does not repair what has already shipped, and it is not supposed
+# to: ADR-0024 § 11.2 rules that `messaging.send.v1` is repaired by SUCCESSION
+# (`messaging.direct.send.v2`, `social.comment.reply.v1`,
+# `social.profile.read.v1`) rather than by redefining a published version. Five
+# capability ids are currently served by two connectors each with no domain
+# contract published between them; they are held in a two-directional ratchet at
+# `tests/architecture/test_capability_contract_divergence.py` so the set cannot
+# grow — or silently shrink — without a reviewer seeing it.
+unrepaired_shared_capabilities = "messaging.receive.v1 and messaging.send.v1 (meta_whatsapp, meta_social); payments.intent.v1, payments.refund.v1 and payments.settlement.observation.v1 (paystack, flutterwave). messaging.send.v1 carries the documented divergence: send_text|send_template|send_media with `recipient` against send_direct_message|reply_to_comment with `recipient_id`+`channel`. Repaired by succession, not redefinition."
+
+# NOT BUILT, AND NAMED SO THE ABSENCE IS REVIEWABLE. Two obligations the gate
+# leaves open:
+#
+# 1. A binding does NOT durably pin the contract digest it was activated against.
+#    Redefinition is refused in-process (a changed digest breaks every connector
+#    claim at composition and at binding, and `install_capability_registry`
+#    refuses a reload that redefines), but a coordinated owner+connector change
+#    across a restart is a reviewable two-repository diff rather than a refusal.
+#    A `contract_digest` column on `capability_bindings` is the next ratchet and
+#    was deliberately NOT taken now: with every contract in grace it would be
+#    NULL for every row on day one, which is a control over an empty set.
+# 2. A webhook refusal carries no detail. `ObservationRejected` has a constant
+#    message by the `IngressRefused` contract, and the detailed
+#    `CapabilityPayloadRejected` is currently converted and not otherwise
+#    surfaced on the ingress path.
+contract_gate_gaps = "No durable per-binding contract-digest pin (deferred: every contract is in grace, so the column would be uniformly NULL). No observability seam for an ingress-side observation refusal."
+
+# PAYLOAD RETENTION IS NEW BEHAVIOUR, NOT A PORT — recorded so the product-first
+# rule is answered rather than skipped. Sub keeps every `integration_inbox_event`
+# payload forever: there is no purge job, no legal-hold table and no retention
+# setting in any of the eleven engine modules or seven tables inventoried above.
+# So there was no qualifying production implementation to start from, and this
+# slice is written fresh against the constraint the source's absence creates —
+# a payload that ages out must not take the deduplication key with it.
+#
+# The three values this module refuses to invent stay UNSET here as well: the
+# content period, the replay-evidence period and the legal-policy owner are
+# deployment decisions, and a dossier that named an example number would be the
+# same smuggled default as a dataclass field with a value in it.
+payload_retention = "NEW behaviour, not ported: Sub retains integration payloads indefinitely and has no purge, hold or retention setting to port. Inbound redaction rewrites payload/headers/consequence VALUES and preserves receipt deduplication through the longer replay window. Outbound redaction acts only on delivered attempts and preserves the installation-scoped idempotency key, payload digest, state and typed provider evidence; retryable, dead-letter and reconciliation-required payloads remain available for repair. Separate receipt and delivery hold tables keep database referential integrity exact. Neither period nor the legal-policy owner has a default in code or in this dossier."
+
+local_copy_retirement = "Sub retires the eleven generic engine modules (installations, manifest, registry, inbox, delivery, runtime, runtime_execution, runner_protocol, egress_gateway, egress_policy, external_runner) and its seven integration_* tables once the module is composed and one capability has cut over in shadow. It KEEPS its *_capability.py handlers — what a message or payment means to Sub is product business policy and was never the module's. ERP retires its direct provider clients, webhooks, credentials, tasks and checkpoints through the external-connector ratchet. CRM additionally retires integration_targets, integration_jobs, integration_runs, their mutating API/service paths and every direct connector; recreating any of them as a plugin would preserve the architecture being removed. Each ratchet is lowered in the SAME change as its cutover or deletion."
+
+next_action = "Publish dotmac-integration a17, then make Sub publish authenticated descriptor v3 with its domain-owned schemas or dated grace and exact-pin a17 in dotmac_integrator. Only after that serial handshake is green may Integrator reconcile the registry and begin polling. Retire each grace by publishing the connector-normalized domain schema and matching connector digest claims before its date; do not mistake Sub's later destination envelope for the pre-delivery observation payload."
+
+# PARITY DISPOSITIONS — one per source suite, and the reason.
+#
+# Mechanically copying all nine would port Sub's PRODUCT decisions along with
+# the engine, and would carry a legacy secret-value surface this contract
+# deliberately replaced. So each suite gets an explicit disposition, and
+# `tests/architecture/test_integration_parity.py` fails if a suite named here
+# has none — a suite cannot be quietly dropped.
+#
+# The fresh invariant tests in tests/unit/test_integration_*.py SUPPLEMENT
+# these; they do not replace them.
+[parity]
+"tests/test_integration_installations.py" = "port"
+"tests/test_integration_manifest_adoption.py" = "port"
+"tests/test_integration_delivery.py" = "port-with-fake-plugin"
+"tests/test_integration_installation_api.py" = "port-service-only"
+"tests/test_integration_capability_sync.py" = "keep-in-sub"
+"tests/test_connector_services.py" = "exclude-retiring"
+"tests/test_connector_auth_config_encryption.py" = "exclude-superseded"
+"tests/test_connector_header_masking.py" = "exclude-superseded"
+"tests/test_external_connector_end_to_end.py" = "move-to-assembly"
+
+# WHERE each ported suite's behaviour now lives. Without this the parity table
+# proves ACCOUNTING — that every suite has a verdict — but not PORTING. A test
+# asserts each file and named case exists, so a promise cannot outlive its
+# evidence.
+[parity.ported_to]
+"tests/test_integration_installations.py" = "tests/unit/test_integration_lifecycle.py::test_a_draft_pins_the_connector_installed_right_now"
+"tests/test_integration_manifest_adoption.py" = "tests/unit/test_integration_lifecycle.py::test_adoption_is_idempotent"
+"tests/test_integration_delivery.py" = "tests/unit/test_integration_lifecycle.py::test_a_dispatch_reaches_the_plugin_with_materialized_secrets"
+"tests/test_integration_installation_api.py" = "tests/unit/test_integration_lifecycle.py::test_the_service_surface_the_routes_would_call_is_complete"
+
+[parity.reasons]
+"port" = "Generic engine behaviour with no product coupling. Ported as-is with the code it proves."
+"port-with-fake-plugin" = "Generic, but exercises a connector. Ported against the shipped fake-plugin conformance kit so it needs no provider and no network."
+"port-service-only" = "The SERVICE behaviour ports; the HTTP surface does not. Routes belong to the dotmac_integrator assembly, which owns its own transport tests."
+"keep-in-sub" = "A product business adapter, not engine machinery. Capability sync decides what a payload MEANS to Sub, which ADR-0024 keeps with the product."
+"exclude-retiring" = "Covers the legacy ConnectorConfig surface, which is being retired rather than ported. Porting it would preserve the architecture being removed."
+"exclude-superseded" = "Covers storing and masking secret VALUES. The new contract stores REFERENCES only, so the behaviour under test cannot occur — a ported test would assert a property the design forbids."
+"move-to-assembly" = "Container/runtime end-to-end verification. Belongs to the dotmac_integrator deployment, not to the module."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/integration.py", "app/services/integration.py", "app/api/integrations.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["docs/external-connector-surface.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/integration_platform.py", "app/services/integrations/installations.py", "app/services/integrations/manifest.py", "app/services/integrations/registry.py"]

@@ -1,0 +1,101 @@
+schema_version = 1
+package = "dotmac-assets"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant-scoped individual durable asset identity, custody, assignment, maintenance, physical lifecycle, disposal state and lifecycle evidence"
+contract = "Create one stable tenant record per durable asset; guard physical lifecycle transitions with expected state; maintain at most one active opaque-custodian assignment while preserving issue, return, loss and transfer history; record opaque location moves; schedule, start, complete and cancel maintenance while keeping asset availability coherent; request, separately approve and complete disposal only after custody and maintenance are resolved; and append immutable lifecycle evidence in the caller's transaction. NOT depreciation, impairment, revaluation, GL posting, stock/parts, product identity, vehicle specifications, GPS observations, fuel, incidents, reservations, documents, authorization policy, notification delivery or product consequences."
+
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+
+source_paths = [
+  # Qualifying source: individual fixed-asset identity and lifecycle.
+  "dotmac_erp:app/models/fixed_assets/asset.py",
+  "dotmac_erp:app/models/fixed_assets/asset_disposal.py",
+  "dotmac_erp:app/models/fixed_assets/maintenance_request.py",
+  "dotmac_erp:app/models/fixed_assets/maintenance_work_order.py",
+  "dotmac_erp:app/models/people/assets/assignment.py",
+  "dotmac_erp:app/models/people/assets/audit.py",
+  "dotmac_erp:app/services/fixed_assets/asset.py",
+  "dotmac_erp:app/services/fixed_assets/disposal.py",
+  "dotmac_erp:app/services/people/assets/assignment_service.py",
+  "dotmac_erp:app/services/people/assets/maintenance_service.py",
+  "dotmac_erp:app/services/people/assets/lifecycle_event_service.py",
+  # Same product's overlapping fleet implementation and mandatory parity input.
+  "dotmac_erp:app/models/fleet/vehicle.py",
+  "dotmac_erp:app/models/fleet/vehicle_assignment.py",
+  "dotmac_erp:app/models/fleet/maintenance.py",
+  "dotmac_erp:app/services/fleet/vehicle_service.py",
+  "dotmac_erp:app/services/fleet/assignment_service.py",
+  "dotmac_erp:app/services/fleet/maintenance_service.py",
+]
+
+preserved_tests = [
+  "dotmac_erp:tests/ifrs/fa/test_asset_service.py",
+  "dotmac_erp:tests/ifrs/fa/test_asset_bulk_service.py",
+  "dotmac_erp:tests/ifrs/fa/test_disposal_service.py",
+  "dotmac_erp:tests/people/hr/test_employee_assigned_assets.py",
+  "dotmac_erp:tests/services/test_fleet_maintenance_form.py",
+  "dotmac_erp:tests/test_fleet_vehicle_edit_save.py",
+  "dotmac_starter_mt:tests/unit/test_assets_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_assets_service.py",
+  "dotmac_starter_mt:tests/architecture/test_assets_module.py",
+  "dotmac_starter_mt:tests/test_assets_isolation.py",
+]
+
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+
+authority_boundary = "ADR-0037. dotmac-assets owns individual durable asset identity, physical lifecycle, opaque current location, custody/assignment history, maintenance lifecycle, disposal state and append-only evidence. ERP's finance owner keeps capitalization, depreciation, impairment, revaluation, gain/loss and journal posting. Inventory keeps parts, stock and procurement. dotmac-positioning keeps provider-neutral position observations; the adopting product owns the asset-to-tracked-unit link and asks the asset owner to change authoritative location when policy permits. Product extensions keep vehicle registration/specification, odometer, fuel, incidents, reservations, documents and driver/department policy. Actors, custodians and locations are opaque local UUIDs without product foreign keys."
+
+inventory_evidence = [
+  "docs/inventories/assets-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/inventories/fleet-fact-level-decomposition.md",
+]
+
+first_cutover = "dotmac_erp is cutover 1. Compose the as lineage in ERP's truthful tenant/organization mapping, backfill generic asset identity plus active/historical assignments, maintenance and disposal state, then shadow every old owner command in one transaction. Compare full-column typed digests and lifecycle event order, switch the only writer, and retire the displaced generic fixed-asset/vehicle lifecycle paths. Keep finance, inventory and vehicle extensions product-owned and rebind them through typed local relations. The eventual dotmac-erp assembly consumes the same released package rather than inheriting a copied ERP owner."
+
+shadow_and_drift = "For every in-scope ERP asset, compare stable code, kind, serial/tag, physical state and condition, opaque location, active custodian, complete assignment chain, scheduled/in-progress/completed maintenance, disposal state and ordered lifecycle-event digest. Compare command refusals for stale state, duplicate active assignment, invalid transition, self-approval, unresolved custody and open maintenance. Finance values, stock movements, GPS coordinates and vehicle-only fields are excluded deliberately and are reconciled by their own owners. Seal the typed digest and effective privileges under ADR-0031 before switching reads/writes; the shadow is then removed."
+
+local_copy_retirement = "After ERP cutover, delete or migration-seal the generic writers in app/services/fixed_assets/asset.py, app/services/fixed_assets/disposal.py, app/services/people/assets/{assignment_service,maintenance_service,lifecycle_event_service}.py and the overlapping identity/lifecycle branches in app/services/fleet/{vehicle_service,assignment_service,maintenance_service}.py. Retire or transform the displaced asset, assignment, maintenance, disposal and lifecycle tables only after backfill verification and rollback-window closure. Preserve finance tables/services and product-owned vehicle, inventory, files and positioning extensions, rekeyed to the module asset id. Two-directional caller/model/table ratchets reach zero before local ownership is declared retired."
+
+next_action = "Validate the canary-first package on a fresh isolated Observer worktree. When the ERP adoption slice is ready, release the compatible kernel namespace allocation and dotmac-assets together, exact-pin them in ERP, write the ERP backfill/shadow/one-writer cutover and retirement ratchets, and keep the reference Starter assembly a non-consumer. Do not publish or call the module adopted before that cutover."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/inventory.py", "docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/fixed_assets/asset.py", "app/services/fixed_assets/asset.py", "app/services/people/assets/assignment_service.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

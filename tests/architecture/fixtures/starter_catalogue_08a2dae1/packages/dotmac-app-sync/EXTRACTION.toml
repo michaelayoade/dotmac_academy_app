@@ -1,0 +1,75 @@
+schema_version = 1
+package = "dotmac-app-sync"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "The provider-neutral, versioned inter-application observation envelope and the authenticated hand-off to a destination-owned atomic receiver."
+contract = "Encode and validate source identity, capability version, opaque scope/subject references, correlation, destination-owned JSON Schema, stable idempotency identity and payload fingerprint. Own no HTTP route, peer authentication mechanism, database, session, outbox row, domain model, resolver or consequence."
+
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_academy_app",
+]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+]
+
+source_paths = [
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:packages/dotmac-integration/src/dotmac_integration/receipt_delivery.py",
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:packages/dotmac-integration/src/dotmac_integration/destination_binding.py",
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:packages/dotmac-integration/src/dotmac_integration/capability_registry.py",
+  "dotmac_sub@d3e4380cc7d58cf2dea9b3d7f7b91951f556422d:app/services/dotmac_erp/outbox.py",
+  "dotmac_sub@d3e4380cc7d58cf2dea9b3d7f7b91951f556422d:app/services/dotmac_erp/billing_adapter.py",
+  "dotmac_erp@c656bb9070b7f35659f1968e44823e4727b309b9:app/services/dotmac_academy/training_sync.py",
+  "dotmac_erp@c656bb9070b7f35659f1968e44823e4727b309b9:app/services/dotmac_academy/events.py",
+  "dotmac_academy_app@a5e25e4e829350e503e66a03d73739529ba7da7f:app/services/erp_sync.py",
+  "dotmac_academy_app@a5e25e4e829350e503e66a03d73739529ba7da7f:app/services/learning_events.py",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_app_sync_contracts.py",
+  "dotmac_starter_mt:tests/architecture/test_app_sync_boundary.py",
+]
+
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp", "dotmac_academy_app"]
+
+inventory_evidence = [
+  "docs/superpowers/plans/2026-08-21-integration-ecosystem-programme.md",
+  "docs/ARCHITECTURE.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+]
+
+first_cutover = "One destination exact-pins an exact-SHA source build, publishes one destination-owned capability schema, authenticates the source in its own thin adapter, and implements atomic deduplication plus local resolver invocation in its own transaction. Publication is held until that pilot changes or confirms the seam."
+shadow_and_drift = "Mirror the same outbox observation through the existing path and this contract, compare the destination owner's resulting local decision by source event identity, and retain queryable mismatch evidence. The wire package never decides equality for a domain it does not own."
+local_copy_retirement = "After each capability cutover, remove only the replaced pairwise envelope/auth/idempotency glue. Keep each product's durable outbox, authenticated adapter, local observation model, resolver and owning service. No product imports another product or delegates its decision."
+next_action = "Pilot one exact-SHA build in the destination with the simplest already-owned receiver, then add dotmac-app-sync to the stateless-adapter release lane with that consumer proof. Sub-to-ERP, ERP-to-Sub and both Academy flows remain product-repository cutovers after this reusable contract merges."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = [
+  "app/services/erp_sync.py",
+  "app/services/erp_assessment_sync.py",
+  "app/services/learning_events.py",
+]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/dotmac_academy/training_sync.py", "app/services/dotmac_academy/events.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/dotmac_erp/outbox.py", "app/services/dotmac_erp/billing_adapter.py"]

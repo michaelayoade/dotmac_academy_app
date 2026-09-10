@@ -1,0 +1,94 @@
+schema_version = 1
+package = "dotmac-imports"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "The durable record of a bulk import: the run, its immutable partition plan, its rows, and what became of each one"
+contract = "Record an operator-initiated import of one stored document; verify immutable source/partition SHA-256; validate without holding anything that could mutate; promote one validated run into one apply run; advance either one locked ordinary chunk or one atomically claimed bounded partition; and commit each domain effect with its minimised row outcome plus the owning checkpoint. Stream large CSVs into bounded dotmac-files artifacts, clone the exact validated plan on promotion, read each claimed object outside every database transaction, refuse stale claim settlement, and preserve a product's typed non-writing skip outcome without invoking its applier. Persist only opaque file ids, ranges, checksums, row fingerprints, bounded typed safe errors and opaque results — never mapped row values or raw exception text. NOT field vocabulary, business validation, duplicate policy, domain mutation/reversal, stored bytes, worker-count policy, database extraction, COPY or export."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_academy_app",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/services/import_runs.py",
+  "dotmac_sub:app/models/imports.py",
+  "dotmac_sub:alembic/versions/180_import_runs.py",
+  "dotmac_sub:app/services/web_system_import_wizard.py",
+  "dotmac_sub:app/imports/loader.py",
+  "dotmac_erp:app/services/finance/import_export/base.py",
+  "dotmac_erp:app/services/finance/import_export/import_service.py",
+  "dotmac_erp:app/services/imports/formats.py",
+  "dotmac_crm:app/imports/loader.py",
+  "dotmac_starter_mt:packages/dotmac-imports/src/dotmac_imports",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_import_runs.py",
+  "dotmac_sub:tests/test_system_import_wizard_service.py",
+  "dotmac_sub:tests/test_import_rollback_money_safety.py",
+  "dotmac_erp:tests/ifrs/import_export/test_base_importer.py",
+  "dotmac_erp:tests/ifrs/import_export/test_base_importer_spreadsheets.py",
+  "dotmac_erp:tests/ifrs/import_export/test_validation_rules.py",
+  "dotmac_erp:tests/architecture/test_importer_dry_run_writes_nothing.py",
+  "dotmac_starter_mt:tests/unit/test_imports.py",
+  "dotmac_starter_mt:tests/unit/test_import_partitions.py",
+  "dotmac_starter_mt:tests/architecture/test_imports_module.py",
+  "dotmac_starter_mt:tests/test_imports_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+composition_boundary = "ADR-0024: each adopter installs its own im lineage and owns its own run ledger. Applications share the package contract, never a mod_imports schema or a run row. An import performed in one application is that application's fact; another app learns of its results through the owning app's versioned API/webhook, never by reading its ledger. The domain's validator and applier are product code supplied at the call site, never product/provider switches inside the module."
+inventory_evidence = [
+  "docs/inventories/imports-sources.md",
+  "docs/inventories/imports-large-migration-sources.md",
+  "docs/adr/0025-imports-own-the-run-not-what-a-row-means.md",
+]
+first_cutover = "dotmac_erp is cutover 1. Product-first requires a qualifying source product to retire its local owner, and ERP is the half with no durable record at all — its adoption is a capability gain rather than a relocation, which makes the parity evidence unusually clear (before: an in-memory ImportResult; after: a queryable run). ERP now has the Organization-to-Tenant mapping, composed lineage, dotmac-files partition storage, product-owned customer validator/applier, scheduling and repair surface, shadow verdict comparison and concurrent-claim PostgreSQL proof; publication of a2 and the exact registry lock are the remaining pre-merge gates. dotmac_sub is cutover 2, retiring app/services/import_runs.py and moving its two tables into the im lineage while web_system_import_wizard's ENTITY_CONFIG stays in Sub as the domain half. dotmac_crm is retired from the programme and remains source evidence only, never a recreated consumer. Neither dotmac_academy_app nor dotmac_vendor_control_plane is a candidate — Academy's content_import is markdown authoring over a filesystem tree and Vendor CP has no import capability at all."
+shadow_and_drift = "ERP's cutover runs each entity importer's existing in-memory path and the module-backed path over the same document and compares row-for-row: same accepted count, same rejected rows with equivalent typed safe reasons, same resulting entity ids. Because ERP has no prior ledger there is no historical record to backfill and no drift class from one — the comparison is between two live paths, and the module's ledger becomes the first durable one. Sub's cutover is the opposite shape: its ledger already exists, so every import_runs / import_run_rows row is compared against the module row created from the same input (kind, status, counts, per-line status and classified error), the payment provenance columns are verified to have moved to the domain side with no row losing its link, and the inline input_text is verified against the dotmac-files object's SHA-256 before the column is dropped. Imported row values are not copied into the new ledger. Both cutovers run the new path in dry-run only until the row-for-row comparison is clean."
+local_copy_retirement = "ERP must reduce app/services/finance/import_export/base.py to a domain FieldSet plus its 23 validators and appliers, with decoding, mapping, preview and the run loop coming from the pinned dotmac-imports release; a two-directional import/caller ratchet reaches zero before BaseImporter is deleted. Its COLUMN_ALIASES, VALID_ACCOUNT_TYPES, VALID_CURRENCY_CODES and vendor-format detectors stay in ERP as finance vocabulary and must not migrate into the module. Sub must delete app/services/import_runs.py and its import_runs / import_run_rows tables after the module lineage is composed, keeping ENTITY_CONFIG and _persist_row as the domain half; PaymentImportBatchReversal stays in billing and is never reproduced in the module. CRM deletes app/imports/loader.py outright. No permanent mirrored ledger, second run table, or parallel dry-run implementation is allowed."
+next_action = "Publish 0.1.0a2 through the now-authorized closed module lane, then generate ERP's exact Poetry 2.4.1 registry lock and merge its first-adopter slice. Keep contract_consumers empty until that exact pin and composed im lineage merge; publication alone is not adoption. Run real customer-master CSV files through the legacy and durable dry-run paths until row-for-row verdicts and resulting entity ids match, then seal and retire the legacy decoding/mapping/run loop with its caller ratchet lowered in the same change. Port ERP's XLSX/XLSM reader as an openpyxl extra and legacy XLS as an xlrd extra with their source parity tests after the CSV cutover, not as untested formats ahead of a consumer. Sub follows. CRM remains inventory evidence only and is not revived as a consumer. PostgreSQL COPY, database extraction and export remain separate candidates requiring source evidence."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/services/content_import.py", "app/services/bank_loader.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/imports/loader.py"]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/finance/import_export/base.py", "app/services/finance/import_export/import_service.py", "app/services/imports/formats.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/import_runs.py", "app/models/imports.py", "alembic/versions/180_import_runs.py", "app/services/web_system_import_wizard.py"]

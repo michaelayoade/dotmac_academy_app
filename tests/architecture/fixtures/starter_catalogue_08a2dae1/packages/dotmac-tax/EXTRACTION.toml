@@ -1,0 +1,115 @@
+schema_version = 1
+package = "dotmac-tax"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant tax policy and classifications, effective-dated multi-tax determinations, statutory reporting snapshots, filing obligations, and tax-return lifecycle evidence"
+contract = "Configure authorities, jurisdictions, tax codes, effective rules, ordered/compound calculation bases and progressive bands; publish evidenced tax-specific party/supply/place classifications; expose policy through immutable ORM-free V1 reads and exact-replay natural-key ensure commands; determine an ordered, result-content-sealed component set from typed source facts and return it through an ORM-free exact-Money V1 contract while preserving standard/zero/exempt/out-of-scope treatment identity; aggregate configured report boxes into versioned snapshots; schedule explicit filing obligations; and govern prepare/review/file/accept/reject/amend transitions. NOT a country-specific rate/calendar/code enum, taxpayer identity validation transport, invoice/order/payroll ownership, government portal client, GL account, journal entry, fiscal period, payment, or remittance transport."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:943bc59f8e4ca0849c7de578bc9dbc17c57b116f",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_starter_mt:5876ffd0bce17172fa2dc6ac6d09b48d877fadf8",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/tax",
+  "dotmac_erp:app/services/finance/tax",
+  "dotmac_erp:app/services/finance/reporting",
+  "dotmac_sub:app/models/billing.py",
+  "dotmac_sub:app/models/customer_tax_policy.py",
+  "dotmac_sub:app/models/catalog.py",
+  "dotmac_sub:app/services/billing_automation.py",
+  "dotmac_sub:app/services/prepaid_service_renewals.py",
+  "dotmac_sub:app/services/customer_tax_policies.py",
+  "dotmac_sub:app/services/tax_accounting.py",
+  "dotmac_crm:app/services/revenue_service_report.py",
+  "dotmac_crm:app/services/vendor.py",
+  "dotmac_starter_mt:packages/dotmac-tax/src/dotmac_tax/service.py",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_tax_service.py",
+  "dotmac_starter_mt:tests/architecture/test_tax_module.py",
+  "dotmac_starter_mt:tests/test_financial_modules_isolation.py",
+  "dotmac_starter_mt:tests/test_tax_released_migration_upgrade.py",
+]
+# CORRECTED 2026-08-29. Was `contract_consumers = ["dotmac_erp"]` with
+# `status = "adopted"`. A pin is installation, not adoption: ERP pins
+# `dotmac-tax 0.1.0a3` at an exact commit AND declares the module not composed
+# in `app/services/finance/tax/adoption/composition.py` — the `tx` lineage is
+# absent from ERP's `alembic.ini`, `mod_tax` exists in no ERP database, and no
+# writer is repointed (this dossier types ERP as a `qualifying_source` whose
+# retirement is still required, in [[product_writers]] below). Both facts are
+# true at once;
+# the pin was simply never the fact being claimed. ERP moves back to a
+# candidate, which is what `_state_for(0)` requires and what the evidence says.
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+adoption_evidence_schema = "v1"
+composition_boundary = "Applications submit typed, deduplicated source facts and consume determinations through local orchestration. Tax imports no billing, payroll, banking or accounting sibling. Official authority APIs and identity validation are Integrator/product adapters; accounting consequences use opaque references outside the module."
+inventory_evidence = ["docs/inventories/tax-sources.md"]
+first_cutover = "ERP is the qualifying policy/reporting source and first decision owner to retire after shared accounting exists. Sub then supplies its billing tax and withholding facts through a versioned product API/outbox contract without losing its operational source-fact ownership. Backoffice is a later exact-pin consumer. No package or table creation is a cutover."
+shadow_and_drift = "Replay source facts against both engines and compare selected rule/version, bases, output/recoverable amounts, configured report boxes, payable totals, obligations and return transitions. Any rule ambiguity or source-version mismatch fails closed; shadow writes neither owner."
+local_copy_retirement = "Seal one policy/determination/reporting writer switch, then remove ERP's fixed TaxType/rate/calendar/report-format decisions and direct filing lifecycle writers. Product source-fact writers remain only for facts they own; country/provider transports remain adapters. No fallback calculator or dual return ledger survives."
+next_action = "Release 0.1.0a4 after its package, public-policy-contract and unchanged released-migration gates are green. ERP then pins the immutable a4 release coordinates and uses only the exact-replay ensure/read seam to bind its sealed C3 policy map; shadow remains default-off and moves no writer authority. PAYE shadow waits for persisted annual taxable-base and approved band evidence. Sub may first contain its billing defects, then supplies facts only after a tax-classification backfill, zero-drift shadow, and explicit writer switch."
+
+# Typed product claims refreshed from the exact revisions above. Product-owned
+# source facts survive cutover; only their local tax-policy, determination,
+# reporting and return writers are retired.
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = [
+  "app/models/finance/tax",
+  "app/services/finance/tax",
+  "app/services/finance/reporting",
+]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "943bc59f8e4ca0849c7de578bc9dbc17c57b116f"
+evidence_paths = [
+  "app/models/billing.py",
+  "app/models/customer_tax_policy.py",
+  "app/models/catalog.py",
+  "app/services/billing_automation.py",
+  "app/services/prepaid_service_renewals.py",
+  "app/services/customer_tax_policies.py",
+  "app/services/tax_accounting.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = [
+  "app/services/revenue_service_report.py",
+  "app/services/vendor.py",
+]
+
+# CORRECTION found by typing this list. The previous rows cited ERP #363
+# (63f607d2, 2026-08-25) as the adoption commit. At that commit `dotmac-tax`
+# does not appear in ERP's pyproject.toml or poetry.lock at all: the pin first
+# held a day later, at 7643d5a2. The old citation was the branch tip somebody
+# read, not the commit where anything happened — the same defect that put a
+# twenty-minute-old pin in the deployment-foundation dossier.
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_erp"
+commit = "7643d5a29ec1aaed197d6584a4c8f4267ef57981"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-tax.version"
+expected = "0.1.0a3"
+note = "The commit where the pin FIRST held: 'feat(tax): compose released tax module contracts', 2026-08-26. This row is TRUE and it stays: ERP installs the distribution. It is the only row here, and that is the whole claim — ERP's own app/services/finance/tax/adoption/composition.py declares NOT COMPOSED, the `tx` lineage is absent from alembic.ini, `mod_tax` exists in no ERP database, and no writer is repointed. #496 left open whether `status = \"adopted\"` survived that reading; it did not, and the status was corrected rather than the history. AdoptionEvidenceV1 still authorises nothing: the correction is the dossier gate reading two of its own fields and refusing a contradiction."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_erp"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-tax.version"
+note = "ERP's BOM is authoritative for what ERP installs. This dossier holds no copy — the previous `dependency:dotmac-tax==0.1.0a3` string was exactly such a copy."

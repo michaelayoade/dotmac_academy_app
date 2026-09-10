@@ -1,0 +1,68 @@
+schema_version = 1
+package = "dotmac-runner-transport-github-actions"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+
+owner = "The GitHub Actions runner transport adapter: parse GitHub's versioned metadata observation, intersect its exact domains with GitHub's official domains-by-function contract, and publish one immutable adapter manifest through package metadata."
+contract = "Translate only complete official GitHub self-hosted runner functional groups into provider-neutral RunnerTransport capabilities and claim the raw snapshot, explicit exclusions and declaration digests. Azure-named result-storage endpoints are current GitHub adapter data only. PACKAGES is withheld while pkg-containers.githubusercontent.com is absent; SOURCE_FETCH is withheld because no complete provider contract is declared. NOT runner policy ownership, host firewall or proxy mutation, GitHub credentials, runner registration, workflow decisions, live request-path metadata fetches, cloud CIDRs, inferred hostname semantics, partial functional groups, or a provider branch in the core facility."
+
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_observability",
+  "dotmac_erp",
+  "dotmac_sub",
+]
+source_revisions = [
+  "dotmac_starter_mt:e7b51e7fe56ddb3ef0bece4f0f79df383efeac23",
+  "dotmac_observability:f720d7dcc33240f6d4c0892a2dddd45511f10463",
+  "dotmac_erp:7b62974b366eead1b32bead380e47d9cf10ec4c7",
+  "dotmac_sub:7c1d271dad54ad178fb90083305363f855622175",
+]
+source_paths = [
+  "dotmac_starter_mt:.github/workflows/exposure-rehearsal.yml",
+  "dotmac_starter_mt:packages/dotmac-integration/src/dotmac_integration/spi.py",
+  "dotmac_starter_mt:packages/dotmac-integration/src/dotmac_integration/runtime_policy.py",
+  "dotmac_observability:.github/workflows/control-runner-diagnostic.yml",
+  "dotmac_sub:.github/workflows/production-deploy.yml",
+  "dotmac_sub:.github/workflows/staging-deploy.yml",
+  "dotmac_erp:.github/workflows/release-hardened.yml",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_runner_transport_github_actions.py",
+  "dotmac_starter_mt:tests/architecture/test_runner_transport_provider_boundary.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_starter_mt", "dotmac_observability"]
+inventory_evidence = [
+  "docs/inventories/executor-retirement/dotmac_starter_mt.toml",
+  "docs/inventories/executor-retirement-baseline.json",
+]
+first_cutover = "VMID 124 is the first pilot only after the protected-main adapter bytes render the installed policy, both repository diagnostics reach provider-recorded success, and the same proof survives a cold reboot."
+shadow_and_drift = "A credential-free hosted collector compares a candidate semantic digest to this checked-in snapshot. Drift opens a review obligation and never auto-admits or auto-excludes a domain: the reviewed functional mapping and explicit exclusion set must account for the new snapshot exactly. Failure retains the last working snapshot and fails the update job. The VMID 124 diagnostics prove both current control and results paths, not merely local workload execution."
+local_copy_retirement = "After the pilot and reboot proof, remove the six-then-twelve-host observed broker inventory, its scanner and its autonomous timer. Keep only the generic rendered policy and its digest guard; provider names must not appear in the generic host input."
+next_action = "Land behind the unreleased runner-transport facility, render an exact VMID 124 bundle from protected main, prove the pilot, then enroll the adapter release lane after Foundation 0.3.0a2 publication."
+
+[[product_writers]]
+product = "dotmac_observability"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "f720d7dcc33240f6d4c0892a2dddd45511f10463"
+evidence_paths = [".github/workflows/control-runner-diagnostic.yml"]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "7b62974b366eead1b32bead380e47d9cf10ec4c7"
+evidence_paths = []
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "7c1d271dad54ad178fb90083305363f855622175"
+evidence_paths = [
+  ".github/workflows/production-deploy.yml",
+  ".github/workflows/staging-deploy.yml",
+]

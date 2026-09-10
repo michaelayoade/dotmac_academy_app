@@ -1,0 +1,88 @@
+schema_version = 1
+package = "dotmac-finance"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant fixed-asset accounting books, valuation balances and immutable balanced accounting consequences"
+contract = "Capitalize an opaque physical-asset reference into a functional-currency book; calculate and post prospective depreciation with stale-snapshot and creator/poster separation; assess impairment using the higher recoverable amount and cap reversals at the no-impairment carrying amount; apply revaluation increases/decreases against running reserve and prior-loss balances; derecognize the book and calculate gain/loss from net proceeds; append one source-versioned accounting event and one balanced consequence in the same transaction as each book mutation. NOT physical asset identity/lifecycle/custody/maintenance/disposal approval, chart of accounts, fiscal periods, journals, tax/statutory books, foreign-exchange policy, payments or cash."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_erp:b969a889e8aba7255e32aa466960c22347c02fd8",
+  "dotmac_sub:430a09e847715832c1dd8e67a16f07d77c8a0fcc",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_vendor_control_plane:f8f8c3fd636e663e4a17275c19e82fc1667aa52a",
+  "dotmac_starter_mt:300ebd7523e85dff7e94efcdf81d8c1f34b80de5",
+]
+revalidation_revisions = [
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/fixed_assets/asset.py",
+  "dotmac_erp:app/models/fixed_assets/depreciation_run.py",
+  "dotmac_erp:app/models/fixed_assets/depreciation_schedule.py",
+  "dotmac_erp:app/models/fixed_assets/asset_impairment.py",
+  "dotmac_erp:app/models/fixed_assets/asset_revaluation.py",
+  "dotmac_erp:app/models/fixed_assets/asset_disposal.py",
+  "dotmac_erp:app/services/fixed_assets/capitalization.py",
+  "dotmac_erp:app/services/fixed_assets/depreciation.py",
+  "dotmac_erp:app/services/fixed_assets/revaluation.py",
+  "dotmac_erp:app/services/fixed_assets/disposal.py",
+  "dotmac_erp:app/services/fixed_assets/fa_posting_adapter.py",
+  "dotmac_starter_mt:packages/dotmac-finance/src/dotmac_finance",
+]
+preserved_tests = [
+  "dotmac_erp:tests/unit/services/fixed_assets/test_asset_service.py",
+  "dotmac_erp:tests/unit/services/fixed_assets/test_depreciation_service.py",
+  "dotmac_erp:tests/unit/services/fixed_assets/test_disposal_service.py",
+  "dotmac_erp:tests/unit/services/fixed_assets/test_revaluation_service.py",
+  "dotmac_erp:tests/unit/services/fixed_assets/test_fa_posting_adapter.py",
+  "dotmac_starter_mt:tests/unit/test_finance_calculations.py",
+  "dotmac_starter_mt:tests/unit/test_finance_service.py",
+  "dotmac_starter_mt:tests/architecture/test_finance_module.py",
+  "dotmac_starter_mt:tests/test_finance_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac-erp"]
+inventory_evidence = [
+  "docs/inventories/finance-asset-accounting-sources.md",
+  "docs/adr/0048-finance-owns-asset-books-and-accounting-consequences.md",
+]
+composition_boundary = "ADR-0024/0038: each adopting application installs its own tenant-only fn lineage and owns its local finance rows. The module imports the kernel but no sibling or product. A physical-assets adapter supplies an opaque asset id and source version; chart-of-accounts and fiscal-period owners supply opaque references; a general-ledger reconciler consumes immutable balanced consequences. No application reads another application's database and no module-to-module FK or import is created."
+first_cutover = "dotmac_erp is cutover 1 because its production-used fixed-assets stack is the qualifying source. Backoffice is the second candidate as an independent assembly consuming the exact released contract. Installing the package alone moves no authority; ERP remains owner until its sealed shadow/cutover retires every legacy book and consequence writer."
+shadow_and_drift = "Backfill one module book per ERP asset/book with source id, source version, functional-currency balances and a full event fingerprint. Shadow depreciation schedules, impairment/revaluation allocation, disposal gain/loss and balanced account consequences without posting twice. Compare Decimal values after declared minor-unit rounding, periods taken, running reserve/loss balances and source evidence. Rehearsal must reach zero unexplained drift. Cut over under source-book write locks, then reconcile immutable module consequences to the product general ledger by idempotent source identity; no mirrored finance writer remains."
+local_copy_retirement = "ERP retires its fixed_assets book, component, depreciation schedule/run, impairment, revaluation, disposal and GL-reconciliation decision writers plus AP/task/web direct callers after backfill, zero-drift shadow, sealed authority switch and rollback window. Physical asset identity/lifecycle fields move to or remain with Assets; AP capitalization and scheduled tasks become thin finance adapters. A bidirectional caller/table ratchet reaches zero. Backoffice creates no local fixed-asset accounting owner."
+next_action = "Run the package, architecture and real-PostgreSQL canaries on Observer against an exact committed revision. Keep kernel a84 and Finance a1 unallowlisted and unpublished until ERP has a checked-in composition/backfill/shadow plan, corrected source parity fixtures and an authority-switch rehearsal."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/fixed_assets/asset_impairment.py", "app/services/fixed_assets/depreciation.py", "app/services/fixed_assets/revaluation.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

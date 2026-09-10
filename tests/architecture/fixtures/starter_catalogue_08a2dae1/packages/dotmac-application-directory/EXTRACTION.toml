@@ -1,0 +1,129 @@
+schema_version = 1
+package = "dotmac-application-directory"
+classification = "optional-module"
+status = "adopted"
+source_mode = "greenfield-after-inventory"
+owner = "The tenant's connected-application portfolio"
+# The 2026-08-12 audit (`application-portfolio-sources.md`) ran two mechanical
+# sweeps across all four repositories and found NO owner: the name sweep
+# returned nothing, and the attribute sweep returned only false positives where
+# "application" means applying a credit, a tax or a leave request. The vendor
+# control plane's assembly composes eight features and none is a portfolio; its
+# `allocations` — the nearest neighbour — is an immutable projection of a
+# contract's entitlement, carrying no application instance, admin URL, audience,
+# local tenant reference or lifecycle.
+#
+# So this is greenfield, and greenfield AFTER the inventory rather than instead
+# of it. The audit is what makes that claim checkable.
+contract = "Which applications a tenant has, how to reach each one, which tenant it corresponds to inside the target — as IMMUTABLE binding identity, never rewritten by reconciliation — and how much the stored descriptor can currently be trusted. NOT who may enter them (ADR-0021 §3), not the deployment, not the product catalogue, not the entitlement, not the remote application."
+source_repositories = [
+  # Both named because the gate requires proof that ERP and Sub were
+  # inventoried — and here the finding is a negative in both.
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_vendor_control_plane",
+  "dotmac_academy_app",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+]
+source_paths = [
+  # Read and REJECTED as sources. Listed because the audit required inventorying
+  # them, not because any supplied an implementation.
+  #
+  # The vendor CP's nearest neighbour: commercial entitlement projected from a
+  # contract. A different unit from a connected-application binding — see the
+  # inventory's side-by-side.
+  "dotmac_vendor_control_plane:src/vendor_cp/allocations/models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/assembly.py",
+  # The false positives, recorded so a future audit does not re-investigate
+  # them: "application" in the sense of applying a thing.
+  "dotmac_erp:app/models/people/leave/leave_application.py",
+  "dotmac_sub:app/models/billing.py",
+  "dotmac_starter_mt:packages/dotmac-application-directory/src/dotmac_application_directory",
+]
+preserved_tests = [
+  # Nothing to preserve FROM a source — there is no source. These are this
+  # module's own proofs, which is what a greenfield dossier can honestly list.
+  "dotmac_starter_mt:tests/architecture/test_application_directory_module.py",
+  "dotmac_starter_mt:tests/unit/test_application_directory.py",
+  "dotmac_starter_mt:tests/test_application_directory_isolation.py",
+]
+contract_consumers = ["dotmac_workspace"]
+candidate_consumers = []
+inventory_evidence = [
+  "docs/inventories/application-portfolio-sources.md",
+  "docs/adr/0021-the-tenant-workspace-is-a-third-plane.md",
+]
+adoption_evidence_schema = "v1"
+first_cutover = "COMPLETED 2026-08-16. The Tenant Workspace (`dotmac_workspace`) exact-pins `dotmac-application-directory==0.1.0a3`, composes the `ad` lineage with the kernel and assembly lineages, and exercised the directory-backed launcher at `workspace.dotmac.io` during the two-worker production OIDC pilot recorded at `bfc121f33013a93c5eceb6d18a8c2417acc11e0d`. This was a greenfield adoption: no prior application-portfolio rows or writer existed to migrate. The cutover adopted only directory inventory. Authentication remains the Workspace's OIDC boundary, and each target application remains the sole authorization and session owner."
+shadow_and_drift = "No shadow verification is possible or needed: there is no prior implementation to run beside, and no existing rows whose behaviour could diverge. The drift this module must detect is a different kind — between its stored descriptor copy and what the target application currently publishes — and that is a first-class feature rather than a migration concern: `reconcile_descriptor` returns UNCHANGED/UPDATED/REGRESSED/CONFLICT, refuses to adopt a descriptor whose version regressed or whose content changed under a fixed version, and records `reconciliation_status` + `descriptor_refreshed_at` so an unreachable application never looks freshly checked."
+local_copy_retirement = "No prior implementation existed to retire. The Workspace launcher is a thin consumer of the module rather than a local directory model or writer. `application-portfolio-sources.md` records the two sweeps that established the greenfield starting point. The module still must NOT absorb the neighbouring authorities in that inventory's concept-to-owner table: commercial entitlement stays with the Vendor CP's allocations/contracts, local capability evaluation stays with `dotmac_kernel.entitlements`, signed licence delivery stays with `dotmac_kernel.licensing`, Workspace authentication stays with its OIDC boundary, and who may enter an application stays with the target application."
+next_action = "Hold at `adopted` until a second REAL production consumer supplies reuse evidence; the Workspace alone does not earn `reuse-proven`. Continue adding application bindings and reconciling descriptors through this module's public service surface, with the launcher remaining a thin read adapter. Do NOT absorb access requests, approvals, delegation policy, grant sets, acknowledgement, shared sessions or cross-application sign-on: `dotmac-application-access` remains deferred by ADR-0021 §5 until a generic signed-document mechanism exists, while every target application remains its own authentication, authorization and session authority. Do NOT add a column naming a person, member, group, role, grant or permission — `test_the_directory_holds_no_authorization_column` fails the build on one, and that test is the executable half of ADR-0021 §3."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/web/applications.py", "app/models/admissions.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/assembly.py", "src/vendor_cp/allocations/adapter.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/people/leave/leave_application.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/billing.py"]
+
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_workspace"
+commit = "bfc121f33013a93c5eceb6d18a8c2417acc11e0d"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-application-directory.version"
+expected = "0.1.0a3"
+locator = "dotmac_workspace:pull/5"
+
+# The two live probes, now dated and typed. A live observation is the WEAKEST
+# evidence in this vocabulary and decays: this says something answered on two
+# days in August 2026, and it must never be rendered as a statement about today.
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_workspace"
+commit = "bfc121f33013a93c5eceb6d18a8c2417acc11e0d"
+subject = "workspace.dotmac.io"
+observed = "directory-backed launcher exercised in the two-worker production pilot"
+observed_at = "2026-08-16"
+observed_by = "michaelayoade"
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_workspace"
+commit = "bfc121f33013a93c5eceb6d18a8c2417acc11e0d"
+subject = "https://workspace.dotmac.io/health"
+observed = "healthy"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_workspace"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-application-directory.version"
+note = "`dependency:...==0.1.0a3` used to sit in the list above as a copied live value. It happens to be unchanged today, which is luck, not a control."

@@ -1,0 +1,191 @@
+schema_version = 1
+package = "dotmac-connector-meta-social"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "Meta Social protocol edge, both directions: Facebook and Instagram subscription challenge, exact-byte signature verification, provider event identity, message/comment normalization, acknowledgement bytes — and, outbound, Messenger/Instagram Direct send and Facebook/Instagram comment-reply wire translation, one Graph call per product-decided command, provider receipt extraction, and Graph error-code classification into typed outcomes."
+
+contract = "Implement dotmac-integration SPI >=1.4,<2.0 for connector key meta_social with messaging.receive.v1 in INGRESS mode and messaging.send.v1 in DELIVERY mode. INGRESS receives immutable request bytes and already-materialized declared secret material, and emits one provider-neutral fact per Meta message/comment or record-only transport evidence. DELIVERY receives a product-decided send_direct_message or reply_to_comment command plus materialized access material, performs only Graph wire translation and one call, and returns a typed Outcome carrying status, the bounded provider message reference and the numeric HTTP status. The connector owns no rows, sessions, retries, checkpoints, product identity, messaging-window decision, permission to respond, destination decision, conversation state, tickets, subscriber state or HTTP status."
+
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+
+source_paths = [
+  "dotmac_sub@5e75e0469dadb15aee4a25921f036c4f3787dc7a:app/api/meta_inbox_webhooks.py",
+  "dotmac_sub@5e75e0469dadb15aee4a25921f036c4f3787dc7a:app/services/integrations/connectors/meta_social_runtime.py",
+  "dotmac_sub@5e75e0469dadb15aee4a25921f036c4f3787dc7a:tests/test_team_inbox_meta_social_webhook.py",
+  "dotmac_sub@5e75e0469dadb15aee4a25921f036c4f3787dc7a:tests/test_integration_meta_social.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/connectors/meta_social_runtime.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/meta_social_capability.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/meta_social_contracts.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/meta_pages.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/team_inbox_outbound.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/tasks/notifications.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_integration_meta_social.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_team_inbox_outbound.py",
+  "dotmac_crm@60daaa2dd305696636632f48505ab784110a55d2:app/services/meta_webhooks.py",
+  "dotmac_starter_mt:packages/dotmac-connector-whatsapp/src/dotmac_connector_whatsapp/plugin.py",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_meta_social_connector.py",
+  "dotmac_starter_mt:tests/architecture/test_meta_social_connector_boundary.py",
+]
+
+# ── ADR-0024 § 8 (2026-08-24): `messaging.send.v1` is ONE contract, and the two
+# connectors behind it do not yet take the same command ─────────────────────
+#
+# Declaring the shared id rather than minting a per-connector one is CORRECT and
+# is the shape ADR-0061 § 3 points at for payments: `meta_whatsapp` and
+# `meta_social` both serve `messaging.send.v1`, so a product declares one
+# outbound messaging port and the Integrator binds a provider to it.
+#
+# DIVERGENCE, recorded because the id alone does not make them interchangeable:
+#
+#   meta_whatsapp   action `send_text | send_template | send_media`,
+#                   recipient param `recipient`
+#   meta_social     action `send_direct_message | reply_to_comment`,
+#                   recipient param `recipient_id` plus a required `channel`
+#
+# A product bound to one cannot be re-bound to the other without changing the
+# command it builds — which is a provider branch relocated into the product,
+# forbidden by ADR-0024 § 8.1/8.2. `reply_to_comment` is a genuinely different
+# act and may well deserve its own contract; a direct message is not.
+#
+# The root cause is not either connector: nothing in the SPI or the registry
+# declares a COMMAND schema at all, so nothing could have caught the drift
+# (ADR-0024 § 8.4).
+#
+# CORRECTED 2026-08-24. The sentence that followed here read:
+#
+#   "Closure is a declared command payload for `messaging.send.v1` on the SPI,
+#   then both connectors accepting it."
+#
+# Two things in it are wrong. (1) The schema does not go on the SPI's
+# `CapabilityDeclaration`: a schema published per connector makes drift
+# machine-readable rather than prevented. It belongs to the business-owned
+# `capability_registry.CapabilityContract` — `command_schema`, `result_schema`,
+# `observation_schema`, a canonical digest and deprecation/replacement metadata
+# — and a connector declaration may only CLAIM that digest (ADR-0024 § 10,
+# ADR-0061 A2). (2) `messaging.send.v1` is PUBLISHED, so converging the two
+# dialects under it would redefine a published contract version. That is
+# forbidden; the repair is SUCCESSION (ADR-0024 § 11, ADR-0061 A4):
+#
+#   messaging.direct.send.v2   provider-neutral DIRECT delivery with a
+#                              DISCRIMINATED text/template/media content shape.
+#                              This is the successor that replaces the disjoint
+#                              send_text|send_template|send_media and
+#                              send_direct_message vocabularies at once.
+#   social.comment.reply.v1    public Facebook/Instagram comment consequences —
+#                              a different business act from a direct message,
+#                              and always was.
+#   social.profile.read.v1     caller-initiated profile OBSERVATION through a
+#                              REQUEST mode. ConnectorMode is a CLOSED union of
+#                              INGRESS|POLL|DELIVERY today, so this one is
+#                              blocked on an SPI mode that does not exist.
+#
+# Sub migrates to the successors; `messaging.send.v1` is retained for a BOUNDED
+# compatibility window and then RETIRED, and both the migration and the
+# retirement are obligations carried by the old contract's deprecation metadata
+# rather than intentions. Tracked as the reopened open question in
+# packages/dotmac-integration/EXTRACTION.toml.
+#
+# FOR THIS CONNECTOR: its outbound surface splits across TWO successors.
+# `send_direct_message` succeeds to `messaging.direct.send.v2`;
+# `reply_to_comment` — which the note above already suspected "may well deserve
+# its own contract" — succeeds to `social.comment.reply.v1`, and that is now the
+# decision rather than a suspicion. The `channel` param stops being a
+# product-supplied discriminator between Messenger and Instagram Direct: which
+# Graph edge a bound account uses is a connector-internal fact, not a field a
+# product fills in. The withheld contact-profile lookup recorded under
+# [[not_ported]] below is `social.profile.read.v1`, and the SPI gap that entry
+# names ("it needs an SPI capability that returns typed observations for an
+# on-demand request") is exactly the missing REQUEST mode.
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator", "dotmac_sub"]
+
+inventory_evidence = [
+  "packages/dotmac-connector-meta-social/EXTRACTION.toml",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+  "docs/superpowers/specs/2026-08-15-sub-messaging-receive-port.md",
+]
+
+first_cutover = "Sub is cutover 1 through dotmac_integrator, ingress first and outbound second. Exact-pin the released connector beside dotmac-integration 0.1.0a14, reconcile Sub's authenticated messaging.receive.v1 and messaging.send.v1 ProductPort descriptors, then mirror the same Meta request and the same outbound command while Sub's direct receiver and local Graph outbox remain authoritative. Publication and package conformance alone do not make either repository a contract consumer."
+
+shadow_and_drift = "INGRESS: mirror exact raw bytes and the signature header into Integrator and compare provider event identity, count, event type, channel, account scope, timestamps, text, attachments and comment thread references for the provider retry horizon. DELIVERY: shadow each outbound command by comparing the composed Graph host, path and JSON body against Sub's own runtime for the same command, and compare the resulting outcome class and provider message reference — never Sub's product consequences, which the connector cannot express. Duplicate sends are prevented by the module's idempotency ledger, not by the connector, so shadow mode composes the call without issuing it until the corpus agrees. Cut over the provider callback and then the outbox only after parity, and lower Sub's external-connector ratchet in the same change that removes the displaced surface."
+
+local_copy_retirement = "Retire Sub's and CRM's Meta webhook signature, challenge and payload traversal surfaces after the ingress cutover, and Sub's meta_social_runtime send path plus meta_pages comment-reply adapters after the outbound cutover. Sub retains everything the connector deliberately does not own: the reply-window decision (team_inbox_reply_window.decide_reply_window and the notification preflight), the comment-target validation in app/tasks/notifications.py, Team Inbox routing, threading, assignment, contact/profile enrichment and timeline consequences. CRM is retired and never becomes a connector consumer."
+
+next_action = "OUTBOUND SLICE DECLARED AS 0.1.0a2, NOT YET RELEASED. The version is bumped and the exact published a1 ingress manifest is retained as INGRESS_MANIFEST, so an installation adopted against the a1 digest (61b5ba0e929bec924af4a338408a10db1035efef1589b7abaaf3152586b734e4, recorded in docs/inventories/released-manifest-digests.json) still resolves. Publish 0.1.0a2, then exact-pin the release in dotmac_integrator beside dotmac-integration 0.1.0a14 and run the shadow described above. Keep status audit-complete until a cutover retires a direct Sub transport."
+
+[[ported]]
+name = "direct-message-wire-shapes"
+source = "dotmac_sub:app/services/integrations/connectors/meta_social_runtime.py"
+detail = "Per-channel endpoint, credential binding and payload encoding, exactly as production computes them: Messenger posts a structured recipient/message object with messaging_type RESPONSE to graph.facebook.com/{v}/{page_id}/messages; Instagram Login posts compact JSON STRINGS to graph.instagram.com/{v}/me/messages; shared OAuth moves both channels onto graph.facebook.com/{v}/{account_id}/messages under one credential. The provider_account_not_bound binding check is ported unchanged."
+
+[[ported]]
+name = "comment-reply-wire-shapes"
+source = "dotmac_sub:app/services/meta_pages.py"
+detail = "reply_to_comment_sync posts to {parent_comment_id}/comments and reply_to_instagram_comment_sync to {parent_comment_id}/replies, both with a single `message` field and both against graph.facebook.com. The two edges are not interchangeable and are ported as two distinct calls."
+
+[[ported]]
+name = "provider-receipt-normalization"
+source = "dotmac_sub:app/services/integrations/connectors/meta_social_runtime.py"
+detail = "_safe_receipt's identity rule — message_id for direct messages, id for comment replies — becomes Outcome.provider_reference, and a 2xx without one becomes RECONCILIATION_REQUIRED rather than a recorded success. This matches how the ingress half and the WhatsApp connector already treat a receipt: a bounded reference, never a response body."
+
+[[ported]]
+name = "outcome-classification"
+source = "dotmac_sub:app/services/integrations/connectors/meta_social_runtime.py, app/tasks/notifications.py"
+detail = "Sub's four-way split is preserved: 429/5xx retryable, 4xx rejected, ConnectTimeout retryable, a timeout after the request started reconciliation_required, and a success with no message id reconciliation_required. Sub's _safe_provider_failure classified the window refusal and rate limits by matching provider PROSE; the connector classifies the numeric Graph error code and subcode instead, because prose is unstable, locale-dependent and quotes the outbound content back."
+
+[[not_ported]]
+name = "reply-window-and-response-permission"
+reason = "Sub owns it. team_inbox_reply_window.decide_reply_window and _preflight_team_inbox_meta_window decide whether a free-form reply may be sent at all; the connector performs the wire operation only. Implementing that arithmetic here would create a second authority whose clock and inbound history are both stale, and would refuse sends the product had already authorized. A provider's own window refusal is still CLASSIFIED here, which is a different act: reporting what came back, not deciding what may go out."
+
+[[not_ported]]
+name = "comment-target-validation"
+reason = "Sub owns it. _meta_comment_target_validation_error checks that a public reply targets an inbound comment on the same account, post, media and root thread. Those are product facts held in Sub's inbox. The connector refuses only what it can see: a missing or unaddressable parent comment id, terminally, before any call."
+
+[[not_ported]]
+name = "contact-profile-lookup"
+reason = "Named consumer, no SPI seam. Sub's fetch_contact_profile feeds one real local projection — the Team Inbox contact display name and metadata.contact_profile written in app/api/meta_inbox_webhooks.py — so the consumer is not hypothetical. But the delivery contract returns an Outcome, which carries status, a bounded provider reference and an HTTP status and deliberately no result body, while the poll contract returns InboundEvents on the ENGINE's schedule and cannot express an on-demand read for one contact id. A profile lookup therefore has nowhere to return a profile. Adding it as a send action would burn a real Graph call and discard the answer. It needs an SPI capability that returns typed observations for an on-demand request; until that exists, Sub keeps the lookup."
+
+[[not_ported]]
+name = "preview-dry-run"
+reason = "Sub's send_direct_message accepts preview=true and returns the composed payload without contacting Meta. Outcome has no field for a rendered payload, and returning SUCCEEDED for a command that never left the process would mark the delivery delivered. Shadow comparison covers the same need through the engine, which is where a dry run belongs."
+
+[[not_ported]]
+name = "connection-probe-and-health"
+reason = "Sub's MetaSocialRuntimeRunner.validate performs live Graph GETs to prove each bound account and credential. validate_connection here checks declared material and configuration shape only; a network probe belongs to the Integrator's health surface, which owns scheduling and result retention, and a plugin that probes on validation makes enablement depend on provider availability."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/services/meta_webhooks.py", "app/services/meta_oauth.py", "app/api/webhooks.py"]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/api/meta_inbox_webhooks.py", "app/services/integrations/connectors/meta_social_runtime.py", "app/services/integrations/meta_social_capability.py"]

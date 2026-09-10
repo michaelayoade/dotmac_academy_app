@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-network-control"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral command intent, approval, dispatch, execution evidence, reconciliation and recovery"
+contract = "Request, approve/reject and dispatch commands; ingest typed execution observations; reconcile and recover idempotently. NOT provider clients, credentials, schedules, retry transport, inventory, outages or entitlements."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/network_operation.py", "dotmac_sub:app/services/network_operations.py", "dotmac_sub:app/services/network_operation_dispatch.py", "dotmac_sub:app/services/control_plane_intent.py", "dotmac_starter_mt:packages/dotmac-network-control/src/dotmac_network_control"]
+preserved_tests = ["dotmac_sub:tests/test_network_operation_dispatch.py", "dotmac_sub:tests/test_network_operation_recovery.py", "dotmac_sub:tests/test_control_plane_intent.py", "dotmac_sub:tests/architecture/test_network_operation_dispatch_ownership.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Kernel supplies execution/idempotency/outbox mechanics; Integrator plugins perform I/O. Products request typed commands. The module contains no sibling/provider/product imports."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover."
+shadow_and_drift = "Replay operation state and compare request fingerprints, approvals, dispatches, observations, reconciliation and recovery against Sub."
+local_copy_retirement = "Sub removes local operation/dispatch engines and provider task writers after sealed suite cutover."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network_operation.py", "app/services/network_operations.py", "app/services/network_operation_dispatch.py", "app/services/control_plane_intent.py"]

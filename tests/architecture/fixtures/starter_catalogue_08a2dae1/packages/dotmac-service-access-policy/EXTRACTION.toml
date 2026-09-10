@@ -1,0 +1,52 @@
+schema_version = 1
+package = "dotmac-service-access-policy"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Per-service desired access decisions from operational policy inputs"
+contract = "Own current per-service FUP, prepaid, collections and administrative policy observations plus the derived desired ALLOW/RESTRICT/DENY state. Consequences are scoped to the affected service. NOT customer/subscriber status, balance/collections ownership, AAA facts, network-device state or enforcement."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/fup.py",
+  "dotmac_sub:app/models/fup_state.py",
+  "dotmac_sub:app/models/prepaid_coverage.py",
+  "dotmac_sub:app/services/subscriber_access_policy.py",
+  "dotmac_sub:app/services/fup.py",
+  "dotmac_sub:app/services/prepaid_service_coverage.py",
+  "dotmac_sub:app/services/enforcement.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/architecture/test_subscription_service_access_boundary.py",
+  "dotmac_sub:tests/architecture/test_fup_rule_engine_boundary.py",
+  "dotmac_sub:tests/test_fup_period_aware_evaluation.py",
+  "dotmac_sub:tests/test_prepaid_service_coverage.py",
+  "dotmac_sub:tests/test_fup_enforcement_scope_and_evidence.py",
+  "dotmac_starter_mt:tests/unit/test_service_access_policy_service.py",
+  "dotmac_starter_mt:tests/architecture/test_service_access_policy_module.py",
+  "dotmac_starter_mt:tests/test_service_access_policy_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "FUP, prepaid, collections and admin adapters record typed observations; the resolver writes desired state. Network Access consumes that state through a typed port and is the only enforcer. No sibling module import is permitted."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains access-policy owner until input backfill and per-service desired-state shadow comparison complete before Network Access switches its reader."
+shadow_and_drift = "Compare each service's active signals, precedence, desired access, reason and decision time; device/AAA state remains an external enforcement projection."
+local_copy_retirement = "After cutover, reduce Sub parallel desired-access resolvers and direct policy-to-device writers to zero; Network Access remains the reconciler."
+next_action = "Compose in Sub and shadow per-service decisions before switching Network Access to the typed desired-state reader."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/fup.py", "app/models/fup_state.py", "app/models/prepaid_coverage.py", "app/services/subscriber_access_policy.py"]

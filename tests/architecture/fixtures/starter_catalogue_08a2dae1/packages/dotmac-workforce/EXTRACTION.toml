@@ -1,0 +1,71 @@
+schema_version = 1
+package = "dotmac-workforce"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Workforce teams, skills, shifts, availability, capacity and dispatch decisions"
+contract = "Own service teams, skill vocabulary, memberships, worker skill evidence, shifts, operational availability/capacity and opaque-work dispatch decisions. NOT employee identity/employment, payroll/leave/attendance consequences, Inbox agent presence, Work Order lifecycle or route execution."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/models/service_team.py",
+  "dotmac_sub:app/models/dispatch.py",
+  "dotmac_sub:app/services/service_team_lifecycle.py",
+  "dotmac_sub:app/services/service_team_composition.py",
+  "dotmac_sub:app/services/capacity_planning.py",
+  "dotmac_sub:app/services/dispatch.py",
+  "dotmac_erp:app/models/people/attendance/shift_type.py",
+  "dotmac_erp:app/models/people/attendance/shift_assignment.py",
+  "dotmac_erp:app/models/people/hr/skill_requirement.py",
+  "dotmac_erp:app/models/people/scheduling/shift_pattern.py",
+  "dotmac_erp:app/models/people/scheduling/shift_schedule.py",
+  "dotmac_erp:app/services/people/hr/skills_matrix_service.py",
+  "dotmac_erp:app/services/people/scheduling/schedule_generator.py",
+  "dotmac_crm:app/models/workforce.py",
+  "dotmac_crm:app/services/workforce.py",
+  "dotmac_crm:app/services/dotmac_erp/shift_sync.py",
+  "dotmac_crm:app/services/dotmac_erp/team_sync.py",
+  "dotmac_crm:app/services/dotmac_erp/technician_sync.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_service_team_lifecycle.py",
+  "dotmac_sub:tests/test_service_team_composition.py",
+  "dotmac_sub:tests/test_capacity_planning.py",
+  "dotmac_sub:tests/test_dispatch_services.py",
+  "dotmac_erp:tests/services/test_schedule_generator_rotating_work_days.py",
+  "dotmac_erp:tests/services/test_attendance_service.py",
+  "dotmac_starter_mt:tests/unit/test_workforce_service.py",
+  "dotmac_starter_mt:tests/architecture/test_workforce_module.py",
+  "dotmac_starter_mt:tests/test_workforce_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp", "dotmac_crm"]
+composition_boundary = "Workers are opaque Party/People references and work is an opaque Work Order reference. Products synchronize through typed APIs; no sibling module or foreign database is imported. Inbox presence is a separate operational signal."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub is the first team/capacity/dispatch cutover after history backfill and shadow; ERP skills/shifts follow after schedule parity; CRM workforce sync becomes an API projection and its local decision copy retires."
+shadow_and_drift = "Compare team/skill/membership identities, proficiency, shift window/capacity, availability source/window and dispatch work/team/worker/skill/time/rationale."
+local_copy_retirement = "Retire Sub team/capacity/dispatch writers, ERP skill/schedule decision writers and CRM workforce decision copies in their authorized cutovers; People and Work Orders keep their own lifecycle writers."
+next_action = "Compose first in Sub for team/dispatch shadow, then migrate ERP skills/schedules and convert CRM to a reconciled API projection."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/workforce.py", "app/services/workforce.py", "app/services/dotmac_erp/technician_sync.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/people/attendance/shift_type.py", "app/models/people/scheduling/shift_schedule.py", "app/services/people/scheduling/schedule_generator.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/service_team.py", "app/models/dispatch.py", "app/services/service_team_lifecycle.py", "app/services/service_team_composition.py"]

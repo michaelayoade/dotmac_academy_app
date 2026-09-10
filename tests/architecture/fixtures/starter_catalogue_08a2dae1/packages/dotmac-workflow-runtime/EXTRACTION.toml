@@ -1,0 +1,75 @@
+schema_version = 1
+package = "dotmac-workflow-runtime"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant user-authored resumable workflow execution instances, ordered checkpoints, repair evidence and runtime state"
+contract = "Start an execution against an immutable opaque definition/version digest; claim and settle one checkpoint at a time; record typed output/evidence references; resume deterministically after failure; require explicit repair evidence for operator correction; and close/cancel terminally. NOT workflow definition UI, domain status machines, Fulfillment sagas, provisioning, scheduling/timers, provider I/O, arbitrary code, webhooks, email or direct domain mutation."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_starter_mt", "dotmac_integrator", "dotmac_vendor_control_plane", "dotmac_workspace", "dotmac_academy_app"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = ["dotmac_erp:app/models/finance/automation/workflow_execution.py", "dotmac_erp:app/models/finance/automation/workflow_rule_version.py", "dotmac_erp:app/services/finance/automation/workflow.py", "dotmac_starter_mt:packages/dotmac-durable-timers", "dotmac_starter_mt:docs/inventories/fulfillment-sources.md"]
+preserved_tests = ["dotmac_erp:tests/services/test_workflow_engine.py", "dotmac_starter_mt:tests/unit/test_workflow_runtime.py", "dotmac_starter_mt:tests/test_sub_vnext_modules_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+adoption_evidence = []
+composition_boundary = "A definition version and subject are opaque references. The runtime emits a typed step intent; an assembly adapter invokes the owning domain/provider and returns a typed observation. Durable Timers wakes work, Fulfillment owns product-authored orchestration, and domain services own consequences. No sibling import or direct external I/O."
+inventory_evidence = ["docs/inventories/sub-vnext-parity-sources.md", "docs/inventories/sub-vnext-parity-dispositions.toml", "docs/adr/0040-sub-vnext-parity-capabilities-have-narrow-independent-owners.md"]
+first_cutover = "Dotmac ERP is cutover 1 for qualifying user-authored generic execution rows; Sub is candidate 2. Only executions with immutable definition versions and deterministic checkpoints migrate; product-specific rule/action configuration stays behind an adapter or is retired."
+shadow_and_drift = "Replay source trigger/execution histories into the runtime and compare execution status, retry/refusal and ordered checkpoint evidence. No email/webhook/task/domain mutation may originate inside the module."
+local_copy_retirement = "Retire ERP's generic workflow_execution writer after the Dotmac ERP cutover. ERP rule authoring and product-specific action adapters are separate decisions; Sub domain workflows, Fulfillment and Durable Timers are not retirement targets."
+next_action = "Implement the tenant-only wr lineage from ERP execution/retry semantics with explicit checkpoints, leases, repair records, RLS/FORCE and resume canaries."
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/assembly.py", "src/dotmac_integrator/product_port.py"]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/services/onboarding.py", "app/services/success_queue.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/provisioning/service.py", "README.md"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/workflow.py", "app/services/workflow.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/automation/workflow_execution.py", "app/models/finance/automation/workflow_rule_version.py", "app/services/finance/automation/workflow.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

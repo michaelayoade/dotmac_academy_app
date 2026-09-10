@@ -1,0 +1,275 @@
+schema_version = 1
+package = "dotmac-connector-paystack"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "Paystack provider transport in both directions: exact-byte HMAC-SHA512 verification, authenticated transaction-list polling, provider-event identity, charge-success normalization, acknowledgement bytes, and the nine outbound provider-neutral commands (payment initialization, saved-authorization charge, refund, bank-account resolution, transfer-recipient creation, transfer initiation, and customer create/update/read) with their wire translation, exact-money conversion and outcome classification."
+
+contract = "Implement dotmac-integration SPI >=1.4,<2.0 for connector key paystack. Serve payments.settlement.observation.v1 in INGRESS and POLL, and payments.intent.v1, payments.refund.v1, payments.payout.v1 and payments.customer.v1 in DELIVERY, each capability mapped to its own mode so an observation binding never carries command authority. Emit exact amount and provider-fee decimal strings with explicit currency, provider status verbatim, merchant reference and transport evidence; reconcile through the authenticated paged transaction list. On the command side: carry the engine's idempotency key through to Paystack's own duplicate protection (the client-supplied unique reference, and merchant_note where no reference field exists), convert exact major-unit decimal strings to provider minor units without float and without rounding, classify each attempt as succeeded/declined/retryable/terminal/ambiguous, and report the provider reference and transaction id as evidence on every outcome including the ones that received no answer. Own no product identifier, tenant, allocation, coverage, balance, receivable state, net-amount arithmetic, settlement admissibility, invoice targeting, refund warrant, retry/checkpoint engine, row, session or product database."
+
+# ── ADR-0061 (2026-08-24): the payout DECISION is ERP's, and this connector is
+# one BINDING behind one contract ────────────────────────────────────────────
+#
+# `payments.payout.v1` is ONE provider-neutral contract for the whole fleet, and
+# this distribution is currently its only implementation. That is a fact about
+# today, never a licence: ADR-0061 § 2 forbids a Paystack variant of the
+# contract, and § 3 requires that ERP be able to move payout traffic to another
+# connector by changing a capability binding — no ERP release, no provider name
+# anywhere in ERP.
+#
+# What this connector does NOT own, restated because the outbound leg makes it
+# easy to blur: whether a payout happens, to whom, for how much, and whether an
+# ambiguous attempt may be tried again. Those are ERP's Treasury/payment
+# owner's decisions (ADR-0061 § 1, the owner ADR-0042 § 3 left unnamed). This
+# package translates a decided command onto a wire and classifies the answer,
+# including the answer that never arrived.
+#
+# DIVERGENCE THIS CONNECTOR MUST CLOSE (ADR-0061 § 4 D3, § 5 step 2). Its
+# command payload is not the same shape as dotmac-connector-flutterwave's or
+# dotmac-connector-remita's, so no product could bind either interchangeably
+# today:
+#
+#   * envelope     `{"action": <verb>, "params": {...}}` checked against
+#                  delivery.ACTIONS_BY_CAPABILITY, against their flat,
+#                  per-capability payload with no action verb;
+#   * reference    DERIVED here (operations.provider_reference = "dmi" +
+#                  sha256(DispatchRequest.idempotency_key)), and reading one
+#                  from the payload is refused outright — against their
+#                  PRODUCT-minted `intent_reference` / `orderId`;
+#   * minor units  refused here: the product sends an exact MAJOR-unit decimal
+#                  string plus `currency` and PAYSTACK_WIRE_SCALE = 2 is applied
+#                  locally — against their REQUIRED `currency_minor_units`.
+#
+# Both sides are locally right. Paystack's wire multiplies by 100 for EVERY
+# supported currency including zero-exponent XOF, so a product-supplied exponent
+# would be a second, contradictory authority on this provider's scale; and
+# deriving the reference from the engine key is exactly what makes every attempt
+# of one delivery present an identical, provider-refusable key. Neither property
+# may be dropped to reach parity.
+#
+# The closure is therefore NOT "make Paystack look like Flutterwave". It is a
+# declared, provider-neutral command payload for `payments.payout.v1`, after
+# which this connector keeps deriving its provider reference but derives it from
+# the contract's stable reference plus the engine key, and IGNORES an exponent
+# it cannot use rather than refusing the command that carries it.
+#
+# CORRECTED 2026-08-24 (ADR-0024 § 10, ADR-0061 A2/A3). The paragraph above
+# originally located the missing declaration surface on the SPI's
+# `CapabilityDeclaration` ("the SPI has nowhere to put one today —
+# CapabilityDeclaration carries a config schema and DispatchRequest.payload is
+# an unvalidated dict, ADR-0024 § 8.4"). That is the wrong owner: a schema
+# published per connector makes drift machine-readable instead of preventing
+# it. The canonical schema belongs to the business-owned
+# `capability_registry.CapabilityContract`; this connector's declaration may
+# only CLAIM that contract's digest.
+#
+# AND THE COMMAND SURFACE SHRINKS. ADR-0061 A3 fixes what `payments.payout.v1`
+# exposes to a product: `submit_payout`, a PRODUCT payout reference, exact money
+# (exact decimal amount plus explicit currency), a provider-neutral destination,
+# and idempotency/correlation identifiers. That is all of it.
+#
+#   * `resolve_bank_account` and `create_transfer_recipient` — today two of the
+#     three actions this connector accepts under PAYMENT_PAYOUT_CAPABILITY in
+#     `delivery.ACTIONS_BY_CAPABILITY` — stop being product-visible actions and
+#     become INTERNAL steps performed behind `submit_payout`. ERP must never
+#     orchestrate "create the Paystack recipient, then initiate the Paystack
+#     transfer" against "send the Flutterwave transfer": a product that does
+#     still needs a code release to change a binding, which defeats ADR-0061 § 3
+#     entirely. A recipient code is a normalized RESULT or a connector internal,
+#     never a separate provider action the product sequences.
+#   * `ACTIONS_BY_CAPABILITY`'s totality check and its refusal of an action
+#     outside the bound capability are CORRECT and stay — the correction is to
+#     what the product may name, not to the connector's own allow-list.
+#
+# DECIDED 2026-08-24 (ADR-0061 Amendment A5) — supersedes the OPEN ITEM this
+# block previously carried, which read: "this connector also declares
+# `payments.customer.v1` ... it either earns that argument in an accepted
+# record, or it collapses into `payments.intent.v1`'s normalized result."
+# It did not earn it. **`payments.customer.v1` is REMOVED from the public
+# capability manifest.** It has no independent Dotmac business lifecycle: it is
+# Paystack's `POST/PUT/GET /customer` surface with a Dotmac id painted on it,
+# and no product decides "create a customer at a payment provider" as an act of
+# its own. Instead: the product Customer owner keeps customer identity;
+# `payments.intent.v1` carries the required customer EVIDENCE;
+# THIS CONNECTOR creates or resolves any provider-side customer INTERNALLY
+# behind the intent command (`/transaction/initialize` already does exactly
+# that from the evidence on the command); the result returns an OPAQUE
+# Integrator correlation where one is needed at all; and saved-instrument
+# charging consumes an opaque PAYMENT-METHOD correlation — the
+# `authorization_code` this connector already takes on `charge_authorization` —
+# never a Paystack customer code. Customer read/create/update disappear from
+# the public manifest. There is no compatibility window because no product
+# binds the capability, so nothing is succeeded (A4's succession rule is not
+# engaged). A future product needing genuine, independent provider-customer
+# synchronization arrives with its own owner, consumer, lifecycle and schema in
+# an accepted record; today's Paystack synchronization is NOT preserved merely
+# because it exists.
+#
+# STILL AS BUILT: the code below has not changed yet, and the `contract` field
+# above still names `payments.customer.v1` because it describes what this
+# distribution ships TODAY. The removal is part of the payout refactor, gated
+# behind the capability-schema seam (A2) and the result seam (A3). ADR-0061 A5
+# holds the exact artifact-by-artifact removal list, including the ordering
+# constraint that `delivery._MISALLOCATED`'s import-time bijection check forces
+# the `OPERATIONS` and `ACTIONS_BY_CAPABILITY` deletions into ONE change.
+#
+# DECIDED 2026-08-24 (ADR-0061 Amendment A8) — supersedes the line this block
+# previously carried, which read: "the same A3 test still applies to
+# `payments.refund.v1`'s surface, and remains an open item there."
+# It is no longer open, and it closes the OPPOSITE way to `payments.customer.v1`
+# — which is the test discriminating, not an inconsistency. The discriminating
+# question is: if the provider vanished tomorrow, would the thing still exist
+# and still need an owner? A provider-side customer record would not; it is a
+# by-product of a charge. A refund obligation WOULD — someone with authority
+# decided money goes back, for how much, against which original payment, and it
+# would be paid another way. A provider-side customer record is a by-product of
+# an act; a refund IS the act. It has its own lifecycle (requested -> submitted
+# -> ambiguous -> settled/failed), its own evidence, its own reconciliation and
+# a receivable/revenue consequence.
+#
+# **`payments.refund.v1` is KEPT.** What changes is its SURFACE, under the same
+# A3 rule that moved recipient creation behind `submit_payout`: ONE command,
+# `request_refund`, carrying exact money (with full-versus-partial DECLARED,
+# never signalled by an absent field), the original-payment correlation, the
+# authorization reference and idempotency identity. `refund` is Paystack's verb
+# inside this connector's `{"action", "params"}` envelope and stops being what
+# a product names; `_request`'s `refund` branch stops reading a product-supplied
+# `params["transaction"]` and resolves the Paystack transaction handle itself;
+# `_refund_result`'s `{"refund_id": ...}` becomes a normalized value under the
+# contract's `result_schema`; and `GET /refund?transaction=...` stays a
+# reconciliation internal, never a product-visible action.
+#
+# WHAT MUST NOT CHANGE while that happens: the `refund` `_Operation` keeps
+# `OperationOutcome.AMBIGUOUS` on an unanswered send and keeps `needs_key=True`,
+# and the `merchant_note` stamping stays. Paystack's `/refund` accepts NO client
+# reference, so there is no provider-enforced duplicate protection on this
+# endpoint at all — the derived key in `merchant_note` makes an ambiguous refund
+# DECIDABLE by reading the provider's refund list, and decidable is NOT refused.
+# A duplicated payout is refusable at Paystack because the derived reference
+# rides the provider's own `reference` field; a duplicated refund is not.
+# Nothing at the provider stands between a re-request and a second refund except
+# that read, so the read is mandatory before any re-request, no transport ever
+# makes one, and a re-request is a NEW authorized decision by the refund owner.
+#
+# The refund OWNER is not named here and is not Treasury by default: a refund
+# reverses a receivable rather than discharging a payable, and it is not one of
+# ADR-0063 section 6's twelve closed surface items (ADR-0061 A9). It is Billing
+# or another named owner, and naming one needs the same product-first evidence
+# ADR-0061 A1 demanded before naming a payout owner.
+#
+# STILL AS BUILT: the code below has not changed. Like A5's removal, the refund
+# surface change is part of the payout refactor, gated behind the
+# capability-schema seam (A2) and the result seam (A3); `delivery._MISALLOCATED`
+# forces the `OPERATIONS` and `ACTIONS_BY_CAPABILITY` edits into ONE change.
+
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+
+source_paths = [
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/services/integrations/payment_capability.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/services/payment_webhook_commands.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:app/api/billing.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/test_integration_payment_capability.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/test_payment_webhook_settlement.py",
+  "dotmac_sub@94d5189b379bdae83665193264ad4dc03e613cc6:tests/architecture/test_payment_webhook_ownership.py",
+  "dotmac_erp@4aab56812d6fb243c814ada15c13fabea6234da8:app/services/finance/payments/webhook_service.py",
+  "dotmac_erp@4aab56812d6fb243c814ada15c13fabea6234da8:tests/finance/test_paystack_payments.py",
+  # ── the outbound slice (2026-08-24 audit) ────────────────────────────────
+  # Sub's connector runtime: the capability -> allowed-action allow-list, the
+  # HTTP status split, the provider-envelope unwrapping and the four egress
+  # payload shapes for initialize, charge_authorization and refund.
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/connectors/payment_gateway.py",
+  # The typed facade: reference generation, kobo helpers, the
+  # `is_verification_not_found` predicate that separates "no charge exists"
+  # from "we could not ask".
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/payment_capability.py",
+  # The SHA-256 idempotency-key derivation carried in the operation envelope —
+  # and the fact, verified across both repositories, that it is never sent to
+  # Paystack as a header because Paystack publishes none.
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/integrations/runtime_execution.py",
+  # The decline/retry/reconcile model this connector's classification is built
+  # on: a decline BURNS the reference, deterministic per-attempt references,
+  # and `_recover_charge` re-verifying after any charge exception.
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/autopay.py",
+  # The closed provider-status vocabulary, the fail-closed unknown-status
+  # branch, the success EVIDENCE gate, and the ambiguous-refund lookup that
+  # matches on `merchant_note` because a refund has no reference field.
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:app/services/payment_gateway_adapter.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_payment_gateway_observations.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_payment_gateway_refunds.py",
+  "dotmac_sub@5c56b64a2b7f08bb1596d9f53a27d553f17d4085:tests/test_autopay.py",
+  # ERP's 1,164-line client: the only production source for transfers, bank
+  # resolution, transfer recipients and the customer endpoints, and the source
+  # of every outbound wire shape Sub does not have.
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:app/services/finance/payments/paystack_client.py",
+  # The exact ROUND_HALF_UP major->minor conversion this package ported, and
+  # `_recover_transfer_initiation`: verify the reference after a timeout or a
+  # duplicate-reference refusal rather than re-sending.
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:app/services/finance/payments/payment_service.py",
+  # Lookup-then-write customer synchronization: create vs update by email.
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:app/services/finance/payments/paystack_customer_sync.py",
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:tests/finance/test_expense_transfer_lifecycle.py",
+  "dotmac_erp@0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf:tests/services/test_paystack_customer_sync.py",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_paystack_connector.py",
+  "dotmac_starter_mt:tests/unit/test_paystack_outbound_operations.py",
+  "dotmac_starter_mt:tests/unit/test_payment_reconciliation_connectors.py",
+  "dotmac_starter_mt:tests/architecture/test_paystack_connector_boundary.py",
+]
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator", "dotmac_sub", "dotmac_erp"]
+
+inventory_evidence = [
+  "docs/inventories/payment-connector-sources.md",
+  "docs/inventories/payment-connector-extraction-dossier.md",
+  "docs/superpowers/specs/2026-08-14-payment-connector-and-settlement-contracts.md",
+  "docs/adr/0017-adoption-is-the-scarce-resource.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+]
+
+first_cutover = "Sub through dotmac_integrator, in mirror mode, and INGRESS FIRST. This package release is supply-chain evidence only: Sub's direct Paystack receiver remains authoritative until the same verified webhook stream produces zero unexplained identity, signature, amount, fee, currency, reference and provider-status drift over a full billing cycle. The OUTBOUND capabilities do not cut over with it and are not eligible on the ingress proof — the outbound direction is where a mistake takes money from a customer twice, so each command capability cuts over separately, behind its own product-owned command contract, after its own shadow period."
+
+shadow_and_drift = "Ingress: mirror the exact raw body and signature header into Integrator while Sub's existing receiver remains the sole producer of financial consequences; compare provider-event coverage, verification verdict, payload digest and normalized fields. Outbound: shadow is NOT a second send. A command capability is proven by replaying real product commands through the connector against Paystack's TEST integration and comparing the wire body field-for-field against the product's existing client (endpoint, minor-unit amount, currency, reference derivation, and for a refund the merchant_note), plus a classification comparison over recorded provider responses — declines, duplicate-reference refusals, in-flight status tokens, 5xx and induced read timeouts. The drift class that must NOT be waived: any case where this connector answers SUCCEEDED and the product's own client did not, and any case where it answers RETRYABLE for a money-moving command. Deliberately NOT emitted on either side: Sub metadata, invoice targeting, net amount, PaymentStatus, or any allocation."
+
+local_copy_retirement = "Retire only provider transport. Sub keeps payment_provider_events.py, payment_reconciliation.py, autopay's mandate/failure-count/suspension policy, every intent service, allocation, coverage and lifecycle decision; ERP keeps GL posting, expense-claim and payment allocation policy, its FOR UPDATE intent locking and its bounded poll sweep. This release can retire direct paged reconciliation clients and their private checkpoints after ingress shadow proof. On the command side it can retire, per capability and only after that capability's own cutover, Sub's PaymentGatewayRunner Paystack branch and ERP's paystack_client.py transport methods — never the product-side reference bookkeeping those clients feed, and never ERP's paystack_* columns, whose rename is a separate expand/contract migration. Flutterwave is a separate distribution and cutover."
+
+next_action = "OUTBOUND SLICE DECLARED AS 0.1.0a3, NOT YET RELEASED: it changed the manifest of the already-tagged 0.1.0a2, whose exact contract is retained as SETTLEMENT_MANIFEST and whose digest is recorded in docs/inventories/released-manifest-digests.json. Publish 0.1.0a3 after dotmac-integration 0.1.0a14, exact-pin it in dotmac_integrator, reconcile the authenticated payments.settlement.observation.v1 ProductPort descriptor, and run ingress plus paged-poll shadow cutover. The four outbound capabilities remain blocked on two named gates: (1) product-owned command contracts for payment intent, refund, payout and customer synchronization — the connector performs commands, and nobody may issue one until a product owner is named for the decision behind it; and (2) a durable command-response seam in dotmac-integration, because DELIVERY returns an Outcome and cannot preserve a reply, so a checkout URL, a resolved account name and a new recipient code have nowhere to land. Until (2) exists, only commands whose reply is pure evidence (charge, refund, transfer) are usable through DELIVERY at all."
+
+# ── Residual duplicate-charge risk, stated rather than implied ───────────────
+#
+# 1. REFUND has no provider-side reference field. The derived key travels in
+#    `merchant_note`, which makes an ambiguous refund DECIDABLE by listing the
+#    provider's refunds for the transaction — but nothing at Paystack REFUSES a
+#    second refund. Closed by the product's reconciler, which must read the
+#    refund list before issuing a replacement. This connector deliberately does
+#    not read it: choosing whether an existing refund satisfies the intent is a
+#    product decision.
+# 2. CUSTOMER CREATE has undocumented duplicate semantics. Classified ambiguous
+#    for that reason; no money is at stake, and `GET /customer/{email}` answers
+#    it in one call.
+# 3. A product that issues a NEW delivery (hence a new engine key, hence a new
+#    reference) for a command that already landed defeats every protection
+#    here. The connector cannot see that and must not try to; the engine's
+#    at-most-once ledger and the product's own intent state are what close it.
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/finance/payments/paystack_client.py", "app/services/finance/payments/webhook_service.py"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/integrations/payment_capability.py", "app/services/integrations/connectors/payment_gateway.py", "app/services/payment_webhook_commands.py"]

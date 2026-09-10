@@ -1,0 +1,63 @@
+schema_version = 1
+package = "dotmac-people"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant employment directory, positions, temporal assignments, and date-aware reporting resolution"
+contract = "Link a kernel Party person to one tenant employment relationship; own employee code and lifecycle state/dates, departments, designations, employment types, positions, temporal occupancy, and derived manager/direct-report/approval resolution. NOT personal identity, authentication, RBAC, attendance, leave, scheduling, discipline, performance, training, compensation, payroll, banking, tax, GL dimensions, physical locations, files, notifications, or external provisioning."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_erp:app/models/people/hr/employee.py",
+  "dotmac_erp:app/models/people/hr/department.py",
+  "dotmac_erp:app/models/people/hr/designation.py",
+  "dotmac_erp:app/models/people/hr/employment_type.py",
+  "dotmac_erp:app/models/people/hr/position.py",
+  "dotmac_erp:app/models/people/hr/position_assignment.py",
+  "dotmac_erp:app/services/people/hr/employees.py",
+  "dotmac_erp:app/services/people/hr/organization.py",
+  "dotmac_erp:app/services/people/hr/positions.py",
+  "dotmac_erp:app/services/people/hr/org_resolver.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/models.py",
+]
+preserved_tests = [
+  "dotmac_erp:tests/people/hr/test_position_assignments.py",
+  "dotmac_erp:tests/people/hr/test_position_role_summary.py",
+  "dotmac_erp:tests/people/hr/test_employee_rehire.py",
+  "dotmac_erp:tests/people/hr/test_employee_search.py",
+  "dotmac_erp:tests/integration/test_person_services.py",
+  "dotmac_starter_mt:tests/unit/test_people_service.py",
+  "dotmac_starter_mt:tests/architecture/test_people_module.py",
+  "dotmac_starter_mt:tests/test_people_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp"]
+composition_boundary = "Each adopting application pins the released package, runs the pe lineage in its own database, binds party_person_catalog.v1 to its own qualifying Party provider, and owns its sessions and authorization. The module imports only dotmac-kernel, never an assembly, sibling module, ERP model, or product adapter."
+inventory_evidence = ["docs/inventories/people-directory-sources.md"]
+first_cutover = "dotmac-erp is the first exact-pin consumer and replacement authority. Employment Type catalogue administration is the first vertical authority slice: bootstrap and shadow the catalogue, atomically repoint its API/web commands, disable every importer/script bypass, and keep hr.employment_type only as a module-derived compatibility table for retained Employee and Payroll foreign keys. Later slices move the other catalogues, Employee, positions and assignments independently."
+shadow_and_drift = "Employment Type reconciliation preserves source UUIDs and the historical projection fingerprint while deriving an algorithm-versioned target fingerprint over the module-owned state. A fixed-point shadow compares missing, extra, conflicting and stale rows without writing the historical owner. Later entity slices add their own typed reconciliation evidence; the date-sensitive position projection must gain an explicit as_of before it is eligible."
+local_copy_retirement = "The Employment Type slice retires its full legacy decision-writer set together and names one same-transaction projector as the only writer of the retained hr.employment_type compatibility table. Subsequent two-directional writer ratchets reach zero per entity. Delete legacy People tables only after the checked-in physical foreign-key ledger is empty; zero ledger rows without zero authority is not success."
+next_action = "Publish the remotely verified dotmac-people 0.1.0a2 artifact, install ERP's prepared exact a2 lock, then execute and record the separately authorized Employment Type dry-run, fixed-point bootstrap and compatibility-repair sequence. After that evidence is accepted, choose the next catalogue slice without widening Employment Type authority."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/person.py", "app/services/dotmac_erp/agent_sync.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/people/hr/employee.py", "app/services/people/hr/employees.py", "app/services/people/hr/organization.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

@@ -1,0 +1,99 @@
+schema_version = 1
+package = "dotmac-connector-linkedin"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+source_mode_note = "The pinned fleet external-connector inventory covers Academy, CRM, ERP, Sub, Vendor Control Plane and Starter and finds no qualifying LinkedIn webhook implementation. CRM is requirement evidence only and remains retired; no CRM connector or consumer is created."
+owner = "LinkedIn webhook challenge, exact-byte authentication and provider-neutral organization-social and lead notification translation."
+contract = "Implement dotmac-integration SPI >=1.3,<2.0 for connector key linkedin and social.activity.observation.v1 plus marketing.lead.observation.v1 in INGRESS mode only. Own no contact, campaign, qualification, assignment, ticket, publication, retry, checkpoint, row, session or product database."
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_academy_app",
+  "dotmac_crm",
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_vendor_control_plane",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:docs/inventories/external-connector-sources.md",
+  "dotmac_starter_mt@bfc112fc8eac58e5ce279c1d0a5868c1f156c0e3:docs/superpowers/plans/2026-08-21-integration-ecosystem-programme.md",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_linkedin_connector.py",
+  "dotmac_starter_mt:tests/architecture/test_linkedin_connector_boundary.py",
+]
+# ── ADR-0024 § 9 (2026-08-24): INGRESS-only is capability parity, not a gap ──
+#
+# HELD BACK, deliberately: every LinkedIn OUTBOUND surface — organic publishing
+# to an organization page, member/organization messaging, and lead write-back
+# into LinkedIn Lead Gen. No product consumer exists: no owner in Sub, ERP or
+# the vendor control plane commands a LinkedIn publication or message today,
+# and `dotmac-campaigns` (ADR-0056) owns outbound progression without naming
+# this channel.
+#
+# ADR-0024 § 9.1 measures connector completeness as Dotmac CAPABILITY parity —
+# every capability the ecosystem needs, with interchangeable providers behind
+# the ones that matter. It explicitly does NOT mean wrapping every endpoint
+# LinkedIn happens to expose. Publishing on an organization's behalf is exactly
+# the class where the first execution would also be the first review, so the
+# constraint is a named consumer, not an endpoint (ADR-0017).
+#
+# § 9.4 requires the withholding to be DECLARED rather than merely absent, and
+# this comment is that declaration. If outbound is ever built it uses the
+# existing fleet contracts for the acts involved (`messaging.send.v1` for a
+# message, whatever Campaigns/Publishing declares for a publication) rather than
+# a `social.*.linkedin.*` id minted from this provider's vocabulary
+# (ADR-0024 § 8.1). Note the current manifest declares DENY-ALL provider egress:
+# adding outbound is a visible egress change, not a quiet capability.
+
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_integrator", "dotmac_sub"]
+inventory_evidence = [
+  "docs/inventories/external-connector-sources.md",
+  "docs/superpowers/plans/2026-08-21-integration-ecosystem-programme.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+]
+first_cutover = "Route a LinkedIn organization-social or Lead Sync subscription to dotmac_integrator and deliver the typed observation to the declared product port while that product remains the only local decision writer."
+shadow_and_drift = "Compare notification identity, action, source entity and provider timestamp between the provider delivery and the destination observation. Require complete batch traversal, stable deduplication and no decision fields in connector output."
+local_copy_retirement = "No qualifying fleet connector exists. If a product adds a direct LinkedIn runtime before cutover, delete it with the adopter change and lower its external-connector ratchet."
+next_action = "Validate on Observer and CI, publish after dotmac-integration 0.1.0a11, exact-pin in dotmac_integrator, then configure the first product-owned destination port."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["pyproject.toml", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/services/connector.py", "docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

@@ -1,0 +1,44 @@
+schema_version = 1
+package = "dotmac-qualification"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Time-bounded service eligibility evidence and qualification decisions"
+contract = "Own qualification cases, immutable typed evidence with observation/validity windows, and expiring eligibility decisions. Positioning and Network Access contribute observations only. NOT coordinates, topology, network reachability truth, catalogue declarations, customer identity, service lifecycle, fulfillment, or provisioning."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/qualification.py",
+  "dotmac_sub:app/services/qualification.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_qualification_services.py",
+  "dotmac_sub:tests/test_gis_qualification_imports.py",
+  "dotmac_starter_mt:tests/unit/test_qualification_service.py",
+  "dotmac_starter_mt:tests/architecture/test_qualification_module.py",
+  "dotmac_starter_mt:tests/test_qualification_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Adopters compose qu locally and feed provider-neutral observations through commands. Catalogue/customer/service identifiers are opaque references; no sibling module import or foreign application database read is permitted."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains qualification owner until history backfill, read-only shadow and zero-drift decision comparison complete and a separately authorized writer switch occurs."
+shadow_and_drift = "Compare evidence identity, source, observation/validity windows, fact digest, outcome, rationale and expiry; positioning/network state itself remains outside."
+local_copy_retirement = "After cutover, reduce Sub qualification decision writers and fallback readers to zero while retaining positioning and Network Access as observation sources."
+next_action = "Compose in Sub and implement the versioned evidence/decision backfill plus zero-drift shadow resolver."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/qualification.py", "app/services/qualification.py"]

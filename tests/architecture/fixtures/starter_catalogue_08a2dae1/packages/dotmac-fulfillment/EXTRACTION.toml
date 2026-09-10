@@ -1,0 +1,66 @@
+schema_version = 1
+package = "dotmac-fulfillment"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "Tenant-scoped fulfillment saga identity, ordered business steps, append-only participant attempts, idempotent asynchronous outcome receipts, derived partial progress, explicit compensation requests and receipts, convergence and operator-repair evidence"
+contract = "Create one immutable run per opaque commercial intent with ordered steps bound to manifest-declared participant codes; append one immutable attempt for each transactional dispatch and schedule its durable re-observation so callback loss converges; record or replay one typed outcome per participant command with fingerprint conflict; derive aggregate, contiguous progress and repair attention from attempts and receipts; schedule uncertain participant and compensation outcomes only through an assembly-supplied dotmac-durable-timers adapter; request compensation in reverse successful-settle order and record the participant's succeeded, refused, not-supported, manual-required, retryable or reconciliation-required answer; require an explicit non-system actor plus assembly authorizer for redrive, compensation and reviewed-terminal settlement, and append a declared kernel audit event in the same transaction. Every mutation receives the caller's Session and flushes without commit or rollback. NOT order, invoice, settlement, subscription, service status, participant policy, provider I/O, credentials, connector delivery retry, leases, backoff, dead-letter state, handler ordering, or a wall-clock reaper."
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:27c76aaeebb7",
+  "dotmac_erp:0f4b1698ddbf",
+  "dotmac_starter_mt:e6ba2022f3d7",
+]
+revalidation_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_sub:app/services/owner_commands.py",
+  "dotmac_sub:app/services/events/owner_outputs.py",
+  "dotmac_sub:app/services/provisioning_lifecycle.py",
+  "dotmac_sub:app/services/provisioning_managers.py",
+  "dotmac_sub:app/services/service_order_lifecycle.py",
+  "dotmac_erp:app/models/finance/platform/saga_execution.py",
+  "dotmac_erp:app/services/finance/platform/saga_orchestrator.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/providers/provisioning.py",
+  "dotmac_starter_mt:packages/dotmac-kernel/src/dotmac_kernel/testing/provisioning.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_provisioning_lifecycle.py",
+  "dotmac_sub:tests/test_provisioning_run_state.py",
+  "dotmac_sub:tests/architecture/test_provisioning_lifecycle_sot.py",
+  "dotmac_sub:tests/architecture/test_service_order_status_writers.py",
+  "dotmac_starter_mt:tests/unit/test_provisioning_provider.py",
+  "dotmac_starter_mt:tests/unit/test_fulfillment_contract.py",
+  "dotmac_starter_mt:tests/architecture/test_fulfillment_module.py",
+  "dotmac_starter_mt:tests/test_fulfillment_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_cloud", "dotmac_sub"]
+composition_boundary = "ADR-0024 and ADR-0030: every adopter installs the tenant-only fu lineage in its own database and owns its local fulfillment rows. Steps hold only opaque intent and line references; no foreign key reaches Orders, Domains, Hosting, Sub or another application. Participant implementations are declared by installed manifests and bound by the assembly through typed callbacks; dotmac-fulfillment imports no sibling module and contains no participant-specific branch. The manifest depends on the separately released dotmac-durable-timers module, while the assembly supplies the adapter so no scheduler ledger enters mod_fulfillment. Integrator transports commands and observations but never writes fulfillment tables."
+inventory_evidence = [
+  "docs/inventories/fulfillment-sources.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+  "docs/inventories/durable-timers-sources.md",
+]
+first_cutover = "Dotmac Cloud is cutover 1 after its first participant declares the stable provisioning contract. Begin with one domain-registration line: dual-write no fulfillment status, dispatch through the local participant adapter, record the module outcome in shadow, and compare it with the domain lifecycle owner's observation before allowing any consequence. Add a second independent participant before calling partial-progress behavior proven. Dotmac Sub is cutover 2 and replaces ProvisioningRuns.run plus reap_stale_runs together; it keeps ISP readiness and service lifecycle decisions as participant owners and drops the orphaned saga tables rather than adopting them."
+shadow_and_drift = "For each candidate adopter, create the module run and attempts in the same transaction as the existing request while leaving the local owner authoritative. Compare command identity, correlation, per-line outcome, derived progress and re-observation verdict for every transition. Record provider-success/callback-loss, out-of-order delivery, duplicate delivery and partial success as named divergence classes. Cut over only after live PostgreSQL RLS/concurrency evidence and zero unexplained drift; then seal one writer and use the module's reconciliation reader to rebuild progress from immutable attempts and receipts."
+local_copy_retirement = "Cloud has no local saga copy to retire. Sub retires the synchronous ProvisioningRuns.run loop, reap_stale_runs, provisioning run/workflow/step tables insofar as they are engine state, the ProvisioningStepType/ProvisioningVendor/ProvisioningReadinessCheckKind database enums, and the orphaned saga_executions/provisioning_step_executions tables. It retains ISP participant models and service_order_lifecycle without the cross-owner activate_subscription write. ERP's dormant platform saga is a cleanup candidate, not an adopter. Two-directional caller/model/table ratchets reach zero before any displaced owner is called retired."
+next_action = "Kernel a89 is published, registry-verified and tagged, so the floor now names an installable release and this package no longer waits on the kernel. Remaining gates are unchanged and are about ADOPTION, not supply: compose the released dotmac-durable-timers dependency, then implement the first Dotmac Cloud participant adapter. Do not allowlist or publish before that named participant exists \u2014 an installable saga owner standing beside products that still drive their own is the failure the dotmac-imports row was ruled on."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/platform/saga_execution.py", "app/services/finance/platform/saga_orchestrator.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/owner_commands.py", "app/services/events/owner_outputs.py", "app/services/provisioning_lifecycle.py", "app/services/provisioning_managers.py"]

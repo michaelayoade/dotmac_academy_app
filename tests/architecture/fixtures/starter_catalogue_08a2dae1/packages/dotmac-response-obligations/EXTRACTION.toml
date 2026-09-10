@@ -1,0 +1,64 @@
+schema_version = 1
+package = "dotmac-response-obligations"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Response-time targets, running clocks, paused intervals and breach observations"
+contract = "Own one promise about time on one opaque subject: named policies per product-declared subject type, priority-resolved targets for first-response, next-response, queue-wait and resolution, a running clock whose stored due instant a resume moves, itemised paused intervals each carrying a required reason, and append-only warning/breach observations. NOT the subject: subject_reference is opaque and no ticket, conversation, work-order, queue or agent column may exist. NOT the consequence: dotmac-operational-escalations owns whether a breach should escalate, under which policy version, at what level and who answered, so an observation carries no status and the sweep returns typed escalation requests plus two declared outbox events. NOT scheduling: dotmac-durable-timers owns that and the assembly drives a bounded index-backed sweep. NOT delivery: Messaging/Integrator owns transport and its outcomes. NOT a business calendar: opening hours are a product policy expressed through OUTSIDE_BUSINESS_HOURS pause and resume, so one time-arithmetic implementation exists rather than two."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_crm", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:5c56b64a2b7f08bb1596d9f53a27d553f17d4085",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+]
+source_paths = [
+  "dotmac_sub:app/models/ticket_workflow.py",
+  "dotmac_sub:app/services/sla_assignment.py",
+  "dotmac_sub:app/services/web_notifications_sla_policies.py",
+  "dotmac_sub:app/services/team_inbox_metrics.py",
+  "dotmac_erp:app/services/support/sla.py",
+  "dotmac_erp:app/services/sla_policies_web.py",
+  "dotmac_crm:app/services/sla_assignment.py",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_response_obligations_service.py",
+  "dotmac_starter_mt:tests/architecture/test_response_obligations_module.py",
+  "dotmac_starter_mt:tests/test_response_obligations_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp", "dotmac_crm"]
+composition_boundary = "Subjects are opaque references supplied by their owners; Inbox keeps conversations and assignments, Ticketing keeps tickets, Work Orders keeps field execution. Priority is an opaque product string, severity is an opaque string the escalation owner interprets, and subject_type is an open product-declared vocabulary rather than an enum this module edits for each adopter."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub is the qualifying source and first writer cutover: its sla_policies/sla_targets/sla_clocks/sla_breaches already carry entity_type on both policy and clock, which is why this is a shared owner rather than a support feature. ERP's read-time SLATarget computation and CRM's third copy retire as API consumers afterwards."
+shadow_and_drift = "Compare resolved policy and target row, priority fallback to the NULL-priority default, computed due and warn instants, every pause interval with its reason and the resulting due-time shift, total paused seconds, warning and breach observation instants and their dedup keys, and settlement outcome including late completion settling as BREACHED rather than MET. Sub records no pause reason and no per-interval row, so expect an explained gap there rather than parity; ERP has no clock at all and its read-time target is a computation to reproduce, not a row to compare."
+local_copy_retirement = "Reduce Sub's SLA clock writers to zero at first cutover, then retire ERP's read-time SLA computation and CRM's sla_assignment copy after API synchronization verification. Sub's SlaBreach open/acknowledged/resolved lifecycle does not migrate into this module: it maps onto dotmac-operational-escalations instances raised from the forwarded EscalationRequested, and that mapping is part of the cutover, not an afterthought."
+next_action = "Run the Postgres RLS, append-only and concurrency canaries on Observer. Then decide with Michael whether Sub's SlaBreach lifecycle rows migrate to escalation instances or are archived, compose the module in Sub, backfill policies/targets/clocks/pauses, shadow due-instant and breach decisions including the paused-time arithmetic, seal the Sub writer switch, and only then migrate ERP and CRM as API consumers."
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "5c56b64a2b7f08bb1596d9f53a27d553f17d4085"
+evidence_paths = [
+  "app/models/ticket_workflow.py",
+  "app/services/sla_assignment.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = [
+  "app/services/support/sla.py",
+  "app/services/sla_policies_web.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "c64b5aa0f7902b52e7ef73cf26f3f88687ed849d"
+evidence_paths = [
+  "app/services/sla_assignment.py",
+]

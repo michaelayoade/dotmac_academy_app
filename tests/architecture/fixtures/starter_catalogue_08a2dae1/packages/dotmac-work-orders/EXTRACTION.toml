@@ -1,0 +1,86 @@
+schema_version = 1
+package = "dotmac-work-orders"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Dotmac physical work execution"
+contract = "A tenant-scoped physical work order: identity and product-neutral header mutation, guarded execution lifecycle, assignment/unassignment history, work logs, notes and evidence references. The module owns whether execution is scheduled, dispatched, active, paused, completed or cancelled. It does not own the customer, project, ticket, workforce roster, routing policy, inventory, topology/as-built state, vendor commercials, notifications or file bytes."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_vendor_control_plane", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:3f8d74825bee47b98c3c532229b72f3a8a5b16aa",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_vendor_control_plane:e6b2bbee815cf9fd3ce99ceed0ff3a1f5763f057",
+  "dotmac_starter_mt:c6ef6cd7b13105bd95c3faf354ffee9032077625",
+]
+revalidation_revisions = [
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_sub:app/models/work_order.py",
+  "dotmac_sub:app/models/dispatch.py",
+  "dotmac_sub:app/models/field_job_event.py",
+  "dotmac_sub:app/models/field_worklog.py",
+  "dotmac_sub:app/models/field_note.py",
+  "dotmac_sub:app/models/field_attachment.py",
+  "dotmac_sub:app/services/work_order_commands.py",
+  "dotmac_sub:app/services/field/transitions.py",
+  "dotmac_sub:app/services/field/worklogs.py",
+  "dotmac_crm:app/models/workforce.py",
+  "dotmac_crm:app/models/dispatch.py",
+  "dotmac_crm:app/services/workforce.py",
+  "dotmac_crm:app/services/dispatch.py",
+  "dotmac_starter_mt:packages/dotmac-work-orders/src/dotmac_work_orders",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_work_order_commands.py",
+  "dotmac_sub:tests/test_field_transitions.py",
+  "dotmac_sub:tests/test_field_worklogs.py",
+  "dotmac_sub:tests/test_field_notes.py",
+  "dotmac_sub:tests/test_field_attachments.py",
+  "dotmac_sub:tests/architecture/test_work_order_command_ownership.py",
+  "dotmac_starter_mt:tests/unit/test_work_orders_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_work_orders_service.py",
+  "dotmac_starter_mt:tests/architecture/test_work_orders_module.py",
+  "dotmac_starter_mt:tests/test_work_orders_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+authority_boundary = "Sub remains the application owner of operational customer, subscriber, project, ticket, workforce, dispatch-policy, topology and official-timeline decisions. The module owns only the local physical execution aggregate and durable facts. CRM is a retiring duplicate and never a co-owner. InstallationProject remains Sub's vendor-commercial wrapper until the internal-crew/vendor execution split is explicitly resolved; this extraction does not silently turn vendor projects into work orders."
+inventory_evidence = [
+  "docs/inventories/work-orders-sources.md",
+  "docs/inventories/fleet-decomposition-matrix.md",
+]
+first_cutover = "dotmac_sub is the first and only current candidate. The initial cutover is the internal-crew WorkOrder path because it is production-used, tested and already named authoritative by WORK_ORDER_IDENTITY_SOT.md. The separate vendor InstallationProject path is excluded from this first cutover: it carries bidding, quote, purchase-order, accounts-payable and as-built commercial review, and no WorkOrder currently exists on that path."
+shadow_and_drift = "Before Sub moves writes, replay captured create, assign and mobile event commands into an isolated mod_workorders schema while Sub's current work_order owner remains authoritative. Compare exact public identity, assignment, status/timestamps, kernel-ledger command fingerprints, work-log duration and completion-evidence verdicts. The known intentional corrections are measured separately: changed command fingerprints conflict through dotmac_kernel.idempotency, the one at-most-once owner; services flush but never commit/rollback; one actor cannot hold two open timers; completion requirements are snapshotted on the work order; product-specific fiber/splice gates run in Sub before the module command. Any unclassified difference blocks cutover. CRM is not dual-written: its rows are reconciled to Sub and retired under Sub's existing CRM web retirement ledger."
+local_copy_retirement = "After shadow parity and a single Sub write cutover, Sub replaces constructors and lifecycle writers in app/services/work_order_commands.py and app/services/field/transitions.py with this module, migrates the six owned table families into mod_workorders, and deletes the local status/event machine. Subscriber/project/task/ticket relations become Sub-owned tenant-safe link tables; topology, material, movement, customer communication and inbox consequences stay Sub adapters. CRM's work_orders, work_order_assignments, work_order_notes, assignment queue, dispatch and field-work copies retire after reconciliation and zero-traffic evidence; they never become package sources or fallback writers."
+next_action = "Do not publish or cut over from this repository slice. First run the canary and full validation on Observer from the exact committed branch. Then write the Sub adoption migration and shadow reader: internal-crew WorkOrder only, with product-owned subject links and product completion gates. Resolve the separate vendor InstallationProject versus generic WorkOrder decision before adding vendor execution; no vendor branch, provider enum or commercial table may enter this package."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/workforce.py", "app/models/dispatch.py", "app/services/workforce.py", "app/services/dispatch.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/fixed_assets/maintenance_work_order.py", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/work_order.py", "app/models/dispatch.py", "app/models/field_job_event.py", "app/models/field_worklog.py"]

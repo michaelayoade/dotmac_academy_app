@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-pon-access"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Provider-neutral OLT/ONT/PON inventory, admission, assignment, commissioning, desired service state, observations, backup evidence and reconciliation"
+contract = "Register OLT/PON identities, admit/assign/commission ONTs, hold desired service state, ingest observations/backup evidence and reconcile drift. NOT subscriber/commercial decisions, fiber plant, generic inventory or vendor clients."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/network.py", "dotmac_sub:app/models/ont_service_configuration.py", "dotmac_sub:app/services/network/olt.py", "dotmac_sub:app/services/network/ont_inventory.py", "dotmac_sub:app/services/network/ont_service_configuration.py", "dotmac_sub:app/services/network/olt_ssh_ont/status.py", "dotmac_sub:app/services/network/reconcile/readers/olt_reader.py", "dotmac_starter_mt:packages/dotmac-pon-access/src/dotmac_pon_access"]
+preserved_tests = ["dotmac_sub:tests/test_ont_commissioning.py", "dotmac_sub:tests/test_ont_service_configuration.py", "dotmac_sub:tests/test_olt_ont_integrity.py", "dotmac_sub:tests/architecture/test_ont_service_configuration_boundary.py", "dotmac_sub:tests/test_reconcile_readers.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Products supply opaque service decisions; network/fiber/IPAM correlations are opaque; Integrator owns OLT/ACS/UISP/TR-069 I/O. No sibling imports or cross-module FKs."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover."
+shadow_and_drift = "Compare OLT/PON/ONT identities, assignment/commissioning, desired-state fingerprints, observations, backups and repair outcomes against Sub."
+local_copy_retirement = "Sub removes local PON lifecycle/provisioning writers and provider clients after sealed suite cutover. Named explicitly because a writer no census enumerates is a writer no cutover retires (dotmac_sub#1898): olt_ssh_ont/status.py owns get_ont_info_detail and reconcile/readers/olt_reader.py calls it directly, bypassing the adapter. Both retire with the sealed cutover, and reaching a provider outside a connector must be canaried before adoption."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early. Adoption blockers, both adjudicated 2026-08-22: dotmac_sub#1964 (62 unassociated ONTs excluded from reconciliation must be adjudicated or backfilled, with the exclusion count a cutover gate) and dotmac_sub#1898 (the direct-call bypass above needs a canary forbidding provider I/O outside connectors)."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network.py", "app/models/ont_service_configuration.py", "app/services/network/olt.py", "app/services/network/ont_inventory.py"]

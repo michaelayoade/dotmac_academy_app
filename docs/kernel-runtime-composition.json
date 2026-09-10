@@ -1,0 +1,1528 @@
+{
+  "schema_version": "dimensional-composition.v2",
+  "product": "dotmac_academy_app",
+  "starter_protected_main_revision": "08a2dae1b1f6510e9d1076ac9dbd6eca0db06137",
+  "catalogue_size": 95,
+  "records": [
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-accounting",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-accounting''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ac'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_accounting` / `from dotmac_accounting` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-ai-operations",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-ai-operations''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ao'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_ai_operations` / `from dotmac_ai_operations` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-analytics",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-analytics''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ay'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_analytics` / `from dotmac_analytics` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-app-sync",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_app_sync` / `from dotmac_app_sync` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-application-directory",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-application-directory''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ad'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_application_directory` / `from dotmac_application_directory` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-approvals",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-approvals''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ap'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_approvals` / `from dotmac_approvals` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-assets",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-assets''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_as'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_assets` / `from dotmac_assets` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-auth-oidc",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_auth_oidc` / `from dotmac_auth_oidc` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-banking",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-banking''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_bk'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_banking` / `from dotmac_banking` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-billing",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-billing''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_bi'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_billing` / `from dotmac_billing` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-brand-profiles",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-brand-profiles''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_bp'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_brand_profiles` / `from dotmac_brand_profiles` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-campaigns",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-campaigns''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ca'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_campaigns` / `from dotmac_campaigns` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-collections",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-collections''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_cl'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_collections` / `from dotmac_collections` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-commercial-agreements",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-commercial-agreements''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_cg'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_commercial_agreements` / `from dotmac_commercial_agreements` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-compliance-reporting",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-compliance-reporting''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_cr'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_compliance_reporting` / `from dotmac_compliance_reporting` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-flutterwave",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_flutterwave` / `from dotmac_connector_flutterwave` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-linkedin",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_linkedin` / `from dotmac_connector_linkedin` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-meta-social",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_meta_social` / `from dotmac_connector_meta_social` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-mono",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_mono` / `from dotmac_connector_mono` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-nira",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_nira` / `from dotmac_connector_nira` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-paystack",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_paystack` / `from dotmac_connector_paystack` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-remita",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_remita` / `from dotmac_connector_remita` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-connector-whatsapp",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_connector_whatsapp` / `from dotmac_connector_whatsapp` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-content",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-content''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ct'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_content` / `from dotmac_content` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-customers",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-customers''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_cu'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_customers` / `from dotmac_customers` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-deployment-control",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-deployment-control''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_dc'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_deployment_control` / `from dotmac_deployment_control` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-deployment-foundation",
+      "classification": "universal-facility",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'universal-facility' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'universal-facility' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_deployment_foundation` / `from dotmac_deployment_foundation` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-document-rendering",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-document-rendering''s ModuleManifest",
+        "migration_lineage": "classification 'optional-module' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_document_rendering` / `from dotmac_document_rendering` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-documents",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-documents''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_do'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_documents` / `from dotmac_documents` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-durable-timers",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-durable-timers''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_dt'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_durable_timers` / `from dotmac_durable_timers` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-entitlement-allocation",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-entitlement-allocation''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ea'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_entitlement_allocation` / `from dotmac_entitlement_allocation` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-expenses",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-expenses''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ex'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_expenses` / `from dotmac_expenses` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-fiber-plant",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-fiber-plant''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fp'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_fiber_plant` / `from dotmac_fiber_plant` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-files",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-files''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fi'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_files` / `from dotmac_files` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-finance",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-finance''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fn'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_finance` / `from dotmac_finance` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-forms",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-forms''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fm'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_forms` / `from dotmac_forms` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-fulfillment",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-fulfillment''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fu'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_fulfillment` / `from dotmac_fulfillment` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-fx-policy",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-fx-policy''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_fx'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_fx_policy` / `from dotmac_fx_policy` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-imports",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-imports''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_im'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_imports` / `from dotmac_imports` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-inbox",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-inbox''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ib'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_inbox` / `from dotmac_inbox` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-inbox-operations",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-inbox-operations''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_io'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_inbox_operations` / `from dotmac_inbox_operations` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-integration",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-integration''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ig'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_integration` / `from dotmac_integration` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-inventory",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-inventory''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_iv'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_inventory` / `from dotmac_inventory` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-ipam",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-ipam''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ip'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_ipam` / `from dotmac_ipam` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-kernel",
+      "classification": "universal-facility",
+      "installation": "true",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "true",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: present",
+        "module_registration": "classification 'universal-facility' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'universal-facility' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: `dotmac_kernel` imported"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-licensing",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-licensing''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_li'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_licensing` / `from dotmac_licensing` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-media-observations",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-media-observations''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_mo'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_media_observations` / `from dotmac_media_observations` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-access",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-access''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_nac'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_access` / `from dotmac_network_access` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-assurance",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-assurance''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_na'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_assurance` / `from dotmac_network_assurance` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-control",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-control''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_nc'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_control` / `from dotmac_network_control` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-inventory",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-inventory''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ni'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_inventory` / `from dotmac_network_inventory` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-observability",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-observability''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_no'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_observability` / `from dotmac_network_observability` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-network-topology",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-network-topology''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_nt'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_network_topology` / `from dotmac_network_topology` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-numbering",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-numbering''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_nu'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_numbering` / `from dotmac_numbering` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-operational-escalations",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-operational-escalations''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_oe'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_operational_escalations` / `from dotmac_operational_escalations` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-party",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-party''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pt'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_party` / `from dotmac_party` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-payables",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-payables''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pa'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_payables` / `from dotmac_payables` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-payments",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-payments''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pm'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_payments` / `from dotmac_payments` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-payroll",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-payroll''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_py'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_payroll` / `from dotmac_payroll` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-people",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-people''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pe'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_people` / `from dotmac_people` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-platform-health",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-platform-health''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ph'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_platform_health` / `from dotmac_platform_health` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-pon-access",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-pon-access''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pn'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_pon_access` / `from dotmac_pon_access` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-positioning",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-positioning''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_po'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_positioning` / `from dotmac_positioning` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-procurement",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-procurement''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pc'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_procurement` / `from dotmac_procurement` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-projects",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-projects''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pj'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_projects` / `from dotmac_projects` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-publishing",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-publishing''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_pb'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_publishing` / `from dotmac_publishing` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-qualification",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-qualification''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_qu'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_qualification` / `from dotmac_qualification` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-records",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-records''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_re'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_records` / `from dotmac_records` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-referrals",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-referrals''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_rf'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_referrals` / `from dotmac_referrals` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-release-catalog",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-release-catalog''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_rl'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_release_catalog` / `from dotmac_release_catalog` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-remote-access",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-remote-access''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ra'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_remote_access` / `from dotmac_remote_access` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-reseller-management",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-reseller-management''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_rm'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_reseller_management` / `from dotmac_reseller_management` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-response-obligations",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-response-obligations''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ro'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_response_obligations` / `from dotmac_response_obligations` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-runner-transport",
+      "classification": "universal-facility",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'universal-facility' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'universal-facility' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_runner_transport` / `from dotmac_runner_transport` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-runner-transport-github-actions",
+      "classification": "stateless-protocol-adapter",
+      "installation": "false",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "classification 'stateless-protocol-adapter' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'stateless-protocol-adapter' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_runner_transport_github_actions` / `from dotmac_runner_transport_github_actions` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-sales",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-sales''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sa'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_sales` / `from dotmac_sales` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-service-access-policy",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-service-access-policy''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sap'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_service_access_policy` / `from dotmac_service_access_policy` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-service-catalog",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-service-catalog''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sc'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_service_catalog` / `from dotmac_service_catalog` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-service-changes",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-service-changes''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sch'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_service_changes` / `from dotmac_service_changes` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-service-orders",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-service-orders''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_so'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_service_orders` / `from dotmac_service_orders` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-services",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-services''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_se'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_services` / `from dotmac_services` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-sites",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-sites''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_si'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_sites` / `from dotmac_sites` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-subscriptions",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-subscriptions''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_su'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_subscriptions` / `from dotmac_subscriptions` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-support-access",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-support-access''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sup'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_support_access` / `from dotmac_support_access` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-surveys",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-surveys''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_sv'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_surveys` / `from dotmac_surveys` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-tax",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-tax''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_tx'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_tax` / `from dotmac_tax` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-template-studio",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-template-studio''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ts'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_template_studio` / `from dotmac_template_studio` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-ticketing",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-ticketing''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_tk'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_ticketing` / `from dotmac_ticketing` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-ui",
+      "classification": "presentation-foundation",
+      "installation": "true",
+      "module_registration": "not_applicable",
+      "migration_lineage": "not_applicable",
+      "runtime_consumption": "true",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: present",
+        "module_registration": "classification 'presentation-foundation' \u2014 module_registration does not apply",
+        "migration_lineage": "classification 'presentation-foundation' with manifest_applies=False \u2014 migration_lineage does not apply",
+        "runtime_consumption": "AST import scan of app/**/*.py: `dotmac_ui` imported"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-usage",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-usage''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_us'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_usage` / `from dotmac_usage` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-usage-rating",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-usage-rating''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_ur'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_usage_rating` / `from dotmac_usage_rating` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-web-analytics",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-web-analytics''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_wa'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_web_analytics` / `from dotmac_web_analytics` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-work-orders",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-work-orders''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_wo'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_work_orders` / `from dotmac_work_orders` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-workflow-runtime",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-workflow-runtime''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_wr'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_workflow_runtime` / `from dotmac_workflow_runtime` site found"
+      }
+    },
+    {
+      "schema_version": "dimensional-composition.v2",
+      "product": "dotmac_academy_app",
+      "distribution": "dotmac-workforce",
+      "classification": "optional-module",
+      "installation": "false",
+      "module_registration": "false",
+      "migration_lineage": "false",
+      "runtime_consumption": "false",
+      "evidence": {
+        "installation": "pyproject.toml [tool.poetry.dependencies] + poetry.lock: absent",
+        "module_registration": "app/assembly.py ProductAssemblySpec(modules=...) tuple contains ['academy_feature'] only; no reference to 'dotmac-workforce''s ModuleManifest",
+        "migration_lineage": "alembic/versions/*.py (54 files) scanned for schema-qualifying token 'mod_wf'; no occurrence",
+        "runtime_consumption": "AST import scan of app/**/*.py: no `import dotmac_workforce` / `from dotmac_workforce` site found"
+      }
+    }
+  ]
+}

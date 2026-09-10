@@ -1,0 +1,74 @@
+schema_version = 1
+package = "dotmac-sites"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "Dotmac website composition"
+contract = "Tenant-scoped site and page identity, immutable page revisions, immutable composed site revisions, navigation, SEO, redirects and the one revision eligible for release. NOT publication scheduling/outcomes, hosting, domains, DNS, certificates, provider identity, credentials, stored bytes, forms, leads or analytics."
+source_repositories = [
+  "dotmac_starter_mt",
+  "dotmac_mkt",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_crm",
+]
+source_revisions = [
+  "dotmac_starter_mt:c6ef6cd7b13105bd95c3faf354ffee9032077625",
+  "dotmac_mkt:7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d",
+  "dotmac_sub:510b80ca7fab4f54a57f261872f94b5e972c8eb6",
+  "dotmac_erp:dd6416cd981ffdf48564e2770b87d3cd7201186c",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+revalidation_revisions = [
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_starter_mt:docs/inventories/marketing-suite-sources.md",
+  "dotmac_starter_mt:docs/inventories/sites-sources.md",
+  "dotmac_starter_mt:docs/inventories/sites-extraction-dossier.md",
+]
+preserved_tests = [
+  "dotmac_starter_mt:tests/architecture/test_sites_module.py",
+  "dotmac_starter_mt:tests/unit/test_sites_contracts.py",
+  "dotmac_starter_mt:tests/unit/test_sites_lifecycle.py",
+  "dotmac_starter_mt:tests/test_sites_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+authority_boundary = "dotmac-sites owns local site/page composition and release-readiness only. dotmac-files owns stored bytes, dotmac-forms owns form definitions/submissions, dotmac-publishing owns publication requests, attempts and outcomes, and Integrator owns hosting installations, credentials, provider execution, retries, checkpoints and transport evidence. The package exports one immutable SiteReleaseV1 value for a local renderer or a typed assembly adapter; it writes no publication outbox and imports no sibling module."
+inventory_evidence = [
+  "docs/inventories/marketing-suite-sources.md",
+  "docs/inventories/sites-sources.md",
+  "docs/inventories/sites-extraction-dossier.md",
+]
+first_cutover = "The Dotmac ERP product is cutover 1. This is a measured greenfield adoption: it must pin a released dotmac-sites version, compose and migrate its own tenant plane, prove the legacy-site census is still empty, render the exact ready snapshot locally, and keep all adapters thin. Remote delivery is a later gate through a versioned publishing adapter and Integrator. Sub may later adopt independently with its own database, lineage and rows."
+shadow_and_drift = "Because no qualifying writer or data set exists, do not invent a historical backfill or parity subsystem. At Backoffice cutover, repeat the site-builder census and fail if a local writer appeared. Prove that the local renderer consumes the exact ready revision digest, that a newer draft cannot change the served snapshot, and that rebuilding the same release value is deterministic. For remote delivery, reconcile the publishing request snapshot digest and Integrator receipt to the same local revision without treating the remote deployment as the only copy."
+local_copy_retirement = "No prior site-builder implementation exists to retire at the audited pins. The enforceable premise is the checked-in six-repository census plus a Backoffice adoption canary that refuses composition if a competing local site/page/revision writer appears. Product landing routes and configurable welcome text are consumers or unrelated presentation, not a hidden site owner. Any future competing writer must be removed before adoption can be claimed."
+next_action = "Michael authorized release on 2026-08-20 without authorizing adoption, and the release is complete: kernel a81 and Sites 0.1.0a1 are registry-verified and tagged from the exact protected-main commit, closing the marketing cohort's five-artifact train. Gate 3 remains closed until a typed adapter passes SiteReleaseV1 to dotmac-publishing without field laundering; Integrator remains the hosting transport owner; and Backoffice adoption still requires separate authorization, exact pins and a repeated empty-owner census. A deployment never becomes the only site copy."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d"
+evidence_paths = ["app/models/campaign.py", "app/models/post.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

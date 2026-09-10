@@ -1,0 +1,60 @@
+schema_version = 1
+package = "dotmac-payments"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Payment intent and its confirmation correlation"
+contract = "Own the payment intent lifecycle, submitted transfer proof and its review, and the append-only correlation between an intent and an external settlement fact. Payer, target receivable and document identifiers are opaque. NOT receivables, settlement allocation, invoice or credit application, bank accounts, general-ledger posting, refunds, provider credentials or provider transport."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:9493ee4eef737f18b4813899a2d8f0537ed6d5c7",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+]
+revalidation_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_sub:app/models/billing.py",
+  "dotmac_sub:app/models/payment_proof.py",
+  "dotmac_erp:app/models/finance/payments/payment_intent.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_gateway_topup_intents.py",
+  "dotmac_sub:tests/test_topup_intent_proof_reconciliation.py",
+  "dotmac_sub:tests/test_payment_proof_duplicate_correction.py",
+  "dotmac_starter_mt:tests/unit/test_payments_service.py",
+  "dotmac_starter_mt:tests/architecture/test_payments_module.py",
+  "dotmac_starter_mt:tests/test_payments_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Adopters compose pm locally and correlate provider observations through commands. Payer, receivable, document and provider identifiers are opaque references; no sibling module import or foreign application database read is permitted."
+first_cutover = "Sub remains payment-intent owner until history backfill, read-only shadow and zero-drift correlation comparison complete and a separately authorized writer switch occurs."
+shadow_and_drift = "Compare intent reference, payer, purpose, currency and requested amount, terminal status and settlement time, and every confirmation by source, provider type, external reference and confirmed amount; invoice allocation and ledger posting themselves remain outside."
+local_copy_retirement = "After cutover, reduce Sub's topup-intent and payment-confirmation writers to zero while Billing keeps allocation and Integrator keeps provider transport."
+next_action = "Compose in Sub and implement the intent/confirmation backfill plus the zero-drift correlation shadow."
+inventory_evidence = ["docs/inventories/customer-journey-owner-sources.md"]
+
+# Typed product claim. Sub is the qualifying source — these owners are extracted
+# FROM Sub's implementation, which is what `source_mode = "product-first"` and
+# the Sub source paths above already say. Stating it as a typed field is what
+# lets Governance check a claim about Sub rather than take one on trust.
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/models/billing.py",
+  "app/models/payment_proof.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = [
+  "app/models/finance/payments/payment_intent.py",
+  "app/services/finance/payments/payment_service.py",
+]

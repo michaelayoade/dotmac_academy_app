@@ -1,0 +1,104 @@
+schema_version = 1
+package = "dotmac-files"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Stored bytes and their repairable physical lifecycle on explicit tenant and platform planes"
+contract = "Validate and persist opaque bytes beneath immutable trusted keys selected by a required TenantScope or PlatformScope; record size, media type, checksum, provider binding and physical state; stream, delete and reconcile them through one shared physical engine and two structurally separate persistence tables. NOT domain attachment meaning or authorization, document generation, PDF/spreadsheet semantic parsing, import mapping, dry-run/apply, or domain mutation."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_academy_app",
+  "dotmac_vendor_control_plane",
+  "dotmac_workspace",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/services/object_storage.py",
+  "dotmac_sub:app/services/file_storage.py",
+  "dotmac_sub:app/models/stored_file.py",
+  "dotmac_erp:app/services/storage.py",
+  "dotmac_erp:app/services/file_upload.py",
+  "dotmac_erp:app/services/avatar.py",
+  "dotmac_crm:app/services/storage.py",
+  "dotmac_crm:app/services/upload_validation.py",
+  "dotmac_academy_app:app/web/account.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/transport.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/delivery_models.py",
+  "dotmac_vendor_control_plane:src/vendor_cp/licensing/router.py",
+  "dotmac_starter_mt:packages/dotmac-files/src/dotmac_files",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_object_storage_service.py",
+  "dotmac_sub:tests/test_file_storage_service.py",
+  "dotmac_erp:tests/services/test_storage.py",
+  "dotmac_erp:tests/services/test_file_upload.py",
+  "dotmac_crm:tests/test_storage.py",
+  "dotmac_crm:tests/test_upload_mime_validation.py",
+  "dotmac_academy_app:tests/web/test_account.py",
+  "dotmac_vendor_control_plane:tests/unit/test_licence_delivery.py",
+  "dotmac_vendor_control_plane:tests/unit/test_licence_routes.py",
+  "dotmac_starter_mt:tests/unit/test_files.py",
+  "dotmac_starter_mt:tests/architecture/test_files_module.py",
+  "dotmac_starter_mt:tests/test_files_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_academy_app", "dotmac_vendor_control_plane", "dotmac_sub"]
+composition_boundary = "ADR-0024: each adopter installs its own fi lineage, owns its own metadata rows and binds its own provider adapter. Applications share the package contract, never a mod_files schema, object-key authority or provider credential. Cross-app file data moves only through the owning application's versioned API/webhook; any local copy is a provenance-bearing repairable projection. Provider codes and SDK/wire mappings remain assembly declarations/adapters, never product/provider branches in dotmac-files."
+inventory_evidence = [
+  "docs/inventories/files-sources.md",
+  "docs/adr/0022-files-own-stored-bytes-not-domain-meaning.md",
+]
+first_cutover = "dotmac_erp is cutover 1 because the checked-in product-first procedure requires a qualifying source product to retire its local owner first; ERP supplies the production S3 provider, broad admission policy (including image/PDF/XLS/XLSX signatures), and real callers. It is not yet a contract consumer: ERP's E8 Organization-to-Tenant and composed-migration decision currently classifies dotmac_kernel.db and stateful module lineages as defer-db. The cutover begins only after that gate provides one transaction authority and maps organization scope to the module's TenantScope without a parallel tenant writer. dotmac_academy_app is cutover 2, using its avatar flow as the independent tenant-plane slice. dotmac_vendor_control_plane is candidate cutover 3 on PlatformScope, preserving the exact offline licence bundle handed to an authenticated operator when durable artifact evidence is required; licensing retains the relation and delivery authority."
+shadow_and_drift = "During ERP cutover, inventory every domain-owned key/path reference, create its opaque file relation, compare provider key, organization-to-tenant mapping, byte length and SHA-256, shadow authenticated reads against the same object, and run missing-object/orphan reconciliation in report-only mode before switching reads. Academy then imports each static avatar into an immutable tenant key, compares bytes and SHA-256, shadows the authenticated avatar response, and removes the legacy path only after every row has a verified file id. Vendor CP compares the exact exported bundle bytes and digest with the platform file target while its existing delivery-attempt record remains authoritative for the handoff. Upload creates immutable keys, so rollback drift is repairable by the split list/decide/delete orphan reconciler; deletion is pending-first and idempotently repairable after a crash."
+local_copy_retirement = "ERP must replace app/services/file_upload.py as the lifecycle/policy owner and reduce app/services/storage.py to (or replace it with) an assembly-owned StorageProvider adapter over the exact pinned dotmac-files release; a two-directional import/caller ratchet reaches zero before the local owner is deleted. Sub is the qualifying lifecycle/provider source and must likewise retire `StoredFile`, `file_storage.py` and the lifecycle-owning half of `object_storage.py` at its own adoption, retaining only an assembly provider adapter and domain-owned opaque relations. CRM's generic storage service, upload validation path and direct legal-document filesystem writer are legacy byte owners: retained callers migrate to the exact Files seam or retire with CRM, and their writer paths reach zero. Academy then removes direct static/avatars writes and retires Person.avatar_path after its backfill and fallback-read count reach zero. Vendor CP is greenfield for durable storage: its export route must delegate byte persistence to dotmac-files and keep only the licensing-owned relation/attempt, never create a second generic storage facade. No permanent mirrored lifecycle or path authority is allowed."
+next_action = "Publish dotmac-files 0.1.0a3 after its tenant-only and full-plane live-catalog canaries pass. The a3 lineage supports TENANT for the deferred ERP cohort and Academy, plus TENANT+PLATFORM for compatibility; it deliberately refuses PLATFORM-only because no named adopter needs it. Finish ERP's E8 Organization-to-Tenant/composed-lineage decision, then prepare its MinIO adapter, inventory, shadow reads and measured caller ratchet without moving authority until every ERP cohort module is ready. Academy remains the second tenant adopter after ERP retires its local generic owner. Vendor CP remains no-adopt unless a real durable-byte requirement is approved."
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["app/web/account.py", "app/models/person.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/licensing/transport.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/services/storage.py", "app/services/upload_validation.py", "app/services/legal.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/services/storage.py", "app/services/file_upload.py", "app/services/avatar.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/object_storage.py", "app/services/file_storage.py", "app/models/stored_file.py"]

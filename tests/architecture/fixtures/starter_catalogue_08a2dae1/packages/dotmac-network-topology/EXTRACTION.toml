@@ -1,0 +1,35 @@
+schema_version = 1
+package = "dotmac-network-topology"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Declared/observed network links, forwarding resolution, paths, reachability and rebuildable topology projections"
+contract = "Accept opaque identity and observation references, decide link/path/reachability state, expose immutable projections and idempotent rebuild. NOT inventory, fiber physical ledger, incidents, tickets or commands."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = ["dotmac_sub:app/models/forwarding_topology.py", "dotmac_sub:app/models/network_monitoring.py", "dotmac_sub:app/services/topology/", "dotmac_sub:app/services/network/forwarding_topology.py", "dotmac_starter_mt:packages/dotmac-network-topology/src/dotmac_network_topology"]
+preserved_tests = ["dotmac_sub:tests/test_forwarding_topology.py", "dotmac_sub:tests/test_network_topology_services.py", "dotmac_sub:tests/services/topology/test_customer_path.py", "dotmac_sub:tests/architecture/test_forwarding_topology_boundary.py", "dotmac_starter_mt:tests/architecture/test_network_module_suite.py", "dotmac_starter_mt:tests/test_network_suite_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = ["docs/inventories/network-module-sources.md", "docs/inventories/network-module-dispositions.toml", "docs/inventories/network-module-contracts.toml", "docs/adr/0038-network-capabilities-decompose-sub-first.md"]
+composition_boundary = "Typed opaque inputs cross owners; paths are local rebuildable projections. No sibling imports, product models, cross-module FKs or provider I/O."
+first_cutover = "dotmac_sub in the single network-suite-v1 cutover."
+shadow_and_drift = "Backfill declarations/observations and compare resolved paths, reachability and coverage-gap digests against Sub."
+local_copy_retirement = "Sub removes topology writers/projections after the sealed suite cutover; customer impact decisions remain in Sub."
+next_action = "Complete suite implementation and Observer proof; do not publish or adopt early."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/forwarding_topology.py", "app/models/network_monitoring.py", "app/services/topology/", "app/services/network/forwarding_topology.py"]

@@ -1,0 +1,86 @@
+schema_version = 1
+package = "dotmac-publishing"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Dotmac publication lifecycle"
+contract = "Tenant-scoped immutable publication requests, selected opaque targets, requested delivery time, retry-safe attempt history, normalized delivery observations and one derived aggregate publication state. NOT editorial content, audience progression, target installation/configuration, provider identity, credentials, SDKs, wire mapping, raw transport evidence or connector scheduling/checkpoints."
+source_repositories = [
+  "dotmac_mkt",
+  "dotmac_starter_mt",
+  "dotmac_sub",
+  "dotmac_erp",
+  "dotmac_crm",
+]
+source_revisions = [
+  "dotmac_mkt:7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d",
+]
+revalidation_revisions = [
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_mkt:app/models/post.py",
+  "dotmac_mkt:app/models/post_delivery.py",
+  "dotmac_mkt:app/models/channel.py",
+  "dotmac_mkt:app/services/post_service.py",
+  "dotmac_mkt:app/services/publishing_service.py",
+  "dotmac_mkt:app/services/channel_service.py",
+  "dotmac_mkt:app/services/credential_service.py",
+  "dotmac_mkt:app/tasks/publish_scheduled.py",
+  "dotmac_mkt:app/web/campaigns.py",
+]
+preserved_tests = [
+  "dotmac_mkt:tests/test_marketing_models.py",
+  "dotmac_mkt:tests/test_marketing_services.py",
+  "dotmac_mkt:tests/test_web_campaigns.py",
+  "dotmac_starter_mt:tests/architecture/test_publishing_module.py",
+  "dotmac_starter_mt:tests/unit/test_publishing_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_publishing_service.py",
+  "dotmac_starter_mt:tests/test_publishing_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac-erp", "dotmac_sub"]
+authority_boundary = "dotmac-publishing owns only local publication intent, immutable release snapshots, target selection by opaque reference, attempts, normalized observations and derived aggregate state. Content/sites own editable sources. Backoffice owns authorization and target-selection policy. Kernel owns idempotency and the transactional outbox. A typed timer port wakes due releases. Integrator owns installations, bindings, credentials, provider identity, connector execution, webhook/polling, retry/checkpoints and raw transport evidence. Modules do not import siblings and applications do not share databases or writers."
+inventory_evidence = [
+  "docs/inventories/marketing-suite-sources.md",
+  "docs/inventories/publishing-extraction-dossier.md",
+  "docs/inventories/publishing-writer-retirement.toml",
+]
+first_cutover = "The Dotmac ERP product is cutover 1. It must pin a released dotmac-publishing version, compose and migrate its own tenant plane, totally classify Mkt Post/PostDelivery/Channel publication facts, backfill immutable snapshots and outcome history, shadow one complete scheduling cycle, switch one writer at a time and retire the old Mkt/provider path. Installation without writer retirement is not adoption. Sub is a later independent adopter with its own rows and lineage."
+shadow_and_drift = "For every classified Mkt Post and PostDelivery, compare snapshot digest, requested delivery time, distinct target selection, content-variant disposition, attempt order, normalized outcome, bounded error, opaque remote reference and derived aggregate state. Preserve partial and all-failed evidence instead of collapsing it. Classify provider credentials/adapters into Integrator and editable title/body/assets into content with no default bucket. Reconcile for a complete scheduled-publication cycle and require zero unexplained mismatch before any writer switch."
+local_copy_retirement = "Apply the ten-row two-directional ledger in docs/inventories/publishing-writer-retirement.toml. Retire Mkt publishing fields, PostDelivery writers, replacement/reschedule service, direct publish/update/delete calls and the 60-second SessionLocal poller only after their named module behavior is authoritative. Move Channel credentials/provider clients into Integrator and replace direct-query/commit web paths with thin Backoffice adapters. A runtime flag leaving both writers callable is not retirement."
+next_action = "Michael authorized release on 2026-08-20 without authorizing adoption, and the release is complete: kernel a81 and publishing 0.1.0a1 are registry-verified and tagged from the exact protected-main commit. Publication moved neither adoption nor the transport boundary. Backoffice remains cutover 1, has not composed the module, every PUB-R row remains not-started, and Integrator still owns provider transport; do not claim adoption until the total classifier, shadow cycle, writer switches and retirement gates pass."
+
+[[product_writers]]
+product = "dotmac_mkt"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "7f14ee598ceefed7ac3ba0963e5a36f5c4c5082d"
+evidence_paths = [
+  "app/models/post.py",
+  "app/models/post_delivery.py",
+  "app/services/post_service.py",
+  "app/services/publishing_service.py",
+  "app/tasks/publish_scheduled.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/campaign.py", "app/tasks/campaigns.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["docs/SOT_RELATIONSHIP_MAP.md", "pyproject.toml"]

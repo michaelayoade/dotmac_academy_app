@@ -1,0 +1,54 @@
+schema_version = 1
+package = "dotmac-ipam"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant address-space, pool, address, reservation, assignment, utilization and repair lifecycle"
+contract = "Create address spaces and pools; reserve, assign and release addresses against opaque product subjects; prevent collisions; record utilization observations; repair projections; return immutable snapshots and ordered evidence. NOT subscriber/service/NAS/OLT/VLAN authority, RADIUS/route projection, provider I/O or credentials."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/network.py",
+  "dotmac_sub:app/services/ip_assignment_lifecycle.py",
+  "dotmac_sub:app/services/ipam_adapter.py",
+  "dotmac_sub:app/services/network/ipam_scope.py",
+  "dotmac_sub:docs/designs/IP_ASSIGNMENT_LIFECYCLE_SOT.md",
+  "dotmac_starter_mt:packages/dotmac-ipam/src/dotmac_ipam",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_ip_assignment_lifecycle.py",
+  "dotmac_sub:tests/test_ip_assignment_repair.py",
+  "dotmac_sub:tests/test_ipam_collision_prevention.py",
+  "dotmac_sub:tests/architecture/test_ip_assignment_service_ownership.py",
+  "dotmac_starter_mt:tests/architecture/test_network_module_suite.py",
+  "dotmac_starter_mt:tests/test_network_suite_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+inventory_evidence = [
+  "docs/inventories/network-module-sources.md",
+  "docs/inventories/network-module-dispositions.toml",
+  "docs/inventories/network-module-contracts.toml",
+  "docs/adr/0038-network-capabilities-decompose-sub-first.md",
+]
+composition_boundary = "Each adopter installs the tenant-only ipam lineage locally. Products hold opaque subject correlations and call typed commands/queries; no sibling module or product ORM is imported and no cross-module FK exists."
+first_cutover = "dotmac_sub as part of the single network-suite-v1 cutover; no IPAM-only early adoption is permitted."
+shadow_and_drift = "Backfill exact address/pool/assignment state, replay Sub lifecycle parity tests, compare full typed digests and collision outcomes, and prove repair is idempotent. Live exact-service and duplicate-login parity remain an adoption gate."
+local_copy_retirement = "After the sealed suite cutover and rollback window, Sub removes local IPAM tables/writers and product adapters use only the pinned module surface. Subscriber/service correlation remains product-owned."
+next_action = "Finish the complete suite implementation and Observer canaries. Do not publish or adopt before the coordinated Sub gate has live IP parity evidence."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network.py", "app/services/ip_assignment_lifecycle.py", "app/services/ipam_adapter.py", "app/services/network/ipam_scope.py"]

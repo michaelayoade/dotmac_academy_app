@@ -1,0 +1,48 @@
+schema_version = 1
+package = "dotmac-customers"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant customer account identity, narrow profile, lifecycle, and typed Party references"
+contract = "Own customer account numbers, account lifecycle, display/profile attributes, and typed opaque references to Party identities. NOT person/organization identity, authentication, contact reachability, addresses, qualification, offers, prices, subscriptions, service lifecycle, billing, collections, usage, or network state."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_sub:app/models/subscriber.py",
+  "dotmac_sub:app/models/customer_identity.py",
+  "dotmac_sub:app/services/customer_context.py",
+  "dotmac_sub:app/services/subscriber.py",
+  "dotmac_sub:app/services/customer_portal_contacts.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_customer_context.py",
+  "dotmac_sub:tests/test_subscriber_party_binding.py",
+  "dotmac_sub:tests/test_subscriber_profile_cleanup.py",
+  "dotmac_starter_mt:tests/unit/test_customers_service.py",
+  "dotmac_starter_mt:tests/architecture/test_customers_module.py",
+  "dotmac_starter_mt:tests/test_customers_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "An adopting application pins the package, composes the cu lineage in its own database, owns sessions and authorization, and maps its Party identifiers through the typed reference seam. The module imports only dotmac-kernel."
+inventory_evidence = ["docs/inventories/isp-essential-domain-sources.md"]
+first_cutover = "Sub remains the sole writer until an authorized backfill, read-only shadow, reconciliation gate, and sealed writer cutover move customer account/profile authority to this module."
+shadow_and_drift = "Reconcile account number, lifecycle, display/profile fields, and Party-reference membership in both directions. Shadow reads never write either owner."
+local_copy_retirement = "After cutover, a two-directional ratchet reduces Sub customer account/profile writers and fallback readers to zero; Party identity and reachability remain with their existing owners."
+next_action = "Compose exact releases in Sub, implement the versioned backfill/shadow adapter, and request cutover only after drift is zero."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/subscriber.py", "app/models/customer_identity.py", "app/services/customer_context.py", "app/services/subscriber.py"]

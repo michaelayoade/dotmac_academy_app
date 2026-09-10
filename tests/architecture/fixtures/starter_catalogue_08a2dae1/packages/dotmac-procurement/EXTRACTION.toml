@@ -1,0 +1,103 @@
+schema_version = 1
+package = "dotmac-procurement"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant purchase-requisition, sourcing-event, supplier-offer, award and purchase-order commitment decisions"
+contract = "Create and freeze an internal purchase requisition; bind exact budget and approval facts; publish one active direct/selective/open-competitive sourcing event with an aware window and an immutable exact requisition-line/criteria snapshot; receive one immutable offer per supplier; score every submitted offer against every criterion and bind the selected offer to an approved award; create at most one purchase commitment from each exact requisition/award source; ingest deduplicated receipt observations as batch-atomic line/order fulfilment without writing stock. NOT Party/requester/supplier identity, annual budgets, approval policy, statutory thresholds, supplier prequalification, contract administration, Inventory, Assets, AP invoices/three-way match/payments/journals, product work, numbering, files/rendering, notifications or provider transport."
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_academy_app",
+  "dotmac_vendor_control_plane",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_erp:b969a889e8aba7255e32aa466960c22347c02fd8",
+  "dotmac_sub:510b80ca7fab4f54a57f261872f94b5e972c8eb6",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+  "dotmac_academy_app:a5e25e4e829350e503e66a03d73739529ba7da7f",
+  "dotmac_vendor_control_plane:2c4d88ab877aeae1c8d5aef0637bc013edf07aa9",
+  "dotmac_starter_mt:1c33910b2c3a20e7f75968b024970eadcf50babe",
+]
+revalidation_revisions = [
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+]
+source_paths = [
+  "dotmac_erp:app/models/procurement/purchase_requisition.py",
+  "dotmac_erp:app/models/procurement/purchase_requisition_line.py",
+  "dotmac_erp:app/models/procurement/rfq.py",
+  "dotmac_erp:app/models/procurement/rfq_invitation.py",
+  "dotmac_erp:app/models/procurement/quotation_response.py",
+  "dotmac_erp:app/models/procurement/quotation_response_line.py",
+  "dotmac_erp:app/models/procurement/bid_evaluation.py",
+  "dotmac_erp:app/models/procurement/bid_evaluation_score.py",
+  "dotmac_erp:app/models/finance/ap/purchase_order.py",
+  "dotmac_erp:app/models/finance/ap/purchase_order_line.py",
+  "dotmac_erp:app/services/procurement/requisition.py",
+  "dotmac_erp:app/services/procurement/rfq.py",
+  "dotmac_erp:app/services/procurement/quotation.py",
+  "dotmac_erp:app/services/procurement/evaluation.py",
+  "dotmac_erp:app/services/finance/ap/purchase_order.py",
+  "dotmac_sub:app/models/vendor_routes.py",
+  "dotmac_sub:app/services/vendor_project_records.py",
+  "dotmac_sub:docs/SOT_RELATIONSHIP_MAP.md",
+  "dotmac_crm:app/models/vendor.py",
+  "dotmac_crm:app/services/vendor.py",
+  "dotmac_starter_mt:packages/dotmac-procurement/src/dotmac_procurement",
+]
+preserved_tests = [
+  "dotmac_erp:tests/procurement/test_requisition_service.py",
+  "dotmac_erp:tests/ifrs/ap/test_purchase_order_service.py",
+  "dotmac_starter_mt:tests/unit/test_procurement_lifecycle.py",
+  "dotmac_starter_mt:tests/architecture/test_procurement_module.py",
+  "dotmac_starter_mt:tests/test_procurement_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac-erp", "dotmac_sub"]
+inventory_evidence = [
+  "docs/inventories/procurement-sources.md",
+  "docs/adr/0050-procurement-owns-sourcing-and-purchasing-decisions.md",
+]
+composition_boundary = "ADR-0024/0038: each adopting application exact-pins and runs one tenant-only pc lineage in its own database. The module imports kernel only. Assemblies translate local requester/supplier/item/budget/approval/receipt facts through opaque typed seams; products exchange facts through versioned APIs/webhooks and never share mod_procurement tables, ORM models, sessions or transactions."
+first_cutover = "dotmac_erp is the qualifying source and cutover 1 after its Organization-to-Tenant mapping. Backoffice is the first greenfield candidate only after ERP's real one-writer switch. Sub is a later separate adapter decision because its installation-project bidding lifecycle remains product authority; CRM's predecessor copy consolidates to Sub and is not reuse evidence."
+shadow_and_drift = "ERP remains sole writer while a versioned projection replays requisitions, RFQs, invitations, quotations, evaluations, purchase orders and receipt quantities into pc. Compare every lifecycle state, line, amount/currency, criterion/score, selected offer, approval/budget binding and cumulative received quantity. Final comparison, typed digests and authority switch run under source write locks in the single ADR-0031 transaction; a stored report or package publication cannot authorize the switch."
+local_copy_retirement = "After the sealed cutover, ERP web/API surfaces become thin adapters and its procurement/requisition/RFQ/quotation/evaluation and purchase-order decision writers reach zero under a two-directional ratchet. AP, Inventory and product adapters remain only as fact producers/consumers and may not maintain a mirrored lifecycle. Legacy tables retire only after the rollback window and all foreign-key/caller dependencies are removed or replaced by rebuildable compatibility projections."
+next_action = "Validate the canary-first package and pc lineage on Observer at the exact branch commit. Then complete ERP Organization-to-Tenant mapping and build its versioned backfill/shadow adapter. Do not publish or compose a parallel owner before the sealed ERP cutover is ready."
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["README.md", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/vendor.py", "app/services/vendor.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/procurement", "app/services/procurement", "app/services/finance/ap/purchase_order.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/vendor_routes.py", "app/services/vendor_project_records.py", "docs/SOT_RELATIONSHIP_MAP.md"]

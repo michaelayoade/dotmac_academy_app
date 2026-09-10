@@ -1,0 +1,76 @@
+schema_version = 1
+package = "dotmac-remote-access"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "greenfield-after-inventory"
+owner = "Tenant device/network remote-access requests, approval-bound grants, finite expiry and revocation evidence"
+contract = "Record a purpose-bound request for an opaque network/device target and least-privilege scope; bind an external Approval decision digest without owning it; admit one finite grant; emit provider-neutral activation/revocation intents; close expiry and revocation fail-closed; and retain immutable execution observations. NOT approval policy/decision, device command execution, network desired state, credentials, provider transport, VPN configuration or support impersonation."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt", "dotmac_integrator", "dotmac_vendor_control_plane", "dotmac_workspace", "dotmac_academy_app"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_integrator:3ecad2b8beed4dabf4809420b7f0ca04c8e200dd",
+  "dotmac_workspace:c72fe304d3c8b2a2741d111379e4c4ab0af5da57",
+  "dotmac_academy_app:40423a07a4eaa6172a36997f3276cb7a79dda343",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = ["dotmac_sub:app/services/network/ont_action_remote_access.py", "dotmac_sub:app/services/network/ont_features.py", "dotmac_sub:app/services/network/reconcile/adapters.py", "dotmac_sub:app/services/network/reconcile/planner.py"]
+preserved_tests = ["dotmac_sub:tests/test_ont_features_service.py", "dotmac_sub:tests/test_reconcile_adapters.py", "dotmac_sub:tests/test_reconcile_planner.py", "dotmac_starter_mt:tests/unit/test_remote_access.py", "dotmac_starter_mt:tests/test_sub_vnext_modules_isolation.py"]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+adoption_evidence = []
+composition_boundary = "Approvals supplies decision evidence as a value and is never imported. Network Control consumes activation/revocation intents and returns observations through the assembly/Integrator; this module never runs a command or stores a provider credential. Target references are opaque and no FK leaves mod_remoteaccess."
+inventory_evidence = ["docs/inventories/sub-vnext-parity-sources.md", "docs/inventories/sub-vnext-parity-dispositions.toml", "docs/adr/0040-sub-vnext-parity-capabilities-have-narrow-independent-owners.md"]
+source_mode_note = "Fleet search found production expiry/reconciliation behavior in Sub but no generic request/grant/revocation owner in any inspected repository. The implementation is therefore greenfield after inventory while porting Sub's finite-expiry and fail-closed parity tests as references."
+first_cutover = "Sub is cutover 1. A Network Control adapter must require an admitted module grant before toggling device access, shadow intended/observed grant state, then delete every direct bypass path."
+shadow_and_drift = "Because no legacy generic ledger exists, compare every direct device toggle during observation against an admitted module grant and require zero unexplained activations before enforcing the gate. Expired/revoked grants must produce revocation intent and deny reuse."
+local_copy_retirement = "Retire only direct device/network remote-access mutation paths that bypass the new grant. Keep Network Control reconcilers and device observations: they execute and observe, they do not own authorization."
+next_action = "Implement the tenant-only ra lineage with request/grant/observation tables, strict TTL and approval-digest checks, RLS/FORCE and expiry/revocation canaries."
+
+[[product_writers]]
+product = "dotmac_integrator"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "3ecad2b8beed4dabf4809420b7f0ca04c8e200dd"
+evidence_paths = ["src/dotmac_integrator/assembly.py", "src/dotmac_integrator/product_port.py"]
+
+[[product_writers]]
+product = "dotmac_workspace"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "c72fe304d3c8b2a2741d111379e4c4ab0af5da57"
+evidence_paths = ["README.md", "src/dotmac_workspace/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_academy_app"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "40423a07a4eaa6172a36997f3276cb7a79dda343"
+evidence_paths = ["README.md", "app/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["README.md", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/services/vpn_cache.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/services/network/ont_action_remote_access.py", "app/services/network/ont_features.py", "app/services/network/reconcile/adapters.py", "app/services/network/reconcile/planner.py"]

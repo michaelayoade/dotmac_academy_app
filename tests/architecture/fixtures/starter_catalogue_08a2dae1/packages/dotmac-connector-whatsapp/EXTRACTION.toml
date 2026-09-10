@@ -1,0 +1,171 @@
+schema_version = 1
+package = "dotmac-connector-whatsapp"
+classification = "stateless-protocol-adapter"
+status = "audit-complete"
+source_mode = "product-first"
+
+owner = "Meta WhatsApp Cloud API protocol edge: subscription challenge, exact-byte request verification, provider event identity, typed message/status/error observations, approved message-template catalogue reads and their in-process freshness policy, provider attachment constraints (type, size, caption, filename), text/template/media delivery wire shapes, provider response classification, and provider acknowledgement bytes."
+
+contract = "Implement dotmac-integration SPI >=1.4,<2.0 for connector key meta_whatsapp and capabilities messaging.receive.v1, messaging.send.v1 plus messaging.templates.read.v1. INGRESS verifies immutable request bytes and returns provider facts. POLL reads the WABA's message-template catalogue and returns typed provider observations, so the product owns a rebuildable projection of what is approved. DELIVERY receives product-decided text/template/media commands and already-materialized access material, refuses before the wire call what the provider would reject anyway (unapproved template, variable arity the catalogue does not describe, unsupported MIME type, oversize attachment, caption or filename a media type cannot carry), performs only Meta Graph wire translation and I/O, and returns typed engine outcomes. The template catalogue is memoized in process under a configured freshness policy and is never persisted: it is a rebuildable memo of provider facts, never a second authority on approval. The connector owns no rows, sessions, retries, checkpoints, product identity, customer-window decision, template selection, conversation state, tickets, subscribers, or destination decision."
+
+source_repositories = [
+  "dotmac_erp",
+  "dotmac_sub",
+  "dotmac_starter_mt",
+]
+
+source_revisions = [
+  "dotmac_sub:0324d2dcf91e2be038459e41aa013125128e9d43",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+
+source_paths = [
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:app/services/integrations/whatsapp_runtime.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:app/services/integrations/whatsapp_capability.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:app/services/integrations/whatsapp_installation.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:app/services/team_inbox_commands.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:app/services/team_inbox_media.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/test_integration_whatsapp_capability.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/test_team_inbox_attachments.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/test_team_inbox_outbound.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/test_team_inbox_start_conversation.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/test_team_inbox_whatsapp_webhook.py",
+  "dotmac_sub@0324d2dcf91e2be038459e41aa013125128e9d43:tests/architecture/test_team_inbox_boundaries.py",
+  "dotmac_starter_mt:docs/inventories/whatsapp-connector-sources.md",
+  "dotmac_starter_mt:docs/superpowers/specs/2026-08-15-meta-whatsapp-ingress-conformance.md",
+  "dotmac_starter_mt:tests/fixtures/meta_whatsapp/manifest.json",
+  "dotmac_starter_mt:packages/dotmac-connector-whatsapp/src/dotmac_connector_whatsapp/plugin.py",
+]
+
+preserved_tests = [
+  "dotmac_starter_mt:tests/unit/test_meta_whatsapp_ingress_conformance.py",
+  "dotmac_starter_mt:tests/unit/test_whatsapp_connector.py",
+  "dotmac_starter_mt:tests/architecture/test_whatsapp_connector_boundary.py",
+]
+
+# ── ADR-0024 § 8 (2026-08-24): `messaging.send.v1` is ONE contract, and the two
+# connectors behind it do not yet take the same command ─────────────────────
+#
+# Declaring the shared id rather than minting a per-connector one is CORRECT and
+# is the shape ADR-0061 § 3 points at for payments: `meta_whatsapp` and
+# `meta_social` both serve `messaging.send.v1`, so a product declares one
+# outbound messaging port and the Integrator binds a provider to it.
+#
+# DIVERGENCE, recorded because the id alone does not make them interchangeable:
+#
+#   meta_whatsapp   action `send_text | send_template | send_media`,
+#                   recipient param `recipient`
+#   meta_social     action `send_direct_message | reply_to_comment`,
+#                   recipient param `recipient_id` plus a required `channel`
+#
+# A product bound to one cannot be re-bound to the other without changing the
+# command it builds — which is a provider branch relocated into the product,
+# forbidden by ADR-0024 § 8.1/8.2. `reply_to_comment` is a genuinely different
+# act and may well deserve its own contract; a direct message is not.
+#
+# The root cause is not either connector: nothing in the SPI or the registry
+# declares a COMMAND schema at all, so nothing could have caught the drift
+# (ADR-0024 § 8.4).
+#
+# CORRECTED 2026-08-24. The sentence that followed here read:
+#
+#   "Closure is a declared command payload for `messaging.send.v1` on the SPI,
+#   then both connectors accepting it."
+#
+# Two things in it are wrong. (1) The schema does not go on the SPI's
+# `CapabilityDeclaration`: a schema published per connector makes drift
+# machine-readable rather than prevented. It belongs to the business-owned
+# `capability_registry.CapabilityContract` — `command_schema`, `result_schema`,
+# `observation_schema`, a canonical digest and deprecation/replacement metadata
+# — and a connector declaration may only CLAIM that digest (ADR-0024 § 10,
+# ADR-0061 A2). (2) `messaging.send.v1` is PUBLISHED, so converging the two
+# dialects under it would redefine a published contract version. That is
+# forbidden; the repair is SUCCESSION (ADR-0024 § 11, ADR-0061 A4):
+#
+#   messaging.direct.send.v2   provider-neutral DIRECT delivery with a
+#                              DISCRIMINATED text/template/media content shape.
+#                              This is the successor that replaces the disjoint
+#                              send_text|send_template|send_media and
+#                              send_direct_message vocabularies at once.
+#   social.comment.reply.v1    public Facebook/Instagram comment consequences —
+#                              a different business act from a direct message,
+#                              and always was.
+#   social.profile.read.v1     caller-initiated profile OBSERVATION through a
+#                              REQUEST mode. ConnectorMode is a CLOSED union of
+#                              INGRESS|POLL|DELIVERY today, so this one is
+#                              blocked on an SPI mode that does not exist.
+#
+# Sub migrates to the successors; `messaging.send.v1` is retained for a BOUNDED
+# compatibility window and then RETIRED, and both the migration and the
+# retirement are obligations carried by the old contract's deprecation metadata
+# rather than intentions. Tracked as the reopened open question in
+# packages/dotmac-integration/EXTRACTION.toml.
+#
+# FOR THIS CONNECTOR: its whole outbound surface is direct delivery, so it
+# succeeds to `messaging.direct.send.v2` and to nothing else. The
+# text/template/media split it already makes becomes the successor's
+# discriminated content shape, and the WABA template-approval and media
+# refusals it performs before the wire are connector-internal validation of that
+# shape — not a second action vocabulary.
+
+contract_consumers = []
+candidate_consumers = ["dotmac_integrator"]
+
+inventory_evidence = [
+  "docs/inventories/whatsapp-connector-sources.md",
+  "docs/inventories/whatsapp-connector-dossier.md",
+  "docs/adr/0024-apps-compose-by-synchronizing-data.md",
+  "docs/adr/0030-cloud-commerce-is-composed-from-complete-domain-owners.md",
+]
+
+first_cutover = "Sub is the first product destination, through the independently deployed dotmac_integrator assembly. The outbound connector is published after dotmac-integration 0.1.0a14, then both are exact-pinned. The assembly derives secret and egress policy from the installed manifest, runs a provider-neutral delivery pump and delivers typed messaging.receive.v1 observations to Sub's product-owned port. Sub shadows both its direct WhatsApp receiver and local Graph outbox before either authority changes; publication alone is not a cutover and does not enter contract_consumers."
+
+shadow_and_drift = "Mirror the exact raw body and signature header into Integrator without changing Sub's current response path. Compare provider event identities, observation count, event type, typed message/status/location content, and refusal reason; never compare product consequences the old source cannot express. Duplicate observations are safe only through mod_intg's binding-scoped receipt identity and the product port's own idempotency. Cut over the provider callback after the corpus and live shadow agree for the configured retry horizon, then lower Sub's external-connector ratchet in the same change that removes the displaced direct verification/normalization surface."
+
+local_copy_retirement = "Retire only Sub's provider transport surface: webhook signature verification, provider payload traversal, provider event identity construction and provider acknowledgement. Sub retains the authoritative messaging decision, contact/conversation resolution and timeline consequences behind its typed observation port. No ERPNext or CRM connector is recreated; retired product connections stay retired."
+
+next_action = "Complete and release the additive DELIVERY and POLL slice: typed provider evidence and terminal outbound-content retention in dotmac-integration, text/template/media parity plus the approved-template catalogue and attachment gates in this connector, then exact-pin both in dotmac_integrator and run its provider-neutral command intake, catalogue poll and delivery pump. Sub must declare messaging.templates.read.v1 and grow a local reader/reconciler for the whatsapp.message_template.v1 observations before its own `list_approved_templates` Graph call is retired; publication alone retires nothing. Shadow Sub's local outbox against Integrator before retiring the direct Graph client and lowering the external-connector ratchet. Move status to adopted only after ingress and outbound cutovers are both complete."
+
+# 2026-08-24 catalogue and attachment slice. Recorded here rather than in prose
+# elsewhere so the deviations travel with the dossier that authorized them.
+[extraction_notes]
+ported = [
+  "whatsapp_runtime._read_template: endpoint /{graph_version}/{waba_id}/message_templates, fields name,status,language,category,components, limit 200, optional name filter.",
+  "whatsapp_runtime._template_variables: BODY-component arity as the sorted DISTINCT {{n}} index set, pattern r'\\{\\{\\s*(\\d+)\\s*\\}\\}'.",
+  "whatsapp_runtime._ordered_template_parameters: numeric keys sorted numerically, other keys trailing in insertion order.",
+  "whatsapp_capability.list_approved_templates: case-insensitive status == 'approved', a process-local monotonic-clock memo, and a hard 300 s TTL under which stale is treated exactly as cold.",
+  "whatsapp_runtime template-read outcome codes: template_provider_unavailable, template_provider_retryable, template_provider_rejected, template_response_invalid, template_not_found, waba_id_required.",
+  "whatsapp_runtime.build_media_payload: caption on image/document/video only, filename on document only, and the 1024/255 limits.",
+  "team_inbox_media MIME normalization: split(';')[0].strip().lower(), so a charset parameter cannot defeat the comparison.",
+  "team_inbox_commands: the send is blocked when the catalogue cannot be read (fail closed).",
+  "architecture/test_team_inbox_boundaries: the ordering guard that the catalogue read precedes the committing step.",
+]
+not_present_in_sub = [
+  "Arity VALIDATION. Sub derives the placeholder count only to render form fields and never compares a submission against it, so a body needing three values is sent with one and fails at Meta as the generic template_unavailable.",
+  "A per-media-type byte limit table. Sub enforces one flat MAX_OUTBOUND_ATTACHMENT_BYTES = 10 MiB at upload-staging time, which is a product policy about what an operator may stage, not the provider's contract; it stays in Sub.",
+  "A MIME-to-media-type consistency check. Sub's flat allowlist admits image/gif, audio/wav, video/quicktime, application/zip and text/csv, which Meta accepts for no media type.",
+  "Catalogue pagination. Sub reads one page of 200 and ignores paging.next, so a large account silently truncates and a missing template is indistinguishable from an unapproved one.",
+  "A distinct reason for a non-approved template. Sub raises a generic rejection whose only distinguishing feature is an English message.",
+  "Cache eviction and bounds. Sub's dict is unbounded, leaks an entry per superseded config revision, and leaves the expired tuple in place after a failed refresh.",
+  "Any test of the catalogue fetch, the TTL, or the failure paths: list_approved_templates is monkeypatched out of every test that touches it.",
+]
+deliberate_deviations = [
+  "The upload's application/octet-stream default is RETIRED. Meta accepts that type for no media kind, so every upload it produced was streamed in full and then rejected; an upload with no declared supported type is now a local terminal refusal. The `attachment` filename default is kept.",
+  "Caption and filename over-length REFUSE instead of truncating, and a caption on audio refuses instead of being dropped. Editing product content to fit a provider constraint is a decision belonging to whoever wrote the message, not to the wire adapter.",
+  "A catalogue read timeout is RETRYABLE, not RECONCILIATION_REQUIRED. The send path keeps the ambiguous classification because a message may have landed; a catalogue GET has no effect to duplicate, and calling it ambiguous would park a message the provider never saw.",
+  "A catalogue longer than MAX_CATALOGUE_PAGES fails rather than truncating, because a short catalogue reads exactly like a withdrawn approval.",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "0324d2dcf91e2be038459e41aa013125128e9d43"
+evidence_paths = ["app/services/integrations/whatsapp_runtime.py", "app/services/integrations/whatsapp_installation.py", "tests/test_integration_whatsapp_capability.py", "tests/test_team_inbox_outbound.py", "tests/test_team_inbox_whatsapp_webhook.py"]

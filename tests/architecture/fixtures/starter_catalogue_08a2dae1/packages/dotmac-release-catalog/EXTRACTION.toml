@@ -1,0 +1,143 @@
+schema_version = 1
+package = "dotmac-release-catalog"
+classification = "optional-module"
+status = "adopted"
+source_mode = "greenfield-after-inventory"
+owner = "Dotmac published-artifact catalogue"
+# The 2026-08-12 fleet sweep measured ERP, CRM, Sub AND the vendor control
+# plane and found NO implementation of this capability anywhere — zero hits for
+# `release.channel`, `sbom`, provenance refs or digest-addressed selection, in
+# any of the four repositories or in the kernel. This is therefore not a
+# product-first extraction: there is no qualifying implementation to source.
+#
+# Hard rule 24 still applies and was still executed. The inventory is the
+# evidence that nothing qualifies, not a step skipped because the capability
+# looked new. The one adjacent implementation found is recorded below and was
+# read before this package was written.
+contract = "An immutable, digest-addressed record of a software artifact a vendor published, plus typed pointers to the attestations that vouch for it. NOT which deployment should run it, NOT a channel or a pin, NOT the bytes."
+source_repositories = ["dotmac_erp", "dotmac_crm", "dotmac_sub", "dotmac_vendor_control_plane", "dotmac_starter_mt"]
+source_paths = [
+  # The ONLY adjacent implementation in the fleet: Sub's device-firmware
+  # catalogue. Read for requirements, sourced from for nothing. It is a
+  # different domain (OLT/ONT firmware images pushed to network hardware), it
+  # has no channels, pins, compatibility ranges, provenance or digest-addressed
+  # identity, and its ~277 LOC are an admin surface over two tables rather than
+  # a catalogue contract. Listed because the audit required inventorying it.
+  "dotmac_sub:app/models/network.py",
+  "dotmac_sub:app/services/web_network_firmware_catalog.py",
+  "dotmac_sub:app/web/admin/network_firmware_catalog.py",
+  # The shape precedent for an immutable platform catalog table with grants
+  # rather than RLS, followed here. Not a source for this capability — the
+  # vendor CP has no release catalogue — but the migration pattern is copied
+  # deliberately rather than reinvented.
+  "dotmac_vendor_control_plane:alembic/versions/v002_offer_versions.py",
+  "dotmac_starter_mt:packages/dotmac-release-catalog/src/dotmac_release_catalog",
+]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_vendor_control_plane:0c77e85c7f54538e69061614c8de42ad0f6d2332",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+preserved_tests = [
+  # Nothing to preserve: no source implementation means no behavioural proof to
+  # port. The tests below are this module's own, written with the code.
+  "dotmac_starter_mt:tests/unit/test_release_catalog_identity.py",
+  "dotmac_starter_mt:tests/architecture/test_release_catalog_module.py",
+]
+contract_consumers = ["dotmac_vendor_control_plane"]
+candidate_consumers = []
+adoption_evidence_schema = "v1"
+inventory_evidence = [
+  "docs/inventories/fleet-decomposition-matrix.md",
+  "docs/superpowers/plans/2026-08-12-vendor-cp-composable-parts.md",
+]
+first_cutover = "Completed 2026-08-17 in dotmac_vendor_control_plane. Vendor exact-pins dotmac-release-catalog 0.1.0a4, composes rl_0001 on the platform plane, and runs the catalogue as its only release-evidence authority in production at vendor.dotmac.io. Sub 7.187.1 release evidence was ingested as artifact 9094efe1-7cab-4fc7-a2f6-c1787e452e14 plus attestation db269812-d99b-4529-9270-9435a8249124; the held manifest digest was verified from disk, the runtime resolved all five declared capabilities through the exact pin, and an undeclared-code negative control failed closed. app_user has no mod_rel privileges. Deploy run 32022599873 proves the running consumer at main f8f8c3fd636e663e4a17275c19e82fc1667aa52a and immutable image sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc."
+shadow_and_drift = "No shadow phase and no drift window: there is no existing implementation to run beside, and no rows to migrate. The parity question this package replaces is a design one — whether the deferred channel/pin half can be added without reshaping what ships here — answered by keeping selection OUT of the module entirely, so adding channels later adds tables rather than changing these two."
+local_copy_retirement = "Complete for cutover 1. The Vendor assembly has no release-artifact table or local catalogue writer: vendor_cp.release_evidence is a thin typed ingestion adapter over the module's publish/attest seams, and scripts/catalogue_product_release.py is its operator boundary. The exact runtime pin is operator-owned desired state rather than a second catalogue. The remaining inverse obligation is unchanged: licence_delivery_targets must not become artifact or deployment authority while the fleet slice is still separate."
+next_action = "Hold `adopted` until a second real vendor or OEM control plane consumes the same contract; only that independent consumer can earn `reuse-proven`, because product data planes are deliberately isolated from mod_rel. Do not manufacture a second consumer or add channels, pins or artifact selection before update authority exists. Keep the Vendor production evidence current when its first-adopter implementation changes."
+
+[[product_writers]]
+product = "dotmac_vendor_control_plane"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0c77e85c7f54538e69061614c8de42ad0f6d2332"
+evidence_paths = ["src/vendor_cp/release_evidence/service.py", "src/vendor_cp/assembly.py"]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["docs/ARCHITECTURE.md"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["README.md", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/network.py", "app/services/web_network_firmware_catalog.py", "app/web/admin/network_firmware_catalog.py"]
+
+# CUT: `dotmac_sub:production-deploy#32009246911`. Sub is not a contract
+# consumer of this package and no assertion here cites Sub's tree, so that run
+# was an observation with nothing behind it — an attestation floating free of
+# any claim, which is the shape the cohesion rule now refuses outright.
+[[adoption_evidence]]
+kind = "pinned_at"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+path = "pyproject.toml"
+field = "tool.poetry.dependencies.dotmac-release-catalog.version"
+expected = "0.1.0a4"
+
+[[adoption_evidence]]
+kind = "deploy_run"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+run_id = "32022599873"
+observed = "success"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "Re-observed against the API: this run's head_sha IS the commit above. 'Deploy immutable image to production'."
+
+[[adoption_evidence]]
+kind = "image_digest"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+digest = "sha256:56ec553139c449dc7da46a8873b3c03e95a61e43c970cd1675e28a202b2991cc"
+observed = "deployed to production by the run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "The registry path used to sit in the `repository` slot, where a machine reading this file would look for a repository name. `repository` now names the PRODUCING product and the content address is the digest."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+subject = "mod_relcat"
+observed = "the composed release-catalogue lineage applied by the production deploy run above"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "One dated row replaces the two undated strings that used to make this claim twice. Derived from the deploy run rather than from a direct read of the production database, which is why it is an attestation and not an assertion."
+
+[[adoption_evidence]]
+kind = "live_observation"
+repository = "dotmac_vendor_control_plane"
+commit = "f8f8c3fd636e663e4a17275c19e82fc1667aa52a"
+subject = "release_artifacts:9094efe1-7cab-4fc7-a2f6-c1787e452e14"
+observed = "artifact row written by the production catalogue, with attestation db269812-d99b-4529-9270-9435a8249124"
+observed_at = "2026-08-17"
+observed_by = "michaelayoade"
+note = "Two `catalog-*@<uuid>` strings collapsed into one dated observation of the row and its attestation. A bare UUID names no system and no moment."
+
+[[adoption_evidence_pointer]]
+subject = "current_pin"
+repository = "dotmac_vendor_control_plane"
+paths = ["pyproject.toml", "poetry.lock"]
+field = "tool.poetry.dependencies.dotmac-release-catalog.version"
+note = "The rows above are history. The Vendor control plane's BOM is the only authority for what it installs today, and this dossier holds no copy of it — at commit af9fcf6d the plane had already moved past several of the versions recorded above."

@@ -1,0 +1,57 @@
+schema_version = 1
+package = "dotmac-service-orders"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Service-delivery orders and the activation-readiness decision"
+contract = "Own the service-delivery order lifecycle and the append-only readiness decision made from normalized delivery observations. Commercial identifiers, customer identity, specification and service references are opaque. NOT commercial order capture, fulfillment saga mechanics, field work execution, realized service lifecycle, provisioning transport, addressing or network enforcement."
+source_repositories = ["dotmac_sub", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:9493ee4eef737f18b4813899a2d8f0537ed6d5c7",
+]
+revalidation_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0e40d7996abf2da68e866b156a56fa1fde1fd56b",
+]
+source_paths = [
+  "dotmac_sub:app/models/provisioning.py",
+  "dotmac_sub:app/services/provisioning_lifecycle.py",
+  "dotmac_sub:app/services/service_order_lifecycle.py",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_provisioning_lifecycle.py",
+  "dotmac_sub:tests/test_sales_to_service_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_service_orders_service.py",
+  "dotmac_starter_mt:tests/architecture/test_service_orders_module.py",
+  "dotmac_starter_mt:tests/test_service_orders_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub"]
+composition_boundary = "Adopters compose so locally and supply readiness observations through commands. Commercial order, customer, specification, service and evidence identifiers are opaque references; no sibling module import or foreign application database read is permitted."
+inventory_evidence = ["docs/inventories/customer-journey-owner-sources.md"]
+first_cutover = "Sub remains the service-order and readiness owner until history backfill, read-only shadow and zero-drift decision comparison complete and a separately authorized writer switch occurs."
+shadow_and_drift = "Compare order identity and status, decision command/correlation identity, decision status and reason code, and the full check set by kind/result/reason/source; project, task, work-order and IP-assignment state itself remains outside."
+local_copy_retirement = "After cutover, reduce Sub's readiness decision writers and service-order status writers to zero while retaining Projects, Work Orders and Network Access as observation sources."
+next_action = "Compose in Sub and implement the versioned decision/check backfill plus the zero-drift shadow evaluator."
+
+# Typed product claim. Sub is the qualifying source — these owners are extracted
+# FROM Sub's implementation, which is what `source_mode = "product-first"` and
+# the Sub source paths above already say. Stating it as a typed field is what
+# lets Governance check a claim about Sub rather than take one on trust.
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/models/provisioning.py",
+  "app/services/provisioning_lifecycle.py",
+  "app/services/service_order_lifecycle.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "no_writer"
+retirement_required = false
+revision = "0e40d7996abf2da68e866b156a56fa1fde1fd56b"
+evidence_paths = []

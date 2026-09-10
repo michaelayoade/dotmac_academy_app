@@ -1,0 +1,93 @@
+schema_version = 1
+package = "dotmac-surveys"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Tenant-scoped survey definition, invitation identity, response evidence, answer validation, and rebuildable feedback aggregates"
+contract = "Create draft survey definitions over the tested rating, NPS, multiple-choice and free-text question vocabulary; activate, pause, reactivate and close them under guarded lifecycle rules; issue one durable tracked invitation for an opaque recipient and owner-produced source event; capture at most one immutable response per tracked invitation plus explicitly public responses; validate answers, rating and NPS authoritatively; and rebuild invitation count, response count, mean rating and NPS from canonical rows. Every mutation participates in the caller's transaction and flushes without commit or rollback. NOT subject eligibility, audience selection, ticket/work-order/service/conversation/employee lifecycle, rerating policy, product identity, delivery/channel/provider state, agent or technician performance, business consequences, or retention policy."
+source_repositories = [
+  "dotmac_sub",
+  "dotmac_crm",
+  "dotmac_erp",
+  "dotmac_starter_mt",
+]
+source_revisions = [
+  "dotmac_sub:3f8d74825bee47b98c3c532229b72f3a8a5b16aa",
+  "dotmac_crm:c64b5aa0f7902b52e7ef73cf26f3f88687ed849d",
+  "dotmac_erp:0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf",
+  "dotmac_starter_mt:92ae7a6f9c8307797704deb615a24e59420a73c4",
+]
+revalidation_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/models/comms.py",
+  "dotmac_sub:app/schemas/comms.py",
+  "dotmac_sub:app/services/surveys.py",
+  "dotmac_sub:app/services/events/handlers/surveys.py",
+  "dotmac_sub:docs/designs/SURVEY_LIFECYCLE_AND_CREATION.md",
+  "dotmac_sub:app/services/support.py",
+  "dotmac_crm:app/services/surveys.py",
+  "dotmac_crm:app/services/crm/inbox/csat.py",
+  "dotmac_erp:app/models/people/hr/survey.py",
+  "dotmac_erp:app/services/people/hr/survey_service.py",
+  "dotmac_starter_mt:packages/dotmac-surveys/src/dotmac_surveys",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_surveys.py",
+  "dotmac_sub:tests/architecture/test_survey_boundary.py",
+  "dotmac_sub:tests/test_ticket_csat.py",
+  "dotmac_crm:tests/test_csat_send_failure_isolation.py",
+  "dotmac_crm:tests/test_csat_retry_task.py",
+  "dotmac_starter_mt:tests/unit/test_surveys_lifecycle.py",
+  "dotmac_starter_mt:tests/unit/test_surveys_service.py",
+  "dotmac_starter_mt:tests/architecture/test_surveys_module.py",
+  "dotmac_starter_mt:tests/test_surveys_isolation.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_erp"]
+composition_boundary = "ADR-0024 and ADR-0053: every adopter installs its own sv lineage and owns only its local feedback rows. A subject owner decides eligibility, recipient, rerating and consequences, then its application adapter asks dotmac-surveys to issue an invitation using bounded opaque recipient_ref, source_owner, source_event_id and subject_ref values. The module has no product foreign key, imports neither the assembly nor a sibling module, and cannot mutate a ticket, work order, service, conversation or employee. Delivery is requested through the product outbox and remains with delivery/Integrator; the module owns no channel, provider, attempt or retry state."
+inventory_evidence = [
+  "docs/inventories/surveys-sources.md",
+  "docs/adr/0053-surveys-own-feedback-evidence-not-subject-consequences.md",
+  "docs/inventories/module-extraction-sources.md",
+]
+first_cutover = "dotmac_sub is cutover 1 because communications.surveys is the only checked-in named owner with focused typed lifecycle, response and architecture proof. Sub composes the tenant sv lineage, maps existing definitions/invitations/responses with an explicit operator tenant, and uses product adapters from ticket.resolution_confirmed and work_order.field_outcome_recorded without moving either trigger vocabulary into the module. The separate support.ticket_lifecycle metadata.csat writer is shadowed in the same slice and retired only after the ticket read projection resolves the module response fact. CRM retires through Sub and is not a consumer. ERP is cutover 2 after focused characterization of HR anonymity, date-window eligibility, response identity, all six local question types and aggregates; targeting, employee identity and HR consequences stay in ERP."
+shadow_and_drift = "For every Sub definition, compare normalized name/slug/question order and lifecycle; for every eligible owner event, compare the selected survey, opaque recipient/subject mapping and one-invitation semantic identity; for every tracked/public response, compare refusal reason, normalized answers, rating, NPS and aggregate projections. Expected deltas are classified before cutover: tenant_id and FORCE RLS are new; product FKs and trigger enums leave the module; provider delivery state remains in Sub's outbox; activated definitions become immutable; response evidence replaces mutable Ticket metadata CSAT; aggregates use exact Decimal rather than CRM float. Backfill never infers eligibility from timestamps and never copies raw provider payloads. Cutover requires zero unexplained differences, PostgreSQL cross-tenant proof and one sealed response writer."
+local_copy_retirement = "After Sub's one-writer seal, retire the Survey/SurveyInvitation/SurveyResponse persistence and generic writers in app.models.comms and app.services.surveys, plus the mutable Ticket metadata.csat writer. Retain thin Sub adapters for survey selection, subject eligibility, public presentation, audit/event declarations and consequences. CRM's generic fork, conversation CSAT delivery engine and tasks retire through the existing CRM-to-Sub programme; delivery/retry functionality relocates only to the established delivery/Integrator owners, never into this module. ERP later retires only its overlapping definition/question/response/aggregate persistence after HR policy adapters are proven. Two-directional model/caller/table ratchets reach zero before any local owner is declared retired."
+next_action = "Validate the audit-complete package on Observer in a fresh worktree pinned to the exact branch commit. Then land Sub's expand migration and typed composition adapter as the first adoption slice. Keep kernel a84 and Surveys a1 unpublished until that proof. Do not compose dotmac-surveys from the Starter reference assembly, and do not add routers, product trigger enums, delivery, targeting, workforce policy, performance scoring or retention behavior without an adopter-owned contract and canaries."
+
+# Typed product claims. Sub was rostered in Governance as having no scheduled
+# ISP work; this dossier's own `first_cutover` opens "dotmac_sub is cutover 1".
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = [
+  "app/models/comms.py",
+  "app/services/surveys.py",
+  "app/services/events/handlers/surveys.py",
+]
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = [
+  "app/models/comms.py",
+  "app/services/surveys.py",
+  "app/services/crm/inbox/csat.py",
+]
+
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "0f4b1698ddbf27a04f4562ecdaf8b93f19c3debf"
+evidence_paths = [
+  "app/models/people/hr/survey.py",
+  "app/services/people/hr/survey_service.py",
+]

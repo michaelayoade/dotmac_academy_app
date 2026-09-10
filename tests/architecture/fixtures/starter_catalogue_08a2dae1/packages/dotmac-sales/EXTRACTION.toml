@@ -1,0 +1,62 @@
+schema_version = 1
+package = "dotmac-sales"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Commercial intent from Lead qualification through an immutable accepted Quote and its versioned owner-output handoff"
+contract = "Own tenant-scoped pipelines, stages, Leads, append-only Lead-origin evidence, Quote authoring, exact money, discount revisions, Quote lifecycle and exactly-once acceptance. Acceptance freezes one canonical snapshot and publishes sales.accepted-quote.v1. Stop there: never create, import or identify a subscriber, SalesOrder, project, work order, invoice, service or campaign; never own delivery transport."
+source_repositories = ["dotmac_sub", "dotmac_crm", "dotmac_erp", "dotmac_starter_mt"]
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+  "dotmac_crm:60daaa2dd305696636632f48505ab784110a55d2",
+]
+source_paths = [
+  "dotmac_sub:app/models/sales.py",
+  "dotmac_sub:app/services/sales/quote_authoring.py",
+  "dotmac_sub:app/services/sales/quote_acceptance.py",
+  "dotmac_sub:docs/designs/SALES_TO_SERVICE_LIFECYCLE_SOT.md",
+  "dotmac_crm:app/models/sales.py",
+  "dotmac_crm:docs/designs/CRM_WEB_RETIREMENT.md",
+  "dotmac_crm:docs/audits/crm_web_retirement_ledger.json",
+  "dotmac_starter_mt:packages/dotmac-sales/src/dotmac_sales",
+]
+preserved_tests = [
+  "dotmac_sub:tests/test_quote_authoring.py",
+  "dotmac_sub:tests/test_quote_acceptance.py",
+  "dotmac_sub:tests/test_sales.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_sub", "dotmac_crm"]
+composition_boundary = "ADR-0024: each adopter installs and migrates its own sa lineage. Applications share AcceptedQuoteHandoffV1 over a versioned boundary; they never share mod_sales rows or read another application's database. Sales imports neither an assembly nor another module. Subject, actor and delivery arrive through typed product-neutral ports."
+inventory_evidence = [
+  "docs/inventories/sales-sources.md",
+  "docs/inventories/sales-caller-inventory.md",
+  "docs/inventories/sales-extraction-dossier.md",
+  "docs/inventories/sales-parity-and-canaries.md",
+  "docs/inventories/sales-retirement-ledger.md",
+  "docs/adr/0033-sales-authority-stops-at-an-accepted-quote.md",
+]
+first_cutover = "dotmac_sub is cutover 1 because it is the qualifying production-used and tested source. Install sa, backfill in-scope state, run read-only shadow comparisons and reconcile every mismatch before switching one writer family at a time. CRM supplies parity and retirement evidence only; it cannot become a second owner."
+shadow_and_drift = "Compare every Sub row's tenant, lifecycle, stage/probability, subject reference, origin identity/evidence, Quote currency/expiry/lines, exact subtotal/discount/tax/total and discount history. Dual-run authoring and acceptance against captured fixtures while only legacy performs live consequences; compare canonical accepted snapshots. Prove one handoff under replay/concurrency, rollback-safe output, cross-tenant refusal and zero mutable accepted rows."
+local_copy_retirement = "After Sub reconciliation, replace its Lead/Pipeline/Quote writers with thin adapters and retire acceptance consequences in favor of a downstream-owned handoff consumer. Then remove corresponding CRM routes, jobs, webhooks and writers. Keep campaigns unverified and untouched; keep SalesOrder/order-line ownership outside. No permanent mirror, parallel writer or forked lifecycle."
+next_action = "Implementation and the prescribed check, unit/architecture and PostgreSQL canaries are green in the dedicated Starter worktree. The sales namespace allocation is combined with the checked-in kernel 0.1.0a70 candidate and this package now declares that exact floor. Accept and publish kernel a70 first, then release sales just in time for Sub backfill, shadow comparison and reconciliation. The concurrent module workstreams own the generic SQLite harness repair exposed by the eleventh imported module; do not duplicate it here. Do not cut over or retire CRM writers before the release and adoption evidence is accepted."
+
+[[product_writers]]
+product = "dotmac_crm"
+writer_state = "legacy_writer"
+retirement_required = true
+revision = "60daaa2dd305696636632f48505ab784110a55d2"
+evidence_paths = ["app/models/crm/sales.py", "app/services/crm/sales/service.py"]
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/ar/customer.py", "docs/SOT_RELATIONSHIP_MAP.md"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/sales.py", "app/services/sales/quote_authoring.py", "app/services/sales/quote_acceptance.py", "docs/designs/SALES_TO_SERVICE_LIFECYCLE_SOT.md"]

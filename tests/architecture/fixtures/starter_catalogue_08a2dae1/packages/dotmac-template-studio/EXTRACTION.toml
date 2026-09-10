@@ -1,0 +1,64 @@
+schema_version = 1
+package = "dotmac-template-studio"
+classification = "optional-module"
+status = "audit-complete"
+source_mode = "product-first"
+owner = "Dotmac template capability"
+# The 2026-08-10 audit found the claimed two-kind contract does not hold: ERP
+# documents and Sub notifications disagree on placeholder syntax, engine class,
+# identity dimension and missing-variable policy. This package narrows to ONE
+# decision — what the message says. Deciding whether it may be sent (consent),
+# over what (channel policy), actually sending it (delivery) and producing a
+# traceable document are four SEPARATE foundation owners with their own dossiers;
+# see the audit's "Audit outcome, part 2 — the capability map".
+contract = "Tenant-authored, safely rendered notification templates: authoring, versioning, publication and render to (subject, body). Not consent, not routing, not delivery, not documents."
+source_repositories = ["dotmac_erp", "dotmac_sub", "dotmac_starter_mt"]
+
+source_revisions = [
+  "dotmac_sub:457882482cc938bfe70f48ca2fb282dab98beee6",
+  "dotmac_erp:0dc07e4b6dd36260c9510a7115dbdc656e2a19a5",
+]
+source_paths = [
+  "dotmac_erp:app/models/finance/automation/document_template.py",
+  "dotmac_erp:app/services/automation/document_generator.py",
+  "dotmac_erp:app/services/automation/safe_template.py",
+  "dotmac_sub:app/models/notification.py",
+  "dotmac_sub:app/services/web_notifications.py",
+  "dotmac_sub:app/services/notification_template_renderer.py",
+  "dotmac_starter_mt:packages/dotmac-template-studio/src/dotmac_template_studio",
+]
+preserved_tests = [
+  "dotmac_erp:tests/integration/services/test_document_generator.py",
+  "dotmac_erp:tests/services/test_workflow_engine.py",
+  "dotmac_erp:tests/e2e/test_automation.py",
+  "dotmac_sub:tests/test_notification_template_renderer.py",
+  "dotmac_sub:tests/test_email_services.py",
+  "dotmac_sub:tests/test_settings_seed_services.py",
+  "dotmac_starter_mt:tests/architecture/test_template_studio_module.py",
+  # Sub's 7 renderer tests, PORTED 2026-08-10 with the code they prove
+  # (ADR-0006 5b). The header of that file records what changed in the port and
+  # why each change is faithful rather than a weakening.
+  "dotmac_starter_mt:tests/unit/test_template_studio_renderer.py",
+]
+contract_consumers = []
+candidate_consumers = ["dotmac_erp", "dotmac_sub"]
+inventory_evidence = [
+  "docs/inventories/module-extraction-sources.md",
+  "docs/inventories/template-studio-source-audit.md",
+]
+first_cutover = "Sub, on the notification contract only, once the renderer is re-based per ADR-0006 5b. The package cannot receive Sub's rows as built: its double-brace substitution syntax is the syntax Sub rejects at save time after it leaked a literal placeholder to customers."
+shadow_and_drift = "Sub's 7 notification_template_renderer tests are the parity proof; shadow rendering against the live single-brace renderer is required before Sub retires its local writer."
+next_action = "ADR-0006 5b is implemented: kind=document is dropped, the renderer is re-based on Sub's single-brace allowlisted contract with its seven tests ported, identity is (tenant, slug, channel), the RenderContext registry and never-clobber executable-spec seeding mechanism ship, and ts_0002 carries the narrowed identity. To reach `adopted`, exact-pin the release in Sub, seed and shadow its notification templates, then retire the local renderer in the same sealed cutover. `reuse-proven` follows only when a second consumer moves onto an exact pin. Out of this package by ruling (5c): consent/suppression, channel policy, delivery/outbox and document generation are four separate foundation owners, each needing its own dossier, with consent sequenced before delivery. Do not absorb them here."
+local_copy_retirement = "The selected source product must consume the released module and retire or gate its local writer before a second product cutover."
+[[product_writers]]
+product = "dotmac_erp"
+writer_state = "inventory_only"
+retirement_required = false
+revision = "0dc07e4b6dd36260c9510a7115dbdc656e2a19a5"
+evidence_paths = ["app/models/finance/automation/document_template.py", "app/services/automation/document_generator.py", "app/services/automation/safe_template.py"]
+[[product_writers]]
+product = "dotmac_sub"
+writer_state = "qualifying_source"
+retirement_required = true
+revision = "457882482cc938bfe70f48ca2fb282dab98beee6"
+evidence_paths = ["app/models/notification.py", "app/services/web_notifications.py", "app/services/notification_template_renderer.py"]
