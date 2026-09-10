@@ -82,6 +82,39 @@ jobs:
       - name: Lint (ruff)
         run: poetry run ruff check .
 
+      # Positioned where a `ruff format`/`ruff format --check` step would sit
+      # if this job ran one — it does not today (only `ruff check .` above),
+      # so the "runs after formatting" guarantee this step exists to provide
+      # is VACUOUS here: there is no format step in this job for it to
+      # follow, only a place already correct for the day one is added. Do
+      # not read this step's presence as proof formatting is exercised.
+      #
+      # Same job, same runner as any future format step — deliberately not a
+      # separate job with a `needs:` edge, which would serialise the graph
+      # and make unrelated jobs hostage to this one.
+      #
+      # A second copy of this same check lives at the architecture-test
+      # level (tests/architecture/test_strict_json_evidence_documents.py)
+      # and is not redundant with this step: this step catches a formatter
+      # that mangled a document during THIS run; the architecture test
+      # catches a document that arrived already broken by any other route
+      # (a hand edit, an editor's own auto-format, a bad merge) on any run,
+      # including one where this CI step itself was skipped or changed.
+      - name: Strict-JSON evidence documents parse
+        if: '!cancelled()'
+        run: |
+          python3 -c "
+          import json
+          from pathlib import Path
+          paths = [
+              Path('docs/kernel-runtime-composition.json'),
+              Path('docs/kernel-runtime-readiness.json'),
+          ]
+          for path in paths:
+              json.loads(path.read_text(encoding='utf-8'))
+          print(f'{len(paths)} strict-JSON evidence document(s) parse cleanly')
+          "
+
       - name: Type check (mypy)
         if: '!cancelled()'
         run: poetry run mypy

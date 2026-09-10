@@ -21,19 +21,37 @@ That configuration removes the hazard at its source. This module is the
 independent check that does not trust the configuration to have worked: it
 runs `json.load` directly against the actual committed bytes of every
 strict-JSON evidence document and fails, naming the path, on any parse
-error. In this repository's own `ci.yml` pipeline, `pytest` runs last — after
-`ruff check .`, `mypy`, the CSS build, and `pip-audit` — so this check
-structurally runs after any formatting step a future pipeline change might
-add earlier; nothing here needs to independently re-order CI, only avoid
-running before such a step could.
+error.
 
-Academy's own `ci.yml` does not invoke `ruff format` at all today (only
-`ruff check .`, `.github/workflows/ci.yml:83`), and this repository carries
-no `.pre-commit-config.yaml`. That means today's green Academy CI reflects
-the gate never walking a formatter over these files, NOT the gate walking
-formatting and the JSON surviving it — the fix above is still required so
-the next person who adds a format gate (exactly what happened in the ERP
-lane) does not reintroduce this defect silently.
+Two places run this same underlying check, deliberately, and neither is a
+redundant copy of the other:
+
+* `.github/workflows/ci.yml`'s `test` job carries a "Strict-JSON evidence
+  documents parse" STEP, in the same job and runner as `ruff check .`,
+  positioned where a `ruff format`/`ruff format --check` step would sit if
+  this job ran one. It catches a formatter that mangled a document DURING
+  THAT RUN, before any later step (including this file's own `pytest` run)
+  could mask it — the ordering the ERP/Sub finding requires. Academy's `test`
+  job does not run `ruff format` today (only `ruff check .`,
+  `.github/workflows/ci.yml:83`), so that ordering guarantee is currently
+  VACUOUS — there is no format step for this step to follow, only a
+  correctly-chosen place for the day one is added. Say this plainly rather
+  than implying a guarantee the workflow does not yet provide.
+* This architecture test (run by `pytest`, the last step in that same job)
+  catches a document that arrived already broken by ANY OTHER ROUTE — a hand
+  edit, an editor's own auto-format, a bad merge, or the CI step above having
+  been skipped, changed, or removed. It is the one of the two that still
+  fires even if the CI step is deleted by someone who does not realize it is
+  load-bearing.
+
+Academy's own `ci.yml` invokes no `ruff format` step at all today, and this
+repository carries no `.pre-commit-config.yaml` (confirmed: `git ls-files`
+and a recursive search for the filename both return nothing). That means
+today's green Academy CI reflects the gate never walking a formatter over
+these files, NOT the gate walking formatting and the JSON surviving it —
+the fix above is still required so the next person who adds a format gate
+or a pre-commit hook (exactly what happened in the ERP lane) does not
+reintroduce this defect silently.
 """
 
 from __future__ import annotations
