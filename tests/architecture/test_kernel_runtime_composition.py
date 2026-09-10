@@ -47,11 +47,13 @@ RECORD_PATH = ROOT / "docs" / "kernel-runtime-composition.json"
 PACKAGES_ROOT = Path(__file__).resolve().parent / "fixtures" / "starter_catalogue_08a2dae1" / "packages"
 STARTER_REVISION = "08a2dae1b1f6510e9d1076ac9dbd6eca0db06137"
 EXPECTED_PRODUCT = "dotmac_academy_app"
+#: The shared, cross-product envelope (ERP/Sub records use the identical
+#: shape) — `product` and `starter_catalogue_revision` mandatory, no stored
+#: count of anything derivable from `records` itself.
 EXPECTED_TOP_LEVEL_KEYS = {
     "schema_version",
     "product",
-    "starter_protected_main_revision",
-    "catalogue_size",
+    "starter_catalogue_revision",
     "records",
 }
 RECORD_REQUIRED_KEYS = {
@@ -261,12 +263,19 @@ def _validate_record(record: dict[str, Any]) -> None:
         f"(missing: {EXPECTED_TOP_LEVEL_KEYS - set(record.keys())})"
     )
     assert record["schema_version"] == cs.CURRENT_SCHEMA_VERSION
+    assert record["product"], "product is mandatory and must not be empty"
     assert record["product"] == EXPECTED_PRODUCT
-    assert record["starter_protected_main_revision"] == STARTER_REVISION
+    assert len(record["starter_catalogue_revision"]) == 40, (
+        "starter_catalogue_revision must be the full 40-character commit SHA, "
+        f"not {record['starter_catalogue_revision']!r}"
+    )
+    assert record["starter_catalogue_revision"] == STARTER_REVISION
+    # No stored count of anything len(records) already derives — a cached
+    # number is pure drift risk once the row set changes.
+    assert "catalogue_size" not in record, "catalogue_size must not be stored; derive it from records"
 
     universe = cs.derive_distribution_universe(PACKAGES_ROOT)
     universe_by_name = {d.distribution: d for d in universe}
-    assert record["catalogue_size"] == len(universe)
 
     records = record["records"]
     seen: set[str] = set()
@@ -356,6 +365,35 @@ def test_every_catalogue_distribution_has_exactly_one_record() -> None:
     universe = cs.derive_distribution_universe(PACKAGES_ROOT)
     recorded = {r["distribution"] for r in record["records"]}
     assert recorded == {d.distribution for d in universe}
+
+
+# ---------------------------------------------------------------------------
+# Control: the shared cross-product envelope — mandatory `product`, mandatory
+# full-length `starter_catalogue_revision`, and no stored count of anything
+# `records` already derives (a plant that a future record cannot drift back
+# to a cached, driftable `catalogue_size`).
+# ---------------------------------------------------------------------------
+
+
+def test_stored_catalogue_size_is_rejected() -> None:
+    record = copy.deepcopy(_load_record())
+    record["catalogue_size"] = len(record["records"])
+    with pytest.raises(AssertionError, match="catalogue_size"):
+        _validate_record(record)
+
+
+def test_empty_product_is_rejected() -> None:
+    record = copy.deepcopy(_load_record())
+    record["product"] = ""
+    with pytest.raises(AssertionError, match="mandatory"):
+        _validate_record(record)
+
+
+def test_truncated_revision_is_rejected() -> None:
+    record = copy.deepcopy(_load_record())
+    record["starter_catalogue_revision"] = record["starter_catalogue_revision"][:7]
+    with pytest.raises(AssertionError, match="40-character"):
+        _validate_record(record)
 
 
 # ---------------------------------------------------------------------------

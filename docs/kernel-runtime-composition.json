@@ -1,8 +1,7 @@
 {
   "schema_version": "dimensional-composition.v2",
   "product": "dotmac_academy_app",
-  "starter_protected_main_revision": "08a2dae1b1f6510e9d1076ac9dbd6eca0db06137",
-  "catalogue_size": 95,
+  "starter_catalogue_revision": "08a2dae1b1f6510e9d1076ac9dbd6eca0db06137",
   "records": [
     {
       "schema_version": "dimensional-composition.v2",
