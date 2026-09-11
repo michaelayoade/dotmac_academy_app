@@ -8,7 +8,7 @@ from pathlib import Path
 from dotmac_ui import static_dir
 from fastapi.testclient import TestClient
 
-from app.assembly import academy_feature, assembly
+from app.assembly import PRODUCT_ID, academy_feature, assembly
 from app.config import ACADEMY_CONTENT_SECURITY_POLICY
 from app.main import app
 from app.ui import UI_STYLESHEET_URL
@@ -25,7 +25,8 @@ def test_main_does_not_construct_fastapi_or_register_runtime_controls() -> None:
 
 
 def test_assembly_declares_academy_domain_without_claiming_migration_lineage() -> None:
-    assert assembly.name == "dotmac_academy_app"
+    assert PRODUCT_ID == "dotmac-academy"
+    assert assembly.name == PRODUCT_ID
     assert assembly.tenancy == "single"
     assert assembly.platform_surface_enabled is False
     assert assembly.modules == (academy_feature,)

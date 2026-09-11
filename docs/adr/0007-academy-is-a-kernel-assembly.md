@@ -83,3 +83,17 @@ Kernel 0.1.0a38 completed the former platform-surface, startup-hook, and product
 security-policy follow-ups. The a32 compatibility adapters are retired in this
 cutover; no parallel route filter, settings mutation, or browser-header writer
 remains in Academy.
+
+## Amendment — 2026-09-11: product identity is not a repository coordinate
+
+Academy's stable product identity is `dotmac-academy`. The underscore-form
+`dotmac_academy_app` remains the source-repository, Python-distribution, and
+legacy readiness-record coordinate. These are two typed identifiers, not two
+spellings to normalize between: `ProductAssemblySpec.name` consumes
+`app.assembly.PRODUCT_ID`, while repository-facing contracts continue to use
+`dotmac_academy_app` explicitly.
+
+This distinction prevents a repository rename or packaging convention from
+silently changing the identity carried by Academy's assembled product. The
+Kernel composition-observation contract verifies both values independently and
+refuses any attempt to substitute one for the other.
