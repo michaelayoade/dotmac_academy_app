@@ -91,3 +91,16 @@ placement.
   from kernel a38's `ProductSecurityPolicy` contract.
 - The remaining cross-tenant tests are deliberate database isolation canaries,
   not a statement that the product currently supports multiple tenants.
+
+## Amendment — 2026-09-11: production dependencies have one checked-in profile
+
+Academy's checked-in systemd processes use the repository-local `.venv`.
+`deploy/install.sh` is the authoritative supported operator recipe for
+building that environment: it resolves Poetry from the operator's `PATH`,
+requires Poetry 2.4.1, and synchronizes only the resolved `main` dependency
+group.
+
+The recipe owns dependency installation only. Migrations, service restarts,
+environment binding, and secret materialization remain separately authorized
+deployment operations. CI's broader dependency installation is test tooling,
+not evidence of what production installs.

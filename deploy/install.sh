@@ -45,27 +45,33 @@
 
 set -euo pipefail
 
-REQUIRED_POETRY_VERSION="2.4.1"
+REQUIRED_POETRY_VERSION="Poetry (version 2.4.1)"
 
 if ! command -v poetry >/dev/null 2>&1; then
   echo "install.sh: no 'poetry' found on PATH. This script deliberately does" >&2
   echo "not hardcode a Poetry location (see comment above) — install Poetry" >&2
-  echo "${REQUIRED_POETRY_VERSION} and ensure it resolves on PATH for this user." >&2
+  echo "Poetry 2.4.1 and ensure it resolves on PATH for this user." >&2
   exit 1
 fi
 
-actual_poetry_version="$(poetry --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+actual_poetry_version="$(poetry --version --no-ansi 2>/dev/null || true)"
 
 if [ "${actual_poetry_version}" != "${REQUIRED_POETRY_VERSION}" ]; then
-  echo "install.sh: PATH resolves poetry ${actual_poetry_version:-<unknown>}, but this" >&2
-  echo "repository's poetry.lock was written by Poetry ${REQUIRED_POETRY_VERSION} and is" >&2
+  echo "install.sh: PATH resolves ${actual_poetry_version:-an unknown Poetry version}, but this" >&2
+  echo "repository's poetry.lock was written by Poetry 2.4.1 and is" >&2
   echo "only readable by that major/minor. A mismatched Poetry (e.g. the OS package)" >&2
   echo "reports the mismatch as 'pyproject.toml changed significantly since" >&2
   echo "poetry.lock was last generated' and blames the repository for a toolchain" >&2
   echo "problem — this is the exact failure mode behind the 2026-08-10 production" >&2
-  echo "502. Refusing rather than proceeding. Install Poetry ${REQUIRED_POETRY_VERSION} and" >&2
+  echo "502. Refusing rather than proceeding. Install Poetry 2.4.1 and" >&2
   echo "put it first on this user's PATH." >&2
   exit 1
 fi
+
+# Every checked-in systemd unit executes this checkout's `.venv`. Do not let
+# an operator's active environment or host-global Poetry configuration select
+# a different target while this script appears to succeed.
+unset VIRTUAL_ENV
+export POETRY_VIRTUALENVS_IN_PROJECT=true
 
 poetry sync --only main --no-root --no-interaction --no-ansi

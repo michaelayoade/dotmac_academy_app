@@ -78,6 +78,19 @@ poetry run uvicorn app.main:app --reload --port 8001 \
 Use `http://academy.localhost:8001`. Browsers resolve `*.localhost`
 automatically.
 
+## Production dependency installation
+
+Academy's checked-in systemd processes run from this checkout's `.venv`.
+Build that environment with the authoritative production dependency recipe:
+
+```bash
+deploy/install.sh
+```
+
+The recipe resolves Poetry from the operator's `PATH`, refuses every version
+except 2.4.1, and synchronizes only the resolved `main` dependency group.
+Migrations and service restarts remain separate deployment operations.
+
 ## Email delivery
 
 Application requests queue email in the same transaction as the business
