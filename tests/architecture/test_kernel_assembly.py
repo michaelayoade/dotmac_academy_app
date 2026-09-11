@@ -40,6 +40,11 @@ def test_assembly_declares_academy_domain_without_claiming_migration_lineage() -
     assert assembly.stylesheets == (UI_STYLESHEET_URL,)
 
 
+def test_composed_runtime_publishes_the_stable_product_identity() -> None:
+    assert app.title == PRODUCT_ID
+    assert app.openapi()["info"]["title"] == PRODUCT_ID
+
+
 def test_platform_url_is_not_an_online_control_plane(monkeypatch) -> None:
     monkeypatch.setattr(
         "dotmac_kernel.middleware.tenant.TenantResolverMiddleware._resolve",

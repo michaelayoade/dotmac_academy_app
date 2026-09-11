@@ -94,6 +94,9 @@ spellings to normalize between: `ProductAssemblySpec.name` consumes
 `dotmac_academy_app` explicitly.
 
 This distinction prevents a repository rename or packaging convention from
-silently changing the identity carried by Academy's assembled product. The
-Kernel composition-observation contract verifies both values independently and
-refuses any attempt to substitute one for the other.
+silently changing the identity carried by Academy's assembled product. This
+amendment is the product-owned prerequisite only; it does not claim that the
+later Kernel composition-observation record or its pinned verification action
+has landed. That record must independently bind `repository` to
+`dotmac_academy_app` and `product_id` to `dotmac-academy`, refusing substitution
+in either direction before it can serve as cutover evidence.
