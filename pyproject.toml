@@ -98,10 +98,10 @@ ignore = [
 "tests/*" = ["S105", "S106", "S107", "S108", "E501", "RUF012"]
 "alembic/versions/*" = ["E501", "E402"]  # migrations: long SQL/constraints, late imports
 # Verbatim mirror of Starter's own packages/*/{EXTRACTION.toml,manifest.py}
-# at pinned revision 08a2dae1 (dimensional-composition.v2 catalogue fixture,
+# at pinned revision a9dc45ec (dimensional-composition.v2 catalogue fixture,
 # tests/architecture/test_kernel_runtime_composition.py). Not authored here —
 # import order follows Starter's own convention, not Academy's.
-"tests/architecture/fixtures/starter_catalogue_08a2dae1/**" = ["I001"]
+"tests/architecture/fixtures/starter_catalogue_a9dc45ec/**" = ["I001"]
 # Lab orchestration legitimately shells out to the containerlab CLI and uses
 # non-crypto randomness for instance naming.
 "app/services/labengine/*" = ["S603", "S607", "S311"]
