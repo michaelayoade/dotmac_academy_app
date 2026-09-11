@@ -121,15 +121,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import composition_schema as cs  # noqa: E402
 
 RECORD_PATH = ROOT / "docs" / "kernel-runtime-composition.json"
-PACKAGES_ROOT = (
-    Path(__file__).resolve().parent / "fixtures" / "starter_catalogue_a9dc45ec" / "packages"
-)
+PACKAGES_ROOT = Path(__file__).resolve().parent / "fixtures" / "starter_catalogue_a9dc45ec" / "packages"
 STARTER_REVISION = "a9dc45ecd00d5a0163b6544278888220082e2e75"
 EXPECTED_PRODUCT = "dotmac_academy_app"
 
@@ -160,9 +159,7 @@ def _contract_envelope(record: dict[str, Any]) -> dict[str, Any]:
     stripped = copy.deepcopy(record)
     if isinstance(stripped.get("records"), list):
         stripped["records"] = [
-            {k: v for k, v in row.items() if k != "evidence"}
-            for row in stripped["records"]
-            if isinstance(row, dict)
+            {k: v for k, v in row.items() if k != "evidence"} for row in stripped["records"] if isinstance(row, dict)
         ]
     return stripped
 
@@ -407,9 +404,7 @@ def _locate_production_install_recipes(root: Path) -> tuple[cs.InstallRecipe, ..
         text = dockerfile.read_text()
         for instruction in _extract_dockerfile_run_instructions(text):
             try:
-                recipe = cs.parse_install_command(
-                    instruction, source=str(dockerfile.relative_to(root))
-                )
+                recipe = cs.parse_install_command(instruction, source=str(dockerfile.relative_to(root)))
             except cs.InstallRecipeParseError:
                 continue
             if recipe.tool == "poetry" and recipe.subcommand in ("install", "sync"):
@@ -422,10 +417,7 @@ def test_locate_production_install_recipes_finds_a_real_dockerfile(tmp_path: Pat
     Dockerfile with a real, multi-line `RUN poetry install` instruction is
     found and parses."""
     (tmp_path / "Dockerfile").write_text(
-        "FROM python:3.12-slim\n"
-        "RUN poetry install \\\n"
-        "    --only main \\\n"
-        "    --no-root --no-ansi\n"
+        "FROM python:3.12-slim\n" "RUN poetry install \\\n" "    --only main \\\n" "    --no-root --no-ansi\n"
     )
     recipes = _locate_production_install_recipes(tmp_path)
     assert len(recipes) == 1
@@ -446,11 +438,7 @@ def test_locate_production_install_recipes_finds_none_in_this_tree() -> None:
 
 def test_no_dockerfile_exists_anywhere_in_this_repository() -> None:
     excluded_parts = {".git", "node_modules", "starter_catalogue_a9dc45ec"}
-    found = [
-        p
-        for p in ROOT.rglob("Dockerfile*")
-        if p.is_file() and not (excluded_parts & set(p.parts))
-    ]
+    found = [p for p in ROOT.rglob("Dockerfile*") if p.is_file() and not (excluded_parts & set(p.parts))]
     assert found == []
 
 
@@ -461,9 +449,19 @@ def test_docker_compose_prod_carries_no_build_stanza() -> None:
 
 
 def test_ci_workflow_declares_only_a_test_job() -> None:
-    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    job_names = re.findall(r"^  (\w[\w-]*):\s*$", text, flags=re.MULTILINE)
-    assert job_names == ["test"]
+    """Read the workflow's `jobs` mapping STRUCTURALLY.
+
+    The first version of this test matched `^  (\\w[\\w-]*):\\s*$` over the raw
+    text, which collects every two-space-indented key in the file -- so it
+    returned `['push', 'pull_request', 'test']`, the `on:` triggers alongside
+    the one real job, and failed CI. A regex over indentation cannot tell a
+    job name from a trigger name; only the parsed document can. This is the
+    same substring-for-structure mistake the composition contract itself
+    exists to refuse, so it does not get to live in the validator that
+    enforces it.
+    """
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    assert list(workflow["jobs"]) == ["test"]
 
 
 def test_deploy_service_units_carry_no_install_command() -> None:
@@ -506,7 +504,9 @@ def test_deleting_the_real_import_breaks_reachability(tmp_path: Path) -> None:
     assert "dotmac_kernel" in reached
 
     # Plant: delete the real import.
-    (app_dir / "kernel_runtime.py").write_text("# dotmac_kernel used to be imported here\n\n\ndef create_app():\n    return object()\n")
+    (app_dir / "kernel_runtime.py").write_text(
+        "# dotmac_kernel used to be imported here\n\n\ndef create_app():\n    return object()\n"
+    )
     reached_after_deletion = _measure_reachable_dotmac_imports(tmp_path, ("app.main", "app.cli"))
     assert "dotmac_kernel" not in reached_after_deletion
 
@@ -520,8 +520,7 @@ def test_a_comment_mentioning_an_import_is_not_reachability(tmp_path: Path) -> N
     app_dir.mkdir()
     (app_dir / "__init__.py").write_text("")
     (app_dir / "main.py").write_text(
-        "# import dotmac_kernel  -- this is a comment, not a real import\n"
-        "app = object()\n"
+        "# import dotmac_kernel  -- this is a comment, not a real import\n" "app = object()\n"
     )
     (app_dir / "cli.py").write_text('CLI_HELP = "run: import dotmac_kernel"\n')
 
@@ -637,9 +636,9 @@ def _expected_dimensions_for(
 def _validate_record(record: dict[str, Any]) -> None:
     assert record.get("product"), "product is mandatory and must not be empty"
     assert record["product"] == EXPECTED_PRODUCT
-    assert isinstance(record.get("starter_catalogue_revision"), str) and len(
-        record["starter_catalogue_revision"]
-    ) == 40, (
+    assert (
+        isinstance(record.get("starter_catalogue_revision"), str) and len(record["starter_catalogue_revision"]) == 40
+    ), (
         "starter_catalogue_revision must be the full 40-character commit SHA, "
         f"not {record.get('starter_catalogue_revision')!r}"
     )
@@ -657,9 +656,7 @@ def _validate_record(record: dict[str, Any]) -> None:
     # shape, catches duplicate distributions and product disagreement, and
     # routes every row through composition_record_from_payload itself. No
     # local envelope handling remains in this module.
-    built_records = cs.composition_records_from_envelope(
-        _contract_envelope(record), PACKAGES_ROOT
-    )
+    built_records = cs.composition_records_from_envelope(_contract_envelope(record), PACKAGES_ROOT)
     for built in built_records:
         cs.derive_composition_state(built)  # must not raise
 
@@ -742,9 +739,9 @@ def test_flipping_installation_unknown_to_true_is_caught(distribution: str) -> N
     above."""
     record = copy.deepcopy(_load_record())
     (row,) = [r for r in record["records"] if r["distribution"] == distribution]
-    assert row["installation"] == "unknown", (
-        f"fixture assumption broken: {distribution}/installation is not recorded unknown"
-    )
+    assert (
+        row["installation"] == "unknown"
+    ), f"fixture assumption broken: {distribution}/installation is not recorded unknown"
     row["installation"] = "true"
     with pytest.raises(AssertionError, match=distribution):
         _validate_record(record)
@@ -1015,9 +1012,7 @@ def test_derive_installation_dimension_would_say_true_with_a_real_recipe() -> No
     lock_document = tomllib.loads((ROOT / "poetry.lock").read_text())
     lock_membership = cs.derive_lock_group_membership(lock_document)
     group_optionality = cs.derive_group_optionality(pyproject)
-    recipe = cs.parse_install_command(
-        "poetry install --no-root --no-ansi", source="synthetic"
-    )
+    recipe = cs.parse_install_command("poetry install --no-root --no-ansi", source="synthetic")
     result = cs.derive_installation_dimension(
         distribution="dotmac-kernel",
         lock_membership=lock_membership,
