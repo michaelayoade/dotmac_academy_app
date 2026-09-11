@@ -48,6 +48,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Kernel composition observations
+        uses: michaelayoade/dotmac_starter_mt/.github/actions/verify-composition-observations@fff94e88c792573adbc58b7e632174a455d1c67c
+        with:
+          product: academy
+
       # PINNED, and it must stay in step with deploy/install.sh's production
       # version check. CI owns this installation; production resolves Poetry
       # from the operator's PATH and verifies the version rather than assuming
