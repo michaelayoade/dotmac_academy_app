@@ -45,6 +45,25 @@
 
 set -euo pipefail
 
+# Poetry resolves its target project by walking up from the current working
+# directory, not from this script's location — so running this recipe from
+# any cwd other than the checkout root (see the instruction at the top of
+# this file) silently resolves a *different* project's pyproject.toml/.venv
+# and `sync`s against it. Make the recipe independent of cwd by deriving the
+# checkout root from the script's own path and moving there before doing
+# anything else. Resolve symlinks so invoking through a symlinked path (e.g.
+# a systemd unit that references a stable symlink to a release directory)
+# still lands on the real checkout root.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "${SOURCE}" ]; do
+  DIR="$(cd -P "$(dirname "${SOURCE}")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "${SOURCE}")"
+  [[ ${SOURCE} != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" >/dev/null 2>&1 && pwd)"
+ROOT_DIR="$(cd -P "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
+cd "${ROOT_DIR}"
+
 REQUIRED_POETRY_VERSION="Poetry (version 2.4.1)"
 
 if ! command -v poetry >/dev/null 2>&1; then
@@ -70,8 +89,17 @@ fi
 
 # Every checked-in systemd unit executes this checkout's `.venv`. Do not let
 # an operator's active environment or host-global Poetry configuration select
-# a different target while this script appears to succeed.
+# a different target while this script appears to succeed. IN_PROJECT alone
+# only says *where* the venv goes; it does nothing if host-global Poetry
+# config (e.g. `~/.config/pypoetry/config.toml` setting
+# `virtualenvs.create = false`, a common container/CI idiom that migrates
+# onto hosts) has disabled venv creation entirely — in that case Poetry
+# resolves the ambient interpreter instead, and because this is `sync` (not
+# `install`) it uninstalls every package in that environment absent from
+# this repository's `main` lock. CREATE=true forces venv creation regardless
+# of host-global config, so IN_PROJECT's target is the one actually used.
 unset VIRTUAL_ENV
+export POETRY_VIRTUALENVS_CREATE=true
 export POETRY_VIRTUALENVS_IN_PROJECT=true
 
 poetry sync --only main --no-root --no-interaction --no-ansi
