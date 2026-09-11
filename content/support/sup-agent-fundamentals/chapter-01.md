@@ -115,20 +115,77 @@ proper channel rather than improvising around it.
 5. **Write down one question about your access** you are not sure about, and
    ask your supervisor rather than guessing.
 
-## Practice scenario
+## Practice scenarios
 
-A colleague tells you: "Just message the customer on WhatsApp directly,
-it's faster than opening a ticket." The customer's issue gets resolved that
-way in ten minutes.
+### Scenario: The WhatsApp shortcut
 
-What is missing from this picture, and what should happen before you
-consider it done? (Think about it before continuing — the honest answer is
-that resolving the problem is only half the job. Nothing about the
-customer, the issue, or the resolution exists anywhere Sub can show
-anyone else. The next agent who talks to this customer starts from zero,
-and if the same issue recurs, no one will see the pattern. The fix is not
-"stop helping customers quickly" — it is logging what happened in Sub
-*as well*, even after the fact.)
+A colleague messages you: "Just message the customer on WhatsApp directly,
+it's faster than opening a ticket." You do, and the customer's issue is
+resolved in ten minutes flat — everyone is happy, and you move on to the
+next thing in your inbox.
+
+**What do you do?**
+
+**A)** Nothing further — the customer's problem is solved, and that is what
+matters.
+**B)** Go back and create a ticket in Sub afterward, describing what
+happened and how it was resolved, even though the work is already done.
+**C)** Mention it to your supervisor verbally at the next team huddle, so
+they know you handled something quickly.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. The customer is happy right now, but nothing about this
+  interaction exists in Sub — the official record. The next agent who talks
+  to this customer starts from zero, and if the same issue recurs across
+  many customers, no one will see the pattern, because it never happened
+  "officially" at all.
+- **B)** Correct. Logging it in Sub *after the fact* is exactly the fix —
+  resolving the problem quickly and having it exist in the record are not in
+  tension. This is the one choice that makes the work visible to the next
+  agent, to reporting, and to anyone reviewing this account later.
+- **C)** Partially right at best. A verbal mention to a supervisor is still
+  outside Sub — it disappears from memory the same way the WhatsApp thread
+  will, and it does nothing for the next agent who opens this customer's
+  account with no ticket history to read.
+
+</details>
+
+### Scenario: The screen that isn't there
+
+You are helping a customer with a billing question, and while looking
+around you notice you cannot open the network monitoring screens that
+would show you infrastructure status. A teammate mentions that another
+agent's shared login can get into that console "if you're ever stuck."
+
+**What do you do?**
+
+**A)** Note it down as something to ask about later, but do not use the
+shared login — treat the missing access as a boundary until told otherwise.
+**B)** Use the shared login this one time, since it would help you answer
+the customer faster and no one would know.
+**C)** Assume it is a bug in your account setup and ask IT to grant you the
+same access your teammate has.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Correct, and the best choice. A missing screen is almost always a
+  deliberate boundary tied to a different role and a different kind of
+  risk, not an oversight — the right move is to ask through the proper
+  channel, not to find a way around it, and definitely not to route around
+  it quietly.
+- **B)** Wrong, and a serious misstep. Using someone else's login to reach a
+  screen your role deliberately does not carry is exactly the "find a
+  workaround that reaches it anyway" behavior this chapter warns against —
+  it defeats the purpose of the access boundary entirely.
+- **C)** Wrong premise, though the instinct to ask is fine. Assuming it is a
+  bug skips the more likely explanation — that this is a permission
+  boundary by design — and asking IT to just grant it does not confirm
+  whether the task actually belongs to your role at all.
+
+</details>
 
 ## Summary
 

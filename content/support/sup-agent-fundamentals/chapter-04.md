@@ -126,22 +126,73 @@ a problem that is not on their end at all.
 
 Illustrative situations, not real customer records.
 
-1. Within twenty minutes you receive four tickets, all from the same
-   region, all reporting "connected but can't browse." What do you do
-   before triaging the fourth one the same way as the first three?
-   *(This is exactly the outage-shaped pattern: same symptom, same area,
-   clustered in time. Ask NOC whether there is a known or suspected
-   incident before treating these as four unrelated equipment problems —
-   and if NOC confirms one, link all four tickets to it, not just the one
-   you are working on right now.)*
+### Scenario: Four tickets in twenty minutes
 
-2. NOC tells you in chat that there is a confirmed outage affecting a
-   cabinet, and gives you the outage ticket reference. You resolve your
-   customer's call by telling them about it. What is still missing?
-   *(The ticket itself does not yet reflect this. Open the ticket and use
-   Related Outage / Links to record the reference — telling the customer
-   is necessary but not sufficient, because it leaves no trace for anyone
-   who opens the ticket later.)*
+Within twenty minutes you receive four tickets, all from the same region,
+all reporting "connected but can't browse." You are about to triage the
+fourth one the same way you triaged the first three: as an individual
+equipment problem.
+
+**What do you do?**
+
+**A)** Triage all four independently and start troubleshooting each
+customer's equipment one at a time, since none of them mentioned an
+outage.
+**B)** Ask NOC whether there is a known or suspected incident in that
+region before troubleshooting any of them individually.
+**C)** Try to check the network monitoring console yourself to confirm
+whether there's an outage before asking anyone.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. Same symptom, same area, clustered in time is exactly the
+  outage-shaped pattern this chapter describes — troubleshooting each
+  account individually wastes time on four cases when the real cause is
+  likely one shared incident.
+- **B)** Correct, and the best choice. Asking NOC before assuming four
+  unrelated equipment faults is the real, supported response to this
+  pattern — and if NOC confirms an incident, all four tickets should be
+  linked to it, not just the one you happen to be working on.
+- **C)** Wrong, and it repeats a mistake from Chapter 1. Your role does not
+  carry `monitoring:read` by design; trying to reach the console yourself
+  is exactly the "side door" behavior that boundary exists to prevent —
+  asking NOC is the supported path, not a workaround to it.
+
+</details>
+
+### Scenario: Told, but not linked
+
+NOC tells you in chat that there is a confirmed outage affecting a cabinet,
+and gives you the outage ticket reference. You tell your customer about it
+on the call and consider the ticket resolved.
+
+**What do you do?**
+
+**A)** Consider it done — the customer knows what's happening, which was
+the point of the call.
+**B)** Open the ticket and use Related Outage / Links to record the outage
+reference before moving on.
+**C)** Add an internal comment mentioning the outage in plain text, so the
+information is at least somewhere on the ticket.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. Telling the customer is necessary but not sufficient — the
+  ticket itself does not yet reflect the outage connection, so anyone who
+  opens it later has no way to see that it was ever linked to an incident.
+- **B)** Correct, and the best choice. The Related Outage / Links panel is
+  the real, supported tool for this — it turns "I was told about an outage
+  in a chat message that will scroll away" into a permanent, visible link
+  on the ticket that any future reader can see.
+- **C)** Partially right — better than nothing, since it puts some
+  information on the record, but a plain-text comment is not the same as
+  the structured Related Outage / Links reference. It won't be visible or
+  queryable the same way, and it is not the actual tool this chapter
+  teaches for the job.
+
+</details>
 
 ## Summary
 

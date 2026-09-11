@@ -111,32 +111,75 @@ happened to this customer in one place.
 
 Illustrative situations, not real customer records.
 
-1. A customer calls: "My account is active, I can see that in the app, but
-   the internet doesn't work." What are the two most likely places to look
-   next, and in which order?
-   *(Check the specific subscription's status first — the "account" a
-   customer sees in a self-service app is often the account-level status,
-   which can be active while the relevant subscription is suspended for
-   non-payment. Only after confirming the subscription is genuinely active
-   does "offline" become a real connectivity question rather than an
-   entitlement one.)*
+### Scenario: "Active" but not working
 
-2. A brand-new customer signed up yesterday and has no subscription showing
-   yet. They call asking why their service "isn't active." Is this
-   necessarily a problem?
-   *(Not necessarily — a brand-new account can legitimately have no
-   subscription yet if installation or activation has not completed. Check
-   what stage the account is actually at before treating it as a fault; the
-   answer here is about process status, not troubleshooting.)*
+A customer calls: "My account is active — I can see that in the app — but
+the internet doesn't work." You have their account open in Sub and need to
+decide where to look first.
 
-3. An overdue-balance customer calls annoyed that their connection is
-   offline. What do you check, and what do you tell them?
-   *(Check whether the subscription itself has moved to a
-   payment-related status such as `blocked`, `suspended`, or `delinquent`
-   at the account level. If so, the offline connection is a direct,
-   correctly-working consequence of the billing state, not a fault — and
-   the honest, useful answer to the customer is about resolving the
-   balance, not "let me check the network.")*
+**What do you do?**
+
+**A)** Trust what the customer read in the app, tell them the account looks
+fine on your end too, and suggest they restart their router.
+**B)** Check the specific subscription's status before anything else, since
+what the app calls "active" is often the account-level status only.
+**C)** Check the connection indicator first, since that most directly
+answers "the internet doesn't work."
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. This treats the account-level "active" the customer saw as
+  the whole answer, when account status and subscription status are
+  separate fields that can disagree — an active account with a suspended
+  subscription is exactly this situation, and a router restart won't fix a
+  billing-driven suspension.
+- **B)** Correct, and the best choice. The app the customer sees often
+  shows account-level status, which can be `active` while the relevant
+  subscription is `suspended` for non-payment. Checking the subscription
+  first answers the real question before you waste time elsewhere.
+- **C)** Partially right in sequence but wrong as a starting point.
+  Connection state is real but it is a live signal about *entitled*
+  service — checking it before confirming the subscription is actually
+  active risks reading "offline" as a network fault when it is really an
+  entitlement problem underneath.
+
+</details>
+
+### Scenario: The overdue balance, offline
+
+A customer with a known overdue balance calls, annoyed that their
+connection is offline. They want to know what's wrong with the network.
+
+**What do you do?**
+
+**A)** Apologize for the network issue and offer to escalate to the
+technical team to investigate the outage.
+**B)** Check whether the subscription has moved to a payment-related status
+such as `blocked`, `suspended`, or `delinquent`, and explain the real cause
+if so.
+**C)** Tell the customer their internet is off because they haven't paid,
+without checking the account first.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong, and it wastes the technical team's time. Escalating this as
+  a network fault skips the much more likely, already-known explanation —
+  an overdue balance that has moved the subscription into a
+  payment-related status — and sends the ticket to the wrong team entirely.
+- **B)** Correct, and the best choice. If the subscription shows a
+  payment-related status, the offline connection is a direct,
+  correctly-working consequence of the billing state rather than a fault.
+  The honest, useful answer to the customer is about resolving the
+  balance, not "let me check the network."
+- **C)** Wrong process even if the guess turns out right. Stating the cause
+  without confirming it in the account risks being wrong (the subscription
+  might, in fact, be unrelated to the balance) and skips the actual check
+  this chapter teaches — read the record, don't assume it from the
+  customer's billing reputation alone.
+
+</details>
 
 ## Summary
 

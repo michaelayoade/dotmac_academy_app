@@ -128,21 +128,72 @@ an update meant for the customer.
 
 Illustrative situations, not real customer records.
 
-1. A customer's issue turns out to need a site visit. You have already
-   diagnosed it correctly, but no field team member has looked at it yet.
-   What do you do, and what goes in your note?
-   *(Reassign via Service Team to the technical/field team, with a note
-   covering what you diagnosed, what you already checked, and what the
-   customer has been told to expect next — so the field team can act
-   immediately rather than re-diagnosing from scratch.)*
+### Scenario: Diagnosed, but not yet visited
 
-2. You find two open tickets from the same customer, three days apart,
-   both describing the same intermittent drop in service. One has five
-   detailed comments; the other has none. Which do you merge into which,
-   and why?
-   *(Merge the empty one into the detailed one — the target should be
-   whichever ticket already carries the useful history, regardless of
-   which was created first or has the lower ticket number.)*
+A customer's issue turns out to need a site visit. You have already
+diagnosed it correctly, but no field team member has looked at it yet, and
+the ticket is still sitting with you.
+
+**What do you do?**
+
+**A)** Message someone on the field team directly asking them to "take a
+look when they get a chance," and leave the ticket with yourself for now.
+**B)** Change Service Team to hand the ticket to the technical/field team,
+after writing a note covering your diagnosis, what you checked, and what
+the customer expects next.
+**C)** Change Service Team immediately to get the ticket off your desk, and
+write the note afterward if there's time.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. A chat message is not on the ticket — the receiving team
+  has no way to see that a handoff even happened, let alone why, and the
+  ticket's Service Team field still shows you as the owner.
+- **B)** Correct, and the best choice. Writing the note first, then
+  changing Service Team, means the field team can act immediately using
+  your diagnosis instead of re-asking the customer everything — this is
+  the sequence Chapter 5 recommends specifically because the note is what
+  makes the handoff usable, not just visible.
+- **C)** Partially right — the ownership change is on the record, which
+  is better than option A, but changing Service Team before writing the
+  note risks the handoff arriving with no context. The field team could
+  start working (or ask the customer to repeat themselves) before your
+  note ever gets written.
+
+</details>
+
+### Scenario: Two tickets, one issue
+
+You find two open tickets from the same customer, three days apart, both
+describing the same intermittent drop in service. One has five detailed
+comments; the other has none. You need to merge them.
+
+**What do you do?**
+
+**A)** Merge the older ticket into the newer one, since the newer one is
+the one the customer most recently touched.
+**B)** Merge the empty ticket into the one with five detailed comments,
+regardless of which was created first.
+**C)** Merge the detailed ticket into the empty one, since it has the lower
+comment count and looks like less has been invested in it.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. Ticket age alone isn't the criterion — merging based on
+  which is newer, when the older one holds all the useful history, would
+  bury five comments' worth of context inside a canceled, less-visible
+  source ticket.
+- **B)** Correct, and the best choice. The target should be whichever
+  ticket already carries the useful, complete history — here, the one
+  with five detailed comments — regardless of which was created first or
+  which has the lower ticket number.
+- **C)** Wrong, and it's the exact mistake this chapter warns against:
+  merging the well-documented ticket into a nearly-empty one loses context
+  for no reason, just to keep a particular ticket number active.
+
+</details>
 
 ## Summary
 

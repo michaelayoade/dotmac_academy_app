@@ -142,22 +142,76 @@ of local shortcut that quietly breaks load balancing across the team.
 These are illustrative situations, not real customer records — practice
 reasoning through them before you see the equivalent in your live queue.
 
-1. A ticket arrives by `phone`, no type set, priority left at `normal`. The
-   customer told you on the call that their entire street has no service.
-   What do you set, and why does the channel matter here?
-   *(A whole-street outage is a strong signal to raise priority and set an
-   accurate type immediately — and because it came in by phone, you already
-   have first-hand detail a `web` ticket would have lacked. Chapter 4 covers
-   what to do about the outage angle specifically.)*
+### Scenario: The whole-street call
 
-2. You open your queue and find three tickets marked `pending` that have
-   not moved in six days. Each one's last comment is you asking the
-   customer a question with no reply. What is wrong with how these are
-   tracked, and what should change?
-   *(These should be `waiting_on_customer`, not `pending`. As tracked now,
-   they read as an internal backlog you are sitting on, when the real
-   story is customers who have gone quiet — which may call for a follow-up
-   contact attempt, not more waiting.)*
+A ticket arrives by `phone`, type unset, priority left at `normal`. The
+customer told you directly on the call that their entire street has no
+service. You need to triage this ticket before moving to the next one in
+your queue.
+
+**What do you do?**
+
+**A)** Leave priority at `normal` and set type to a connectivity fault —
+the customer already told you what's wrong, so the priority does not need
+to change.
+**B)** Raise the priority (reflecting that this looks wider than one
+account) and set an accurate type now, using the first-hand detail from the
+call.
+**C)** Set the type to `maintenance` since something is clearly wrong with
+infrastructure, and leave priority for whoever picks it up next.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Partially right — setting type is correct, but leaving priority at
+  `normal` ignores the strongest signal in the call: a whole street with no
+  service is not a routine single-account complaint.
+- **B)** Correct, and the best choice. A whole-street outage is a strong
+  signal to raise priority and set an accurate type immediately, and
+  because the ticket came in by `phone` you already have first-hand detail
+  a `web` ticket would have lacked — there is no reason to wait for a
+  clarifying question you don't need.
+- **C)** Wrong on both counts. `maintenance` is not the same as an
+  unclassified connectivity fault the customer is reporting live, and
+  leaving priority for "whoever picks it up next" is exactly the kind of
+  deferred triage this chapter warns against — a ticket with no real
+  classification is invisible to reporting and automation until someone
+  fixes it.
+
+</details>
+
+### Scenario: The silent three
+
+You open your queue and find three tickets marked `pending`, none of which
+have moved in six days. Each one's last comment is you asking the customer
+a question, with no reply since.
+
+**What do you do?**
+
+**A)** Leave them as `pending` — the ticket is still waiting on an answer,
+and pending covers "waiting on something" generally.
+**B)** Change all three to `waiting_on_customer`, and consider a follow-up
+contact attempt on each.
+**C)** Close all three, since a customer who has not replied in six days
+has probably resolved the issue themselves.
+
+<details>
+<summary>What happens with each choice</summary>
+
+- **A)** Wrong. `pending` means the ticket is waiting on *your side* — a
+  technician, a process, an internal decision — not on the customer. Left
+  this way, these three tickets misreport as an internal backlog you are
+  sitting on, when the real story is customers who have gone quiet.
+- **B)** Correct, and the best choice. These should be `waiting_on_customer`
+  since the ball is genuinely in the customer's court, and six days of
+  silence is a reasonable trigger to attempt another contact rather than
+  wait indefinitely.
+- **C)** Wrong, and risky. Six days of silence is not evidence the issue is
+  resolved — closing without confirmation could leave a real, unresolved
+  problem marked done, which is worse for the customer than an accurately
+  labeled ticket still open.
+
+</details>
 
 ## Summary
 
