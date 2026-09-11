@@ -1,0 +1,88 @@
+bank:
+  course: sup-agent-fundamentals
+  kind: chapter
+  chapter: 4
+  version: 1
+  policy:
+    mode: practice
+  questions:
+    - id: s4-01
+      stem: "What is the operator-declared outage lifecycle?"
+      type: single
+      options: ["open then resolved", "suspected then confirmed then clearing then resolved", "new then open then closed", "pending then active then expired"]
+      correct: ["open then resolved"]
+      rubric_category: recall
+      explanation: "Operator-declared incidents move open to resolved; the longer suspected/confirmed/clearing/resolved path belongs to classifier-detected incidents."
+      weight: 1
+    - id: s4-02
+      stem: "Which panel do you use to record that a ticket belongs to a known outage?"
+      type: single
+      options: ["Related Outage / Links", "Ticket Metadata, further up the same page", "Merge Ticket, further down the same page", "Customer / Subscriber"]
+      correct: ["Related Outage / Links"]
+      rubric_category: recall
+      explanation: "Related Outage / Links is where you paste the outage ticket's identifier to link it to the current ticket."
+      weight: 1
+    - id: s4-03
+      stem: "You try to open the network monitoring console and get an access-denied page. What should you conclude?"
+      type: single
+      options: ["This is a designed boundary, not a bug, and you should ask NOC instead", "Your account is broken and needs to be reset", "The console is temporarily down for everyone", "You should ask a colleague to log in and check it for you"]
+      correct: ["This is a designed boundary, not a bug, and you should ask NOC instead"]
+      rubric_category: application
+      explanation: "Support does not carry monitoring:read by design — the correct next step is to ask NOC, not to find another way in."
+      weight: 1
+    - id: s4-04
+      stem: "NOC tells you by chat that a cabinet outage is confirmed and gives you the outage ticket reference. You update the customer verbally. What should you still do?"
+      type: single
+      options: ["Open the ticket and link the outage reference through Related Outage / Links", "Nothing further at all, since the customer has already been told verbally", "Escalate the ticket to Finance for a credit", "Change the ticket's channel field to reflect NOC's ongoing involvement in the case"]
+      correct: ["Open the ticket and link the outage reference through Related Outage / Links"]
+      rubric_category: application
+      explanation: "Telling the customer is necessary but not sufficient — the link on the ticket is what makes the connection visible to anyone later."
+      weight: 1
+    - id: s4-05
+      stem: "Within twenty minutes, four tickets arrive from the same region all reporting the identical symptom. What should you do before triaging the fourth exactly like the first three?"
+      type: single
+      options: ["Ask NOC whether there is a known or suspected incident in that area", "Assign all four to different agents to parallelize the work", "Close three as duplicates without further review", "Raise all four to the highest possible priority automatically"]
+      correct: ["Ask NOC whether there is a known or suspected incident in that area"]
+      rubric_category: application
+      explanation: "Same symptom, same area, clustered in time is the outage-shaped pattern — check before treating four tickets as four unrelated faults."
+      weight: 1
+    - id: s4-06
+      stem: "Your role has broad customer, subscription, and ticket permissions but not monitoring:read. What does this combination reveal about how the outage workflow is meant to work?"
+      type: single
+      options: ["You are meant to act on outage information NOC gives you, not discover it yourself from the console", "It reveals a gap that should promptly be fixed by granting your role full ongoing console access", "It means outages are not really support's concern at all, under any circumstances", "It means the two permission sets were probably assigned inconsistently by mistake"]
+      correct: ["You are meant to act on outage information NOC gives you, not discover it yourself from the console"]
+      rubric_category: analysis
+      explanation: "The design intentionally separates declaring/monitoring outages (NOC) from acting on known ones in a ticket (support) — not an inconsistency to fix by widening your access."
+      weight: 1
+    - id: s4-07
+      stem: "An agent, frustrated at not being told about outages promptly, starts escalating every connectivity complaint as a suspected outage regardless of pattern. What is the likely consequence?"
+      type: single
+      options: ["NOC starts discounting the agent's reports because most turn out not to be outages", "NOC will grant the agent console access to resolve the frustration", "Reporting accuracy improves because more cases get NOC's attention", "Nothing changes, since escalation has no cost"]
+      correct: ["NOC starts discounting the agent's reports because most turn out not to be outages"]
+      rubric_category: analysis
+      explanation: "Escalating without checking for the real pattern first erodes the signal value of a report, training the receiving team to discount it."
+      weight: 1
+    - id: s4-08
+      stem: "A ticket is linked to a confirmed outage, but the agent working it never mentions this to the customer, assuming the link speaks for itself. What is missing?"
+      type: single
+      options: ["The customer still needs to be told directly — the link is the internal record, not customer communication", "Nothing more at all — linking the ticket is already fully and permanently sufficient on its own", "The link should be removed again since customers can never see it anyway", "The ticket should instead be merged directly into the outage incident's own separate master ticket, closing this one out"]
+      correct: ["The customer still needs to be told directly — the link is the internal record, not customer communication"]
+      rubric_category: analysis
+      explanation: "Linking the outage is the internal-record half of the job; the customer-facing half — actually telling them — is a separate, still-necessary step."
+      weight: 1
+    - id: s4-09
+      stem: "Which detection source requires a human to have confirmed the incident from the console before it exists in that state?"
+      type: single
+      options: ["operator", "classifier", "both equally", "neither — both are automatic"]
+      correct: ["operator"]
+      rubric_category: recall
+      explanation: "Operator-declared incidents are confirmed from the console by a person; classifier-detected incidents move through a debounced automated lifecycle first."
+      weight: 1
+    - id: s4-10
+      stem: "A customer mentions that their neighbour has the same problem right now. On its own, what does this prove?"
+      type: single
+      options: ["Nothing conclusively — it is a reason to ask about a possible outage, not proof of one", "It proves beyond any doubt that an outage is already confirmed and should be linked immediately", "It proves the underlying issue is specifically the customer's own equipment", "It proves the ticket should be closed as entirely unrelated to Sub going forward"]
+      correct: ["Nothing conclusively — it is a reason to ask about a possible outage, not proof of one"]
+      rubric_category: application
+      explanation: "A neighbour reporting the same issue is one of the outage-shaped signals worth asking NOC about — not, by itself, confirmation."
+      weight: 1
