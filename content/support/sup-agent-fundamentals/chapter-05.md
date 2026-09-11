@@ -45,10 +45,16 @@ FIGURE `SUP-05-01` *Merging a ticket into another with a stated reason.*
 
 The **Service Team** field on a ticket is how a handoff is represented —
 changing it moves ownership of the ticket to another team, visibly, on the
-ticket itself. This is different from simply telling someone in chat "can
-you take this one" — a chat message is not on the ticket, and the next
-person to open it has no way to see that a handoff even happened, let
-alone why.
+ticket itself. On the ticket's own detail page, Service Team is shown as
+plain, read-only text in the Ticket Metadata panel — there is no dropdown
+or input there. To actually change it, open the separate **Edit Ticket**
+screen, where the same underlying field appears under a different label:
+**"Service / User Group."** That is the real mechanism for a handoff —
+not an in-panel edit on the detail page itself.
+
+This is different from simply telling someone in chat "can you take this
+one" — a chat message is not on the ticket, and the next person to open it
+has no way to see that a handoff even happened, let alone why.
 
 Before you change Service Team, write an internal note explaining *why*
 you are handing this off and what you have already tried or ruled out.

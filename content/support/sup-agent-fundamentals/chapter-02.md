@@ -109,6 +109,11 @@ same logic that runs automatically on intake. Do not hand-pick an assignee
 "because they're usually free" without checking — that is exactly the kind
 of local shortcut that quietly breaks load balancing across the team.
 
+Your role can also view and edit the automation rules themselves, on the
+relevant admin screen — this is not someone else's job to reach for. If the
+rules are routing tickets wrongly, you are not stuck working around them;
+you can go fix the rule directly.
+
 ## Common failure modes
 
 - **Leaving type and priority at their defaults.** A ticket with no real
@@ -120,8 +125,8 @@ of local shortcut that quietly breaks load balancing across the team.
 - **Resetting Due instead of investigating a breach.** The due date exists
   to surface a problem. Quietly pushing it out defeats the entire point of
   having it.
-- **Hand-assigning around the auto-assign rules** instead of trusting or
-  fixing them.
+- **Hand-assigning around the auto-assign rules** instead of trusting them,
+  or fixing the rule directly if it is genuinely routing tickets wrongly.
 
 ## Do this at work
 

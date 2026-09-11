@@ -129,12 +129,12 @@ bank:
       explanation: "Over-escalating without checking the real pattern first erodes the credibility of future reports from the same source."
       weight: 1
     - id: supf-16
-      stem: "Which field, when changed, represents a ticket handoff to another team on the permanent record?"
+      stem: "Which screen do you actually use to change Service Team and record a ticket handoff to another team?"
       type: single
-      options: ["Service Team, shown in the Ticket Metadata panel", "Region, shown further up the same panel", "Channel, recorded once when the ticket first arrives in the queue", "Customer ID, shown lower on the ticket page"]
-      correct: ["Service Team, shown in the Ticket Metadata panel"]
+      options: ["Edit Ticket, where the field appears as 'Service / User Group'", "The Ticket Metadata panel on the ticket detail page, directly", "Merge Ticket, since a handoff and a merge use the same form", "Customer search, by reassigning the account to a different team"]
+      correct: ["Edit Ticket, where the field appears as 'Service / User Group'"]
       rubric_category: recall
-      explanation: "Service Team is the field that represents ownership, and changing it is how a handoff is recorded on the ticket itself."
+      explanation: "The ticket detail page shows Service Team as read-only text; the actual change happens on Edit Ticket, where the same field is labeled 'Service / User Group.'"
       weight: 1
     - id: supf-17
       stem: "You find two open tickets from the same customer about the same issue — one detailed, one empty. How should you merge them?"

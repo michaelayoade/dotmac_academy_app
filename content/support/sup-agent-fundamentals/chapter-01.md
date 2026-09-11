@@ -72,7 +72,8 @@ need." Broadly, you can:
   a payment.
 - Read, create, and update support tickets, and self-assign inbox
   conversations.
-- Read and write CRM contacts and conversations.
+- View and edit ticket automation rules.
+- Read CRM contacts (read-only), and read and write CRM conversations.
 
 Notice what is missing: you cannot reach the **network monitoring** screens
 that Network Operations uses to watch infrastructure health and declare

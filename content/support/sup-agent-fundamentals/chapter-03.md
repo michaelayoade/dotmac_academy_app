@@ -19,7 +19,9 @@ customer record correctly.
 - Tell the difference between account status and service status, and know
   which one answers which question.
 - Read a customer's plan and bandwidth correctly.
-- Explain why a customer can be "active" and still offline — or vice versa.
+- Explain why a customer can be "active" and still show "Not connected" —
+  or vice versa — and tell that apart from a merely stale "Last seen"
+  reading.
 - Navigate a customer record without needing to ask someone else first.
 
 FIGURE `SUP-03-02` *The Customers directory: search, filter, and open an account.*
@@ -46,7 +48,7 @@ connection-level question.
 
 ## Plan and bandwidth
 
-FIGURE `SUP-03-01` *A customer's account overview: status, plan, balance, and connection.*
+FIGURE `SUP-03-01` *A customer's account overview: status, plan, balance, and the header's Online/Offline connection badge.*
 
 A customer's plan (their `CatalogOffer`) is where the bandwidth numbers
 live — download and upload speed — bundled with the price. When a customer
@@ -56,16 +58,38 @@ starting reference point, not proof of what they are actually getting
 right now — that is a network diagnostic question, which is out of scope
 for this course and belongs with the technical/network team.
 
-## Connection: a third, live-er signal
+## Connection: a third, live-er signal — at two levels of detail
 
-The account overview also shows a **connection** indicator (online /
-offline). This reflects whether the account currently has an active
-network session — not whether it is entitled to one. An account can be
+The customer's own header — visible no matter which tab you're on,
+including Account — carries a simple **Connection** stat: **Online** or
+**Offline**. This reflects whether the account currently has an active
+network session, not whether it is entitled to one. An account can be
 fully `active`, on a fully `active` subscription, and still show
-**offline** — for example, the customer's equipment is powered off, or
-they simply are not connected right now. Offline is not, by itself,
-evidence of a fault. It becomes relevant when the customer says they
-*expect* to be connected and are not.
+**Offline** — the customer's equipment is powered off, or they simply are
+not connected right now. Offline is not, by itself, evidence of a fault;
+it becomes relevant when the customer says they *expect* to be connected
+and are not.
+
+The **Service** and **Network** tabs go one level deeper, per subscription,
+with a more granular reading that is not the same simple pair: **Connected**,
+**Last seen**, and **Not connected**.
+
+- **Connected** — there is an active session right now.
+- **Not connected** — a clean, current reading that there is no active
+  session (this is what the header's "Offline" collapses down to).
+- **Last seen** — the account's last known session data is stale or
+  uncertain. This is a genuinely different reading from "Not connected": it
+  means Sub cannot currently confirm the live state one way or the other,
+  not that it has confirmed the connection is down. Treating "Last seen" as
+  the same thing as "Not connected" is exactly the kind of mix-up that can
+  mislead a real "why is it slow" or "is my internet down" call — the header
+  badge alone cannot tell the two apart, which is exactly why the
+  per-subscription tabs matter once you need that distinction.
+
+Neither "Offline"/"Not connected" nor "Last seen" is, by itself, evidence of
+a fault. All of these become relevant when the customer says they *expect*
+to be connected and are not — and knowing which reading you are looking at
+changes how confidently you can state what is actually happening.
 
 Put the three together in that order — account status, subscription
 status, connection state — and you can answer almost any "what's going on
@@ -87,8 +111,11 @@ happened to this customer in one place.
 
 - **Reading "active" and stopping there.** Active *what* — the account, or
   the specific service the customer is asking about? They can disagree.
-- **Treating "offline" as a fault report.** It is a live state, not a
+- **Treating "Not connected" as a fault report.** It is a live state, not a
   verdict. Ask what the customer expects before treating it as a problem.
+- **Treating "Last seen" as the same thing as "Not connected."** One is a
+  stale, uncertain reading; the other is a clean, current one — conflating
+  them can mislead a real troubleshooting call.
 - **Quoting the plan's bandwidth as a guarantee of current speed.** It is
   what they are sold, not a live measurement.
 - **Guessing instead of opening the account.** Every one of these questions
@@ -123,8 +150,8 @@ decide where to look first.
 fine on your end too, and suggest they restart their router.
 **B)** Check the specific subscription's status before anything else, since
 what the app calls "active" is often the account-level status only.
-**C)** Check the connection indicator first, since that most directly
-answers "the internet doesn't work."
+**C)** Check the connection indicator on the Service or Network tab first,
+since that most directly answers "the internet doesn't work."
 
 <details>
 <summary>What happens with each choice</summary>
@@ -141,15 +168,16 @@ answers "the internet doesn't work."
 - **C)** Partially right in sequence but wrong as a starting point.
   Connection state is real but it is a live signal about *entitled*
   service — checking it before confirming the subscription is actually
-  active risks reading "offline" as a network fault when it is really an
-  entitlement problem underneath.
+  active risks reading "Not connected" as a network fault when it is really
+  an entitlement problem underneath.
 
 </details>
 
-### Scenario: The overdue balance, offline
+### Scenario: The overdue balance, not connected
 
 A customer with a known overdue balance calls, annoyed that their
-connection is offline. They want to know what's wrong with the network.
+connection shows "Not connected." They want to know what's wrong with the
+network.
 
 **What do you do?**
 
@@ -169,7 +197,7 @@ without checking the account first.
   an overdue balance that has moved the subscription into a
   payment-related status — and sends the ticket to the wrong team entirely.
 - **B)** Correct, and the best choice. If the subscription shows a
-  payment-related status, the offline connection is a direct,
+  payment-related status, the "Not connected" reading is a direct,
   correctly-working consequence of the billing state rather than a fault.
   The honest, useful answer to the customer is about resolving the
   balance, not "let me check the network."
@@ -188,8 +216,12 @@ without checking the account first.
   question.
 - Plan and bandwidth live on the subscription's offer; they describe what
   was sold, not a live measurement.
-- Offline is a live state, not automatically a fault — check what the
-  customer expects before treating it as one.
+- The customer's header shows a simple **Online/Offline** connection badge
+  on every tab; the Service and Network tabs go deeper with **Connected**,
+  **Last seen**, and **Not connected**. Neither the header's "Offline" nor
+  a stale "Last seen" reading is automatically a fault — check what the
+  customer expects before treating either as one, and use the deeper
+  per-subscription reading when the header's simple pair isn't enough.
 - Customer search takes name, email, phone, account number, or PPPoE ID;
   the account record's own Tickets and Timeline tabs are often the fastest
   way to see full history in one place.

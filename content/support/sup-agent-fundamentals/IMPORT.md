@@ -1,13 +1,15 @@
 # Importing "Support Agent Fundamentals: Working in dotmac_sub"
 
-This course was authored locally (not yet imported into the production
-`academy.dotmac.io` database). It follows the same content pipeline as the
+This course is live in production on `academy.dotmac.io` (currently at
+`v4`) and this file is the living import/re-import record for it, not a
+pre-launch checklist. It follows the same content pipeline as the
 management courses — see `docs/bank-lint-in-the-content-repo.md` and
 `content/management/IMPORT.md` for the general pattern this mirrors.
 
-**Nothing in this file has been run against production.** These are the
-exact commands to run on the `academy` host, as user `dotmac`, from
-`/home/dotmac/projects/dotmac_academy_app`.
+**These are the exact commands to (re-)run on the `academy` host, as user
+`dotmac`, from `/home/dotmac/projects/dotmac_academy_app`, any time this
+course's content changes.** Re-importing is the normal way a content fix
+reaches production — it is not a one-time, not-yet-happened event.
 
 ## Provenance
 
@@ -111,15 +113,19 @@ learner, exactly like the six management courses noted in
 
 Chapter 4 teaches that the support role cannot reach `/admin/network/outages`
 (confirmed empirically: a support-role account gets an HTTP 403 from that
-route) and instead uses the ticket's "Related Outage / Links" panel once NOC
-shares an outage reference. This is accurate to the current system, but it
-also means frontline agents cannot self-serve "is there a known outage here"
-— they depend on being told. That is a real operational gap (see Knowledge
-slug `network-support-escalation-taxonomy`, corrected during this course's
-authoring — it previously said outage tracking was "handled entirely outside
-Sub," which turned out to be wrong: the tracking exists, the discoverability
-for the support role does not). Worth a product decision at some point:
-either a read-only, support-scoped outage-status view, or an explicit
-process for NOC to proactively push known-outage notices to support — this
-course teaches the current, real workaround, it does not resolve the
-underlying gap.
+route). That boundary is real and by design. It does **not** mean frontline
+agents cannot self-serve "is there a known outage here" — an earlier version
+of this course said exactly that, and it was wrong: a customer's own Network
+tab (reachable via `customer:read`, which support already has) shows a live
+"Known incident" / "Known area outage" panel with an "Open the covering
+ticket" link, or an explicit "No known outage · Last checked <time>" line
+when nothing is known. That per-customer check is real, accessible
+self-service; only the general, all-incidents console stays with NOC. The
+remaining, genuine gap is narrower than previously stated: a "No known
+outage" reading on one customer's record does not rule out an outage that
+has not yet been confirmed against that specific customer, so a clustered,
+same-symptom pattern across several customers still has to go to NOC rather
+than being self-serviceable. That narrower gap is worth a product decision
+at some point (e.g. a lightweight, support-visible signal for suspected-but-
+unconfirmed incidents); this course teaches the current, real mechanism, it
+does not resolve that residual gap.
