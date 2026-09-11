@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
+from sqlalchemy import select
+
 from app.models.auth import UserCredential
-from app.models.cohort import Cohort
+from app.models.cohort import Cohort, Enrollment
+from app.models.course import Course
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from app.services.tracks import create_cohort_track
 
 
 def _login_instructor(app_client, admin_session, tenant):
@@ -251,3 +257,220 @@ def test_student_forbidden(app_client, admin_session, tenant_a):
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": "s3@a.edu", "password": "password1"})
     assert app_client.get("/instructor/results", headers=h).status_code == 403
+
+
+def test_create_track_error_renders_inline_message_not_raw_400(app_client, admin_session, tenant_a):
+    """Finding #1: create_cohort_track's BadRequestError ("select at least one
+    course") must render inline (200 + retarget), not become a raw 400 that
+    htmx cannot swap into hx-target="body"."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="Errs", discipline="networking", status="active")
+    admin_session.add(coh)
+    admin_session.commit()
+    admin_session.refresh(coh)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/tracks",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"name": "Empty Track"},  # no course_ids selected -> BadRequestError
+    )
+    assert r.status_code == 200
+    assert "select at least one course" in r.text
+    assert r.headers.get("HX-Retarget") == f"#track-form-error-{coh.id}"
+    # No track was actually created.
+    from app.models.track import Track
+
+    assert (
+        admin_session.query(Track).filter(Track.tenant_id == tenant_a.id, Track.name == "Empty Track").count() == 0
+    )
+
+
+def test_add_courses_to_track_error_renders_inline_message(app_client, admin_session, tenant_a):
+    """Finding #1: add_courses_to_cohort_track's BadRequestError renders inline."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="Errs2", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id, slug="c1", title="C1", discipline="networking", source_ref="x", version=1,
+        status="published",
+    )
+    admin_session.add_all([coh, course])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="T1", course_ids=[course.id]
+    )
+    admin_session.commit()
+    admin_session.refresh(track)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/tracks/{track.id}/courses",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={},  # no course_ids selected -> BadRequestError
+    )
+    assert r.status_code == 200
+    assert "select at least one course" in r.text
+    assert r.headers.get("HX-Retarget") == f"#track-courses-error-{track.id}"
+
+
+def test_roster_track_reassign_error_renders_inline_message(app_client, admin_session, tenant_a):
+    """Finding #1: assign_enrollment_track's NotFoundError (unknown track) renders inline."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="Errs3", discipline="networking", status="active")
+    stu = Person(tenant_id=tenant_a.id, email="stu3@a.edu", first_name="S", last_name="T")
+    admin_session.add_all([coh, stu])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active")
+    )
+    admin_session.commit()
+
+    bad_track_id = uuid4()
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{stu.id}/track",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"track_id": str(bad_track_id)},
+    )
+    assert r.status_code == 200
+    assert "not found" in r.text.lower()
+    assert r.headers.get("HX-Retarget") == f"#roster-track-error-{coh.id}-{stu.id}"
+
+
+def test_draft_courses_excluded_from_track_checkbox_lists(app_client, admin_session, tenant_a):
+    """Finding #2: a draft course is hidden from the create-track/add-courses
+    checkbox lists (drafts grant nothing per entitlements.py); a published one
+    is shown, and the hidden-draft-count note appears."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="DraftTest", discipline="networking", status="active")
+    draft = Course(
+        tenant_id=tenant_a.id, slug="draft-c", title="Draft Course Title", discipline="networking",
+        source_ref="x", version=1, status="draft",
+    )
+    published = Course(
+        tenant_id=tenant_a.id, slug="pub-c", title="Published Course Title", discipline="networking",
+        source_ref="x", version=1, status="published",
+    )
+    admin_session.add_all([coh, draft, published])
+    admin_session.commit()
+
+    r = app_client.get("/instructor/cohorts", headers=h)
+    assert r.status_code == 200
+    assert "Published Course Title" in r.text
+    assert "Draft Course Title" not in r.text
+    assert "draft course(s) hidden" in r.text
+
+
+def test_roster_shows_dropped_and_waitlisted_enrollments(app_client, admin_session, tenant_a):
+    """Finding #3: the roster table no longer hides non-active-student rows."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="RosterTest", discipline="networking", status="active")
+    dropped_p = Person(tenant_id=tenant_a.id, email="dropped@a.edu", first_name="Drop", last_name="Ped")
+    waitlisted_p = Person(tenant_id=tenant_a.id, email="wait@a.edu", first_name="Wait", last_name="List")
+    admin_session.add_all([coh, dropped_p, waitlisted_p])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=dropped_p.id, role_in_cohort="student",
+            status="dropped",
+        )
+    )
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=waitlisted_p.id, role_in_cohort="student",
+            status="waitlisted",
+        )
+    )
+    admin_session.commit()
+
+    r = app_client.get("/instructor/cohorts", headers=h)
+    assert r.status_code == 200
+    assert "dropped@a.edu" in r.text
+    assert "wait@a.edu" in r.text
+
+
+def test_non_admin_instructor_forbidden_from_changing_instructor_role_enrollment(app_client, admin_session, tenant_a):
+    """Finding #3 authorization: a plain instructor cannot drop/reactivate a
+    non-student (e.g. instructor-role) enrollment — that is admin-only,
+    because dropping it silently strips that instructor's own authoring
+    access via _assigned_course_ids."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="AuthzTest", discipline="networking", status="active")
+    other_instructor = Person(tenant_id=tenant_a.id, email="peer@a.edu", first_name="Peer", last_name="Instr")
+    admin_session.add_all([coh, other_instructor])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=other_instructor.id, role_in_cohort="instructor",
+            status="active",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{other_instructor.id}/state",
+        headers={**h, "x-csrf-token": csrf},
+        data={"state": "dropped"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == other_instructor.id)
+    ).first()
+    assert enr.status == "active"  # unchanged
+
+
+def test_admin_can_change_instructor_role_enrollment_state(app_client, admin_session, tenant_a):
+    """Finding #3 authorization: an admin CAN drop/reactivate a non-student enrollment."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="AuthzTest2", discipline="networking", status="active")
+    other_instructor = Person(tenant_id=tenant_a.id, email="peer2@a.edu", first_name="Peer", last_name="Instr")
+    admin_session.add_all([coh, other_instructor])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=other_instructor.id, role_in_cohort="instructor",
+            status="active",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{other_instructor.id}/state",
+        headers={**h, "x-csrf-token": csrf},
+        data={"state": "dropped"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == other_instructor.id)
+    ).first()
+    assert enr.status == "dropped"
+
+
+def test_roster_state_change_error_renders_inline_message(app_client, admin_session, tenant_a):
+    """Finding #1: set_roster_state's NotFoundError (invalid state) renders inline."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="Errs4", discipline="networking", status="active")
+    stu = Person(tenant_id=tenant_a.id, email="stu4@a.edu", first_name="S", last_name="U")
+    admin_session.add_all([coh, stu])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active")
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{stu.id}/state",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"state": "bogus-state"},
+    )
+    assert r.status_code == 200
+    assert "invalid roster state" in r.text.lower()
+    assert r.headers.get("HX-Retarget") == f"#roster-state-error-{coh.id}-{stu.id}"

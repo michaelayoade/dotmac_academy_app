@@ -60,7 +60,11 @@
                 {% endif %}
                 {% endfor %}
               </div>
+              {% if draft_course_count %}
+              <p class="text-xs text-ink-soft">{{ draft_course_count }} draft course(s) hidden — <a class="font-semibold text-brand-600 underline" href="/instructor/courses">publish them first from Manage Courses</a> before adding to a track.</p>
+              {% endif %}
               <button type="submit" class="btn-ghost px-3.5 py-2 text-sm">Add selected courses</button>
+              <div id="track-courses-error-{{ item.track.id }}"></div>
             </form>
           </details>
         </div>
@@ -93,18 +97,22 @@
           {% else %}
           <p class="rounded-lg bg-sand-100 p-3 text-sm text-ink-soft">No courses have been created yet for this tenant.</p>
           {% endif %}
+          {% if draft_course_count %}
+          <p class="mt-2 text-xs text-ink-soft">{{ draft_course_count }} draft course(s) hidden — <a class="font-semibold text-brand-600 underline" href="/instructor/courses">publish them first from Manage Courses</a> before adding to a track.</p>
+          {% endif %}
         </fieldset>
         <div class="flex items-end">
           <button type="submit" class="btn-primary">Create track</button>
         </div>
+        <div class="lg:col-span-3" id="track-form-error-{{ c.id }}"></div>
       </form>
     </details>
 
     <details class="disclosure mt-5 border-t border-sand-200 pt-4">
       <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-lg bg-sand-100 px-3.5 py-2.5 text-sm font-semibold text-ink hover:bg-sand-200">
-        <span>Enrolled students</span>
+        <span>Roster</span>
         <span class="flex items-center gap-2">
-          <span class="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-semibold text-ink-soft">{{ row.active_student_count }} total</span>
+          <span class="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-semibold text-ink-soft">{{ row.active_student_count }} active · {{ row.roster|length }} total</span>
           <span class="disclosure-chevron text-ink-soft" aria-hidden="true">›</span>
         </span>
       </summary>
@@ -118,12 +126,14 @@
               <th class="px-3 py-2">Role</th>
               <th class="px-3 py-2">Track</th>
               <th class="px-3 py-2">Status</th>
+              <th class="px-3 py-2">Actions</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-sand-200 bg-white">
             {% for member in row.roster %}
             {% set student = member.person %}
             {% set enrollment = member.enrollment %}
+            {% set can_manage = enrollment.role_in_cohort == 'student' or is_admin %}
             <tr>
               <td class="px-3 py-2 font-medium text-ink">{{ student.first_name }} {{ student.last_name }}</td>
               <td class="px-3 py-2 text-ink-soft">{{ student.email }}</td>
@@ -138,12 +148,42 @@
                   </select>
                   <button type="submit" class="btn-ghost px-2 py-1 text-xs">Save</button>
                 </form>
+                <div id="roster-track-error-{{ c.id }}-{{ student.id }}"></div>
                 {% else %}
                 <span class="text-ink-soft">—</span>
                 {% endif %}
               </td>
               <td class="px-3 py-2">
-                <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">{{ enrollment.status }}</span>
+                <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold
+                  {% if enrollment.status == 'active' %}bg-brand-100 text-brand-800
+                  {% elif enrollment.status == 'dropped' %}bg-clay-500/15 text-clay-600
+                  {% else %}bg-sand-200 text-ink-soft{% endif %}">{{ enrollment.status }}</span>
+                {% if student.status != 'active' %}
+                <span class="ml-1 inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">account {{ student.status }}</span>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2">
+                {% if can_manage %}
+                <div class="flex flex-wrap items-center gap-1.5">
+                  {% if enrollment.status != 'active' %}
+                  <form hx-post="/instructor/cohorts/{{ c.id }}/roster/{{ student.id }}/state"
+                        hx-target="#roster-state-error-{{ c.id }}-{{ student.id }}" hx-swap="innerHTML">
+                    <input type="hidden" name="state" value="active">
+                    <button type="submit" class="btn-ghost px-2 py-1 text-xs">Reactivate</button>
+                  </form>
+                  {% endif %}
+                  {% if enrollment.status != 'dropped' %}
+                  <form hx-post="/instructor/cohorts/{{ c.id }}/roster/{{ student.id }}/state"
+                        hx-target="#roster-state-error-{{ c.id }}-{{ student.id }}" hx-swap="innerHTML">
+                    <input type="hidden" name="state" value="dropped">
+                    <button type="submit" class="btn-ghost px-2 py-1 text-xs">Drop</button>
+                  </form>
+                  {% endif %}
+                </div>
+                {% else %}
+                <span class="text-xs text-ink-soft">Admin only</span>
+                {% endif %}
+                <div id="roster-state-error-{{ c.id }}-{{ student.id }}" class="mt-1"></div>
               </td>
             </tr>
             {% endfor %}

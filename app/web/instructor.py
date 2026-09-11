@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -73,6 +73,7 @@ def cohorts_list(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    is_admin = _is_admin(db, tenant.id, person.id)
     rows = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)).all()
     roster_rows = db.execute(
         select(Enrollment, Person)
@@ -83,9 +84,11 @@ def cohorts_list(
         .where(Enrollment.tenant_id == tenant.id)
         .order_by(Person.last_name, Person.first_name, Person.email)
     ).all()
+    # Every enrollment is shown regardless of Enrollment.status, Enrollment.role_in_cohort
+    # or Person.status (finding #3): a dropped/waitlisted student or a suspended account
+    # must stay visible so an instructor can act on it, not disappear silently.
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
     active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
-    cohort_names = {cohort.id: cohort.name for cohort in rows}
     for enrollment, student in roster_rows:
         if enrollment.cohort_id not in roster_by_cohort:
             continue
@@ -94,12 +97,31 @@ def cohorts_list(
         )
         if is_active_student:
             active_student_counts[enrollment.cohort_id] += 1
-        if is_active_student or cohort_names.get(enrollment.cohort_id) == "Dotmac Academy Demo Cohort":
-            roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
+        roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
     tracks_by_cohort = {
         cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
     }
-    courses = list(db.scalars(select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)).all())
+    # Draft courses are excluded from the ADD/CREATE checkbox lists (finding #2): a
+    # draft is invisible to learners (see entitlements.py), so placing one in a track
+    # would silently grant nothing. This does not touch a track's EXISTING membership
+    # (list_cohort_tracks, above) — a draft already added keeps showing there.
+    courses = list(
+        db.scalars(
+            select(Course)
+            .where(Course.tenant_id == tenant.id)
+            .where(Course.status.in_(("published", "completed")))
+            .order_by(Course.title)
+        ).all()
+    )
+    draft_course_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(Course)
+            .where(Course.tenant_id == tenant.id)
+            .where(Course.status == "draft")
+        )
+        or 0
+    )
     offering_rows = db.execute(
         select(CourseOffering.cohort_id, Course)
         .join(
@@ -136,6 +158,8 @@ def cohorts_list(
             "cohort_rows": cohort_rows,
             "courses": courses,
             "all_courses": courses,
+            "draft_course_count": draft_course_count,
+            "is_admin": is_admin,
         },
     )
 
@@ -164,6 +188,29 @@ def _split_emails(*fields: str) -> list[str]:
 
 def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return "admin" in role_slugs(db, tenant_id, person_id)
+
+
+def _hx_error(request: Request, target_id: str, message: str) -> HTMLResponse:
+    """Render a small inline error fragment (finding #1/#3).
+
+    ``create_track``/``add_courses_to_track``/the roster-track and
+    roster-state handlers used to let a ``BadRequestError``/``NotFoundError``
+    become a raw kernel-rendered 400/404 response, which htmx never swaps into
+    ``hx-target="body"`` — so the page just sat there with no feedback. This
+    always answers 200 (htmx swaps 200 responses) and, for an htmx caller,
+    retargets the swap to the small per-form ``target_id`` div placed next to
+    the form instead of ``body`` — ``hx-target="body"`` on the form itself is
+    left alone, since ``HX-Redirect`` (the success path) ignores it anyway.
+    """
+    response = templates.TemplateResponse(
+        request,
+        "instructor/_form_error.html",
+        {"request": request, "message": message},
+    )
+    if request.headers.get("HX-Request"):
+        response.headers["HX-Retarget"] = f"#{target_id}"
+        response.headers["HX-Reswap"] = "innerHTML"
+    return response
 
 
 def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
@@ -243,11 +290,30 @@ def change_roster_state(
     person_id: UUID,
     request: Request,
     state: str = Form(...),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Drop / waitlist / reactivate a roster member (finding #6)."""
+    """Drop / waitlist / reactivate a roster member (finding #6).
+
+    A plain instructor may change a ``student``-role enrollment's state. Only
+    an admin may change a non-student (e.g. ``instructor``) enrollment's
+    state — dropping a fellow instructor's own enrollment silently strips
+    their authoring access (``_assigned_course_ids``), so this must not be
+    reachable by any instructor with a UI button, not just a crafted request.
+    """
     tenant = require_tenant(request)
-    set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+    target = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant.id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == person_id)
+    ).first()
+    if target is not None and target.role_in_cohort != "student" and not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    try:
+        set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+    except NotFoundError as exc:
+        return _hx_error(request, f"roster-state-error-{cohort_id}-{person_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -267,10 +333,8 @@ def create_track_for_cohort(
             selected.append(UUID(raw))
     try:
         track_svc.create_cohort_track(db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected)
-    except BadRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-form-error-{cohort_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -296,10 +360,8 @@ def add_courses_to_track(
             track_id=track_id,
             course_ids=selected,
         )
-    except BadRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-courses-error-{track_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -317,7 +379,7 @@ def change_roster_track(
             db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, track_id=UUID(track_id)
         )
     except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _hx_error(request, f"roster-track-error-{cohort_id}-{person_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
