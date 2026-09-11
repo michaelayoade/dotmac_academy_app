@@ -319,6 +319,9 @@ def test_apply_assignment_still_sets_role_for_a_genuinely_new_student(admin_sess
         role="student",
         assignment=CohortAssignment(cohort=cohort),
     )
+    # _apply_assignment itself never flushes (invite_and_enroll does, once,
+    # after all assignments) — flush here since this test calls it directly.
+    admin_session.flush()
 
     enrollment = admin_session.scalars(
         select(Enrollment).where(Enrollment.cohort_id == cohort.id).where(Enrollment.person_id == person.id)
