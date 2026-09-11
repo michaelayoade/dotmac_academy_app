@@ -29,6 +29,12 @@ exact commands to run on the `academy` host, as user `dotmac`, from
   course's `Course.source_ref` field to the exact dotmac_sub commit its
   content and screenshots describe, so a future drift check has something
   concrete to diff against.
+- Chapter 6 ("Understanding Customer Behavior and Professional
+  Communication") was added 2026-09-11. Unlike chapters 2–5, it is not
+  drawn from `dotmac_sub` source or screenshots — it is grounded in a real,
+  aggregate-only (no PII, no free text) 90-day production performance pull
+  recorded in Knowledge as `dotmac-sub-support-performance-aggregate-2026-09-11`.
+  It carries no figure callouts (no screenshot was captured for it).
 
 ## 1. Validate locally first (already done, re-run to confirm)
 
@@ -36,7 +42,7 @@ From this repo's root:
 
 ```bash
 python3 app/services/bank_lint.py content/support/sup-agent-fundamentals/banks/
-# Expect: 6/6 bank(s) pass
+# Expect: 7/7 bank(s) pass
 ```
 
 ## 2. Import the course content
