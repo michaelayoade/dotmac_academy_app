@@ -258,23 +258,37 @@ def enroll_student(
     emails: str = Form(""),
     email: str = Form(""),
     track_id: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Bulk-enroll people by email; reports unknown emails instead of silently
-    dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``."""
+    dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``.
+
+    Reactivating a non-student (e.g. instructor-role) enrollment is
+    admin-only (see ``activate_enrollment``); a non-admin instructor
+    attempting it gets an inline error, not a silent restoration of the
+    target's authoring access.
+    """
     tenant = require_tenant(request)
     # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
     track_uuid = UUID(track_id) if track_id else None
-    result = bulk_enroll(
-        db,
-        tenant_id=tenant.id,
-        cohort_id=cohort_id,
-        emails=_split_emails(emails, email),
-        track_id=track_uuid,
-    )
-    enrolled = len(result["enrolled"]) + len(result["reactivated"])
+    try:
+        result = bulk_enroll(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            emails=_split_emails(emails, email),
+            track_id=track_uuid,
+            actor_is_admin=_is_admin(db, tenant.id, person.id),
+        )
+    except BadRequestError as exc:
+        return _hx_error(request, f"enroll-result-{cohort_id}", str(exc))
+    enrolled = len(result["enrolled"])
+    reactivated = len(result["reactivated"])
     already_active = len(result["already_active"])
     summary = f"Enrolled {enrolled}."
+    if reactivated:
+        summary += f" Reactivated {reactivated}."
     if already_active:
         summary += f" Already active: {already_active}."
     if result["not_found"]:
@@ -475,10 +489,17 @@ def invite_to_cohort(
     first_name: str = Form("New"),
     last_name: str = Form("Learner"),
     track_id: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
-    where unknown emails were silently dropped. Queues the activation email."""
+    where unknown emails were silently dropped. Queues the activation email.
+
+    Reactivating a non-student (e.g. instructor-role) enrollment through this
+    form is admin-only (see ``activate_enrollment``); a non-admin instructor
+    attempting it gets an inline error instead of silently restoring the
+    target's authoring access.
+    """
     tenant = require_tenant(request)
     track_uuid = UUID(track_id) if track_id else None
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
@@ -493,16 +514,20 @@ def invite_to_cohort(
         track = db.scalars(
             select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
         ).first()
-    result = invite_and_enroll(
-        db,
-        tenant_id=tenant.id,
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        role="student",
-        assignments=(CohortAssignment(cohort=cohort, track=track),),
-    )
-    person = result.person
+    try:
+        result = invite_and_enroll(
+            db,
+            tenant_id=tenant.id,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            role="student",
+            actor_is_admin=_is_admin(db, tenant.id, person.id),
+            assignments=(CohortAssignment(cohort=cohort, track=track),),
+        )
+    except BadRequestError as exc:
+        return _hx_error(request, f"invite-result-{cohort_id}", str(exc))
+    invited_person = result.person
     sent = False
     if result.token is not None:
         link = str(request.url_for("accept_form").include_query_params(token=result.token))
@@ -510,18 +535,18 @@ def invite_to_cohort(
         sent = enqueue_email(
             db,
             tenant_id=tenant.id,
-            idempotency_key=f"account-invite:{person.id}:{hash_token(result.token)}",
+            idempotency_key=f"account-invite:{invited_person.id}:{hash_token(result.token)}",
             kind="account_invite",
-            recipient=person.email,
+            recipient=invited_person.email,
             subject="You're invited to Dotmac Academy",
             html_body=(
-                f"<p>Hi {_e(person.first_name)},</p>"
+                f"<p>Hi {_e(invited_person.first_name)},</p>"
                 f"<p>You have been invited to Dotmac Academy.</p>"
                 f'<p><a href="{link_e}">Set up your account</a></p>'
                 f"<p>If the button does not work, open this link: {link_e}</p>"
             ),
             text_body=(
-                f"Hi {person.first_name},\n\n"
+                f"Hi {invited_person.first_name},\n\n"
                 f"You have been invited to Dotmac Academy.\n\n"
                 f"Set up your account: {link}\n"
             ),
@@ -530,10 +555,18 @@ def invite_to_cohort(
         status = "Student enrolled. Existing account can sign in."
     else:
         status = "Invite email queued." if sent else "Invite email could not be queued."
+    # Surface _apply_assignment's descriptions (e.g. "reactivated (was
+    # dropped)", "already an instructor, role unchanged") — previously
+    # computed but silently discarded on this surface.
+    assignments_html = ""
+    if result.assignments:
+        items = "".join(f"<li>{_e(item)}</li>" for item in result.assignments)
+        assignments_html = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
     return HTMLResponse(
         f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{_e(status)}</p>'
-        f"<p>Student: {_e(person.email)}</p>"
+        f"<p>Student: {_e(invited_person.email)}</p>"
+        f"{assignments_html}"
         f"</div>"
     )
 

@@ -21,6 +21,7 @@ from app.services.bootstrap import ensure_roles
 from app.services.exceptions import BadRequestError
 from app.services.identity import normalize_email, person_for_email, sync_credential_emails
 from app.services.lifecycle import issue_invite_for_person
+from app.services.roster import activate_enrollment
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ def _apply_assignment(
     person: Person,
     role: str,
     assignment: CohortAssignment,
+    actor_is_admin: bool,
 ) -> list[str]:
     cohort = assignment.cohort
     member_role = "instructor" if role in {"instructor", "admin"} else "student"
@@ -70,6 +72,7 @@ def _apply_assignment(
         .where(Enrollment.person_id == person.id)
     ).first()
     preserved_instructor_role = False
+    reactivation_note = ""
     if enrollment is None:
         enrollment = Enrollment(
             tenant_id=tenant_id,
@@ -89,12 +92,20 @@ def _apply_assignment(
             preserved_instructor_role = True
         else:
             enrollment.role_in_cohort = member_role
-        enrollment.status = "active"
+        # activate_enrollment is the single owner of the status="active"
+        # decision: it raises BadRequestError when this enrollment's
+        # role_in_cohort is not "student" and actor_is_admin is False —
+        # reactivating a dropped/waitlisted non-student enrollment silently
+        # restores their authoring access, the mirror-image of the admin
+        # gate change_roster_state already enforces for dropping one.
+        result = activate_enrollment(db, tenant_id=tenant_id, enrollment=enrollment, actor_is_admin=actor_is_admin)
+        if result.outcome == "reactivated" and result.previous_status in ("dropped", "waitlisted"):
+            reactivation_note = f" — reactivated (was {result.previous_status})"
 
     if preserved_instructor_role:
-        descriptions = [f"{cohort.name} cohort — already an instructor, role unchanged"]
+        descriptions = [f"{cohort.name} cohort — already an instructor, role unchanged{reactivation_note}"]
     else:
-        descriptions = [f"{cohort.name} cohort as {member_role}"]
+        descriptions = [f"{cohort.name} cohort as {member_role}{reactivation_note}"]
     if assignment.track is not None:
         enrollment.track_id = assignment.track.id
         track_svc.ensure_track_offerings(
@@ -135,6 +146,7 @@ def invite_and_enroll(
     first_name: str,
     last_name: str,
     role: str,
+    actor_is_admin: bool,
     assignments: tuple[CohortAssignment, ...] = (),
     now: datetime | None = None,
 ) -> AccountInvitationResult:
@@ -143,6 +155,12 @@ def invite_and_enroll(
     Existing login-capable users are enrolled without receiving an unusable
     activation link. Credential-less people receive one fresh invite; issuing
     it invalidates any older outstanding invite for the same account.
+
+    ``actor_is_admin`` has no default — every caller must state the acting
+    user's authority, since reactivating an existing non-student cohort
+    enrollment (via ``_apply_assignment`` -> ``activate_enrollment``) is
+    admin-only. It is inert when ``assignments`` is empty (nothing to
+    reactivate) but callers must still pass it explicitly.
     """
     canonical = normalize_email(email)
     if not canonical:
@@ -179,6 +197,7 @@ def invite_and_enroll(
                 person=person,
                 role=role,
                 assignment=assignment,
+                actor_is_admin=actor_is_admin,
             )
         )
 

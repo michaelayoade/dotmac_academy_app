@@ -127,6 +127,122 @@ def test_bulk_enroll_surfaces_unknown_emails(app_client, admin_session, tenant_a
     assert n == 1
 
 
+def test_enroll_route_refuses_non_admin_reactivating_instructor_enrollment(app_client, admin_session, tenant_a):
+    """A plain instructor cannot type a dropped fellow instructor's email into
+    the enroll form to silently restore their authoring access — bulk_enroll's
+    BadRequestError renders inline, and the enrollment stays dropped."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="EnrollGate", discipline="networking", status="active")
+    peer = Person(tenant_id=tenant_a.id, email="peer-enroll@a.edu", first_name="Peer", last_name="Enroll")
+    admin_session.add_all([coh, peer])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=peer.id, role_in_cohort="instructor",
+            status="dropped",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/enroll",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"email": "peer-enroll@a.edu"},
+    )
+    assert r.status_code == 200
+    assert r.headers.get("HX-Retarget") == f"#enroll-result-{coh.id}"
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == peer.id)
+    ).first()
+    assert enr.status == "dropped"  # unchanged
+
+
+def test_enroll_route_summary_separates_enrolled_from_reactivated(app_client, admin_session, tenant_a):
+    """The enroll summary line must not fold reactivations into "Enrolled N"."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="EnrollSummary", discipline="networking", status="active")
+    fresh = Person(tenant_id=tenant_a.id, email="fresh-enroll@a.edu", first_name="Fresh", last_name="Enroll")
+    dropped = Person(tenant_id=tenant_a.id, email="dropped-enroll@a.edu", first_name="Dropped", last_name="Enroll")
+    admin_session.add_all([coh, fresh, dropped])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=dropped.id, role_in_cohort="student",
+            status="dropped",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/enroll",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"emails": "fresh-enroll@a.edu, dropped-enroll@a.edu"},
+    )
+    assert r.status_code == 200
+    assert "Enrolled 1." in r.text
+    assert "Reactivated 1." in r.text
+
+
+def test_invite_route_refuses_non_admin_reactivating_instructor_enrollment(app_client, admin_session, tenant_a):
+    """Same gap, different door: the invite form must not let a plain
+    instructor reactivate a dropped fellow instructor's enrollment either."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="InviteGate", discipline="networking", status="active")
+    peer = Person(tenant_id=tenant_a.id, email="peer-invite@a.edu", first_name="Peer", last_name="Invite")
+    admin_session.add_all([coh, peer])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=peer.id, role_in_cohort="instructor",
+            status="dropped",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/invite",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"email": "peer-invite@a.edu"},
+    )
+    assert r.status_code == 200
+    assert r.headers.get("HX-Retarget") == f"#invite-result-{coh.id}"
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == peer.id)
+    ).first()
+    assert enr.status == "dropped"  # unchanged
+
+
+def test_invite_route_surfaces_reactivation_description(app_client, admin_session, tenant_a):
+    """invite_to_cohort's response must render _apply_assignment's
+    description text (e.g. "reactivated (was dropped)"), not discard it."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="InviteVisible", discipline="networking", status="active")
+    stu = Person(tenant_id=tenant_a.id, email="invite-reactivate@a.edu", first_name="Re", last_name="Activate")
+    admin_session.add_all([coh, stu])
+    admin_session.flush()
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student",
+            status="dropped",
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/invite",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"email": "invite-reactivate@a.edu"},
+    )
+    assert r.status_code == 200
+    assert "reactivated (was dropped)" in r.text
+
+
 def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
     """Finding #4: manual submissions awaiting a score appear in the queue."""
     from app.models.assessment import Activity, Submission

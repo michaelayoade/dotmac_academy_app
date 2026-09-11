@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import func, select
 
 from app.models.account_token import AccountToken
@@ -34,6 +35,7 @@ def test_new_user_invitation_is_canonical_and_enrolled(admin_session, tenant_a):
         first_name="New",
         last_name="Student",
         role="student",
+        actor_is_admin=True,
         assignments=(CohortAssignment(cohort=cohort),),
     )
 
@@ -71,6 +73,7 @@ def test_existing_user_without_credentials_is_reinvited_idempotently(admin_sessi
         first_name="Ignored",
         last_name="Ignored",
         role="student",
+        actor_is_admin=True,
         assignments=(CohortAssignment(cohort=cohort),),
     )
     second = invite_and_enroll(
@@ -80,6 +83,7 @@ def test_existing_user_without_credentials_is_reinvited_idempotently(admin_sessi
         first_name="Ignored",
         last_name="Ignored",
         role="student",
+        actor_is_admin=True,
         assignments=(CohortAssignment(cohort=cohort),),
     )
 
@@ -141,6 +145,7 @@ def test_existing_user_with_credentials_is_enrolled_without_activation(admin_ses
         first_name="Existing",
         last_name="Member",
         role="student",
+        actor_is_admin=True,
         assignments=(CohortAssignment(cohort=cohort),),
     )
     repeated = invite_and_enroll(
@@ -150,6 +155,7 @@ def test_existing_user_with_credentials_is_enrolled_without_activation(admin_ses
         first_name="Existing",
         last_name="Member",
         role="student",
+        actor_is_admin=True,
         assignments=(CohortAssignment(cohort=cohort),),
     )
 
@@ -204,6 +210,9 @@ def test_already_enrolled_user_is_reactivated_without_duplicate(admin_session, t
         first_name=person.first_name,
         last_name=person.last_name,
         role="student",
+        # A student-role enrollment reactivates for any instructor, admin or
+        # not — actor_is_admin=False proves this case is never gated.
+        actor_is_admin=False,
         assignments=(CohortAssignment(cohort=cohort),),
     )
 
@@ -217,6 +226,44 @@ def test_already_enrolled_user_is_reactivated_without_duplicate(admin_session, t
         )
         == 1
     )
+    admin_session.rollback()
+
+
+def test_reactivation_description_names_the_prior_status(admin_session, tenant_a):
+    """The description string _apply_assignment returns must distinguish a
+    reactivation from a genuinely new enrollment — this is what makes the
+    reactivation visible on the invite_to_cohort web surface at all."""
+    cohort = _cohort(admin_session, tenant_a.id)
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="was-waitlisted@example.com",
+        first_name="Was",
+        last_name="Waitlisted",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        person_id=person.id,
+        role_in_cohort="student",
+        status="waitlisted",
+    )
+    admin_session.add(enrollment)
+    admin_session.flush()
+
+    result = invite_and_enroll(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email=person.email,
+        first_name=person.first_name,
+        last_name=person.last_name,
+        role="student",
+        actor_is_admin=False,
+        assignments=(CohortAssignment(cohort=cohort),),
+    )
+
+    assert any("reactivated (was waitlisted)" in item for item in result.assignments)
     admin_session.rollback()
 
 
@@ -250,6 +297,10 @@ def test_invite_and_enroll_never_downgrades_an_existing_instructor_to_student(ad
         first_name=person.first_name,
         last_name=person.last_name,
         role="student",  # would normally resolve member_role="student"
+        # Already active (no status transition here), so this is not gated
+        # even for a non-admin actor — proves the gate is about REACTIVATION,
+        # not the role preservation itself.
+        actor_is_admin=False,
         assignments=(CohortAssignment(cohort=cohort),),
     )
 
@@ -261,7 +312,13 @@ def test_invite_and_enroll_never_downgrades_an_existing_instructor_to_student(ad
 
 def test_apply_assignment_direct_call_preserves_instructor_role(admin_session, tenant_a):
     """Same guarantee exercised directly against _apply_assignment (the single
-    function both the instructor route and the admin Users route share)."""
+    function both the instructor route and the admin Users route share).
+
+    actor_is_admin=True here: this test specifically checks that an ADMIN
+    preserves the instructor role while reactivating a dropped instructor
+    enrollment — that is still the correct, allowed behavior. A non-admin
+    performing this same scenario is refused; see the sibling test below.
+    """
     from app.services.account_invitations import _apply_assignment
 
     cohort = _cohort(admin_session, tenant_a.id)
@@ -289,11 +346,54 @@ def test_apply_assignment_direct_call_preserves_instructor_role(admin_session, t
         person=person,
         role="student",
         assignment=CohortAssignment(cohort=cohort),
+        actor_is_admin=True,
     )
 
     assert enrollment.role_in_cohort == "instructor"
     assert enrollment.status == "active"
     assert any("already an instructor, role unchanged" in item for item in descriptions)
+    admin_session.rollback()
+
+
+def test_apply_assignment_direct_call_refuses_non_admin_reactivating_instructor(admin_session, tenant_a):
+    """The mirror of the test above: a non-admin actor may NOT reactivate a
+    dropped instructor-role enrollment through _apply_assignment — this is
+    exactly the privilege-restoration gap this fix closes. The enrollment's
+    status must be left unchanged (still "dropped") after the refusal."""
+    from app.services.account_invitations import _apply_assignment
+    from app.services.exceptions import BadRequestError
+
+    cohort = _cohort(admin_session, tenant_a.id)
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="non-admin-instructor@example.com",
+        first_name="NonAdmin",
+        last_name="Instructor",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        person_id=person.id,
+        role_in_cohort="instructor",
+        status="dropped",
+    )
+    admin_session.add(enrollment)
+    admin_session.flush()
+
+    with pytest.raises(BadRequestError):
+        _apply_assignment(
+            admin_session,
+            tenant_id=tenant_a.id,
+            person=person,
+            role="student",
+            assignment=CohortAssignment(cohort=cohort),
+            actor_is_admin=False,
+        )
+
+    assert enrollment.role_in_cohort == "instructor"
+    assert enrollment.status == "dropped"
     admin_session.rollback()
 
 
@@ -318,6 +418,9 @@ def test_apply_assignment_still_sets_role_for_a_genuinely_new_student(admin_sess
         person=person,
         role="student",
         assignment=CohortAssignment(cohort=cohort),
+        # Brand-new enrollment: activate_enrollment is never reached, so this
+        # value is inert here — passed because the signature has no default.
+        actor_is_admin=False,
     )
     # _apply_assignment itself never flushes (invite_and_enroll does, once,
     # after all assignments) — flush here since this test calls it directly.
