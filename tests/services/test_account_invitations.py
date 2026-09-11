@@ -218,3 +218,111 @@ def test_already_enrolled_user_is_reactivated_without_duplicate(admin_session, t
         == 1
     )
     admin_session.rollback()
+
+
+def test_invite_and_enroll_never_downgrades_an_existing_instructor_to_student(admin_session, tenant_a):
+    """Fix 2: /invite and /enroll (and the admin Users page's invite path,
+    which shares this same function) must never silently demote an existing
+    cohort instructor to student — unconditionally, no opt-out."""
+    cohort = _cohort(admin_session, tenant_a.id)
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="instructor@example.com",
+        first_name="Existing",
+        last_name="Instructor",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        person_id=person.id,
+        role_in_cohort="instructor",
+        status="active",
+    )
+    admin_session.add(enrollment)
+    admin_session.flush()
+
+    result = invite_and_enroll(
+        admin_session,
+        tenant_id=tenant_a.id,
+        email=person.email,
+        first_name=person.first_name,
+        last_name=person.last_name,
+        role="student",  # would normally resolve member_role="student"
+        assignments=(CohortAssignment(cohort=cohort),),
+    )
+
+    assert enrollment.role_in_cohort == "instructor"  # NOT demoted
+    assert enrollment.status == "active"  # the status line is untouched/still runs
+    assert any("already an instructor, role unchanged" in item for item in result.assignments)
+    admin_session.rollback()
+
+
+def test_apply_assignment_direct_call_preserves_instructor_role(admin_session, tenant_a):
+    """Same guarantee exercised directly against _apply_assignment (the single
+    function both the instructor route and the admin Users route share)."""
+    from app.services.account_invitations import _apply_assignment
+
+    cohort = _cohort(admin_session, tenant_a.id)
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="direct-instructor@example.com",
+        first_name="Direct",
+        last_name="Instructor",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        person_id=person.id,
+        role_in_cohort="instructor",
+        status="dropped",
+    )
+    admin_session.add(enrollment)
+    admin_session.flush()
+
+    descriptions = _apply_assignment(
+        admin_session,
+        tenant_id=tenant_a.id,
+        person=person,
+        role="student",
+        assignment=CohortAssignment(cohort=cohort),
+    )
+
+    assert enrollment.role_in_cohort == "instructor"
+    assert enrollment.status == "active"
+    assert any("already an instructor, role unchanged" in item for item in descriptions)
+    admin_session.rollback()
+
+
+def test_apply_assignment_still_sets_role_for_a_genuinely_new_student(admin_session, tenant_a):
+    """Sanity check for the fix's near-miss: a brand-new enrollment (no
+    existing instructor role) still gets member_role set normally."""
+    from app.services.account_invitations import _apply_assignment
+
+    cohort = _cohort(admin_session, tenant_a.id)
+    person = Person(
+        tenant_id=tenant_a.id,
+        email="brand-new@example.com",
+        first_name="Brand",
+        last_name="New",
+    )
+    admin_session.add(person)
+    admin_session.flush()
+
+    descriptions = _apply_assignment(
+        admin_session,
+        tenant_id=tenant_a.id,
+        person=person,
+        role="student",
+        assignment=CohortAssignment(cohort=cohort),
+    )
+
+    enrollment = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == cohort.id).where(Enrollment.person_id == person.id)
+    ).first()
+    assert enrollment.role_in_cohort == "student"
+    assert descriptions == [f"{cohort.name} cohort as student"]
+    admin_session.rollback()

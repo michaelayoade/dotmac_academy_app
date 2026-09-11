@@ -37,9 +37,26 @@
           {% if item.courses %}
           <ol class="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink-soft">
             {% for course in item.courses %}
-            <li>{{ course.title }}</li>
+            <li>{{ course.title }}{% if course.id in item.zero_activity_course_ids %} <span class="font-semibold text-clay-600">⚠ no activities yet — will block progress for anyone who reaches this course</span>{% endif %}</li>
             {% endfor %}
           </ol>
+          <details class="disclosure mt-3 border-t border-sand-200 pt-3">
+            <summary class="cursor-pointer list-none text-sm font-semibold text-brand-700">Reorder courses</summary>
+            <form class="mt-2 space-y-2" hx-post="/instructor/tracks/{{ item.track.id }}/reorder" hx-target="body" hx-push-url="true">
+              <div class="grid gap-1.5">
+                {% for course in item.courses %}
+                <div class="flex items-center gap-2 rounded-md border border-sand-200 px-2 py-1.5 text-sm">
+                  <input type="hidden" name="course_ids" value="{{ course.id }}">
+                  <input type="number" name="position_{{ course.id }}" min="1" value="{{ loop.index }}"
+                         class="w-20 px-2 py-1 text-xs" aria-label="Position for {{ course.title }}">
+                  <span class="min-w-0 flex-1 text-ink">{{ course.title }}</span>
+                </div>
+                {% endfor %}
+              </div>
+              <button type="submit" class="btn-ghost px-3.5 py-2 text-sm">Save order</button>
+              <div id="track-reorder-error-{{ item.track.id }}"></div>
+            </form>
+          </details>
           {% else %}
           <p class="mt-2 text-sm text-ink-soft">No courses in this track yet.</p>
           {% endif %}
@@ -52,10 +69,12 @@
                 {% if course.id not in assigned_ids %}
                 <label class="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sand-100">
                   <input type="checkbox" name="course_ids" value="{{ course.id }}" class="mt-0.5">
-                  <span class="min-w-0">
+                  <span class="min-w-0 flex-1">
                     <span class="block font-medium text-ink">{{ course.title }}</span>
                     <span class="block text-xs text-ink-soft">{{ course.slug }}</span>
                   </span>
+                  <input type="number" name="position_{{ course.id }}" min="1" placeholder="#"
+                         class="w-20 shrink-0 px-2 py-1 text-xs" aria-label="Position for {{ course.title }}">
                 </label>
                 {% endif %}
                 {% endfor %}
@@ -87,10 +106,12 @@
             {% for course in track_course_options %}
             <label class="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sand-100">
               <input type="checkbox" name="course_ids" value="{{ course.id }}" class="mt-0.5">
-              <span class="min-w-0">
+              <span class="min-w-0 flex-1">
                 <span class="block font-medium text-ink">{{ course.title }}</span>
                 <span class="block text-xs text-ink-soft">{{ course.slug }}</span>
               </span>
+              <input type="number" name="position_{{ course.id }}" min="1" placeholder="#"
+                     class="w-20 shrink-0 px-2 py-1 text-xs" aria-label="Position for {{ course.title }}">
             </label>
             {% endfor %}
           </div>
@@ -183,7 +204,14 @@
                 {% else %}
                 <span class="text-xs text-ink-soft">Admin only</span>
                 {% endif %}
+                {% if is_admin and enrollment.track_id %}
+                <form class="mt-1.5" hx-post="/instructor/cohorts/{{ c.id }}/roster/{{ student.id }}/track/clear"
+                      hx-target="#roster-track-clear-error-{{ c.id }}-{{ student.id }}" hx-swap="innerHTML">
+                  <button type="submit" class="btn-ghost px-2 py-1 text-xs">Clear track</button>
+                </form>
+                {% endif %}
                 <div id="roster-state-error-{{ c.id }}-{{ student.id }}" class="mt-1"></div>
+                <div id="roster-track-clear-error-{{ c.id }}-{{ student.id }}" class="mt-1"></div>
               </td>
             </tr>
             {% endfor %}

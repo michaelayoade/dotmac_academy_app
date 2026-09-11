@@ -453,6 +453,207 @@ def test_admin_can_change_instructor_role_enrollment_state(app_client, admin_ses
     assert enr.status == "dropped"
 
 
+def test_reorder_track_courses_route_updates_order(app_client, admin_session, tenant_a):
+    """1b: an instructor can reorder an EXISTING track's courses via the
+    track-level route (not nested under a specific cohort)."""
+    from app.models.track import TrackCourse
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ReorderRoute", discipline="networking", status="active")
+    course_a = Course(
+        tenant_id=tenant_a.id, slug="rr-a", title="RR A", discipline="networking", source_ref="x", version=1,
+        status="published",
+    )
+    course_b = Course(
+        tenant_id=tenant_a.id, slug="rr-b", title="RR B", discipline="networking", source_ref="x", version=1,
+        status="published",
+    )
+    admin_session.add_all([coh, course_a, course_b])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session,
+        tenant_id=tenant_a.id,
+        cohort_id=coh.id,
+        name="Route Track",
+        course_ids=[course_a.id, course_b.id],
+    )
+    admin_session.commit()
+    admin_session.refresh(track)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/tracks/{track.id}/reorder",
+        headers={**h, "x-csrf-token": csrf},
+        data={
+            "course_ids": [str(course_a.id), str(course_b.id)],
+            f"position_{course_b.id}": "1",
+            f"position_{course_a.id}": "2",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    admin_session.expire_all()
+    rows = admin_session.scalars(
+        select(TrackCourse).where(TrackCourse.track_id == track.id).order_by(TrackCourse.order_index)
+    ).all()
+    assert [row.course_id for row in rows] == [course_b.id, course_a.id]
+
+
+def test_reorder_track_courses_route_rejects_mismatched_membership(app_client, admin_session, tenant_a):
+    """1b: reordering with an id that isn't in the track renders inline,
+    same as the other track-form BadRequestError handlers."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ReorderReject", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id, slug="rr-only", title="RR Only", discipline="networking", source_ref="x", version=1,
+        status="published",
+    )
+    admin_session.add_all([coh, course])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="Reject Route Track", course_ids=[course.id]
+    )
+    admin_session.commit()
+    admin_session.refresh(track)
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/tracks/{track.id}/reorder",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"course_ids": [str(uuid4())]},  # not a member of the track
+    )
+    assert r.status_code == 200
+    assert "must match" in r.text.lower()
+    assert r.headers.get("HX-Retarget") == f"#track-reorder-error-{track.id}"
+
+
+def test_clear_roster_track_forbidden_for_non_admin_instructor(app_client, admin_session, tenant_a):
+    """1d: clearing a learner's track is admin-only, regardless of the
+    target's role (mirrors change_roster_state's admin gate)."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ClearForbidden", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id, slug="clear-c", title="Clear C", discipline="networking", source_ref="x", version=1,
+        status="published",
+    )
+    stu = Person(tenant_id=tenant_a.id, email="clear-stu@a.edu", first_name="C", last_name="S")
+    admin_session.add_all([coh, course, stu])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="Clear Track", course_ids=[course.id]
+    )
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active",
+            track_id=track.id,
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{stu.id}/track/clear",
+        headers={**h, "x-csrf-token": csrf},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == stu.id)
+    ).first()
+    assert enr.track_id == track.id  # unchanged
+
+
+def test_admin_can_clear_a_learners_stuck_track(app_client, admin_session, tenant_a):
+    """1d: an admin clearing a learner's track nulls Enrollment.track_id
+    (not a fabricated completion) and falls back to cohort-wide access."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ClearAdmin", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id, slug="clear-a-c", title="Clear Admin C", discipline="networking", source_ref="x",
+        version=1, status="published",
+    )
+    stu = Person(tenant_id=tenant_a.id, email="clear-admin-stu@a.edu", first_name="C", last_name="A")
+    admin_session.add_all([coh, course, stu])
+    admin_session.flush()
+    track = create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="Clear Admin Track", course_ids=[course.id]
+    )
+    admin_session.add(
+        Enrollment(
+            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active",
+            track_id=track.id,
+        )
+    )
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{stu.id}/track/clear",
+        headers={**h, "x-csrf-token": csrf},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    admin_session.expire_all()
+    enr = admin_session.scalars(
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == stu.id)
+    ).first()
+    assert enr.track_id is None
+
+
+def test_clear_roster_track_error_renders_inline_message(app_client, admin_session, tenant_a):
+    """1d: NotFoundError (no enrollment) renders inline, same as the other
+    roster-action handlers."""
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ClearMissing", discipline="networking", status="active")
+    stu = Person(tenant_id=tenant_a.id, email="clear-missing@a.edu", first_name="C", last_name="M")
+    admin_session.add_all([coh, stu])
+    admin_session.commit()
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    r = app_client.post(
+        f"/instructor/cohorts/{coh.id}/roster/{stu.id}/track/clear",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    assert "not found" in r.text.lower()
+    assert r.headers.get("HX-Retarget") == f"#roster-track-clear-error-{coh.id}-{stu.id}"
+
+
+def test_cohorts_page_shows_zero_activity_course_warning(app_client, admin_session, tenant_a):
+    """1c: a zero-Activity course in a track shows a live-computed warning,
+    without blocking the track from rendering."""
+    from app.models.assessment import Activity
+
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    coh = Cohort(tenant_id=tenant_a.id, name="ActivityWarning", discipline="networking", status="active")
+    course = Course(
+        tenant_id=tenant_a.id, slug="warn-c", title="Warn Course", discipline="networking", source_ref="x",
+        version=1, status="published",
+    )
+    admin_session.add_all([coh, course])
+    admin_session.flush()
+    create_cohort_track(
+        admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="Warn Track", course_ids=[course.id]
+    )
+    admin_session.commit()
+
+    r = app_client.get("/instructor/cohorts", headers=h)
+    assert r.status_code == 200
+    assert "no activities yet" in r.text.lower()
+
+    # Adding an activity clears the warning on the next render (computed live).
+    act = Activity(
+        tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test", title="Q", pass_threshold=0.6
+    )
+    admin_session.add(act)
+    admin_session.commit()
+    r2 = app_client.get("/instructor/cohorts", headers=h)
+    assert "no activities yet" not in r2.text.lower()
+
+
 def test_roster_state_change_error_renders_inline_message(app_client, admin_session, tenant_a):
     """Finding #1: set_roster_state's NotFoundError (invalid state) renders inline."""
     h = _login_instructor(app_client, admin_session, tenant_a)

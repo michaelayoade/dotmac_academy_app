@@ -317,8 +317,28 @@ def change_roster_state(
     return hx_redirect(request, "/instructor/cohorts")
 
 
+async def _positions_from_form(request: Request, course_ids: list[UUID]) -> dict[UUID, int]:
+    """Read optional ``position_<course_id>`` fields for the given course ids.
+
+    A blank/absent position input is fine — that course is simply left
+    unpositioned (appended after any positioned courses in submission
+    order); a non-integer value is treated the same as absent.
+    """
+    form = await request.form()
+    positions: dict[UUID, int] = {}
+    for course_id in course_ids:
+        raw = form.get(f"position_{course_id}")
+        if not raw:
+            continue
+        try:
+            positions[course_id] = int(str(raw))
+        except ValueError:
+            continue
+    return positions
+
+
 @router.post("/cohorts/{cohort_id}/tracks")
-def create_track_for_cohort(
+async def create_track_for_cohort(
     cohort_id: UUID,
     request: Request,
     name: str = Form(...),
@@ -331,15 +351,18 @@ def create_track_for_cohort(
     for raw in [*course_ids, course_id]:
         if raw:
             selected.append(UUID(raw))
+    positions = await _positions_from_form(request, selected)
     try:
-        track_svc.create_cohort_track(db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected)
+        track_svc.create_cohort_track(
+            db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected, positions=positions
+        )
     except (BadRequestError, NotFoundError) as exc:
         return _hx_error(request, f"track-form-error-{cohort_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
 @router.post("/cohorts/{cohort_id}/tracks/{track_id}/courses")
-def add_courses_to_track(
+async def add_courses_to_track(
     cohort_id: UUID,
     track_id: UUID,
     request: Request,
@@ -352,6 +375,7 @@ def add_courses_to_track(
     for raw in [*course_ids, course_id]:
         if raw:
             selected.append(UUID(raw))
+    positions = await _positions_from_form(request, selected)
     try:
         track_svc.add_courses_to_cohort_track(
             db,
@@ -359,9 +383,44 @@ def add_courses_to_track(
             cohort_id=cohort_id,
             track_id=track_id,
             course_ids=selected,
+            positions=positions,
         )
     except (BadRequestError, NotFoundError) as exc:
         return _hx_error(request, f"track-courses-error-{track_id}", str(exc))
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/tracks/{track_id}/reorder")
+async def reorder_track(
+    track_id: UUID,
+    request: Request,
+    course_ids: list[str] = Form([]),
+    db: Session = Depends(get_db),
+):
+    """Reorder an EXISTING track's courses (not just at creation).
+
+    A Track is tenant-level, not cohort-scoped (CohortTrack is the join), so
+    this route is not nested under a specific cohort. Gated the same as
+    other track-management actions (require_web_role("instructor"), already
+    the router-level default) — this is not the admin-only case.
+    """
+    tenant = require_tenant(request)
+    submitted: list[UUID] = [UUID(raw) for raw in course_ids if raw]
+    form = await request.form()
+    ranked: list[tuple[int, int, UUID]] = []
+    for idx, course_id in enumerate(submitted):
+        raw_pos = form.get(f"position_{course_id}")
+        try:
+            pos = int(str(raw_pos)) if raw_pos else idx
+        except ValueError:
+            pos = idx
+        ranked.append((pos, idx, course_id))
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    ordered = [course_id for _, _, course_id in ranked]
+    try:
+        track_svc.reorder_track_courses(db, tenant_id=tenant.id, track_id=track_id, ordered_course_ids=ordered)
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-reorder-error-{track_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -380,6 +439,31 @@ def change_roster_track(
         )
     except NotFoundError as exc:
         return _hx_error(request, f"roster-track-error-{cohort_id}-{person_id}", str(exc))
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/roster/{person_id}/track/clear")
+def clear_roster_track(
+    cohort_id: UUID,
+    person_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Admin-only recovery: null out a stuck learner's track assignment.
+
+    Deliberately admin-gated regardless of the target's role — clearing a
+    learner's track is a bigger structural change than a routine
+    drop/reactivate (mirrors the admin gate already used in
+    change_roster_state above).
+    """
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    try:
+        track_svc.clear_enrollment_track(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id)
+    except NotFoundError as exc:
+        return _hx_error(request, f"roster-track-clear-error-{cohort_id}-{person_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 

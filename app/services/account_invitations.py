@@ -69,6 +69,7 @@ def _apply_assignment(
         .where(Enrollment.cohort_id == cohort.id)
         .where(Enrollment.person_id == person.id)
     ).first()
+    preserved_instructor_role = False
     if enrollment is None:
         enrollment = Enrollment(
             tenant_id=tenant_id,
@@ -79,10 +80,21 @@ def _apply_assignment(
         )
         db.add(enrollment)
     else:
-        enrollment.role_in_cohort = member_role
+        # Never downgrade an existing cohort instructor to student — this is
+        # unconditional (Michael's decision), regardless of caller (both the
+        # instructor-facing invite/enroll routes and the admin Users page's
+        # invite path share this function). Demoting silently strips
+        # instructor.py's _assigned_course_ids-derived authoring access.
+        if enrollment.role_in_cohort == "instructor" and member_role == "student":
+            preserved_instructor_role = True
+        else:
+            enrollment.role_in_cohort = member_role
         enrollment.status = "active"
 
-    descriptions = [f"{cohort.name} cohort as {member_role}"]
+    if preserved_instructor_role:
+        descriptions = [f"{cohort.name} cohort — already an instructor, role unchanged"]
+    else:
+        descriptions = [f"{cohort.name} cohort as {member_role}"]
     if assignment.track is not None:
         enrollment.track_id = assignment.track.id
         track_svc.ensure_track_offerings(
