@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
@@ -129,8 +130,7 @@ def test_bulk_enroll_continues_batch_after_a_refused_reactivation(admin_session,
     admin_session.refresh(enrollment)
     assert enrollment.status == "dropped"  # refused, unchanged
     fresh_enr = admin_session.scalars(
-        __import__("sqlalchemy").select(Enrollment)
-        .where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == fresh.id)
+        select(Enrollment).where(Enrollment.cohort_id == coh.id).where(Enrollment.person_id == fresh.id)
     ).first()
     assert fresh_enr is not None and fresh_enr.status == "active"  # rest of the batch still applied
     admin_session.rollback()
