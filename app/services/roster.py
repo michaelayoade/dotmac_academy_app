@@ -88,14 +88,19 @@ def bulk_enroll(
 ) -> dict:
     """Enroll each email's person into the cohort as an active student.
 
-    Returns {"enrolled", "reactivated", "already_active", "not_found"} lists of
-    emails. Unknown emails are reported, never silently dropped.
+    Returns {"enrolled", "reactivated", "already_active", "not_found",
+    "admin_required"} lists of emails. Unknown emails are reported, never
+    silently dropped — and, matching that same per-email-outcome contract, an
+    email whose existing enrollment needs an admin to reactivate (see
+    :func:`activate_enrollment`) is categorized into "admin_required" and the
+    batch continues; it does NOT abort the rest of the emails in the call.
 
     ``actor_is_admin`` has no default — every caller must state the acting
     instructor's authority, because reactivating an existing non-student
-    (e.g. instructor-role) enrollment is admin-only; see
-    :func:`activate_enrollment`. A ``BadRequestError`` it raises propagates
-    to the caller.
+    (e.g. instructor-role) enrollment is admin-only. Unlike
+    :func:`activate_enrollment` itself, ``bulk_enroll`` never raises
+    ``BadRequestError`` for this case — it is caught here and folded into
+    "admin_required" instead.
     """
     cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
     if track_id is not None:
@@ -105,6 +110,7 @@ def bulk_enroll(
         "reactivated": [],
         "already_active": [],
         "not_found": [],
+        "admin_required": [],
     }
     for email in _normalize_emails(emails):
         person = person_for_email(db, tenant_id=tenant_id, email=email)
@@ -130,7 +136,11 @@ def bulk_enroll(
             )
             result["enrolled"].append(email)
         elif enr.status != "active":
-            activate_enrollment(db, tenant_id=tenant_id, enrollment=enr, actor_is_admin=actor_is_admin)
+            try:
+                activate_enrollment(db, tenant_id=tenant_id, enrollment=enr, actor_is_admin=actor_is_admin)
+            except BadRequestError:
+                result["admin_required"].append(email)
+                continue
             if track_id is not None:
                 assign_enrollment_track(
                     db,

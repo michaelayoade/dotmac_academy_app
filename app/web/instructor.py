@@ -265,24 +265,22 @@ def enroll_student(
     dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``.
 
     Reactivating a non-student (e.g. instructor-role) enrollment is
-    admin-only (see ``activate_enrollment``); a non-admin instructor
-    attempting it gets an inline error, not a silent restoration of the
-    target's authoring access.
+    admin-only (see ``activate_enrollment``). ``bulk_enroll`` never raises for
+    this — a non-admin instructor's attempt is reported in the summary as
+    "Requires admin to reactivate", the same per-email-outcome contract as
+    an unknown email, and the rest of the batch is still processed.
     """
     tenant = require_tenant(request)
     # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
     track_uuid = UUID(track_id) if track_id else None
-    try:
-        result = bulk_enroll(
-            db,
-            tenant_id=tenant.id,
-            cohort_id=cohort_id,
-            emails=_split_emails(emails, email),
-            track_id=track_uuid,
-            actor_is_admin=_is_admin(db, tenant.id, person.id),
-        )
-    except BadRequestError as exc:
-        return _hx_error(request, f"enroll-result-{cohort_id}", str(exc))
+    result = bulk_enroll(
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
+        emails=_split_emails(emails, email),
+        track_id=track_uuid,
+        actor_is_admin=_is_admin(db, tenant.id, person.id),
+    )
     enrolled = len(result["enrolled"])
     reactivated = len(result["reactivated"])
     already_active = len(result["already_active"])
@@ -291,6 +289,12 @@ def enroll_student(
         summary += f" Reactivated {reactivated}."
     if already_active:
         summary += f" Already active: {already_active}."
+    if result["admin_required"]:
+        summary += (
+            " Requires admin to reactivate: "
+            + ", ".join(_e(e) for e in result["admin_required"])
+            + "."
+        )
     if result["not_found"]:
         summary += " Unknown (not enrolled): " + ", ".join(_e(e) for e in result["not_found"]) + "."
     if request.headers.get("HX-Request"):
