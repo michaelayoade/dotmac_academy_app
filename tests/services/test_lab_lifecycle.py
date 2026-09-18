@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy import select
 
 from app.config import settings
@@ -10,6 +11,7 @@ from app.models.course import Course
 from app.models.lab import LabInstance, LabTemplate
 from app.models.person import Person
 from app.services import lab_lifecycle
+from app.services.exceptions import ConflictError
 from app.services.labengine.interface import ExecResult, LabHandle
 
 # The autouse ``_no_real_console_spawn`` fixture in tests/conftest.py replaces
@@ -228,6 +230,52 @@ def test_reset_success_rebuilds_consoles_from_fresh_handle(admin_session, tenant
     assert out.consoles["client"]["mgmt"] == "172.20.20.55"
     assert "r1" in out.consoles
     assert "port" not in out.consoles["r1"]  # RouterOS gets webfig, not ttyd
+    admin_session.rollback()
+
+
+def test_reset_stops_old_consoles_before_starting_fresh_ones(admin_session, tenant_a, monkeypatch):
+    """stop_consoles() matches running ttyd processes by instance.id alone (not
+    by port), so it MUST run before the fresh start_console() calls — calling
+    it after would kill the just-started consoles for the same instance."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-order", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux", "mgmt": "172.20.20.9", "port": 1111}})
+    admin_session.add(inst)
+    admin_session.flush()
+
+    calls: list[str] = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: calls.append("stop") or 1)
+
+    def _fake_start_console(cname, base_path):
+        calls.append("start")
+        return 9999
+
+    monkeypatch.setattr(lab_lifecycle, "start_console", _fake_start_console)
+    engine = MagicMock()
+    engine.reset.return_value = LabHandle(
+        instance_name="dal-reset-order", nodes={"client": "clab-dal-reset-order-client"},
+        mgmt={"client": "172.20.20.55"}, kinds={"client": "linux"})
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+
+    assert calls == ["stop", "start"]
+    assert out.consoles["client"]["port"] == 9999
+    admin_session.rollback()
+
+
+def test_reset_refuses_a_reaped_instance_without_touching_the_engine(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reaped", seed={"o": 5}, status="reaped",
+                       consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+
+    with pytest.raises(ConflictError):
+        lab_lifecycle.reset(admin_session, inst, engine, lt)
+    engine.reset.assert_not_called()
     admin_session.rollback()
 
 

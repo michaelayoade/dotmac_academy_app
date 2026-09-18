@@ -27,6 +27,7 @@ from app.config import settings
 from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabTemplate
 from app.services.checks.engine import run_checks
+from app.services.exceptions import ConflictError
 from app.services.lab_seed import generate_seed, interpolate
 from app.services.labengine.interface import LabEngine, LabHandle
 
@@ -386,6 +387,13 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
     """Tear down and redeploy the instance topology in place (fresh state).
 
+    Refuses a ``reaped`` (already-destroyed) instance up front, before any
+    engine interaction: a successful reset unconditionally sets
+    ``status="active"``, so resetting a reaped row would resurrect it. This
+    guard lives here — not in the web route — so it applies to every current
+    and future caller of ``reset()``, not just the one route that exists
+    today.
+
     Mirrors ``provision``'s guarded-deploy shape and its topology preparation:
     ``_set_topology_name()`` is applied the same way so the redeployed
     container names still follow the ``clab-<instance>-<node>`` convention
@@ -398,13 +406,23 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     unguarded, since a database/transaction failure is not something this
     function can meaningfully paper over.
 
+    Old ttyd consoles are stopped BEFORE the fresh ones are started —
+    mirroring ``destroy()``'s ordering — because ``stop_consoles()`` matches
+    processes by ``instance.id`` alone (see ``console_pids()``), not by the
+    specific port each one was launched on. Calling it after starting the new
+    consoles would kill the ones just spawned for the same instance, since
+    they're indistinguishable from the old ones by that pattern.
+
     On success, ``instance.consoles`` is rebuilt from the fresh
     :class:`LabHandle` ``engine.reset()`` returns (mgmt IPs and console ports
     can change on redeploy) — the same node/console-spawn loop ``provision``
     uses, so a "successful" reset never leaves stale console/mgmt data on the
     row.
     """
+    if instance.status == "reaped":
+        raise ConflictError("lab instance has been reaped")
     try:
+        stop_consoles(instance)
         topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
         handle = engine.reset(topology_text, instance.instance_name)
         consoles: dict = {}

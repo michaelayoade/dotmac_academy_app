@@ -37,6 +37,7 @@ from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
+from app.services.exceptions import ConflictError
 from app.services.lab_content import render_instance_instructions
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.web_auth import require_web_user
@@ -339,13 +340,13 @@ def lab_reset(
     """Tear down + redeploy the instance topology → status partial."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    if instance.status == "reaped":
-        # A reaped instance is destroyed and gone; resetting it would
-        # unconditionally set status="active" on success, resurrecting a row
-        # that no longer has anything live behind it.
-        raise HTTPException(status_code=409, detail="lab instance has been reaped")
     tpl = _lab_template(db, tenant, instance.activity_id)
-    lab_lifecycle.reset(db, instance, _engine(), tpl)
+    try:
+        lab_lifecycle.reset(db, instance, _engine(), tpl)
+    except ConflictError as exc:
+        # e.g. the instance is already reaped — reset() refuses before
+        # touching the engine, so translate its domain error to 409 here.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
 
 
