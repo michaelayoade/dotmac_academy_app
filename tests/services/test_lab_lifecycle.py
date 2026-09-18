@@ -279,6 +279,42 @@ def test_reset_refuses_a_reaped_instance_without_touching_the_engine(admin_sessi
     admin_session.rollback()
 
 
+def test_reset_refuses_a_queued_instance_without_touching_the_engine(admin_session, tenant_a):
+    """queued is lab_jobs.drain_once()'s capacity-controlled deployment path —
+    resetting a queued instance directly would deploy it immediately and
+    bypass MAX_CONCURRENT_LABS entirely."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-queued", seed={"o": 5}, status="queued",
+                       consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+
+    with pytest.raises(ConflictError):
+        lab_lifecycle.reset(admin_session, inst, engine, lt)
+    engine.reset.assert_not_called()
+    admin_session.rollback()
+
+
+def test_reset_refuses_a_provisioning_instance_without_touching_the_engine(admin_session, tenant_a):
+    """provisioning means the worker's own provision() may be running against
+    this exact row/work directory right now — resetting it too would race
+    that in-flight deploy."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-provisioning", seed={"o": 5}, status="provisioning",
+                       consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+
+    with pytest.raises(ConflictError):
+        lab_lifecycle.reset(admin_session, inst, engine, lt)
+    engine.reset.assert_not_called()
+    admin_session.rollback()
+
+
 def test_reset_failure_records_error_and_does_not_raise(admin_session, tenant_a):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,

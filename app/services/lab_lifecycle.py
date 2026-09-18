@@ -387,12 +387,19 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
     """Tear down and redeploy the instance topology in place (fresh state).
 
-    Refuses a ``reaped`` (already-destroyed) instance up front, before any
-    engine interaction: a successful reset unconditionally sets
-    ``status="active"``, so resetting a reaped row would resurrect it. This
-    guard lives here — not in the web route — so it applies to every current
-    and future caller of ``reset()``, not just the one route that exists
-    today.
+    Only ``active`` or ``error`` (a previously-failed deploy, retryable) may
+    be reset; every other status is refused up front, before any engine
+    interaction. This is an allow-list, not just a reaped exclusion:
+    ``queued``/``provisioning`` are the capacity-controlled deployment path
+    owned by ``lab_jobs.drain_once()`` (which enforces ``MAX_CONCURRENT_LABS``
+    before calling ``provision()``) — resetting a ``queued`` instance would
+    deploy it immediately and bypass that cap entirely, and resetting a
+    ``provisioning`` one would race the worker's own ``provision()`` call on
+    the same row/work directory. ``reaped`` (already-destroyed) is refused
+    because a successful reset unconditionally sets ``status="active"``,
+    which would resurrect it. This guard lives here — not in the web route —
+    so it applies to every current and future caller of ``reset()``, not just
+    the one route that exists today.
 
     Mirrors ``provision``'s guarded-deploy shape and its topology preparation:
     ``_set_topology_name()`` is applied the same way so the redeployed
@@ -419,8 +426,8 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     uses, so a "successful" reset never leaves stale console/mgmt data on the
     row.
     """
-    if instance.status == "reaped":
-        raise ConflictError("lab instance has been reaped")
+    if instance.status not in ("active", "error"):
+        raise ConflictError(f"cannot reset a lab instance with status {instance.status!r}")
     try:
         stop_consoles(instance)
         topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
