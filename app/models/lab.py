@@ -121,10 +121,23 @@ class LabOperation(Base, TimestampMixin):
                                                     server_default=func.now())
     not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                   server_default=func.now())
-    claimed_by: Mapped[str | None] = mapped_column(String(200))
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Same reasoning as `state` above applies to every worker-owned column
+    # below, nullable or not: Postgres requires INSERT privilege on any
+    # column *mentioned* in the statement regardless of whether the value
+    # sent is NULL, and a mapped_column with no default at all is still
+    # mentioned explicitly (as NULL) on every ORM flush. `server_default=
+    # text("NULL")` is metadata-only — it doesn't require or touch a DDL
+    # change, since a nullable column is already implicitly NULL-default in
+    # Postgres — it only tells SQLAlchemy's ORM to omit the column so the
+    # column-level INSERT grant is never tripped by an otherwise-normal
+    # insert that doesn't set it.
+    claimed_by: Mapped[str | None] = mapped_column(String(200), server_default=text("NULL"))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                         server_default=text("NULL"))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                           server_default=text("NULL"))
     # Same reasoning as `state` above.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_error: Mapped[str | None] = mapped_column(Text)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                          server_default=text("NULL"))
+    last_error: Mapped[str | None] = mapped_column(Text, server_default=text("NULL"))
