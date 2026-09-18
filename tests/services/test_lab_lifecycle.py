@@ -163,6 +163,40 @@ def test_provision_records_error_on_failure(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_reset_success_sets_active_clears_error_and_updates_last_active(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-ok", seed={"o": 5}, status="error",
+                       error="stale failure from a prior reset", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.error is None
+    assert out.last_active_at is not None
+    engine.reset.assert_called_once()
+    admin_session.rollback()
+
+
+def test_reset_failure_records_error_and_does_not_raise(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-err", seed={"o": 5}, status="active",
+                       consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.side_effect = RuntimeError("engine boom")
+    # Must not raise out of the service function.
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert "engine boom" in out.error
+    admin_session.rollback()
+
+
 def test_grade_writes_score_and_submission(admin_session, tenant_a):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,

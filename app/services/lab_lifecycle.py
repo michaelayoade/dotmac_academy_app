@@ -384,9 +384,23 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 
 
 def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
-    """Tear down and redeploy the instance topology in place (fresh state)."""
-    engine.reset(interpolate(template.topology, instance.seed), instance.instance_name)
-    instance.last_active_at = _now()
+    """Tear down and redeploy the instance topology in place (fresh state).
+
+    Mirrors ``provision``'s guarded-deploy shape: an engine/interpolation
+    failure is recorded onto the row (``status="error"``) rather than
+    propagating out as an unhandled exception — the caller (the reset route)
+    always gets a normal return to render, in either outcome. Only the
+    ``db.flush()`` itself is left unguarded, since a database/transaction
+    failure is not something this function can meaningfully paper over.
+    """
+    try:
+        engine.reset(interpolate(template.topology, instance.seed), instance.instance_name)
+        instance.status = "active"
+        instance.last_active_at = _now()
+        instance.error = None
+    except Exception as exc:  # surface any deploy failure onto the row
+        instance.status = "error"
+        instance.error = str(exc)
     db.flush()
     return instance
 

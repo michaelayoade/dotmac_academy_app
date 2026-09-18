@@ -31,6 +31,7 @@ class LabTemplate(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     topology: Mapped[str] = mapped_column(Text, nullable=False, default="")
     instructions_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    instructions_md: Mapped[str | None] = mapped_column(Text)
     checks: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     seed_spec: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     limits: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

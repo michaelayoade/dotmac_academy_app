@@ -37,11 +37,19 @@ from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
+from app.services.lab_content import render_instance_instructions
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 logger = logging.getLogger(__name__)
+
+#: Shown in place of instructions before a learner has an instance (queued,
+#: provisioning, active, or error — any non-reaped LabInstance) to render
+#: against: there is no seed yet, so there is nothing to interpolate.
+_NO_INSTANCE_INSTRUCTIONS = (
+    "<p>Launch the lab to view your instance-specific instructions.</p>"
+)
 
 
 class _TenantContext(Protocol):
@@ -253,10 +261,19 @@ def lab_detail(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
     instance = _current_instance(db, tenant, person, activity_id)
+    instructions_html = (
+        render_instance_instructions(tpl, instance) if instance is not None else _NO_INSTANCE_INSTRUCTIONS
+    )
     return templates.TemplateResponse(
         request,
         "labs/detail.html",
-        {"request": request, "activity": act, "template": tpl, "instance": instance},
+        {
+            "request": request,
+            "activity": act,
+            "template": tpl,
+            "instance": instance,
+            "instructions_html": instructions_html,
+        },
     )
 
 
@@ -273,7 +290,14 @@ def lab_launch(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
     instance = lab_lifecycle.request_lab(db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    resp = templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    # The instance's seed now exists but the instructions column (rendered
+    # server-side into the surrounding page, not this swapped fragment) has
+    # not been refreshed — force a full-page reload so the follow-up GET
+    # renders instructions interpolated with the real seed instead of the
+    # pre-launch placeholder.
+    resp.headers["HX-Refresh"] = "true"
+    return resp
 
 
 @router.get("/labs/instances/{instance_id}/status", response_class=HTMLResponse)

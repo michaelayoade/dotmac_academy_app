@@ -51,6 +51,13 @@ class _FakeEngine:
         return handle.nodes[node]
 
 
+class _FailingResetEngine(_FakeEngine):
+    """A fake engine whose reset() always fails, for the guarded-reset test."""
+
+    def reset(self, topology_text, instance_name):
+        raise RuntimeError("containerlab reset failed")
+
+
 def _make_person(admin_session, tenant, email: str) -> Person:
     p = Person(tenant_id=tenant.id, email=email, first_name="S", last_name="L")
     admin_session.add(p)
@@ -130,6 +137,34 @@ def _seed_lab(admin_session, tenant, *, with_course=True):
         limits={},
         source_hash="abc",
         version=1,
+    )
+    admin_session.add(tpl)
+    admin_session.commit()
+    return course, act, tpl
+
+
+def _seed_seeded_lab(admin_session, tenant):
+    """A lab template whose instructions carry a `{{lan_octet}}` placeholder,
+    for the interpolation/placeholder web tests."""
+    course = Course(
+        tenant_id=tenant.id, slug="foundation-seeded", title="F", discipline="networking",
+        source_ref="x", version=1,
+    )
+    admin_session.add(course)
+    admin_session.flush()
+    act = Activity(
+        tenant_id=tenant.id, course_id=course.id, chapter_number=14, type="lab",
+        title="Seeded Lab", pass_threshold=0.5,
+    )
+    admin_session.add(act)
+    admin_session.flush()
+    tpl = LabTemplate(
+        tenant_id=tenant.id, course_id=course.id, chapter_number=14, activity_id=act.id,
+        slug="seeded", title="Seeded Lab", topology="name: x",
+        instructions_html="<p>Configure the client at 10.0.{{lan_octet}}.10.</p>",
+        instructions_md="Configure the client at 10.0.{{lan_octet}}.10.",
+        checks=[], seed_spec={"lan_octet": {"type": "int", "min": 2, "max": 9}},
+        limits={}, source_hash="abc", version=1,
     )
     admin_session.add(tpl)
     admin_session.commit()
@@ -295,3 +330,121 @@ def test_cross_tenant_check_not_found(
         f"/labs/instances/{inst.id}/check", headers={**h, "x-csrf-token": csrf}
     )
     assert r.status_code == 404
+
+
+def test_detail_shows_neutral_placeholder_before_launch(app_client, admin_session, tenant_a, monkeypatch):
+    """No instance yet → a neutral placeholder, never raw/unfilled instructions."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "prelaunch@a.edu")
+    course, act, _tpl = _seed_seeded_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
+    h = _login(app_client, "prelaunch@a.edu")
+
+    r = app_client.get(f"/labs/{act.id}", headers=h)
+    assert r.status_code == 200
+    assert "{{lan_octet}}" not in r.text
+    assert "Launch the lab" in r.text
+
+
+def test_detail_after_launch_interpolates_this_instances_seed(app_client, admin_session, tenant_a, monkeypatch):
+    """Once an instance exists, GET renders instructions substituted with THAT
+    instance's seed — no literal placeholder left in the page."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "postlaunch@a.edu")
+    course, act, _tpl = _seed_seeded_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
+    h = _login(app_client, "postlaunch@a.edu")
+
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    launch_resp = app_client.post(f"/labs/{act.id}/launch", headers={**h, "x-csrf-token": csrf})
+    assert launch_resp.headers.get("HX-Refresh") == "true"
+
+    inst = (
+        admin_session.query(LabInstance)
+        .filter(LabInstance.activity_id == act.id, LabInstance.person_id == p.id)
+        .one()
+    )
+    r = app_client.get(f"/labs/{act.id}", headers=h)
+    assert r.status_code == 200
+    assert "{{lan_octet}}" not in r.text
+    assert f"10.0.{inst.seed['lan_octet']}.10" in r.text
+
+
+def test_two_learners_same_template_get_different_rendered_instructions(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p1 = _make_person(admin_session, tenant_a, "learner1@a.edu")
+    p2 = _make_person(admin_session, tenant_a, "learner2@a.edu")
+    course, act, tpl = _seed_seeded_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p1, course)
+    _entitle(admin_session, tenant_a, p2, course)
+
+    inst1 = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p1.id,
+                        instance_name="dal-l1", seed={"lan_octet": 2}, status="active",
+                        consoles={})
+    inst2 = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p2.id,
+                        instance_name="dal-l2", seed={"lan_octet": 8}, status="active",
+                        consoles={})
+    admin_session.add(inst1)
+    admin_session.add(inst2)
+    admin_session.commit()
+
+    h1 = _login(app_client, "learner1@a.edu")
+    h2 = _login(app_client, "learner2@a.edu")
+    r1 = app_client.get(f"/labs/{act.id}", headers=h1)
+    r2 = app_client.get(f"/labs/{act.id}", headers=h2)
+    assert "10.0.2.10" in r1.text
+    assert "10.0.8.10" in r2.text
+    assert r1.text != r2.text
+
+
+def test_reset_success_returns_status_partial(app_client, admin_session, tenant_a, monkeypatch):
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "reset-ok@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
+    inst = LabInstance(
+        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+        instance_name="dal-reset-ok", seed={}, status="error", error="stale",
+        consoles={"r1": {"kind": "linux", "mgmt": "172.20.20.3"}},
+    )
+    admin_session.add(inst)
+    admin_session.commit()
+    admin_session.refresh(inst)
+
+    h = _login(app_client, "reset-ok@a.edu")
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    r = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 200
+    admin_session.refresh(inst)
+    assert inst.status == "active"
+    assert inst.error is None
+
+
+def test_reset_endpoint_with_failing_engine_returns_200_with_error_partial(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    """A failing engine.reset() must not become an unhandled 500 — the route
+    still returns 200 with the status partial showing the error state."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FailingResetEngine)
+    p = _make_person(admin_session, tenant_a, "reset-fail@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
+    inst = LabInstance(
+        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+        instance_name="dal-reset-fail", seed={}, status="active",
+        consoles={"r1": {"kind": "linux", "mgmt": "172.20.20.3"}},
+    )
+    admin_session.add(inst)
+    admin_session.commit()
+    admin_session.refresh(inst)
+
+    h = _login(app_client, "reset-fail@a.edu")
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    r = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 200
+    assert "containerlab reset failed" in r.text
+    admin_session.refresh(inst)
+    assert inst.status == "error"
+    assert inst.error == "containerlab reset failed"
