@@ -1,5 +1,5 @@
 [Unit]
-Description=Push Dotmac Academy course completions to ERP HR hourly
+Description=Project Dotmac Academy staff training progress to ERP HR hourly
 
 [Timer]
 OnCalendar=hourly
