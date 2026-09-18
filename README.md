@@ -121,8 +121,12 @@ settings writer, and `MIGRATION_DATABASE_URL` uses the offline migration role.
 
 ## Validation
 
-Tests require a migrated disposable PostgreSQL database because SQLite cannot
-exercise RLS or the concurrency constraints.
+CI owns test evidence — `pytest` runs only in CI, against CI's migrated
+disposable PostgreSQL database (SQLite cannot exercise RLS or the concurrency
+constraints). Never run `pytest` on a workstation, staging, prod, or an
+ad-hoc host, and never stand up a local database just to make it runnable.
+
+Before pushing, run the permitted local checks:
 
 ```bash
 poetry run ruff check .
@@ -131,10 +135,17 @@ poetry run pip-audit
 npm ci
 npm run build:css
 git diff --exit-code -- static/app.css
+```
+
+CI runs all of the above plus the full test suite:
+
+```bash
 poetry run pytest -q
 ```
 
-CI runs all gates. The CSS rebuild proves Academy still consumes the installed
-`dotmac-ui` preset and that the committed browser asset is current. The
-cross-tenant tests are deliberate RLS isolation
-canaries even though production accepts only one Academy tenant.
+The CSS rebuild proves Academy still consumes the installed `dotmac-ui`
+preset and that the committed browser asset is current. The cross-tenant
+tests are deliberate RLS isolation canaries even though production accepts
+only one Academy tenant. A change is validated locally, not "tested," until
+CI's pytest run reports green — don't represent local static checks as test
+evidence.
