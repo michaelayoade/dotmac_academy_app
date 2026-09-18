@@ -28,13 +28,16 @@ the base grant system. Without this explicit grant, Phase 2's worker
 no privileges in CI.
 
 Because `state`/`attempts` are excluded from `app_user`'s INSERT grant, the
-ORM model must never carry a *client-side* default for them (see
-`app/models/lab.py`): SQLAlchemy includes a column explicitly in the compiled
-INSERT whenever it has a client-side default, even when the caller never set
-it, which would hit the missing column privilege on every plain insert.
-Relying on `server_default` only means the column is omitted from the INSERT
-entirely when unset, and Postgres fills it in without needing INSERT
-privilege on it.
+ORM model (see `app/models/lab.py`) declares `server_default=` for both,
+matching this migration's DB-level defaults exactly, and carries no
+*client-side* `default=` for either. A client-side `default=` makes
+SQLAlchemy mention the column explicitly in the compiled INSERT even when the
+caller never set it, which would hit the missing column privilege on every
+plain insert. Declaring neither kind of default is just as broken the other
+way: SQLAlchemy's ORM unit-of-work still sends every mapped column explicitly
+(as `NULL`) unless it is told a server-side default exists — failing the NOT
+NULL constraint outright. `server_default=` is what makes the ORM omit the
+column and refresh the object from the row Postgres actually inserted.
 
 The partial unique index `uq_lab_operations_open_per_instance` is the other
 half: at most one `queued` or `claimed` operation may exist per instance at a

@@ -104,14 +104,18 @@ class LabOperation(Base, TimestampMixin):
     tenant_id: Mapped[UUID] = _tenant_fk()
     instance_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    # No client-side `default=` here: app_user's column-level INSERT grant (see
-    # the 0055 migration) does not cover this column, and SQLAlchemy includes
-    # a column explicitly in the compiled INSERT whenever it has a client-side
-    # default — even when the value being sent is the same as the server
-    # default. Relying on `server_default` alone means the ORM omits `state`
-    # entirely when the caller doesn't set it, so Postgres fills it in without
-    # requiring INSERT privilege on the column.
-    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    # `server_default=` (not client-side `default=`) here: app_user's
+    # column-level INSERT grant (see the 0055 migration) does not cover this
+    # column. A client-side `default=` makes SQLAlchemy mention the column
+    # explicitly in the compiled INSERT even when the value equals the server
+    # default — tripping the missing column grant. Declaring no default at all
+    # is just as broken the other way: the ORM's unit-of-work flush still
+    # sends every mapped column explicitly (as `NULL`) unless it is told a
+    # server-side default exists, which fails the NOT NULL constraint outright.
+    # `server_default=` is what makes the ORM omit the column from the INSERT
+    # and refresh the object from the row Postgres actually inserted, exactly
+    # like `requested_at`/`not_before` below.
+    state: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'queued'"))
     requested_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                     server_default=func.now())
@@ -120,9 +124,7 @@ class LabOperation(Base, TimestampMixin):
     claimed_by: Mapped[str | None] = mapped_column(String(200))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Same reasoning as `state` above: no client-side default, so a plain
-    # INSERT that doesn't mention `attempts` gets the server default without
-    # needing INSERT privilege on this worker-owned column.
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Same reasoning as `state` above.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)

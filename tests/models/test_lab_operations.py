@@ -238,6 +238,12 @@ def test_app_user_can_request_an_operation_for_its_own_tenant_instance(
 def test_app_user_cannot_reference_an_instance_owned_by_another_tenant(
     admin_session, app_user_session, tenant_a, tenant_b
 ):
+    """Own tenant_id, foreign instance_id — rejected by the composite FK, not
+    RLS (there is no (tenant_a, instance_b) row in lab_instances for the
+    FK to match). See the two tests below for RLS's WITH CHECK and USING
+    clauses specifically — this one would still pass if RLS were replaced
+    with `USING (true) WITH CHECK (true)`.
+    """
     instance_b = _make_instance(admin_session, tenant_b)
     admin_session.commit()
 
@@ -250,6 +256,57 @@ def test_app_user_cannot_reference_an_instance_owned_by_another_tenant(
             {"id": str(op_id), "tenant_id": str(tenant_a.id), "instance_id": str(instance_b.id)},
         )
     app_user_session.rollback()
+    _reset_tenant(app_user_session)
+
+
+def test_rls_with_check_rejects_a_foreign_tenant_id_even_with_a_matching_instance(
+    admin_session, app_user_session, tenant_a, tenant_b
+):
+    """Isolates RLS's WITH CHECK clause: tenant_id is the FOREIGN tenant
+    (tenant_b) and instance_id genuinely belongs to that same tenant_b, so the
+    composite FK matches cleanly — the only thing standing between this insert
+    and success is the tenant_isolation policy's
+    `WITH CHECK (tenant_id = app_current_tenant_id())`, which must reject a
+    row asserting a tenant_id other than the session's own.
+    """
+    instance_b = _make_instance(admin_session, tenant_b)
+    admin_session.commit()
+
+    _set_tenant(app_user_session, tenant_a.id)
+    op_id = uuid4()
+    with pytest.raises(ProgrammingError) as exc_info:
+        app_user_session.execute(
+            text("INSERT INTO lab_operations (id, tenant_id, instance_id, kind) "
+                 "VALUES (:id, :tenant_id, :instance_id, 'deploy')"),
+            {"id": str(op_id), "tenant_id": str(tenant_b.id), "instance_id": str(instance_b.id)},
+        )
+    # Distinguish this from the column-privilege ProgrammingError elsewhere in
+    # this file — Postgres raises SQLSTATE 42501 for both, but only a RLS
+    # WITH CHECK failure says "row-level security policy" in its message.
+    assert "row-level security policy" in str(exc_info.value).lower()
+    app_user_session.rollback()
+    _reset_tenant(app_user_session)
+
+
+def test_rls_using_hides_another_tenants_operation_from_a_select(
+    admin_session, app_user_session, tenant_a, tenant_b
+):
+    """Isolates RLS's USING clause (read-side): a real, fully-valid operation
+    row exists for tenant_b. Under app_user scoped to tenant_a, it must be
+    invisible to a plain SELECT — nothing about this row is malformed, so
+    only the tenant_isolation policy's USING clause can be hiding it.
+    """
+    instance_b = _make_instance(admin_session, tenant_b)
+    op_row = _make_operation(tenant_b, instance_b, state="queued")
+    admin_session.add(op_row)
+    admin_session.commit()
+    op_id = op_row.id
+
+    _set_tenant(app_user_session, tenant_a.id)
+    visible = app_user_session.execute(
+        text("SELECT id FROM lab_operations WHERE id = :id"), {"id": str(op_id)}
+    ).first()
+    assert visible is None
     _reset_tenant(app_user_session)
 
 
