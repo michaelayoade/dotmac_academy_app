@@ -390,9 +390,16 @@ def test_two_learners_same_template_get_different_rendered_instructions(
     admin_session.add(inst2)
     admin_session.commit()
 
+    # A shared app_client requires clearing cookies before switching who's
+    # logged in (established pattern — see tests/web/test_entitlements.py);
+    # each GET happens right after that person's login, before switching to
+    # the next, so a stale session cookie can't make one request masquerade
+    # as the other person.
+    app_client.cookies.clear()
     h1 = _login(app_client, "learner1@a.edu")
-    h2 = _login(app_client, "learner2@a.edu")
     r1 = app_client.get(f"/labs/{act.id}", headers=h1)
+    app_client.cookies.clear()
+    h2 = _login(app_client, "learner2@a.edu")
     r2 = app_client.get(f"/labs/{act.id}", headers=h2)
     assert "10.0.2.10" in r1.text
     assert "10.0.8.10" in r2.text
