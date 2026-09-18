@@ -9,10 +9,32 @@ migration will add the constraint once a worker actually exists to honor it.
 reason.
 
 The load-bearing invariant of this whole design lives in the grants, not the
-columns: `app_user`/`platform_api` get SELECT (+INSERT for `app_user`, so the
-web tier can request an operation and observe it) but neither gets UPDATE or
-DELETE. Only `app_admin` (already BYPASSRLS/table owner) can settle a row —
-the web tier can never mark its own request as claimed, succeeded, or failed.
+columns, and it is narrower than "no UPDATE/DELETE": `app_user` gets
+table-wide SELECT plus a *column-level* INSERT grant covering only
+`id, tenant_id, instance_id, kind, requested_by` — the columns a request
+actually needs to set. `state`, `attempts`, and every claim/settlement column
+are left out of that grant entirely, so `app_user` cannot forge worker-owned
+state (e.g. `state='claimed'`) at INSERT time either — denying UPDATE alone
+would only stop changing an existing row, not establishing a false one at
+creation. `platform_api` keeps table-wide SELECT only. `app_admin` is granted
+full SELECT/INSERT/UPDATE/DELETE explicitly: in production `app_admin` runs
+the migration and is already the table owner, but CI runs migrations as the
+`postgres` superuser (see `.github/workflows/ci.yml`), which owns the table
+there instead — `GRANT ALL ON SCHEMA public TO app_admin` in
+`scripts/initdb-roles.sql` is schema-level (USAGE/CREATE) and does not cascade
+into table ACLs, and `BYPASSRLS` bypasses row-visibility policies only, not
+the base grant system. Without this explicit grant, Phase 2's worker
+(claiming/settling as `app_admin`) would work in production but silently have
+no privileges in CI.
+
+Because `state`/`attempts` are excluded from `app_user`'s INSERT grant, the
+ORM model must never carry a *client-side* default for them (see
+`app/models/lab.py`): SQLAlchemy includes a column explicitly in the compiled
+INSERT whenever it has a client-side default, even when the caller never set
+it, which would hit the missing column privilege on every plain insert.
+Relying on `server_default` only means the column is omitted from the INSERT
+entirely when unset, and Postgres fills it in without needing INSERT
+privilege on it.
 
 The partial unique index `uq_lab_operations_open_per_instance` is the other
 half: at most one `queued` or `claimed` operation may exist per instance at a
@@ -84,11 +106,21 @@ def upgrade() -> None:
         f"USING (tenant_id = app_current_tenant_id()) "
         f"WITH CHECK (tenant_id = app_current_tenant_id());"
     )
-    # Deliberately no UPDATE/DELETE for app_user or platform_api: the web tier
-    # may request and observe an operation, never settle one. Only app_admin
-    # (BYPASSRLS/table owner already) may claim, heartbeat, or finish a row.
-    op.execute(f"GRANT SELECT, INSERT ON {TABLE} TO app_user;")
+    # app_user may SELECT any column but INSERT only the "request" columns —
+    # id (client-generated), tenant_id, instance_id, kind, requested_by. Every
+    # worker-owned column (state, claimed_by, claimed_at, heartbeat_at,
+    # attempts, finished_at, last_error) is left out of the INSERT grant
+    # entirely, so app_user cannot forge worker-owned state at row creation,
+    # not just after it via UPDATE.
+    op.execute(f"GRANT SELECT ON {TABLE} TO app_user;")
+    op.execute(f"GRANT INSERT (id, tenant_id, instance_id, kind, requested_by) "
+               f"ON {TABLE} TO app_user;")
     op.execute(f"GRANT SELECT ON {TABLE} TO platform_api;")
+    # Explicit even though app_admin is the table owner in production — CI
+    # migrates as the `postgres` superuser, which owns the table there instead,
+    # and app_admin would otherwise have zero privileges on it in CI. See the
+    # module docstring for the full explanation.
+    op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {TABLE} TO app_admin;")
 
 
 def downgrade() -> None:

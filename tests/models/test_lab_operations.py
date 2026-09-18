@@ -11,10 +11,20 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from app.models.lab import LabInstance, LabOperation
 from app.models.tenant import Tenant
+
+
+def _set_tenant(session, tenant_id) -> None:
+    # SET does not accept bound parameters in PostgreSQL — safe to interpolate
+    # a UUID (matches the existing pattern in tests/test_lab_isolation.py).
+    session.execute(text(f"SET app.current_tenant = '{tenant_id}'"))
+
+
+def _reset_tenant(session) -> None:
+    session.execute(text("RESET app.current_tenant"))
 
 
 def _make_instance(db, tenant: Tenant) -> LabInstance:
@@ -104,17 +114,36 @@ def test_rls_enabled_forced_with_tenant_policy(admin_session):
 def test_grants_are_exactly_the_ownership_boundary(admin_session):
     rows = admin_session.execute(
         text("SELECT grantee, privilege_type FROM information_schema.role_table_grants "
-             "WHERE table_name = 'lab_operations' AND grantee IN ('app_user', 'platform_api')")
+             "WHERE table_name = 'lab_operations' "
+             "AND grantee IN ('app_user', 'platform_api', 'app_admin')")
     ).all()
     by_grantee: dict[str, set[str]] = {}
     for grantee, privilege in rows:
         by_grantee.setdefault(grantee, set()).add(privilege)
 
-    # The web tier may request (INSERT) and observe (SELECT) an operation, but
-    # never settle one — no UPDATE, no DELETE. This is the load-bearing
-    # invariant of the whole design.
-    assert by_grantee.get("app_user") == {"SELECT", "INSERT"}
+    # app_user's table-wide grant is SELECT only — its INSERT is column-level
+    # (checked below), never a table-wide INSERT that would let it set every
+    # column, including worker-owned ones like `state`.
+    assert by_grantee.get("app_user") == {"SELECT"}
     assert by_grantee.get("platform_api") == {"SELECT"}
+    # Explicit for CI parity: CI migrates as the `postgres` superuser (see
+    # .github/workflows/ci.yml), which owns lab_operations there, so app_admin
+    # gets nothing on this table in CI without this grant, even though it is
+    # the table owner (and needs nothing extra) in production.
+    assert by_grantee.get("app_admin") == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+
+    insert_columns = set(
+        admin_session.execute(
+            text("SELECT column_name FROM information_schema.column_privileges "
+                 "WHERE table_name = 'lab_operations' AND grantee = 'app_user' "
+                 "AND privilege_type = 'INSERT'")
+        ).scalars().all()
+    )
+    # Exactly the "request" columns. Every worker-owned column (state,
+    # claimed_by, claimed_at, heartbeat_at, attempts, finished_at, last_error)
+    # must be absent — otherwise app_user could forge worker-owned state at
+    # INSERT time even though it can never UPDATE a row afterwards.
+    assert insert_columns == {"id", "tenant_id", "instance_id", "kind", "requested_by"}
 
 
 # --- the core guarantee: one open operation per instance ----------------
@@ -172,3 +201,94 @@ def test_deleting_instance_cascades_to_its_operations(admin_session, tenant_a):
     ).first()
     assert remaining is None
     admin_session.rollback()
+
+
+# --- enforcement from the actual restricted role ------------------------
+#
+# Everything above proves the grants/policies exist under the right names.
+# It does not prove they enforce anything — a same-named policy using `true`
+# would pass those tests too. These exercise a real `app_user`-scoped
+# connection (RLS active, column-level grants active) rather than the
+# unrestricted `admin_session`.
+
+
+def test_app_user_can_request_an_operation_for_its_own_tenant_instance(
+    admin_session, app_user_session, tenant_a
+):
+    instance = _make_instance(admin_session, tenant_a)
+    admin_session.commit()
+
+    _set_tenant(app_user_session, tenant_a.id)
+    op_row = LabOperation(tenant_id=tenant_a.id, instance_id=instance.id, kind="deploy")
+    app_user_session.add(op_row)
+    # Deliberately no explicit state/attempts — app_user has no INSERT grant
+    # on either column, so this only works if the ORM omits them and Postgres
+    # fills them from server_default.
+    app_user_session.commit()
+    op_id = op_row.id
+    _reset_tenant(app_user_session)
+
+    row = admin_session.execute(
+        text("SELECT state, attempts FROM lab_operations WHERE id = :id"), {"id": str(op_id)}
+    ).one()
+    assert row.state == "queued"
+    assert row.attempts == 0
+
+
+def test_app_user_cannot_reference_an_instance_owned_by_another_tenant(
+    admin_session, app_user_session, tenant_a, tenant_b
+):
+    instance_b = _make_instance(admin_session, tenant_b)
+    admin_session.commit()
+
+    _set_tenant(app_user_session, tenant_a.id)
+    op_id = uuid4()
+    with pytest.raises(IntegrityError):
+        app_user_session.execute(
+            text("INSERT INTO lab_operations (id, tenant_id, instance_id, kind) "
+                 "VALUES (:id, :tenant_id, :instance_id, 'deploy')"),
+            {"id": str(op_id), "tenant_id": str(tenant_a.id), "instance_id": str(instance_b.id)},
+        )
+    app_user_session.rollback()
+    _reset_tenant(app_user_session)
+
+
+def test_app_user_cannot_set_a_worker_owned_column_at_insert(
+    admin_session, app_user_session, tenant_a
+):
+    instance = _make_instance(admin_session, tenant_a)
+    admin_session.commit()
+
+    _set_tenant(app_user_session, tenant_a.id)
+    op_id = uuid4()
+    with pytest.raises(ProgrammingError):
+        app_user_session.execute(
+            text("INSERT INTO lab_operations (id, tenant_id, instance_id, kind, state) "
+                 "VALUES (:id, :tenant_id, :instance_id, 'deploy', 'claimed')"),
+            {"id": str(op_id), "tenant_id": str(tenant_a.id), "instance_id": str(instance.id)},
+        )
+    app_user_session.rollback()
+    _reset_tenant(app_user_session)
+
+
+def test_app_user_cannot_update_or_delete_any_row(admin_session, app_user_session, tenant_a):
+    instance = _make_instance(admin_session, tenant_a)
+    op_row = _make_operation(tenant_a, instance, state="queued")
+    admin_session.add(op_row)
+    admin_session.commit()
+    op_id = op_row.id
+
+    _set_tenant(app_user_session, tenant_a.id)
+    with pytest.raises(ProgrammingError):
+        app_user_session.execute(
+            text("UPDATE lab_operations SET state = 'claimed' WHERE id = :id"),
+            {"id": str(op_id)},
+        )
+    app_user_session.rollback()
+
+    with pytest.raises(ProgrammingError):
+        app_user_session.execute(
+            text("DELETE FROM lab_operations WHERE id = :id"), {"id": str(op_id)}
+        )
+    app_user_session.rollback()
+    _reset_tenant(app_user_session)

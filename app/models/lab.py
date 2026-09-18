@@ -77,11 +77,14 @@ class LabOperation(Base, TimestampMixin):
     ahead of the worker that will actually consume this queue.
 
     The load-bearing boundary is in the migration's grants, not here: the web
-    tier may INSERT (request) and SELECT (observe), but only `app_admin` may
-    UPDATE a row to claim, heartbeat, or finish it — the web tier can never
-    settle its own request. `uq_lab_operations_open_per_instance` backs the
-    other half of the guarantee: at most one queued-or-claimed operation may
-    exist per instance at a time.
+    tier may SELECT (observe) and INSERT only the request columns (`id`,
+    `tenant_id`, `instance_id`, `kind`, `requested_by`) — every worker-owned
+    column, including `state` and `attempts`, is excluded from that INSERT
+    grant entirely, so the web tier can neither forge worker-owned state at
+    creation nor UPDATE a row to claim, heartbeat, or finish it. Only
+    `app_admin` may settle a row. `uq_lab_operations_open_per_instance` backs
+    the other half of the guarantee: at most one queued-or-claimed operation
+    may exist per instance at a time.
     """
 
     __tablename__ = "lab_operations"
@@ -101,7 +104,14 @@ class LabOperation(Base, TimestampMixin):
     tenant_id: Mapped[UUID] = _tenant_fk()
     instance_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    # No client-side `default=` here: app_user's column-level INSERT grant (see
+    # the 0055 migration) does not cover this column, and SQLAlchemy includes
+    # a column explicitly in the compiled INSERT whenever it has a client-side
+    # default — even when the value being sent is the same as the server
+    # default. Relying on `server_default` alone means the ORM omits `state`
+    # entirely when the caller doesn't set it, so Postgres fills it in without
+    # requiring INSERT privilege on the column.
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
     requested_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                     server_default=func.now())
@@ -110,6 +120,9 @@ class LabOperation(Base, TimestampMixin):
     claimed_by: Mapped[str | None] = mapped_column(String(200))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Same reasoning as `state` above: no client-side default, so a plain
+    # INSERT that doesn't mention `attempts` gets the server default without
+    # needing INSERT privilege on this worker-owned column.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
