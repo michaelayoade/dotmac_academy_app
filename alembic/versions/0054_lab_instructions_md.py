@@ -18,7 +18,7 @@ The column stays nullable — democode/demo template creation only supplies
 `instructions_html`, and the read path already falls back to it when
 `instructions_md IS NULL`.
 
-Revision ID: 0054_lab_template_instructions_md
+Revision ID: 0054_lab_instructions_md
 Revises: 0053_entrance_defaults
 """
 
@@ -28,7 +28,12 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0054_lab_template_instructions_md"
+# Kept to 24 chars deliberately: alembic_version.version_num is VARCHAR(32).
+# The original id here ("0054_lab_template_instructions_md", 33 chars) exceeded
+# that and failed CI with psycopg.errors.StringDataRightTruncation — caught by
+# CI, not by review, since nothing short of actually running the migration
+# checks this. Every other revision id in this directory stays well under 32.
+revision = "0054_lab_instructions_md"
 down_revision = "0053_entrance_defaults"
 branch_labels = None
 depends_on = None
