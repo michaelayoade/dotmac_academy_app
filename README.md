@@ -12,6 +12,7 @@ does not expose public tenant provisioning or public account registration.
 Architecture:
 
 - [ADR 0007 — Academy Is a Kernel Product Assembly](docs/adr/0007-academy-is-a-kernel-assembly.md)
+- [ADR 0008 — Kernel Identity and Migration-Lineage Cutover](docs/adr/0008-kernel-identity-and-lineage-cutover.md)
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
 - [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
