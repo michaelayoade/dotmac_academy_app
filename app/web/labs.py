@@ -339,6 +339,11 @@ def lab_reset(
     """Tear down + redeploy the instance topology → status partial."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
+    if instance.status == "reaped":
+        # A reaped instance is destroyed and gone; resetting it would
+        # unconditionally set status="active" on success, resurrecting a row
+        # that no longer has anything live behind it.
+        raise HTTPException(status_code=409, detail="lab instance has been reaped")
     tpl = _lab_template(db, tenant, instance.activity_id)
     lab_lifecycle.reset(db, instance, _engine(), tpl)
     return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})

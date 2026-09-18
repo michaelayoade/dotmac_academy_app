@@ -167,16 +167,67 @@ def test_reset_success_sets_active_clears_error_and_updates_last_active(admin_se
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-reset-ok", seed={"o": 5}, status="error",
-                       error="stale failure from a prior reset", consoles={})
+                       error="stale failure from a prior reset",
+                       consoles={"client": {"kind": "linux", "mgmt": "172.20.20.9"}})
     admin_session.add(inst)
     admin_session.flush()
     engine = MagicMock()
+    engine.reset.return_value = LabHandle(
+        instance_name="dal-reset-ok", nodes={"client": "clab-dal-reset-ok-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
     out = lab_lifecycle.reset(admin_session, inst, engine, lt)
     admin_session.flush()
     assert out.status == "active"
     assert out.error is None
     assert out.last_active_at is not None
     engine.reset.assert_called_once()
+    admin_session.rollback()
+
+
+def test_reset_applies_topology_name_before_calling_engine(admin_session, tenant_a):
+    """reset() must apply _set_topology_name() the same way provision() does,
+    so the redeployed containers still follow the clab-<instance>-<node>
+    convention handle_for expects — a raw interpolate() with no name override
+    would leave the topology's original `name:` (or none) in place."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-name", seed={"o": 5}, status="active",
+                       consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.return_value = LabHandle(
+        instance_name="dal-reset-name", nodes={"client": "clab-dal-reset-name-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+    lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    topology_text_used = engine.reset.call_args[0][0]
+    assert "name: dal-reset-name" in topology_text_used
+    admin_session.rollback()
+
+
+def test_reset_success_rebuilds_consoles_from_fresh_handle(admin_session, tenant_a):
+    """A successful reset must not leave stale mgmt/console data on the row —
+    engine.reset() can return different mgmt IPs/ports on redeploy."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-consoles", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux", "mgmt": "172.20.20.9", "port": 1111}})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.return_value = LabHandle(
+        instance_name="dal-reset-consoles",
+        nodes={"client": "clab-dal-reset-consoles-client", "r1": "clab-dal-reset-consoles-r1"},
+        mgmt={"client": "172.20.20.55", "r1": "172.20.20.2"},
+        kinds={"client": "linux", "r1": "vr-ros"})
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    # Fresh mgmt IP replaces the stale one, and a node that didn't exist
+    # before the reset is now present.
+    assert out.consoles["client"]["mgmt"] == "172.20.20.55"
+    assert "r1" in out.consoles
+    assert "port" not in out.consoles["r1"]  # RouterOS gets webfig, not ttyd
     admin_session.rollback()
 
 

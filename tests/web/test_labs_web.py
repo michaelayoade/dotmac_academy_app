@@ -448,3 +448,25 @@ def test_reset_endpoint_with_failing_engine_returns_200_with_error_partial(
     admin_session.refresh(inst)
     assert inst.status == "error"
     assert inst.error == "containerlab reset failed"
+
+
+def test_reset_on_reaped_instance_is_refused(app_client, admin_session, tenant_a, monkeypatch):
+    """A destroyed (reaped) instance must not be resurrected by reset()."""
+    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+    p = _make_person(admin_session, tenant_a, "reset-reaped@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, p, course)
+    inst = LabInstance(
+        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+        instance_name="dal-reaped", seed={}, status="reaped", consoles={},
+    )
+    admin_session.add(inst)
+    admin_session.commit()
+    admin_session.refresh(inst)
+
+    h = _login(app_client, "reset-reaped@a.edu")
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
+    r = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
+    assert r.status_code == 409
+    admin_session.refresh(inst)
+    assert inst.status == "reaped"

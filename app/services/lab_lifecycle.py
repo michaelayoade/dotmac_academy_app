@@ -386,15 +386,38 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
     """Tear down and redeploy the instance topology in place (fresh state).
 
-    Mirrors ``provision``'s guarded-deploy shape: an engine/interpolation
-    failure is recorded onto the row (``status="error"``) rather than
-    propagating out as an unhandled exception — the caller (the reset route)
-    always gets a normal return to render, in either outcome. Only the
-    ``db.flush()`` itself is left unguarded, since a database/transaction
-    failure is not something this function can meaningfully paper over.
+    Mirrors ``provision``'s guarded-deploy shape and its topology preparation:
+    ``_set_topology_name()`` is applied the same way so the redeployed
+    container names still follow the ``clab-<instance>-<node>`` convention
+    ``handle_for`` expects — a reset that skipped this could deploy under the
+    wrong name and silently desync from every other reader of ``consoles``.
+    An engine/interpolation failure is recorded onto the row
+    (``status="error"``) rather than propagating out as an unhandled
+    exception — the caller (the reset route) always gets a normal return to
+    render, in either outcome. Only the ``db.flush()`` itself is left
+    unguarded, since a database/transaction failure is not something this
+    function can meaningfully paper over.
+
+    On success, ``instance.consoles`` is rebuilt from the fresh
+    :class:`LabHandle` ``engine.reset()`` returns (mgmt IPs and console ports
+    can change on redeploy) — the same node/console-spawn loop ``provision``
+    uses, so a "successful" reset never leaves stale console/mgmt data on the
+    row.
     """
     try:
-        engine.reset(interpolate(template.topology, instance.seed), instance.instance_name)
+        topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
+        handle = engine.reset(topology_text, instance.instance_name)
+        consoles: dict = {}
+        for node in handle.nodes:
+            kind = handle.kinds.get(node)
+            spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
+            if _is_linux_kind(kind):
+                spec["port"] = start_console(
+                    handle.nodes[node],
+                    f"{_CONSOLE_BASE}{instance.id}/console/{node}",
+                )
+            consoles[node] = spec
+        instance.consoles = consoles
         instance.status = "active"
         instance.last_active_at = _now()
         instance.error = None
