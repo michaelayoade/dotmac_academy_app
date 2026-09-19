@@ -20,6 +20,7 @@ import socket
 import subprocess
 from collections.abc import Callable
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -202,9 +203,16 @@ def handle_for(instance: LabInstance) -> LabHandle:
     )
 
 
-def instance_name(tenant_id, person_id, activity_id, n) -> str:
-    """Stable, human-traceable instance name: ``dal-<t8>-<p8>-<a8>-<n>``."""
-    return f"dal-{str(tenant_id)[:8]}-{str(person_id)[:8]}-{str(activity_id)[:8]}-{n}"
+def instance_name(instance_id) -> str:
+    """Runtime name: ``dal-<canonical-hyphenated-uuid>``.
+
+    The instance's own id is the whole name — global uniqueness follows
+    directly from ``id`` being a UUID, backed by the DB-level unique index on
+    ``instance_name`` (defense in depth: containerlab's runtime namespace is
+    host-global, not tenant-scoped, so a tenant-scoped uniqueness guarantee on
+    ``id`` alone would not be sufficient for the runtime name it derives).
+    """
+    return f"dal-{instance_id}"
 
 
 def _attempt_seed_id(person_id, activity_id, n: int) -> int:
@@ -257,11 +265,18 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     )
     n = int(prev or 0) + 1
     seed = generate_seed(template.seed_spec, attempt_id=_attempt_seed_id(person_id, activity.id, n))
+    # Allocated explicitly (rather than left to uuid_pk()'s column default)
+    # because the runtime name is derived from it below, before the row is
+    # ever flushed — SQLAlchemy applies column defaults at INSERT/flush time,
+    # not at ordinary Python object construction, so instance.id would still
+    # be None here if read off the LabInstance() object instead.
+    instance_id = uuid4()
     inst = LabInstance(
+        id=instance_id,
         tenant_id=tenant_id,
         activity_id=activity.id,
         person_id=person_id,
-        instance_name=instance_name(tenant_id, person_id, activity.id, n),
+        instance_name=instance_name(instance_id),
         seed=seed,
     )
     db.add(inst)

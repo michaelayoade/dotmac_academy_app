@@ -3,9 +3,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
@@ -53,10 +55,94 @@ def _seed(db, tid):
 
 
 def test_instance_name_format(tenant_a):
-    from uuid import uuid4
-    pid, aid = uuid4(), uuid4()
-    name = lab_lifecycle.instance_name(tenant_a.id, pid, aid, 1)
-    assert name == f"dal-{str(tenant_a.id)[:8]}-{str(pid)[:8]}-{str(aid)[:8]}-1"
+    instance_id = uuid4()
+    name = lab_lifecycle.instance_name(instance_id)
+    assert name == f"dal-{instance_id}"
+
+
+def test_request_lab_names_the_instance_after_its_own_id(admin_session, tenant_a):
+    """The new naming scheme: the runtime name IS the instance id, not a
+    tenant/person/activity-derived, count-based sequence number."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                     person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+    assert inst.instance_name == f"dal-{inst.id}"
+    admin_session.rollback()
+
+
+def test_request_lab_gives_distinct_instances_distinct_uuids_and_names(
+    admin_session, tenant_a
+):
+    """A second request for the same person/activity, after the first
+    instance is reaped (so it's no longer the 'current' active/in-flight
+    row), must create a brand-new row with its own distinct id/name."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    first = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                      person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+    first.status = "reaped"
+    admin_session.flush()
+
+    second = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                       person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+
+    assert second.id != first.id
+    assert second.instance_name != first.instance_name
+    assert second.instance_name == f"dal-{second.id}"
+    admin_session.rollback()
+
+
+def test_request_lab_after_a_hard_delete_does_not_reuse_the_freed_slot(
+    admin_session, tenant_a
+):
+    """The old COUNT(*)-based scheme could theoretically reuse a freed
+    sequence number if a row were ever hard-deleted. Nothing in the app does
+    this today, but this proves the new UUID-derived scheme doesn't have that
+    problem even if something bypassed the app and deleted a row directly."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    first = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                      person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+    first_id = first.id
+    first_name = first.instance_name
+
+    # Bypass the app entirely — hard-delete the row directly, the way nothing
+    # else in this codebase does today.
+    admin_session.delete(first)
+    admin_session.flush()
+
+    second = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                       person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+
+    assert second.id != first_id
+    assert second.instance_name != first_name
+    admin_session.rollback()
+
+
+def test_duplicate_instance_name_is_rejected_at_the_database(
+    admin_session, tenant_a, tenant_b
+):
+    """`uq_lab_instances_instance_name` is a global (not tenant-scoped) unique
+    index — containerlab's runtime namespace is host-global, so even two rows
+    in different tenants must not share a name."""
+    _c_a, act_a, _lt_a, p_a = _seed(admin_session, tenant_a.id)
+    _c_b, act_b, _lt_b, p_b = _seed(admin_session, tenant_b.id)
+    shared_name = f"dal-{uuid4()}"
+    first = LabInstance(tenant_id=tenant_a.id, activity_id=act_a.id, person_id=p_a.id,
+                        instance_name=shared_name, seed={})
+    admin_session.add(first)
+    admin_session.flush()
+
+    second = LabInstance(tenant_id=tenant_b.id, activity_id=act_b.id, person_id=p_b.id,
+                         instance_name=shared_name, seed={})
+    admin_session.add(second)
+    with pytest.raises(IntegrityError) as excinfo:
+        admin_session.flush()
+    assert "uq_lab_instances_instance_name" in str(excinfo.value)
+    admin_session.rollback()
 
 
 def test_request_lab_queues_when_full(admin_session, tenant_a, monkeypatch):

@@ -61,11 +61,23 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 # Fixed anchor points for this specific migration's round trip — not derived
 # from "head", because the whole point is to exercise exactly the 0055/0056
-# boundary regardless of what head is. If a later migration changes head
-# beyond 0056, the head-equality assertions below will fail loudly and name
-# what to update, rather than silently exercising the wrong boundary.
+# boundary regardless of what head is. These two constants are pinned to that
+# boundary specifically and must NOT be read as "head" anywhere below — the
+# repo head is now 0057 (see HEAD_REVISION), and the 0055/0056 tests are
+# updated to assert against that instead of assuming 0056 is still head.
 DOWN_REVISION = "0055_lab_operations"
 TARGET_REVISION = "0056_lab_instance_worker"
+
+# The actual current repo head. Kept as its own constant (rather than reusing
+# TARGET_REVISION) specifically so the 0055/0056 tests below stop silently
+# assuming 0056 is head once 0057 exists.
+HEAD_REVISION = "0057_lab_instance_name_unique"
+
+# 0056 <-> 0057 boundary, for the new tests further down this file.
+DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
+TARGET_REVISION_0057 = HEAD_REVISION  # "0057_lab_instance_name_unique"
+
+INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
 
 WORKER_ROLE = "academy_lab_worker"
 
@@ -265,15 +277,15 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     url = _migration_url()
 
     head = _head_revision(cfg)
-    assert head == TARGET_REVISION, (
-        f"expected repo head to be {TARGET_REVISION!r}, got {head!r} — a "
-        "migration was added after 0056 without updating this test's fixed "
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added after 0057 without updating this test's fixed "
         "anchor revisions"
     )
 
     with admin_engine.connect() as conn:
         assert (
-            _current_version(conn) == TARGET_REVISION
+            _current_version(conn) == HEAD_REVISION
         ), "expected the CI database to already be migrated to head before this test runs"
         baseline = _full_snapshot(conn)
         assert baseline["column_insert"] == {
@@ -283,6 +295,11 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
 
     with _migration_env(url):
         try:
+            # command.downgrade(cfg, DOWN_REVISION) from real head (0057)
+            # downgrades through 0057 first and then 0056, landing at 0055 —
+            # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
+            # only cover grants/check-constraints that 0057 never touches, so
+            # passing through it en route doesn't affect what's asserted here.
             command.downgrade(cfg, DOWN_REVISION)
             with admin_engine.connect() as conn:
                 _assert_at_0055_grants(conn)
@@ -305,7 +322,7 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         "constraint/grant state after a downgrade/upgrade round trip does not "
         "match the pre-cycle baseline — 0056 leaks or loses state across cycles"
     )
-    assert final_version == TARGET_REVISION
+    assert final_version == HEAD_REVISION
 
 
 class _SimulatedCrash(RuntimeError):
@@ -325,14 +342,14 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
     url = _migration_url()
 
     head = _head_revision(cfg)
-    assert head == TARGET_REVISION, (
-        f"expected repo head to be {TARGET_REVISION!r}, got {head!r} — a "
-        "migration was added after 0056 without updating this test's fixed "
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added after 0057 without updating this test's fixed "
         "anchor revisions"
     )
 
     with admin_engine.connect() as conn:
-        assert _current_version(conn) == TARGET_REVISION
+        assert _current_version(conn) == HEAD_REVISION
         # A same-run reference: the state a normal, uninterrupted migration
         # produces, captured before this test disturbs anything.
         reference = _full_snapshot(conn)
@@ -420,3 +437,233 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
         "guard did not make the rerun safe"
     )
     assert recovered_version == TARGET_REVISION
+
+
+# --- 0057: global unique index on lab_instances.instance_name --------------
+
+
+def _instance_name_index_snapshot(conn) -> dict[str, object] | None:
+    """``None`` when ``uq_lab_instances_instance_name`` doesn't exist (0056
+    state); otherwise proves it is unique and covers exactly the
+    ``instance_name`` column — not more, not fewer."""
+    row = conn.execute(
+        text(
+            """SELECT ix.indisunique, array_agg(a.attname ORDER BY k.ordinality)
+               FROM pg_index ix
+               JOIN pg_class i ON i.oid = ix.indexrelid
+               JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON true
+               JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+               WHERE i.relname = :index_name
+               GROUP BY ix.indisunique"""
+        ),
+        {"index_name": INSTANCE_NAME_INDEX},
+    ).first()
+    if row is None:
+        return None
+    return {"unique": bool(row[0]), "columns": list(row[1])}
+
+
+def _insert_tenant(conn, slug: str) -> str:
+    """Raw-SQL tenant insert — this module has no ``tenant_a``/``tenant_b``
+    fixture (those are ``admin_session``-scoped; this file drives Alembic
+    directly against ``admin_engine`` connections instead). Self-heals a
+    leftover row from an interrupted prior run the same way
+    ``tests/conftest.py``'s ``_make_tenant`` does."""
+    conn.execute(text("DELETE FROM tenants WHERE slug = :slug"), {"slug": slug})
+    row = conn.execute(
+        text(
+            "INSERT INTO tenants (id, slug, name) "
+            "VALUES (gen_random_uuid(), :slug, :name) RETURNING id"
+        ),
+        {"slug": slug, "name": slug},
+    ).first()
+    conn.commit()
+    return str(row[0])
+
+
+def _delete_tenant(conn, tenant_id: str) -> None:
+    conn.execute(text("DELETE FROM tenants WHERE id = :id"), {"id": tenant_id})
+    conn.commit()
+
+
+def _insert_lab_instance(conn, *, instance_id: str, tenant_id: str, instance_name: str) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO lab_instances "
+            "(id, tenant_id, activity_id, person_id, instance_name, seed) "
+            "VALUES (:id, :tenant_id, gen_random_uuid(), gen_random_uuid(), :name, '{}'::jsonb)"
+        ),
+        {"id": instance_id, "tenant_id": tenant_id, "name": instance_name},
+    )
+    conn.commit()
+
+
+def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+    """0056 <-> 0057 round trip: the unique index on ``instance_name`` is
+    added and removed cleanly across repeated cycles, mirroring the
+    0055/0056 round-trip test's shape (D1 above).
+
+    No "interrupted mid-migration" test exists for 0057 the way 0056 has one
+    (D2 above): 0057 keeps duplicate-checking, index creation, and Alembic's
+    version stamp all in one ordinary transaction — no ``autocommit_block()``
+    — so a crash partway through cannot leave a durable half-applied state
+    the way 0056's ``autocommit_block`` statements could; there is nothing
+    analogous to prove resumable here.
+    """
+    cfg = _make_config()
+    url = _migration_url()
+
+    head = _head_revision(cfg)
+    assert head == TARGET_REVISION_0057, (
+        f"expected repo head to be {TARGET_REVISION_0057!r}, got {head!r} — a "
+        "migration was added after 0057 without updating this test's fixed "
+        "anchor revisions"
+    )
+
+    with admin_engine.connect() as conn:
+        assert (
+            _current_version(conn) == TARGET_REVISION_0057
+        ), "expected the CI database to already be migrated to head before this test runs"
+        baseline_index = _instance_name_index_snapshot(conn)
+        assert baseline_index == {"unique": True, "columns": ["instance_name"]}
+
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0057)
+            with admin_engine.connect() as conn:
+                assert _instance_name_index_snapshot(conn) is None, (
+                    "downgrade must drop the unique index, not just rename it"
+                )
+            command.upgrade(cfg, TARGET_REVISION_0057)
+            command.downgrade(cfg, DOWN_REVISION_0057)
+            with admin_engine.connect() as conn:
+                assert _instance_name_index_snapshot(conn) is None
+            command.upgrade(cfg, TARGET_REVISION_0057)
+        finally:
+            # Regardless of outcome, leave the database at head so a failing
+            # or interrupted run here doesn't poison later tests in the same
+            # CI job.
+            command.upgrade(cfg, "head")
+
+    with admin_engine.connect() as conn:
+        final_index = _instance_name_index_snapshot(conn)
+        final_version = _current_version(conn)
+
+    assert final_index == baseline_index, (
+        "the unique index's shape after a downgrade/upgrade round trip does "
+        "not match the pre-cycle baseline — 0057 leaks or loses state across cycles"
+    )
+    assert final_version == TARGET_REVISION_0057
+
+
+def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
+    """A row seeded with the OLD ``dal-<t8>-<p8>-<a8>-<n>`` name format must
+    survive a 0056<->0057 downgrade/upgrade cycle with its id and
+    ``instance_name`` byte-for-byte unchanged — 0057 only adds a constraint
+    on future rows, it never touches existing values."""
+    cfg = _make_config()
+    url = _migration_url()
+    legacy_name = "dal-1a2b3c4d-5e6f7a8b-9c0d1e2f-3"
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == TARGET_REVISION_0057
+        tenant_id = _insert_tenant(conn, "roundtrip-0057-legacy")
+        instance_row = conn.execute(
+            text("SELECT gen_random_uuid()")
+        ).scalar()
+        instance_id = str(instance_row)
+        _insert_lab_instance(
+            conn, instance_id=instance_id, tenant_id=tenant_id, instance_name=legacy_name
+        )
+
+    try:
+        with _migration_env(url):
+            try:
+                command.downgrade(cfg, DOWN_REVISION_0057)
+                command.upgrade(cfg, TARGET_REVISION_0057)
+                command.downgrade(cfg, DOWN_REVISION_0057)
+                command.upgrade(cfg, TARGET_REVISION_0057)
+            finally:
+                command.upgrade(cfg, "head")
+
+        with admin_engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, instance_name FROM lab_instances WHERE id = :id"),
+                {"id": instance_id},
+            ).first()
+            assert row is not None, "the migration cycle must not delete the pre-existing row"
+            assert str(row[0]) == instance_id
+            assert row[1] == legacy_name, (
+                "0057 must never rewrite an existing instance_name, even the "
+                "old count-derived format"
+            )
+    finally:
+        with admin_engine.connect() as conn:
+            _delete_tenant(conn, tenant_id)
+
+
+def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_state(
+    admin_engine,
+):
+    """At 0056, two rows sharing an ``instance_name`` (impossible to persist
+    at head once 0057's index exists, hence seeding directly at 0056) must
+    block the 0057 upgrade with both the duplicate name and its count named
+    in the error, leave ``alembic_version`` at 0056, and leave no
+    ``uq_lab_instances_instance_name`` index behind. Removing one of the two
+    duplicate rows must then let the same upgrade succeed normally."""
+    cfg = _make_config()
+    url = _migration_url()
+    dup_name = "dal-duplicate-preexisting-name"
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == TARGET_REVISION_0057
+        tenant_id = _insert_tenant(conn, "roundtrip-0057-dupe")
+
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0057)
+
+            with admin_engine.connect() as conn:
+                first_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+                second_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+                _insert_lab_instance(
+                    conn, instance_id=first_id, tenant_id=tenant_id, instance_name=dup_name
+                )
+                _insert_lab_instance(
+                    conn, instance_id=second_id, tenant_id=tenant_id, instance_name=dup_name
+                )
+
+            with pytest.raises(Exception) as excinfo:
+                command.upgrade(cfg, TARGET_REVISION_0057)
+            message = str(excinfo.value)
+            assert dup_name in message, "the raised error must name the actual duplicate value"
+            assert "2" in message, "the raised error must name the actual duplicate count"
+
+            with admin_engine.connect() as conn:
+                assert _current_version(conn) == DOWN_REVISION_0057, (
+                    "a failed upgrade must not leave alembic_version at 0057"
+                )
+                assert _instance_name_index_snapshot(conn) is None, (
+                    "a failed upgrade must not leave the unique index behind"
+                )
+
+            # Remove one of the two duplicates and retry — must now succeed.
+            with admin_engine.connect() as conn:
+                conn.execute(text("DELETE FROM lab_instances WHERE id = :id"), {"id": second_id})
+                conn.commit()
+
+            command.upgrade(cfg, TARGET_REVISION_0057)
+
+            with admin_engine.connect() as conn:
+                assert _current_version(conn) == TARGET_REVISION_0057
+                assert _instance_name_index_snapshot(conn) == {
+                    "unique": True,
+                    "columns": ["instance_name"],
+                }
+        finally:
+            with admin_engine.connect() as conn:
+                conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
+                conn.commit()
+            command.upgrade(cfg, "head")
+            with admin_engine.connect() as conn:
+                _delete_tenant(conn, tenant_id)

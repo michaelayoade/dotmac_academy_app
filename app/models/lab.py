@@ -54,7 +54,13 @@ class LabTemplate(Base, TimestampMixin):
 
 class LabInstance(Base, TimestampMixin):
     __tablename__ = "lab_instances"
-    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),
+        # Global (not tenant-scoped) — containerlab's runtime namespace is
+        # host-global, not tenant-scoped, so a tenant-scoped constraint would
+        # not be sufficient to prevent a runtime name collision.
+        UniqueConstraint("instance_name", name="uq_lab_instances_instance_name"),
+    )
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
     activity_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)

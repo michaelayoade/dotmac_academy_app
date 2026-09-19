@@ -7,6 +7,7 @@ opening a new admin connection, and clean up by letting ``tenant_a`` CASCADE.
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -513,4 +514,40 @@ def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_
     )
     assert instance.status == "error"
     assert instance.error == "automatic destroy failed 5 time(s); escalated for manual review"
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_still_raises_on_duplicate_instance_names(
+    admin_session, tenant_a, monkeypatch
+):
+    """The in-application duplicate guard (a second line of defense alongside
+    the new DB-level ``uq_lab_instances_instance_name`` unique index — see
+    ``alembic/versions/0057_lab_instance_name_unique.py``) must still fire.
+
+    Two persisted rows can no longer actually share an ``instance_name`` now
+    that the DB constraint exists, so this feeds ``reconcile_runtime`` an
+    in-memory duplicate pair directly (never added to the session) rather
+    than trying to persist a conflict the database would now reject.
+    """
+    fake_rows = [
+        LabInstance(
+            tenant_id=tenant_a.id, activity_id=uuid4(), person_id=uuid4(),
+            instance_name="dal-duplicate-in-memory", seed={},
+        ),
+        LabInstance(
+            tenant_id=uuid4(), activity_id=uuid4(), person_id=uuid4(),
+            instance_name="dal-duplicate-in-memory", seed={},
+        ),
+    ]
+    fake_scalars_result = MagicMock()
+    fake_scalars_result.all.return_value = fake_rows
+    monkeypatch.setattr(admin_session, "scalars", lambda *a, **k: fake_scalars_result)
+
+    engine = MagicMock()
+    engine.inventory.return_value = {}
+
+    with pytest.raises(RuntimeError, match="duplicate lab instance names"):
+        lab_jobs.reconcile_runtime(admin_session, engine)
+
+    engine.destroy.assert_not_called()
     admin_session.rollback()
