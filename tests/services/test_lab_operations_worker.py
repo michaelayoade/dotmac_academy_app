@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
@@ -15,7 +16,8 @@ from app.models.assessment import Activity, Submission
 from app.models.course import Course
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
-from app.services import lab_operations
+from app.services import host_lock, lab_jobs, lab_operations
+from app.services.exceptions import ConflictError
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import LabHandle
 
@@ -639,3 +641,495 @@ def test_capacity_reservation_survives_worker_crash_before_settlement(
         assert claim is not None and claim.state == "claimed"
     finally:
         check.close()
+
+
+def test_enqueue_retries_after_conflicting_operation_settles_mid_race(
+    admin_session, tenant_a, monkeypatch
+):
+    """A conflicting insert whose row settles before the re-select must retry
+    the whole insert exactly once instead of raising ``NoResultFound``."""
+    instance, person = _seed(admin_session, tenant_a.id, name="race")
+    existing = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    admin_session.flush()
+
+    original_select = lab_operations._select_open_operation
+    calls = {"n": 0}
+
+    def _settle_conflict_then_select(db, inst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Simulate the conflicting operation settling out from under the
+            # re-select: it leaves OPEN_STATES right here, so the retried
+            # insert below observes no conflict and legitimately succeeds.
+            settled = db.get(LabOperation, existing.id)
+            settled.state = "succeeded"
+            settled.finished_at = datetime.now(UTC)
+            db.flush()
+            return None
+        return original_select(db, inst)
+
+    monkeypatch.setattr(
+        lab_operations, "_select_open_operation", _settle_conflict_then_select
+    )
+
+    retried = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+
+    assert retried.id != existing.id
+    assert retried.state == "queued"
+    assert calls["n"] == 1  # the retried insert succeeded; no second re-select
+    admin_session.rollback()
+
+
+def test_enqueue_raises_conflict_error_when_retry_also_races(
+    admin_session, tenant_a, monkeypatch
+):
+    """If the retried insert ALSO conflicts and the re-select ALSO finds
+    nothing, enqueue must raise ConflictError rather than crash."""
+    instance, person = _seed(admin_session, tenant_a.id, name="double-race")
+    lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    admin_session.flush()
+
+    # The real conflicting row is never settled, so both the initial insert
+    # and the retried insert genuinely conflict; forcing the re-select to
+    # always report "nothing found" reproduces the vanishingly-unlikely
+    # double-vanish case deterministically.
+    monkeypatch.setattr(
+        lab_operations, "_select_open_operation", lambda db, inst: None
+    )
+
+    with pytest.raises(ConflictError):
+        lab_operations.enqueue(
+            admin_session, instance=instance, kind="deploy", requested_by=person.id
+        )
+    admin_session.rollback()
+
+
+def test_five_consecutive_automatic_destroy_failures_escalate_instance_to_error(
+    admin_session, tenant_a
+):
+    instance, _ = _seed(admin_session, tenant_a.id, name="escalate", status="active")
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+
+    for attempt in range(1, lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"] + 1):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
+        admin_session.commit()
+
+        outcome = lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+        assert outcome == "failed"
+        admin_session.refresh(instance)
+        admin_session.refresh(operation)
+        assert operation.state == "failed"
+        if attempt < lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]:
+            assert instance.status == "active"
+        else:
+            assert instance.status == "error"
+            assert instance.error == (
+                "automatic destroy failed 5 times; manual intervention required"
+            )
+
+
+def test_escalated_instance_stops_being_selected_by_idle_reaper(admin_session, tenant_a):
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="escalate-reaper", status="active"
+    )
+    instance.last_active_at = datetime.now(UTC) - timedelta(hours=2)
+    admin_session.commit()
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+
+    for _ in range(lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
+        admin_session.commit()
+        lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+
+    requested = lab_jobs.request_idle_reaps(admin_session)
+
+    assert requested == 0
+    admin_session.refresh(instance)
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id, state="queued")
+        .count()
+        == 0
+    )
+
+
+def test_user_initiated_deploy_survives_escalation_and_resets_failure_window(
+    admin_session, tenant_a
+):
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="escalate-then-redeploy", status="active"
+    )
+    destroy_engine = MagicMock()
+    destroy_engine.destroy.side_effect = RuntimeError("destroy refused")
+    for _ in range(lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
+        admin_session.commit()
+        lab_operations.run_claimed(
+            admin_session,
+            operation_id=operation.id,
+            claimed_by="worker",
+            engine=destroy_engine,
+        )
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+
+    # (c) a user-attributed deploy can still be enqueued and completes even
+    # after automatic-destroy escalation put the instance into "error".
+    deploy_op = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    deploy_op.state = "claimed"
+    deploy_op.claimed_by = "worker"
+    deploy_op.claimed_at = datetime.now(UTC)
+    deploy_op.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    deploy_outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=deploy_op.id,
+        claimed_by="worker",
+        engine=_engine(instance.instance_name),
+    )
+    assert deploy_outcome == "succeeded"
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+    # (d) a fresh first automatic destroy failure after that successful
+    # redeploy must NOT immediately re-escalate: the failure-count window
+    # reset by the successful deploy must be respected.
+    post_redeploy_destroy = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    post_redeploy_destroy.state = "claimed"
+    post_redeploy_destroy.claimed_by = "worker"
+    post_redeploy_destroy.claimed_at = datetime.now(UTC)
+    post_redeploy_destroy.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+    second_destroy_engine = MagicMock()
+    second_destroy_engine.destroy.side_effect = RuntimeError("destroy refused again")
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=post_redeploy_destroy.id,
+        claimed_by="worker",
+        engine=second_destroy_engine,
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+
+def test_host_lock_contention_defers_without_charging_attempt_or_altering_state(
+    admin_session, tenant_a
+):
+    instance, _ = _seed(admin_session, tenant_a.id, name="host-lock", status="active")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+    engine = MagicMock()
+    engine.destroy.side_effect = host_lock.HostLockUnavailable("host lock held")
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    assert operation.attempts == 0
+
+
+def test_deploy_failure_detected_even_when_provision_leaves_status_active(
+    admin_session, tenant_a, monkeypatch
+):
+    """Stream B's ``provision`` may conservatively leave status "active" on a
+    failed deploy; ``_run_deploy`` must still detect the failure via ``error``.
+    """
+    instance, person = _seed(admin_session, tenant_a.id, name="conservative-fail")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    def _conservative_failure(db, inst, engine, template):
+        inst.status = "active"
+        inst.error = "runtime creation began but deploy failed"
+        db.flush()
+        return inst
+
+    monkeypatch.setattr(lab_operations.lab_lifecycle, "provision", _conservative_failure)
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(instance.instance_name),
+    )
+
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error == "runtime creation began but deploy failed"
+    assert operation.state == "failed"
+    assert "runtime creation began but deploy failed" in operation.last_error
+
+
+def test_wrong_host_refusals_do_not_contribute_to_destroy_escalation_count(
+    admin_session, tenant_a, tmp_path
+):
+    """WrongLabHostError refusals are operator/placement misconfiguration, not
+    genuine destroy execution failures, and must not count toward the
+    cumulative automatic-destroy escalation threshold."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="wrong-host-destroy", status="active"
+    )
+    refusing_engine = ContainerlabEngine(str(tmp_path), lab_host_role="web")
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    for _ in range(threshold + 2):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        admin_session.commit()
+
+        outcome = lab_operations.run_claimed(
+            admin_session,
+            operation_id=operation.id,
+            claimed_by="worker",
+            engine=refusing_engine,
+        )
+        assert outcome == "failed"
+
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+
+def test_legacy_unmarked_wrong_host_rows_do_not_contribute_to_escalation_count(
+    admin_session, tenant_a
+):
+    """A row that failed via WrongLabHostError before the operator-refusal
+    marker existed (bare ``str(exc)``, no ``[operator-refusal]`` prefix — the
+    shape base PR #148 code would have written) must still be excluded from
+    the cumulative escalation count, via the stable WrongLabHostError message
+    substring rather than the marker alone."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="legacy-wrong-host", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    for _ in range(threshold - 1):
+        legacy_operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        legacy_operation.state = "failed"
+        legacy_operation.finished_at = datetime.now(UTC)
+        legacy_operation.last_error = (
+            "containerlab operations require LAB_HOST_ROLE=lab (got 'web')"
+        )
+        admin_session.commit()
+
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    # If the legacy rows above wrongly counted, this single genuine failure
+    # would be the (threshold-1)+1'th and would escalate; the fix keeps it at
+    # count 1 since none of the legacy wrong-host rows are genuine failures.
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+
+def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
+    admin_session, tenant_a
+):
+    """A destroy that exhausts its attempts via lease expiry (worker
+    crash/hang), not a synchronous exception, must escalate the same way a
+    synchronously-failing destroy does — otherwise a hanging engine lets the
+    idle reaper re-enqueue destroys for this instance forever."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="stuck-destroy-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+
+    for _ in range(threshold - 1):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        admin_session.commit()
+        lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+
+    stuck_operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    admin_session.refresh(stuck_operation)
+    assert stuck_operation.state == "failed"
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+
+
+def test_single_stuck_destroy_row_escalates_via_reconcile_stuck_alone(
+    admin_session, tenant_a
+):
+    """Escalation sums attempts, not distinct failed rows: a single operation
+    that hangs and burns its full attempt budget via repeated lease-expiry/
+    reclaim cycles on the SAME row already represents a full attempt budget
+    and must escalate on its own, with no other prior failed rows needed."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="single-row-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    stuck_operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    admin_session.refresh(stuck_operation)
+    assert stuck_operation.state == "failed"
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+
+
+def test_host_lock_during_redeploy_provision_does_not_falsely_restore_active(
+    admin_session, tenant_a, monkeypatch
+):
+    """If the destroy half of a deploy's destroy-then-provision sequence
+    already succeeded (the real runtime is torn down) and it is the
+    subsequent provision/deploy call that hits HostLockUnavailable, restoring
+    the pre-op "active" status would falsely claim a working lab. The
+    instance must stay in the mid-flight "resetting"/"provisioning" state
+    _run_deploy already left it in."""
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="host-lock-redeploy", status="active"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+
+    engine = MagicMock()
+    engine.destroy.return_value = None  # the old runtime is genuinely torn down
+
+    def _provision_hits_host_lock(db, inst, eng, template):
+        raise host_lock.HostLockUnavailable("host lock held during redeploy")
+
+    monkeypatch.setattr(
+        lab_operations.lab_lifecycle, "provision", _provision_hits_host_lock
+    )
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "resetting"
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    assert operation.attempts == 0

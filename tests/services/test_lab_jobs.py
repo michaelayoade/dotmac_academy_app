@@ -283,3 +283,234 @@ def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
         == 0
     )
     admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent_reset(
+    admin_session, tenant_a
+):
+    """Phase 4 must re-validate, not trust, Phase 2's snapshot.
+
+    ``missing_runtime`` is computed once, in Phase 2, before Phase 3's
+    (potentially multi-minute, per orphan) destroy loop runs. If a real,
+    concurrent, user-initiated reset completes for one of those instances
+    while Phase 3 is still running, Phase 4 must not enqueue a destroy
+    against it using the now-stale Phase 2 snapshot — that would tear down a
+    lab that just came back up.
+
+    The concurrent mutation is injected via ``engine.destroy``'s side effect
+    for the one rowless orphan this test also seeds — ``engine.destroy`` is
+    the last thing Phase 3 does before Phase 4 runs, so performing the
+    "concurrent" enqueue from inside it deterministically reproduces "some
+    real time and a real database write happened between Phase 2 and Phase
+    4" without needing an actual second thread or process.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-missing-runtime",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    def _concurrent_reset_during_phase_3(name: str) -> None:
+        assert name == "dal-rowless-race-trigger"
+        # Simulate a real worker completing an unrelated, concurrent
+        # user-initiated redeploy for `instance` while this destroy is
+        # "in flight" — it now has a genuinely open operation.
+        lab_operations.enqueue(admin_session, instance=instance, kind="deploy", requested_by=p.id)
+        admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        "dal-rowless-race-trigger": "/labs/rowless-race-trigger.clab.yml",
+    }
+    engine.destroy.side_effect = _concurrent_reset_during_phase_3
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 1
+    engine.destroy.assert_called_once_with("dal-rowless-race-trigger")
+    # The concurrent deploy is the only operation queued for `instance` — no
+    # destroy/deploy was ALSO enqueued against the stale Phase 2 snapshot.
+    ops = (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .all()
+    )
+    assert [op.kind for op in ops] == ["deploy"]
+    assert queued == 0
+    # Untouched by Phase 4 — it was skipped, not mutated.
+    assert instance.status == "active"
+    assert instance.error is None
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
+    admin_session, tenant_a, monkeypatch
+):
+    """The status/open-op pre-check narrows the race, it does not close it.
+
+    A concurrent enqueue can still land in the gap between
+    ``fresh_open_instance_ids``'s query and this exact instance's ``enqueue()``
+    call further down the same loop iteration — the pre-check has already
+    passed by then. The only correctness guarantee is ``enqueue()``'s own
+    atomic return value (backed by the database's partial unique index):
+    if it hands back an operation of a different kind than requested, a
+    genuinely concurrent operation won, and this pass must not claim its own
+    destroy was enqueued.
+
+    The race is reproduced faithfully — through the real ``on_conflict_do_
+    nothing`` + re-select path in ``lab_operations.enqueue``, not a mock —
+    by wrapping ``lab_operations.enqueue`` so that its first invocation
+    inserts a genuinely competing ``"deploy"`` operation for this instance
+    immediately before letting the real, intended ``"destroy"`` enqueue
+    call proceed and lose that race.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-destroy-enqueue",
+        seed={},
+        status="reaped",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.return_value = {instance.instance_name: "/labs/race.clab.yml"}
+
+    real_enqueue = lab_operations.enqueue
+    calls = {"n": 0}
+
+    def _enqueue_with_late_concurrent_winner(db, *, instance, kind, requested_by):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A real, concurrent user-initiated reset's enqueue landing
+            # after reconcile_runtime's fresh_open_instance_ids query
+            # already ran (and found nothing) for this instance, but
+            # before reconcile_runtime's own enqueue() call for it below.
+            real_enqueue(db, instance=instance, kind="deploy", requested_by=p.id)
+        return real_enqueue(db, instance=instance, kind=kind, requested_by=requested_by)
+
+    monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_late_concurrent_winner)
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    # The concurrent deploy is the only operation that actually exists — no
+    # destroy was ALSO created, and none of this pass's destroy-enqueued
+    # fields were written despite losing the race.
+    ops = admin_session.query(LabOperation).filter_by(instance_id=instance.id).all()
+    assert [op.kind for op in ops] == ["deploy"]
+    assert instance.status == "reaped"
+    assert instance.error is None
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeared_during_phase_3(
+    admin_session, tenant_a
+):
+    """Phase 1's runtime snapshot can go stale exactly like Phase 2's database
+    snapshot did in earlier rounds — a concurrent deploy elsewhere can SETTLE
+    (not merely get enqueued; that race is covered by the previous test)
+    while Phase 3's destroy loop is still running, making an instance no
+    longer "missing" by the time Phase 4 needs to decide. Phase 4 must
+    re-verify against a fresh, second ``engine.inventory()`` call, not
+    Phase 1's now-stale one.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-fresh-inventory",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    # A concurrent worker's deploy for this instance has already SETTLED by
+    # the time Phase 4 runs (a terminal state, not an open one) — the
+    # instance is genuinely running again, not merely claimed.
+    settled = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="deploy",
+        state="succeeded",
+        requested_by=p.id,
+    )
+    admin_session.add(settled)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.side_effect = [
+        {},  # Phase 1: genuinely missing at snapshot time
+        {instance.instance_name: "/labs/settled.clab.yml"},  # Phase 4's fresh re-check
+    ]
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    assert engine.inventory.call_count == 2
+    ops = admin_session.query(LabOperation).filter_by(instance_id=instance.id).all()
+    assert [op.kind for op in ops] == ["deploy"]  # only the pre-existing settled one
+    assert instance.status == "active"
+    assert instance.error is None
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_present(
+    admin_session, tenant_a
+):
+    """An instance already escalated to status="error" (Stream A's destroy-
+    escalation feature, which sets this specifically to stop automatic
+    destroy retries once cumulative failures hit its threshold) must not get
+    ANOTHER automatic destroy enqueued by reconcile_runtime just because its
+    status is not one of the "live" ones. The idle reaper already respects
+    this (it only selects "active" instances) — reconcile_runtime's
+    db_only_repairs path is a different automatic path to the same
+    containerlab destroy, and must respect the same escalation.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-escalated-runtime-present",
+        seed={},
+        status="error",
+        error="automatic destroy failed 5 time(s); escalated for manual review",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        instance.instance_name: "/labs/escalated-runtime-present.clab.yml",
+    }
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    engine.destroy.assert_not_called()
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .count()
+        == 0
+    )
+    assert instance.status == "error"
+    assert instance.error == "automatic destroy failed 5 time(s); escalated for manual review"
+    admin_session.rollback()

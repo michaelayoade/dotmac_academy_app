@@ -13,8 +13,9 @@ from app.models.assessment import Activity, Submission
 from app.models.course import Course
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
-from app.services import lab_lifecycle
+from app.services import lab_lifecycle, lab_operations
 from app.services.exceptions import ConflictError
+from app.services.host_lock import HostLockUnavailable
 from app.services.labengine.interface import ExecResult, LabHandle
 
 # The autouse ``_no_real_console_spawn`` fixture in tests/conftest.py replaces
@@ -203,7 +204,40 @@ def test_destroy_stops_consoles(admin_session, tenant_a, monkeypatch):
     admin_session.rollback()
 
 
-def test_provision_records_error_on_failure(admin_session, tenant_a):
+def test_provision_records_error_when_failure_occurs_before_deploy_is_invoked(
+    admin_session, tenant_a, monkeypatch
+):
+    """A failure before ``engine.deploy()`` is ever called (e.g. topology
+    interpolation) proves no runtime was created — nothing to conservatively
+    protect, so the instance is recorded ``error`` as before."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-err", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+
+    def _boom(text, seed):
+        raise ValueError("bad topology template")
+
+    monkeypatch.setattr(lab_lifecycle, "interpolate", _boom)
+    engine = MagicMock()
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert "bad topology template" in out.error
+    engine.deploy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_provision_deploy_failure_leaves_instance_active_with_error_recorded(
+    admin_session, tenant_a
+):
+    """A failure FROM/AFTER ``engine.deploy()`` does not prove the runtime is
+    absent (the containerlab process may still be running), so — mirroring
+    ``_run_deploy``'s destroy-failure handling — the instance conservatively
+    stays ``active`` rather than ``error``, with the failure text still
+    recorded on ``instance.error`` for callers that key off it."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-err", seed={"o": 5},
@@ -214,8 +248,59 @@ def test_provision_records_error_on_failure(admin_session, tenant_a):
     engine.deploy.side_effect = RuntimeError("boom")
     out = lab_lifecycle.provision(admin_session, inst, engine, lt)
     admin_session.flush()
-    assert out.status == "error"
+    assert out.status == "active"
     assert "boom" in out.error
+    admin_session.rollback()
+
+
+def test_provision_deploy_failure_still_counts_against_capacity(
+    admin_session, tenant_a, monkeypatch
+):
+    """The phantom-but-conservative ``active`` instance from a failed deploy
+    must still occupy a capacity slot — otherwise a second admission could
+    exceed the real limit while the (possibly still-running) old lab lingers
+    until the next ``reconcile_runtime`` pass."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-err-cap", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy.side_effect = RuntimeError("boom")
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "active"
+
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+    candidate = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                            instance_name="dal-second", seed={"o": 6},
+                            status="queued", consoles={})
+    admin_session.add(candidate)
+    admin_session.flush()
+    assert lab_operations._capacity_available(admin_session, candidate) is False
+    admin_session.rollback()
+
+
+def test_provision_host_lock_unavailable_passes_through_unchanged(admin_session, tenant_a):
+    """Host-lock contention is transient contention handled by a different
+    layer (``run_claimed``), not a deployment failure — it must propagate
+    unchanged, without provision() converting it into an error/active status
+    change."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-lock", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy.side_effect = HostLockUnavailable("host lock held")
+
+    with pytest.raises(HostLockUnavailable):
+        lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert inst.status == "provisioning"
+    assert inst.error is None
     admin_session.rollback()
 
 

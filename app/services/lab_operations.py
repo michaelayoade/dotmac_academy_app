@@ -12,16 +12,18 @@ import os
 import socket
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.services import lab_lifecycle
+from app.services.exceptions import ConflictError
+from app.services.host_lock import HostLockUnavailable
 from app.services.labengine.interface import LabEngine, WrongLabHostError
 from app.services.settings_store import effective
 
@@ -32,6 +34,17 @@ MAX_ATTEMPTS_BY_KIND = {"deploy": 3, "destroy": 5, "check": 3}
 RETRY_DELAY_SECONDS = 5
 _CAPACITY_LOCK_KEY = 0x44414C  # "DAL"; one global Academy lab-capacity lock.
 _BOOT_TOKEN = uuid4().hex[:8]
+# Marks a `last_error` recorded for an operator-placement refusal (wrong lab
+# host) rather than a genuine execution failure, so the automatic-destroy
+# escalation count (a structural signal, not a message-substring guess about
+# an engine's wording) can exclude these rows from the cumulative threshold.
+_OPERATOR_REFUSAL_LAST_ERROR_PREFIX = "[operator-refusal] "
+# Backward-compatibility fallback: a `WrongLabHostError`-caused failure that
+# settled before `_OPERATOR_REFUSAL_LAST_ERROR_PREFIX` existed has no marker,
+# just `str(exc)` verbatim. `ContainerlabEngine._require_lab_host` raises with
+# this stable substring; matching it lets the escalation count exclude those
+# legacy rows too, closing the gap between this fix and an earlier release.
+_WRONG_LAB_HOST_LAST_ERROR_SUBSTRING = "containerlab operations require LAB_HOST_ROLE=lab"
 
 
 def _now() -> datetime:
@@ -43,25 +56,18 @@ def worker_identity() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{_BOOT_TOKEN}"
 
 
-def enqueue(
-    db: Session,
-    *,
-    instance: LabInstance,
-    kind: str,
-    requested_by: UUID | None,
-) -> LabOperation:
-    """Insert one open intent per instance, returning the existing one on races.
+def _insert_open_operation_stmt(
+    *, instance: LabInstance, kind: str, requested_by: UUID | None
+) -> Any:
+    """Build one insert-or-skip statement for the open-per-instance constraint.
 
     The explicit value list is security-sensitive: it is exactly the five
     columns granted to ``app_user`` by migration 0055.
     """
-    if kind not in KINDS:
-        raise ValueError(f"unsupported lab operation kind {kind!r}")
-    op_id = uuid4()
-    stmt = (
+    return (
         insert(LabOperation)
         .values(
-            id=op_id,
+            id=uuid4(),
             tenant_id=instance.tenant_id,
             instance_id=instance.id,
             kind=kind,
@@ -73,14 +79,64 @@ def enqueue(
         )
         .returning(LabOperation.id)
     )
-    inserted_id = db.scalar(stmt)
-    if inserted_id is not None:
-        return db.scalars(select(LabOperation).where(LabOperation.id == inserted_id)).one()
+
+
+def _select_open_operation(db: Session, instance: LabInstance) -> LabOperation | None:
+    """Return the current open (queued/claimed) operation for ``instance``, if any.
+
+    Kept as its own call so a conflicting insert's re-check can observe the
+    conflicting row settling out from under it between the insert and the
+    re-select (see :func:`enqueue`).
+    """
     return db.scalars(
         select(LabOperation)
         .where(LabOperation.instance_id == instance.id)
         .where(LabOperation.state.in_(OPEN_STATES))
-    ).one()
+    ).first()
+
+
+def enqueue(
+    db: Session,
+    *,
+    instance: LabInstance,
+    kind: str,
+    requested_by: UUID | None,
+) -> LabOperation:
+    """Insert one open intent per instance, returning the existing one on races.
+
+    Under READ COMMITTED, the conflicting operation can settle (leave
+    ``OPEN_STATES``) in the gap between our insert's conflict and the re-select
+    that follows it. When that happens the re-select legitimately finds
+    nothing — retry the whole insert once, since the conflict should now be
+    gone. If the retried insert conflicts again and the re-select once more
+    finds nothing (the new conflicting row also settled in that same narrow
+    window), give up with a clean, callable-facing error rather than raising
+    ``NoResultFound``.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"unsupported lab operation kind {kind!r}")
+    inserted_id = db.scalar(
+        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+    )
+    if inserted_id is not None:
+        return db.scalars(select(LabOperation).where(LabOperation.id == inserted_id)).one()
+    existing = _select_open_operation(db, instance)
+    if existing is not None:
+        return existing
+    # The conflicting row settled between our insert-conflict and the
+    # re-select above. Retry the complete insert exactly once.
+    retried_id = db.scalar(
+        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+    )
+    if retried_id is not None:
+        return db.scalars(select(LabOperation).where(LabOperation.id == retried_id)).one()
+    existing_after_retry = _select_open_operation(db, instance)
+    if existing_after_retry is not None:
+        return existing_after_retry
+    raise ConflictError(
+        f"could not enqueue {kind} operation for lab instance {instance.id}: "
+        "a conflicting operation resolved during the enqueue retry"
+    )
 
 
 def claim_next(db: Session, *, claimed_by: str) -> LabOperation | None:
@@ -175,6 +231,115 @@ def _requeue_for_capacity(db: Session, op: LabOperation, instance: LabInstance) 
     db.flush()
 
 
+def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
+    """Return a claim's operation row to the queue after transient host-lock
+    contention.
+
+    Only touches the operation row. Callers decide separately whether the
+    instance's status/error should be restored: for a "deploy" operation,
+    ``_run_deploy`` may already have genuinely destroyed the old runtime
+    before the lock contention was hit, so blindly restoring the pre-op
+    instance state would be a false projection, not merely a conservative one.
+    """
+    op.state = "queued"
+    op.claimed_by = None
+    op.claimed_at = None
+    op.heartbeat_at = None
+    op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
+    op.last_error = None
+    op.attempts = max(op.attempts - 1, 0)
+    db.flush()
+
+
+def _automatic_destroy_escalation_message(
+    db: Session,
+    *,
+    instance_id: UUID,
+    current_operation_id: UUID,
+    current_operation_attempts: int,
+) -> str | None:
+    """Return an escalation message once cumulative automatic destroy
+    ATTEMPTS for ``instance_id`` reach the destroy attempt ceiling, else
+    ``None``.
+
+    Sums ``attempts`` (not row count) across ``failed``, ``kind="destroy"``,
+    ``requested_by IS NULL`` operations (automatic reaper-triggered destroys
+    — user-initiated destroys pass a real person id) for this instance, plus
+    the current failure's own ``attempts``. Summing attempts rather than
+    counting rows matters because a single operation that hangs and burns its
+    full attempt budget via lease-expiry (``reconcile_stuck`` reclaiming and
+    re-attempting the same row) already represents up to
+    ``MAX_ATTEMPTS_BY_KIND["destroy"]`` real attempts on its own — it must
+    escalate at least as fast as that many separate single-attempt failures
+    would, not need several more rows on top of it.
+
+    Operator-placement refusals (``WrongLabHostError``, marked with
+    ``_OPERATOR_REFUSAL_LAST_ERROR_PREFIX`` at settle time) are excluded: a
+    misconfigured host role is not a genuine destroy execution failure. Rows
+    settled before that marker existed (a stable substring of
+    ``WrongLabHostError``'s own message, from
+    ``ContainerlabEngine._require_lab_host``) are excluded the same way, so a
+    gap between this fix landing and an earlier release of the worker leaves
+    no unmarked wrong-host refusal able to count toward the threshold. Only
+    failures after the instance's most recent *successful* ``deploy``
+    operation count, so a successful manual redeploy starts a fresh window.
+    The scan is bounded at the threshold rather than unbounded history: no
+    single row can carry more attempts than the ceiling itself, so the most
+    recent ``threshold`` failed rows are always enough to reach it if it can
+    be reached at all.
+    """
+    threshold = MAX_ATTEMPTS_BY_KIND["destroy"]
+    last_deploy_success_at = db.scalar(
+        select(func.max(LabOperation.finished_at))
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "deploy")
+        .where(LabOperation.state == "succeeded")
+    )
+    prior_failure_query = (
+        select(LabOperation.attempts)
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "destroy")
+        .where(LabOperation.state == "failed")
+        .where(LabOperation.requested_by.is_(None))
+        .where(LabOperation.id != current_operation_id)
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.startswith(
+                    _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
+                ),
+            )
+        )
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.contains(
+                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True
+                ),
+            )
+        )
+    )
+    if last_deploy_success_at is not None:
+        prior_failure_query = prior_failure_query.where(
+            LabOperation.finished_at > last_deploy_success_at
+        )
+    bounded = (
+        prior_failure_query.order_by(LabOperation.finished_at.desc())
+        .limit(threshold)
+        .subquery()
+    )
+    prior_attempts = int(db.scalar(select(func.sum(bounded.c.attempts))) or 0)
+    cumulative_attempts = min(
+        prior_attempts + current_operation_attempts, threshold
+    )
+    if cumulative_attempts < threshold:
+        return None
+    return (
+        f"automatic destroy failed {cumulative_attempts} times; "
+        "manual intervention required"
+    )
+
+
 def _capacity_available(db: Session, instance: LabInstance) -> bool:
     """Serialize admission and evaluate the effective, global capacity limit."""
     db.execute(select(func.pg_advisory_xact_lock(_CAPACITY_LOCK_KEY)))
@@ -233,7 +398,11 @@ def _run_deploy(
         after_destroy()
     lab_lifecycle.stop_consoles(instance)
     result = lab_lifecycle.provision(db, instance, engine, template)
-    if result.status != "active":
+    # ``provision`` may conservatively leave a failed deploy's status as
+    # "active" (capacity-counted, unproven-absent runtime) rather than
+    # "error" — its cleared-on-success ``error`` field is the authoritative
+    # failure signal, not ``status`` alone.
+    if result.status != "active" or result.error is not None:
         raise RuntimeError(result.error or "lab deployment failed")
 
 
@@ -268,6 +437,8 @@ def run_claimed(
         return "failed"
     operation_kind = op.kind
     operation_instance_id = op.instance_id
+    operation_requested_by = op.requested_by
+    operation_attempts = op.attempts
     initial_instance_status = instance.status
     initial_instance_error = instance.error
 
@@ -355,13 +526,46 @@ def run_claimed(
             operation_id=operation_id,
             claimed_by=claimed_by,
             state="failed",
-            error=str(exc),
+            error=f"{_OPERATOR_REFUSAL_LAST_ERROR_PREFIX}{exc}",
             refund_attempt=True,
         ):
             db.rollback()
             return "stale"
         db.commit()
         return "failed"
+    except HostLockUnavailable:
+        # Another process holds the host containerlab lock. This is transient
+        # host contention, not a workload failure or a fencing loss: refund
+        # the attempt charged by claim_next and requeue the same row for a
+        # prompt retry.
+        db.rollback()
+        unchanged_instance = db.get(LabInstance, operation_instance_id)
+        refreshed_op = db.get(LabOperation, operation_id)
+        if (
+            unchanged_instance is None
+            or refreshed_op is None
+            or refreshed_op.state != "claimed"
+            or refreshed_op.claimed_by != claimed_by
+        ):
+            db.rollback()
+            return "stale"
+        if operation_kind != "deploy":
+            # Nothing destructive has necessarily happened yet for
+            # destroy/check before this handler fires — safe to restore the
+            # pre-execution instance state verbatim.
+            unchanged_instance.status = initial_instance_status
+            unchanged_instance.error = initial_instance_error
+        # For "deploy", _run_deploy already set instance.status to
+        # "resetting"/"provisioning" for the whole destroy-then-provision
+        # sequence before attempting the (possibly already-succeeded) destroy.
+        # That value stays correctly capacity-counted (_capacity_available
+        # treats provisioning/active/resetting alike) and, unlike the
+        # pre-reset "active", does not falsely claim a working lab when the
+        # real runtime may have just been torn down and not yet redeployed.
+        # Leave it untouched.
+        _requeue_operation_after_host_lock(db, refreshed_op)
+        db.commit()
+        return "deferred"
     except Exception as exc:
         deploy_failure_status: str | None = None
         if operation_kind == "deploy":
@@ -379,6 +583,21 @@ def run_claimed(
             if failed_instance is not None:
                 failed_instance.status = deploy_failure_status
                 failed_instance.error = str(exc)
+        elif operation_kind == "destroy" and operation_requested_by is None:
+            # Automatic (reaper-triggered) destroys escalate after enough
+            # cumulative failures instead of retrying forever; user-initiated
+            # destroys (a real requested_by) are never subject to this check.
+            escalation_message = _automatic_destroy_escalation_message(
+                db,
+                instance_id=operation_instance_id,
+                current_operation_id=operation_id,
+                current_operation_attempts=operation_attempts,
+            )
+            if escalation_message is not None:
+                escalated_instance = db.get(LabInstance, operation_instance_id)
+                if escalated_instance is not None:
+                    escalated_instance.status = "error"
+                    escalated_instance.error = escalation_message
         if not _settle(
             db,
             operation_id=operation_id,
@@ -434,6 +653,25 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                 # An interrupted external mutation cannot prove runtime absence.
                 instance.status = "active"
                 instance.error = op.last_error
+            if (
+                instance is not None
+                and op.kind == "destroy"
+                and op.requested_by is None
+            ):
+                # A stuck/lease-expired automatic destroy is the same
+                # persistent-failure signal as a synchronous one — it must
+                # count toward the same cumulative escalation threshold, or a
+                # hanging engine lets the idle reaper re-enqueue destroys for
+                # this instance forever.
+                escalation_message = _automatic_destroy_escalation_message(
+                    db,
+                    instance_id=op.instance_id,
+                    current_operation_id=op.id,
+                    current_operation_attempts=op.attempts,
+                )
+                if escalation_message is not None:
+                    instance.status = "error"
+                    instance.error = escalation_message
             continue
         if instance is not None:
             if instance.status == "provisioning":

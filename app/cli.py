@@ -870,7 +870,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
     errors = validate_settings(settings)
     if errors:
         raise SystemExit("; ".join(errors))
-    engine = ContainerlabEngine(settings.lab_workdir)
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
     print("lab-worker started; draining durable operations every 5s")
     while True:
         with lab_jobs.lab_worker_session() as db:
@@ -897,6 +897,7 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
 
     from app.config import settings, validate_settings
     from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable
     from app.services.labengine.containerlab import ContainerlabEngine
 
     if settings.lab_host_role.lower() != "lab":
@@ -906,7 +907,7 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
     errors = validate_settings(settings)
     if errors:
         raise SystemExit("; ".join(errors))
-    engine = ContainerlabEngine(settings.lab_workdir)
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-reconcile")
     with lab_jobs.lab_worker_session() as db:
         requeued = lab_operations.reconcile_stuck(db)
         # Commit the stuck-claim reconciliation in its own short transaction —
@@ -919,7 +920,18 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
         # already commits between reconcile_stuck and drain_once for the same
         # reason.
         db.commit()
-        runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine)
+        try:
+            runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine)
+        except HostLockUnavailable as exc:
+            # reconcile_runtime makes no database writes before it can raise
+            # this (see its phase breakdown), so there is nothing this pass
+            # wrote that needs undoing — the rollback below is still explicit
+            # rather than assumed. Skip the console sweep and its commit too:
+            # this whole pass is abandoned, and the 1-minute timer will retry
+            # it from scratch on its own.
+            db.rollback()
+            print(f"lab-reconcile: skipped this pass — {exc}")
+            return
         orphans = lab_jobs.sweep_orphan_consoles(db)
         db.commit()
     print(

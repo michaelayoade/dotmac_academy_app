@@ -210,8 +210,52 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
     Returns ``(queued_repairs, destroyed_rowless_orphans)``. Only Academy's
     ``dal-`` namespace is eligible for direct cleanup; unrelated containerlab
     runtimes on the same host are never touched.
+
+    Structured in four phases so that host-lock contention (raised as
+    :class:`~app.services.host_lock.HostLockUnavailable`, propagated to the
+    caller) can never leave a half-applied repair plan behind:
+
+    1. Locked inventory (``engine.inventory()`` — the lock is acquired and
+       released inside the engine call itself).
+    2. Database reads and repair-plan calculation. No row locks and no host
+       lock are held here — this is pure computation over already-fetched
+       data.
+    3. Locked rowless-orphan destroys (``engine.destroy()`` per orphan, each
+       independently acquiring/releasing the host lock). No database row is
+       mutated in this phase, so if the host lock is contended partway
+       through this loop, there is nothing to unwind.
+    4. One more locked, fresh ``engine.inventory()`` call (replacing Phase
+       1's snapshot for every decision below), followed by database
+       projections/enqueues, only after every host operation this pass
+       needed has already completed. Phase 3's destroys each carry their
+       own multi-minute timeout, so real time passes between Phase 1/2's
+       snapshots and Phase 4's mutations — long enough for an unrelated,
+       concurrent operation (e.g. a user-initiated reset running via the
+       normal worker path) to change an instance's true state, INCLUDING
+       its actual runtime existence, in the meantime. Phase 4 therefore
+       re-validates each candidate's CURRENT status, CURRENT open-operation
+       membership, AND CURRENT runtime presence immediately before mutating
+       it, rather than trusting either the Phase 1 or Phase 2 snapshot for
+       anything beyond "this instance was structurally interesting enough
+       to look at again" — otherwise a freshly-succeeded redeploy could be
+       paved over with a needless destroy+redeploy cycle enqueued against
+       stale data. (This function has now had four rounds of staleness
+       hardening across its database and runtime state; a further
+       staleness angle beyond this should be raised as a tracked decision
+       rather than another silent patch here.)
+
+    If either ``engine.inventory()`` call or an ``engine.destroy()`` call
+    raises ``HostLockUnavailable``, this function does not catch it: it
+    propagates to :func:`app.cli._lab_reconcile`, which rolls back this
+    pass's (nonexistent, by construction — phases 1-3 make no database
+    writes, and Phase 4's own re-inventory call happens before any of its
+    mutations) and exits cleanly rather than raising, so the reconciler
+    simply retries on its own 1-minute timer.
     """
+    # Phase 1 — locked inventory.
     runtime = engine.inventory()
+
+    # Phase 2 — database reads and repair-plan calculation; no locks held.
     rows = db.scalars(select(LabInstance)).all()
     if len({row.instance_name for row in rows}) != len(rows):
         raise RuntimeError("duplicate lab instance names prevent safe runtime reconciliation")
@@ -223,47 +267,138 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             )
         ).all()
     )
-    queued = 0
-    destroyed = 0
 
-    for name in sorted(runtime):
-        if not name.startswith("dal-"):
+    rowless_orphans = [
+        name for name in sorted(runtime) if name.startswith("dal-") and name not in by_name
+    ]
+    db_only_repairs = [
+        instance
+        for name in sorted(runtime)
+        if name.startswith("dal-") and (instance := by_name.get(name)) is not None
+        # "error" is deliberately excluded from eligibility, not just from the
+        # live-status tuple below: Stream A's destroy-escalation feature sets
+        # status="error" specifically to stop automatic destroy retries once
+        # cumulative failures hit its threshold (the idle reaper already
+        # respects this by only selecting "active" instances). Without this
+        # exclusion, an escalated instance whose runtime is still present
+        # would be treated as "non-live" here and get ANOTHER automatic
+        # destroy enqueued — bypassing the escalation's intent through a
+        # different code path than the one it was designed to block.
+        and instance.status not in ("provisioning", "active", "resetting", "error")
+        and instance.id not in open_instance_ids
+    ]
+    missing_runtime = [
+        instance
+        for instance in rows
+        if instance.status in ("provisioning", "active", "resetting")
+        and instance.instance_name not in runtime
+        and instance.id not in open_instance_ids
+    ]
+
+    # Phase 3 — locked rowless-orphan destroys. No database row is mutated
+    # above or here, so a HostLockUnavailable raised mid-loop leaves nothing
+    # for the caller to roll back.
+    destroyed = 0
+    for name in rowless_orphans:
+        engine.destroy(name)
+        destroyed += 1
+
+    # Phase 1's runtime snapshot is just as capable of going stale across
+    # Phase 3's (potentially long, per-orphan) destroy loop as Phase 2's
+    # database snapshot — a concurrent deploy elsewhere can SETTLE during
+    # that window, making an instance no longer "missing" (or a rowless
+    # orphan no longer present) by the time Phase 4 needs to decide. One
+    # fresh, locked re-inventory here — not one per candidate, since
+    # `containerlab inspect --all` is not cheap enough to run per instance —
+    # replaces Phase 1's snapshot for every Phase 4 eligibility check below.
+    fresh_runtime = engine.inventory()
+
+    # Phase 4 — database projections/enqueues, after all required host
+    # operations for this pass have completed. Re-fetch open-operation
+    # membership fresh here rather than reusing Phase 2's — Phase 3's
+    # destroys can each take minutes, plenty of time for a concurrent,
+    # unrelated operation to appear against one of these instances.
+    fresh_open_instance_ids = set(
+        db.scalars(
+            select(LabOperation.instance_id).where(
+                LabOperation.state.in_(lab_operations.OPEN_STATES)
+            )
+        ).all()
+    )
+
+    queued = 0
+    for instance in db_only_repairs:
+        # Re-check this exact instance's current state immediately before
+        # acting on it — Phase 2 only proved it looked eligible at snapshot
+        # time. If a concurrent operation now has it live or already claimed,
+        # something else is handling it and this pass must not interfere.
+        # This is a cheap optimization to skip the obvious case, NOT the
+        # correctness guarantee: a concurrent enqueue can still land after
+        # this check and before the enqueue() call below, so instance fields
+        # are only mutated once enqueue()'s own return value (the one
+        # atomic, race-safe primitive here, backed by the database's partial
+        # unique index) confirms the operation actually created is the one
+        # this pass intended — never on the assumption that it was.
+        db.refresh(instance)
+        if (
+            # Re-check the same escalation exclusion as Phase 2's list-build
+            # above — a concurrent escalation could equally have landed
+            # between the two.
+            instance.status in ("provisioning", "active", "resetting", "error")
+            or instance.id in fresh_open_instance_ids
+            # Phase 1 said this name was running; if the fresh, post-Phase-3
+            # inventory no longer shows it, something else already destroyed
+            # it and there is nothing left here to enqueue a destroy for.
+            or instance.instance_name not in fresh_runtime
+        ):
             continue
-        instance = by_name.get(name)
-        if instance is None:
-            engine.destroy(name)
-            destroyed += 1
+        op = lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
+        if op.kind != "destroy":
+            # Lost the race to a genuinely concurrent operation (e.g. a user
+            # reset) that landed between the check above and this call —
+            # enqueue() returned THAT operation instead of creating ours.
+            # Nothing was enqueued on this pass's behalf, so nothing about
+            # this instance may be claimed as having happened.
             continue
+        instance.status = "active"
+        instance.error = "runtime existed for a non-live database row; destroy enqueued"
+        queued += 1
+
+    for instance in missing_runtime:
+        # Same re-validation, mirrored: a concurrent redeploy since Phase 2
+        # would have left the instance live again and/or claimed by an open
+        # operation, and must not be paved over with a stale destroy/deploy.
+        # Same caveat as above: this pre-check is an optimization only, not
+        # the correctness guarantee for the enqueue() branch below it.
+        db.refresh(instance)
         if (
             instance.status not in ("provisioning", "active", "resetting")
-            and instance.id not in open_instance_ids
+            or instance.id in fresh_open_instance_ids
+            # Phase 1 said this instance's runtime was missing; if the
+            # fresh, post-Phase-3 inventory now shows it, a concurrent
+            # deploy elsewhere already settled and this is no longer
+            # missing — enqueueing a replay now would be a needless
+            # destroy+redeploy cycle on a lab that just came back up.
+            or instance.instance_name in fresh_runtime
         ):
-            instance.status = "active"
-            instance.error = "runtime existed for a non-live database row; destroy enqueued"
-            lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
-            open_instance_ids.add(instance.id)
-            queued += 1
-
-    for instance in rows:
-        if (
-            instance.status in ("provisioning", "active", "resetting")
-            and instance.instance_name not in runtime
-            and instance.id not in open_instance_ids
-        ):
-            if instance.error is not None:
-                # A prior failure was conservatively capacity-counted because
-                # runtime absence was unknown. Inventory has now proved absence,
-                # so expose a retryable error without starting a fresh automatic
-                # attempt loop or retaining a phantom capacity reservation.
-                instance.status = "error"
-                instance.error = f"{instance.error}; containerlab runtime is absent"
-            else:
-                instance.error = "database row was live but no containerlab runtime was found"
-                lab_operations.enqueue(
-                    db, instance=instance, kind="deploy", requested_by=None
-                )
-                open_instance_ids.add(instance.id)
-                queued += 1
+            continue
+        if instance.error is not None:
+            # A prior failure was conservatively capacity-counted because
+            # runtime absence was unknown. Inventory has now proved absence,
+            # so expose a retryable error without starting a fresh automatic
+            # attempt loop or retaining a phantom capacity reservation. This
+            # branch never calls enqueue(), so there is no race to close here.
+            instance.status = "error"
+            instance.error = f"{instance.error}; containerlab runtime is absent"
+            continue
+        op = lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
+        if op.kind != "deploy":
+            # Same race as the destroy branch above: a genuinely concurrent
+            # operation won, so this pass enqueued nothing and must not say
+            # otherwise.
+            continue
+        instance.error = "database row was live but no containerlab runtime was found"
+        queued += 1
 
     db.flush()
     return queued, destroyed

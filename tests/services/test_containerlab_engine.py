@@ -240,3 +240,33 @@ def test_vr_deploy_refuses_without_kvm_before_writing_or_shelling_out(
         eng.deploy(topology, "i")
     run.assert_not_called()
     assert not (tmp_path / "i").exists()
+
+
+@pytest.mark.parametrize(
+    "topology",
+    [
+        "nodes:\n  r1: {kind: vr-ros}",
+        'topology:\n  nodes:\n    r1:\n      kind: "vr-ros"',
+        "topology:\n  defaults:\n    kind: vr-ros\n  nodes:\n    r1: {}",
+    ],
+)
+def test_vr_reset_refuses_the_redeploy_half_without_kvm(tmp_path, monkeypatch, topology):
+    """reset() calls the unlocked deploy helper directly (to avoid a nested
+    lock acquisition) rather than the public deploy() wrapper. The KVM
+    fail-closed guard must still apply to it, not only to deploy() — a
+    regression this once was, since it lives in ``_deploy_unlocked`` now,
+    not only in the ``deploy()`` wrapper.
+
+    destroy() running first (and its own file-missing fallback inspect
+    subprocess call) is existing, unchanged behavior — only the doomed
+    deploy attempt itself must never be reached.
+    """
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    monkeypatch.setattr("app.services.labengine.containerlab.os.path.exists", lambda _: False)
+    with patch("subprocess.run") as run:
+        run.return_value = MagicMock(stdout="{}", stderr="", returncode=0)
+        with pytest.raises(RuntimeError, match="requires /dev/kvm"):
+            eng.reset(topology, "i")
+        deploy_calls = [c for c in run.call_args_list if "deploy" in c.args[0]]
+        assert deploy_calls == []
+    assert not (tmp_path / "i").exists()
