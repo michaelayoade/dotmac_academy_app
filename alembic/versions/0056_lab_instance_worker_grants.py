@@ -22,21 +22,34 @@ def upgrade() -> None:
     # contract was still settling. The worker now exists, so make its defensive
     # application checks a database invariant too.
     #
-    # These are added NOT VALID + validated as two separate statements rather
-    # than a single ``op.create_check_constraint`` so the constraint is visible
-    # to planners/other sessions immediately without holding the stronger lock
-    # a validated add-and-check requires for the whole scan; existing rows are
-    # still fully validated by the second statement before this migration ends.
-    op.execute(
-        "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_kind "
-        "CHECK (kind IN ('deploy', 'destroy', 'check')) NOT VALID;"
-    )
-    op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_kind;")
-    op.execute(
-        "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_state "
-        "CHECK (state IN ('queued', 'claimed', 'succeeded', 'failed', 'cancelled')) NOT VALID;"
-    )
-    op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_state;")
+    # These are added NOT VALID + validated as separate statements rather than
+    # a single ``op.create_check_constraint`` so the constraint is visible to
+    # planners/other sessions immediately without holding the stronger lock a
+    # validated add-and-check requires for the whole scan. That split only
+    # matters if each half actually gets its own transaction, though: alembic's
+    # env.py wraps the whole migration in one ``context.begin_transaction()``,
+    # and Postgres locks are transaction-scoped, so two ``op.execute()`` calls
+    # in the same migration would still hold the ADD's AccessExclusiveLock
+    # through the VALIDATE scan — identical to a single validated ADD. Each
+    # statement below therefore runs in its own ``autocommit_block()``, which
+    # commits the ambient transaction, runs in autocommit mode, and resumes
+    # afterward — this is the one place in this repo that needs it; don't
+    # "simplify" it back to ``create_check_constraint`` or a plain ``execute``.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_kind "
+            "CHECK (kind IN ('deploy', 'destroy', 'check')) NOT VALID;"
+        )
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_kind;")
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_state "
+            "CHECK (state IN ('queued', 'claimed', 'succeeded', 'failed', 'cancelled')) "
+            "NOT VALID;"
+        )
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_state;")
     # The web tier may create a queued instance request and observe it. Runtime
     # state (status/consoles/error/timestamps) is written only by app_admin's
     # lab worker. platform_api has no lab-instance mutation responsibility.
