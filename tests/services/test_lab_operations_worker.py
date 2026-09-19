@@ -725,6 +725,7 @@ def test_five_consecutive_automatic_destroy_failures_escalate_instance_to_error(
         operation.claimed_by = "worker"
         operation.claimed_at = datetime.now(UTC)
         operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
         admin_session.commit()
 
         outcome = lab_operations.run_claimed(
@@ -760,6 +761,7 @@ def test_escalated_instance_stops_being_selected_by_idle_reaper(admin_session, t
         operation.claimed_by = "worker"
         operation.claimed_at = datetime.now(UTC)
         operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
         admin_session.commit()
         lab_operations.run_claimed(
             admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
@@ -795,6 +797,7 @@ def test_user_initiated_deploy_survives_escalation_and_resets_failure_window(
         operation.claimed_by = "worker"
         operation.claimed_at = datetime.now(UTC)
         operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
         admin_session.commit()
         lab_operations.run_claimed(
             admin_session,
