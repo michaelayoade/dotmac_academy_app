@@ -39,6 +39,12 @@ _BOOT_TOKEN = uuid4().hex[:8]
 # escalation count (a structural signal, not a message-substring guess about
 # an engine's wording) can exclude these rows from the cumulative threshold.
 _OPERATOR_REFUSAL_LAST_ERROR_PREFIX = "[operator-refusal] "
+# Backward-compatibility fallback: a `WrongLabHostError`-caused failure that
+# settled before `_OPERATOR_REFUSAL_LAST_ERROR_PREFIX` existed has no marker,
+# just `str(exc)` verbatim. `ContainerlabEngine._require_lab_host` raises with
+# this stable substring; matching it lets the escalation count exclude those
+# legacy rows too, closing the gap between this fix and an earlier release.
+_WRONG_LAB_HOST_LAST_ERROR_SUBSTRING = "containerlab operations require LAB_HOST_ROLE=lab"
 
 
 def _now() -> datetime:
@@ -256,7 +262,12 @@ def _automatic_destroy_escalation_message(
     pass a real person id) for this instance, including the current failure.
     Operator-placement refusals (``WrongLabHostError``, marked with
     ``_OPERATOR_REFUSAL_LAST_ERROR_PREFIX`` at settle time) are excluded: a
-    misconfigured host role is not a genuine destroy execution failure. Only
+    misconfigured host role is not a genuine destroy execution failure. Rows
+    settled before that marker existed (a stable substring of
+    ``WrongLabHostError``'s own message, from
+    ``ContainerlabEngine._require_lab_host``) are excluded the same way, so a
+    gap between this fix landing and an earlier release of the worker leaves
+    no unmarked wrong-host refusal able to count toward the threshold. Only
     failures after the instance's most recent *successful* ``deploy``
     operation count, so a successful manual redeploy starts a fresh window.
     The scan is bounded at the threshold rather than unbounded history.
@@ -280,6 +291,14 @@ def _automatic_destroy_escalation_message(
                 LabOperation.last_error.is_(None),
                 ~LabOperation.last_error.startswith(
                     _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
+                ),
+            )
+        )
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.contains(
+                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING
                 ),
             )
         )

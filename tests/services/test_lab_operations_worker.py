@@ -958,6 +958,54 @@ def test_wrong_host_refusals_do_not_contribute_to_destroy_escalation_count(
     assert instance.error is None
 
 
+def test_legacy_unmarked_wrong_host_rows_do_not_contribute_to_escalation_count(
+    admin_session, tenant_a
+):
+    """A row that failed via WrongLabHostError before the operator-refusal
+    marker existed (bare ``str(exc)``, no ``[operator-refusal]`` prefix — the
+    shape base PR #148 code would have written) must still be excluded from
+    the cumulative escalation count, via the stable WrongLabHostError message
+    substring rather than the marker alone."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="legacy-wrong-host", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    for _ in range(threshold - 1):
+        legacy_operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        legacy_operation.state = "failed"
+        legacy_operation.finished_at = datetime.now(UTC)
+        legacy_operation.last_error = (
+            "containerlab operations require LAB_HOST_ROLE=lab (got 'web')"
+        )
+        admin_session.commit()
+
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    # If the legacy rows above wrongly counted, this single genuine failure
+    # would be the (threshold-1)+1'th and would escalate; the fix keeps it at
+    # count 1 since none of the legacy wrong-host rows are genuine failures.
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+
 def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
     admin_session, tenant_a
 ):
