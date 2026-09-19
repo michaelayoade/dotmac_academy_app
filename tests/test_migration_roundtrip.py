@@ -15,7 +15,13 @@ Nothing in CI exercises either property today. This module proves both:
 
 * ``test_0056_downgrade_upgrade_roundtrip_is_idempotent`` (D1) — two
   downgrade/upgrade cycles leave constraints, grants, and
-  ``alembic_version`` exactly as they started.
+  ``alembic_version`` exactly as they started, AND each intermediate
+  downgrade to 0055 is independently asserted to have actually revoked
+  ``academy_lab_worker``'s grants on every one of the ten supporting tables
+  (and restored ``app_user``/``platform_api``'s prior grants on
+  ``lab_instances``) — a full-cycle-only comparison can't catch a downgrade
+  that fails to revoke, since the following upgrade would just silently
+  re-grant everything and paper over it.
 * ``test_0056_interrupted_upgrade_is_resumable`` (D2) — a simulated crash
   between the first ``ADD CONSTRAINT`` and the first ``VALIDATE CONSTRAINT``
   leaves a partial, ``alembic_version``-unbumped state that a plain,
@@ -56,6 +62,19 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # what to update, rather than silently exercising the wrong boundary.
 DOWN_REVISION = "0055_lab_operations"
 TARGET_REVISION = "0056_lab_instance_worker"
+
+WORKER_ROLE = "academy_lab_worker"
+
+# Exactly what 0056 itself is responsible for granting/revoking on the worker
+# role — used to make a strong, non-brittle assertion at the intermediate
+# 0055 state, rather than every cell of _grant_snapshot()'s full matrix (most
+# of which — e.g. app_user's/platform_api's privileges on the supporting
+# tables — is owned by migrations 0056 never touches, and asserting fixed
+# values there would couple this test to unrelated schema history).
+WORKER_ONLY_SELECT_TABLES = ("lab_templates", "platform_settings", "activities", "people", "tenants")
+WORKER_SELECT_INSERT_TABLES = ("submissions", "scores", "learning_events", "notifications", "email_outbox")
+LAB_INSTANCES_WORKER_PRIVILEGES = ("SELECT", "UPDATE")
+LAB_INSTANCES_APP_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 
 def _migration_url() -> str:
@@ -108,31 +127,26 @@ def _constraint_snapshot(conn) -> dict[str, dict[str, object]]:
     return {row[0]: {"definition": row[1], "validated": row[2]} for row in rows}
 
 
-def _acl_snapshot(conn) -> dict[tuple[str, str], list[str]]:
-    """Full grantee/privilege ACL on ``lab_operations``/``lab_instances``.
-
-    Mirrors the ``aclexplode(c.relacl)`` pattern
-    ``tests/services/test_lab_worker_privileges.py`` uses for its direct-ACL
-    matrix, but over every grantee rather than just ``academy_lab_worker`` —
-    the round trip must not leak or lose any role's grant, not only the
-    worker's.
+def _grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
+    """``has_table_privilege`` for every (role, table, privilege) 0056 (and the
+    migrations around it) govern, across every table 0056's upgrade/downgrade
+    actually touches — not just ``lab_operations``/``lab_instances``. A
+    downgrade that fails to revoke ``academy_lab_worker``'s grant on any one
+    of the ten supporting tables would otherwise be invisible to a snapshot
+    scoped to only those two tables.
     """
     rows = conn.execute(
         text(
-            """SELECT c.relname, pg_get_userbyid(p.grantee) AS grantee,
-                      array_agg(DISTINCT p.privilege_type ORDER BY p.privilege_type)
-               FROM pg_class c
-               JOIN pg_namespace n ON n.oid = c.relnamespace
-               CROSS JOIN LATERAL aclexplode(
-                   COALESCE(c.relacl, acldefault('r', c.relowner))
-               ) p
-               WHERE n.nspname = 'public'
-                 AND c.relname IN ('lab_operations', 'lab_instances')
-               GROUP BY c.relname, p.grantee
-               ORDER BY c.relname, grantee"""
+            """SELECT r.role_name, t.table_name, p.privilege,
+                      has_table_privilege(r.role_name, t.table_name, p.privilege) AS granted
+               FROM unnest(ARRAY['app_user', 'platform_api', 'academy_lab_worker']) AS r(role_name)
+               CROSS JOIN unnest(ARRAY['lab_instances', 'lab_operations', 'lab_templates',
+                   'platform_settings', 'activities', 'people', 'tenants', 'submissions',
+                   'scores', 'learning_events', 'notifications', 'email_outbox']) AS t(table_name)
+               CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p(privilege)"""
         )
     ).all()
-    return {(row[0], row[1]): sorted(row[2]) for row in rows}
+    return {(row[0], row[1], row[2]): bool(row[3]) for row in rows}
 
 
 def _current_version(conn) -> str | None:
@@ -140,7 +154,36 @@ def _current_version(conn) -> str | None:
 
 
 def _full_snapshot(conn) -> dict[str, object]:
-    return {"constraints": _constraint_snapshot(conn), "acl": _acl_snapshot(conn)}
+    return {"constraints": _constraint_snapshot(conn), "grants": _grant_snapshot(conn)}
+
+
+def _assert_at_0055_grants(conn) -> None:
+    """0056's own supporting-table and ``lab_instances`` grants must be fully
+    revoked at 0055 — the property a full-cycle-only comparison can't catch,
+    since a downgrade that fails to revoke would just get silently papered
+    over by the following upgrade re-granting everything.
+    """
+    grants = _grant_snapshot(conn)
+    for table in WORKER_ONLY_SELECT_TABLES:
+        assert (
+            grants[(WORKER_ROLE, table, "SELECT")] is False
+        ), f"downgrade left {WORKER_ROLE} with SELECT on {table} at 0055"
+    for table in WORKER_SELECT_INSERT_TABLES:
+        assert (
+            grants[(WORKER_ROLE, table, "SELECT")] is False
+        ), f"downgrade left {WORKER_ROLE} with SELECT on {table} at 0055"
+        assert (
+            grants[(WORKER_ROLE, table, "INSERT")] is False
+        ), f"downgrade left {WORKER_ROLE} with INSERT on {table} at 0055"
+    for priv in LAB_INSTANCES_WORKER_PRIVILEGES:
+        assert (
+            grants[(WORKER_ROLE, "lab_instances", priv)] is False
+        ), f"downgrade left {WORKER_ROLE} with {priv} on lab_instances at 0055"
+    for role in ("app_user", "platform_api"):
+        for priv in LAB_INSTANCES_APP_PRIVILEGES:
+            assert (
+                grants[(role, "lab_instances", priv)] is True
+            ), f"downgrade failed to restore {role}'s {priv} on lab_instances at 0055"
 
 
 def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
@@ -165,8 +208,12 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     with _migration_env(url):
         try:
             command.downgrade(cfg, DOWN_REVISION)
+            with admin_engine.connect() as conn:
+                _assert_at_0055_grants(conn)
             command.upgrade(cfg, TARGET_REVISION)
             command.downgrade(cfg, DOWN_REVISION)
+            with admin_engine.connect() as conn:
+                _assert_at_0055_grants(conn)
             command.upgrade(cfg, TARGET_REVISION)
         finally:
             # Regardless of outcome, leave the database at head so a failing
@@ -225,6 +272,8 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
     with _migration_env(url):
         try:
             command.downgrade(cfg, DOWN_REVISION)
+            with admin_engine.connect() as conn:
+                _assert_at_0055_grants(conn)
 
             # --- simulate a crash between the two halves of the "kind" ------
             # constraint: op.execute() call #1 (the guarded ADD CONSTRAINT ...
