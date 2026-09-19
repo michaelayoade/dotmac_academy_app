@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     DateTime,
+    FetchedValue,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -60,21 +61,30 @@ class LabInstance(Base, TimestampMixin):
     person_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     instance_name: Mapped[str] = mapped_column(String(120), nullable=False)
     seed: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
-    consoles: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    error: Mapped[str | None] = mapped_column(Text)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # These runtime fields are worker-owned.  Server-default metadata keeps a
+    # normal app_user ORM insert from naming columns outside its column grant.
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'queued'")
+    )
+    consoles: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    error: Mapped[str | None] = mapped_column(Text, server_default=FetchedValue())
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
+    last_active_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue()
+    )
 
 
 class LabOperation(Base, TimestampMixin):
     """One requested deploy/destroy/check for a `LabInstance` — a work queue
     row, not a decision record.
 
-    Phase 1 (schema only): nothing reads or writes this table yet. `kind` and
-    `state` deliberately carry no DB CHECK constraint and `requested_by` is
-    deliberately not a declared FK — both enums/ownership are still settling
-    ahead of the worker that will actually consume this queue.
+    The lab worker consumes this queue. ``kind`` and ``state`` remain
+    application-validated rather than DB CHECK constrained, and
+    ``requested_by`` remains an attribution value rather than a declared FK.
 
     The load-bearing boundary is in the migration's grants, not here: the web
     tier may SELECT (observe) and INSERT only the request columns (`id`,
@@ -82,7 +92,8 @@ class LabOperation(Base, TimestampMixin):
     column, including `state` and `attempts`, is excluded from that INSERT
     grant entirely, so the web tier can neither forge worker-owned state at
     creation nor UPDATE a row to claim, heartbeat, or finish it. Only
-    `app_admin` may settle a row. `uq_lab_operations_open_per_instance` backs
+    `academy_lab_worker` may claim and settle a row; `app_admin` is reserved for
+    migrations/offline maintenance. `uq_lab_operations_open_per_instance` backs
     the other half of the guarantee: at most one queued-or-claimed operation
     may exist per instance at a time.
     """
@@ -125,19 +136,18 @@ class LabOperation(Base, TimestampMixin):
     # below, nullable or not: Postgres requires INSERT privilege on any
     # column *mentioned* in the statement regardless of whether the value
     # sent is NULL, and a mapped_column with no default at all is still
-    # mentioned explicitly (as NULL) on every ORM flush. `server_default=
-    # text("NULL")` is metadata-only — it doesn't require or touch a DDL
-    # change, since a nullable column is already implicitly NULL-default in
-    # Postgres — it only tells SQLAlchemy's ORM to omit the column so the
+    # mentioned explicitly (as NULL) on every ORM flush. `FetchedValue()` is a
+    # metadata-only server-generation marker — it emits no DDL default — and
+    # tells SQLAlchemy's ORM to omit the column so the
     # column-level INSERT grant is never tripped by an otherwise-normal
     # insert that doesn't set it.
-    claimed_by: Mapped[str | None] = mapped_column(String(200), server_default=text("NULL"))
+    claimed_by: Mapped[str | None] = mapped_column(String(200), server_default=FetchedValue())
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                         server_default=text("NULL"))
+                                                         server_default=FetchedValue())
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                           server_default=text("NULL"))
+                                                           server_default=FetchedValue())
     # Same reasoning as `state` above.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                          server_default=text("NULL"))
-    last_error: Mapped[str | None] = mapped_column(Text, server_default=text("NULL"))
+                                                          server_default=FetchedValue())
+    last_error: Mapped[str | None] = mapped_column(Text, server_default=FetchedValue())

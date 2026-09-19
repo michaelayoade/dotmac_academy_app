@@ -78,11 +78,18 @@
   <section class="card p-6">
     <h2 class="text-xl">Lab limits</h2>
     <p class="mt-1.5 text-sm text-ink-soft">Guardrails for concurrent lab usage and idle reclamation.</p>
-    <div class="mt-5 grid gap-4 sm:grid-cols-2">
+    <div class="mt-5 grid gap-4 sm:grid-cols-3">
       <div>
         <label for="max_concurrent_labs" class="mb-1.5 block text-sm font-semibold text-ink">Max concurrent labs</label>
         <input id="max_concurrent_labs" type="number" name="max_concurrent_labs" value="{{ cfg.max_concurrent_labs }}"
                class="w-full px-3.5 py-2.5 text-[0.95rem] tabular-nums">
+      </div>
+      <div>
+        <label for="max_concurrent_labs_per_tenant" class="mb-1.5 block text-sm font-semibold text-ink">Per-tenant lab limit</label>
+        <input id="max_concurrent_labs_per_tenant" type="number" min="0"
+               name="max_concurrent_labs_per_tenant" value="{{ cfg.max_concurrent_labs_per_tenant }}"
+               class="w-full px-3.5 py-2.5 text-[0.95rem] tabular-nums">
+        <p class="mt-1 text-xs text-ink-soft">0 inherits the global limit.</p>
       </div>
       <div>
         <label for="lab_idle_minutes" class="mb-1.5 block text-sm font-semibold text-ink">Lab idle minutes</label>

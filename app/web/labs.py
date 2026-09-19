@@ -31,15 +31,14 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
-from app.models.assessment import Activity
-from app.models.lab import LabInstance, LabTemplate
+from app.models.assessment import Activity, Score, Submission
+from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
-from app.services.exceptions import ConflictError
 from app.services.lab_content import render_instance_instructions
-from app.services.labengine.containerlab import ContainerlabEngine
+from app.services.lab_operations import OPEN_STATES, enqueue
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -245,10 +244,6 @@ def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UU
     return inst
 
 
-def _engine() -> ContainerlabEngine:
-    return ContainerlabEngine(settings.lab_workdir)
-
-
 @router.get("/labs/{activity_id}", response_class=HTMLResponse)
 def lab_detail(
     activity_id: UUID,
@@ -321,13 +316,27 @@ def lab_check(
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Grade the live instance against the template checks → results partial."""
+    """Enqueue worker-owned grading and return a polling partial."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    tpl = _lab_template(db, tenant, instance.activity_id)
-    handle = lab_lifecycle.handle_for(instance)
-    score = lab_lifecycle.grade(db, instance, _engine(), tpl, handle)
-    return templates.TemplateResponse(request, "labs/_checks.html", {"request": request, "score": score})
+    if instance.status != "active" or instance.error is not None:
+        detail = (
+            f"status {instance.status!r}"
+            if instance.status != "active"
+            else "an unresolved infrastructure error"
+        )
+        raise HTTPException(status_code=409, detail=f"cannot check a lab with {detail}")
+    operation = enqueue(db, instance=instance, kind="check", requested_by=person.id)
+    if operation.kind != "check":
+        raise HTTPException(
+            status_code=409,
+            detail=f"lab operation {operation.kind!r} is already in progress",
+        )
+    return templates.TemplateResponse(
+        request,
+        "labs/_operation.html",
+        {"request": request, "operation": operation, "instance": instance, "score": None},
+    )
 
 
 @router.post("/labs/instances/{instance_id}/reset", response_class=HTMLResponse)
@@ -337,17 +346,85 @@ def lab_reset(
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Tear down + redeploy the instance topology → status partial."""
+    """Enqueue a worker-owned destroy-then-deploy reset/retry."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    tpl = _lab_template(db, tenant, instance.activity_id)
-    try:
-        lab_lifecycle.reset(db, instance, _engine(), tpl)
-    except ConflictError as exc:
-        # e.g. the instance is already reaped — reset() refuses before
-        # touching the engine, so translate its domain error to 409 here.
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    retry_in_progress = instance.status == "resetting" or (
+        instance.status in ("queued", "provisioning") and instance.error is not None
+    )
+    if retry_in_progress:
+        # Preserve idempotency after the worker commits its reservation. Active
+        # resets become ``resetting``; error retries retain their prior error
+        # while ``queued`` for capacity or ``provisioning`` after admission.
+        # Initial launch/provisioning has no prior error and remains ineligible.
+        operation = db.scalars(
+            select(LabOperation)
+            .where(LabOperation.tenant_id == tenant.id)
+            .where(LabOperation.instance_id == instance.id)
+            .where(LabOperation.state.in_(OPEN_STATES))
+        ).first()
+        if operation is not None and operation.kind == "deploy":
+            return templates.TemplateResponse(
+                request,
+                "labs/_operation.html",
+                {
+                    "request": request,
+                    "operation": operation,
+                    "instance": instance,
+                    "score": None,
+                },
+            )
+    if instance.status not in ("active", "error"):
+        raise HTTPException(status_code=409, detail=f"cannot reset a lab with status {instance.status!r}")
+    operation = enqueue(db, instance=instance, kind="deploy", requested_by=person.id)
+    if operation.kind != "deploy":
+        raise HTTPException(
+            status_code=409,
+            detail=f"lab operation {operation.kind!r} is already in progress",
+        )
+    return templates.TemplateResponse(
+        request,
+        "labs/_operation.html",
+        {"request": request, "operation": operation, "instance": instance, "score": None},
+    )
+
+
+@router.get("/labs/operations/{operation_id}", response_class=HTMLResponse)
+def lab_operation_status(
+    operation_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Poll an owned operation; expose a completed check's durable score."""
+    tenant = require_tenant(request)
+    operation = db.scalars(
+        select(LabOperation)
+        .where(LabOperation.id == operation_id)
+        .where(LabOperation.tenant_id == tenant.id)
+    ).first()
+    if operation is None:
+        raise HTTPException(status_code=404)
+    instance = _owned_instance(db, tenant, person, operation.instance_id)
+    score = None
+    if operation.kind == "check" and operation.state == "succeeded":
+        score_query = (
+            select(Score)
+            .join(Submission, Score.submission_id == Submission.id)
+            .where(Submission.tenant_id == tenant.id)
+            .where(Submission.person_id == person.id)
+            .where(Submission.answers["instance"].astext == str(instance.id))
+        )
+        if operation.claimed_at is not None:
+            score_query = score_query.where(Submission.created_at >= operation.claimed_at)
+        if operation.finished_at is not None:
+            score_query = score_query.where(Submission.created_at <= operation.finished_at)
+        score = db.scalars(score_query.order_by(Score.created_at.desc())).first()
+    return templates.TemplateResponse(
+        request,
+        "labs/_operation.html",
+        {"request": request, "operation": operation, "instance": instance, "score": score},
+    )
 
 
 @router.get("/labs/instances/{instance_id}/console/{node}")

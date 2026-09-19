@@ -23,9 +23,9 @@ the migration and is already the table owner, but CI runs migrations as the
 there instead — `GRANT ALL ON SCHEMA public TO app_admin` in
 `scripts/initdb-roles.sql` is schema-level (USAGE/CREATE) and does not cascade
 into table ACLs, and `BYPASSRLS` bypasses row-visibility policies only, not
-the base grant system. Without this explicit grant, Phase 2's worker
-(claiming/settling as `app_admin`) would work in production but silently have
-no privileges in CI.
+the base grant system. The dedicated non-owner worker therefore also receives
+an explicit runtime grant below; app_admin's grant is retained for migrations
+and offline maintenance.
 
 Because `state`/`attempts` are excluded from `app_user`'s INSERT grant, the
 ORM model (see `app/models/lab.py`) declares `server_default=` for both,
@@ -124,6 +124,7 @@ def upgrade() -> None:
     # and app_admin would otherwise have zero privileges on it in CI. See the
     # module docstring for the full explanation.
     op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {TABLE} TO app_admin;")
+    op.execute(f"GRANT SELECT, INSERT, UPDATE ON {TABLE} TO academy_lab_worker;")
 
 
 def downgrade() -> None:

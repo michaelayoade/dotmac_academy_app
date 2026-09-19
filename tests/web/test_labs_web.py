@@ -1,61 +1,19 @@
-"""Task 9 — student lab portal (htmx): launch / status / check / reset.
-
-The lab engine is mocked so neither provisioning nor grading touch real Docker.
-We monkeypatch ``app.web.labs.ContainerlabEngine`` with a fake whose ``exec``
-returns a passing :class:`ExecResult`, so the seeded command check passes.
-"""
+"""Student lab portal: web routes enqueue; the lab worker owns execution."""
 
 from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
-from app.models.lab import LabInstance, LabTemplate
+from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.offering import CourseOffering
 from app.models.person import Person
-from app.services.labengine.interface import ExecResult, LabHandle
 from app.services.security import hash_password
-
-
-class _FakeEngine:
-    """Stand-in for ContainerlabEngine — never shells out."""
-
-    def __init__(self, workdir):
-        self.workdir = workdir
-
-    def deploy(self, topology_text, instance_name):
-        return LabHandle(
-            instance_name=instance_name,
-            nodes={"r1": f"clab-{instance_name}-r1"},
-            mgmt={"r1": "172.20.20.3"},
-            kinds={"r1": "linux"},
-        )
-
-    def reset(self, topology_text, instance_name):
-        return self.deploy(topology_text, instance_name)
-
-    def destroy(self, instance_name):
-        return None
-
-    def exec(self, handle, node, command):
-        return ExecResult(stdout="ok", stderr="", exit_code=0)
-
-    def ssh_exec(self, handle, node, command, user="admin", password=""):
-        return ExecResult(stdout="ok", stderr="", exit_code=0)
-
-    def status(self, instance_name):
-        return "running"
-
-    def console_target(self, handle, node):
-        return handle.nodes[node]
-
-
-class _FailingResetEngine(_FakeEngine):
-    """A fake engine whose reset() always fails, for the guarded-reset test."""
-
-    def reset(self, topology_text, instance_name):
-        raise RuntimeError("containerlab reset failed")
 
 
 def _make_person(admin_session, tenant, email: str) -> Person:
@@ -178,7 +136,6 @@ def _csrf(app_client, path, h):
 
 def test_dropped_owner_loses_live_instance_access(app_client, admin_session, tenant_a, monkeypatch):
     """Revocation propagates to live instances: a dropped owner is 403 on status/check."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "drop@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     coh = _entitle(admin_session, tenant_a, p, course)
@@ -202,7 +159,6 @@ def test_dropped_owner_loses_live_instance_access(app_client, admin_session, ten
 
 def test_unentitled_student_forbidden_on_lab(app_client, admin_session, tenant_a, monkeypatch):
     """Slice 1: no offering for the lab's course → 403 on detail and launch, no instance."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     _make_person(admin_session, tenant_a, "nolab@a.edu")
     _, act, _ = _seed_lab(admin_session, tenant_a)  # no enrollment/offering
     h = _login(app_client, "nolab@a.edu")
@@ -217,7 +173,6 @@ def test_unentitled_student_forbidden_on_lab(app_client, admin_session, tenant_a
 def test_launch_creates_instance_and_returns_status(
     app_client, admin_session, tenant_a, monkeypatch
 ):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "owner@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -239,8 +194,43 @@ def test_launch_creates_instance_and_returns_status(
     assert rows[0].status in ("queued", "provisioning")
 
 
-def test_check_grades_and_writes_score(app_client, admin_session, tenant_a, monkeypatch):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+def test_duplicate_launch_reuses_the_current_instance(
+    app_client, admin_session, tenant_a
+):
+    person = _make_person(admin_session, tenant_a, "duplicate-launch@a.edu")
+    course, activity, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    headers = _login(app_client, person.email)
+    _, csrf = _csrf(app_client, f"/labs/{activity.id}", headers)
+
+    first = app_client.post(
+        f"/labs/{activity.id}/launch",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+    second = app_client.post(
+        f"/labs/{activity.id}/launch",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    instances = admin_session.query(LabInstance).filter_by(
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        activity_id=activity.id,
+    ).all()
+    assert len(instances) == 1
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instances[0].id)
+        .count()
+        == 1
+    )
+
+
+def test_check_enqueues_worker_operation_without_writing_score(
+    app_client, admin_session, tenant_a, monkeypatch
+):
     p = _make_person(admin_session, tenant_a, "owner2@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -256,27 +246,69 @@ def test_check_grades_and_writes_score(app_client, admin_session, tenant_a, monk
     )
     inst.status = "active"
     inst.consoles = {"r1": {"kind": "linux", "mgmt": "172.20.20.3"}}
+    launch_operation = admin_session.query(LabOperation).filter_by(instance_id=inst.id).one()
+    launch_operation.state = "succeeded"
+    launch_operation.finished_at = launch_operation.requested_at
     admin_session.commit()
 
     r = app_client.post(
         f"/labs/instances/{inst.id}/check", headers={**h, "x-csrf-token": csrf}
     )
     assert r.status_code == 200
-    assert "score" in r.text.lower()
-
-    score = (
-        admin_session.query(Score)
-        .join(Submission, Score.submission_id == Submission.id)
-        .filter(Submission.activity_id == act.id, Submission.person_id == p.id)
+    assert "queued" in r.text.lower()
+    operation = (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=inst.id, state="queued")
         .one()
     )
-    assert score.source == "auto"
-    assert score.max_score > 0
-    assert score.passed is True
+    assert operation.kind == "check"
+    assert operation.state == "queued"
+
+
+def test_check_refuses_degraded_active_instance(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    person = _make_person(admin_session, tenant_a, "degraded-check@a.edu")
+    course, act, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=person.id,
+        instance_name="dal-degraded-check",
+        seed={},
+        status="active",
+        error="destroy failed; external resources may still exist",
+        consoles={"r1": {"kind": "linux", "mgmt": "172.20.20.3"}},
+    )
+    admin_session.add(instance)
+    admin_session.commit()
+
+    headers = _login(app_client, "degraded-check@a.edu")
+    _, csrf = _csrf(app_client, f"/labs/{act.id}", headers)
+    response = app_client.post(
+        f"/labs/instances/{instance.id}/check",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+
+    assert response.status_code == 409
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .count()
+        == 0
+    )
+
+    status_response = app_client.get(
+        f"/labs/instances/{instance.id}/status", headers=headers
+    )
+    assert status_response.status_code == 200
+    assert "unresolved infrastructure error" in status_response.text
+    assert "Run checks" not in status_response.text
+    assert "Reset lab" in status_response.text
 
 
 def test_cross_person_check_forbidden(app_client, admin_session, tenant_a, monkeypatch):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     owner = _make_person(admin_session, tenant_a, "owner3@a.edu")
     _make_person(admin_session, tenant_a, "intruder@a.edu")
     _, act, _ = _seed_lab(admin_session, tenant_a)
@@ -304,7 +336,6 @@ def test_cross_person_check_forbidden(app_client, admin_session, tenant_a, monke
 def test_cross_tenant_check_not_found(
     app_client, admin_session, tenant_a, tenant_b, monkeypatch
 ):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     _make_person(admin_session, tenant_a, "owner4@a.edu")
     p_b = Person(tenant_id=tenant_b.id, email="b@b.edu", first_name="B", last_name="B")
     admin_session.add(p_b)
@@ -334,7 +365,6 @@ def test_cross_tenant_check_not_found(
 
 def test_detail_shows_neutral_placeholder_before_launch(app_client, admin_session, tenant_a, monkeypatch):
     """No instance yet → a neutral placeholder, never raw/unfilled instructions."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "prelaunch@a.edu")
     course, act, _tpl = _seed_seeded_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -349,7 +379,6 @@ def test_detail_shows_neutral_placeholder_before_launch(app_client, admin_sessio
 def test_detail_after_launch_interpolates_this_instances_seed(app_client, admin_session, tenant_a, monkeypatch):
     """Once an instance exists, GET renders instructions substituted with THAT
     instance's seed — no literal placeholder left in the page."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "postlaunch@a.edu")
     course, act, _tpl = _seed_seeded_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -373,7 +402,6 @@ def test_detail_after_launch_interpolates_this_instances_seed(app_client, admin_
 def test_two_learners_same_template_get_different_rendered_instructions(
     app_client, admin_session, tenant_a, monkeypatch
 ):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p1 = _make_person(admin_session, tenant_a, "learner1@a.edu")
     p2 = _make_person(admin_session, tenant_a, "learner2@a.edu")
     course, act, tpl = _seed_seeded_lab(admin_session, tenant_a)
@@ -406,8 +434,9 @@ def test_two_learners_same_template_get_different_rendered_instructions(
     assert r1.text != r2.text
 
 
-def test_reset_success_returns_status_partial(app_client, admin_session, tenant_a, monkeypatch):
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
+def test_error_retry_enqueues_deploy_and_leaves_admission_to_worker(
+    app_client, admin_session, tenant_a, monkeypatch
+):
     p = _make_person(admin_session, tenant_a, "reset-ok@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -425,16 +454,16 @@ def test_reset_success_returns_status_partial(app_client, admin_session, tenant_
     r = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
     assert r.status_code == 200
     admin_session.refresh(inst)
-    assert inst.status == "active"
-    assert inst.error is None
+    assert inst.status == "error"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=inst.id).one()
+    assert operation.kind == "deploy"
+    assert operation.state == "queued"
 
 
-def test_reset_endpoint_with_failing_engine_returns_200_with_error_partial(
+def test_duplicate_reset_returns_the_existing_open_operation(
     app_client, admin_session, tenant_a, monkeypatch
 ):
-    """A failing engine.reset() must not become an unhandled 500 — the route
-    still returns 200 with the status partial showing the error state."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FailingResetEngine)
+    """Repeated clicks collapse at the database boundary and remain HTTP 200."""
     p = _make_person(admin_session, tenant_a, "reset-fail@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -449,17 +478,15 @@ def test_reset_endpoint_with_failing_engine_returns_200_with_error_partial(
 
     h = _login(app_client, "reset-fail@a.edu")
     _, csrf = _csrf(app_client, f"/labs/{act.id}", h)
-    r = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
-    assert r.status_code == 200
-    assert "containerlab reset failed" in r.text
-    admin_session.refresh(inst)
-    assert inst.status == "error"
-    assert inst.error == "containerlab reset failed"
+    first = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
+    second = app_client.post(f"/labs/instances/{inst.id}/reset", headers={**h, "x-csrf-token": csrf})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert admin_session.query(LabOperation).filter_by(instance_id=inst.id).count() == 1
 
 
 def test_reset_on_reaped_instance_is_refused(app_client, admin_session, tenant_a, monkeypatch):
     """A destroyed (reaped) instance must not be resurrected by reset()."""
-    monkeypatch.setattr("app.web.labs.ContainerlabEngine", _FakeEngine)
     p = _make_person(admin_session, tenant_a, "reset-reaped@a.edu")
     course, act, _ = _seed_lab(admin_session, tenant_a)
     _entitle(admin_session, tenant_a, p, course)
@@ -477,3 +504,277 @@ def test_reset_on_reaped_instance_is_refused(app_client, admin_session, tenant_a
     assert r.status_code == 409
     admin_session.refresh(inst)
     assert inst.status == "reaped"
+
+
+def test_reset_refuses_when_a_check_operation_is_already_open(
+    app_client, admin_session, tenant_a
+):
+    person = _make_person(admin_session, tenant_a, "reset-during-check@a.edu")
+    course, activity, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        instance_name="dal-reset-during-check",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    operation = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="check",
+        requested_by=person.id,
+    )
+    admin_session.add(operation)
+    admin_session.commit()
+
+    headers = _login(app_client, person.email)
+    _, csrf = _csrf(app_client, f"/labs/{activity.id}", headers)
+    response = app_client.post(
+        f"/labs/instances/{instance.id}/reset",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+
+    assert response.status_code == 409
+    assert admin_session.query(LabOperation).filter_by(instance_id=instance.id).count() == 1
+    assert operation.kind == "check"
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "operation_state"),
+    [
+        ("resetting", None, "claimed"),
+        ("provisioning", "prior deploy failed", "claimed"),
+        ("queued", "capacity deferred", "queued"),
+    ],
+)
+def test_reset_retry_reuses_an_open_operation_after_reservation_or_deferral(
+    app_client, admin_session, tenant_a, status, error, operation_state
+):
+    person = _make_person(
+        admin_session, tenant_a, f"retry-claimed-{status}@a.edu"
+    )
+    course, activity, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        instance_name=f"dal-retry-claimed-{status}",
+        seed={},
+        status=status,
+        consoles={},
+        error=error,
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    operation = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="deploy",
+        state=operation_state,
+        requested_by=person.id,
+        claimed_by="worker" if operation_state == "claimed" else None,
+    )
+    admin_session.add(operation)
+    admin_session.commit()
+
+    headers = _login(app_client, person.email)
+    _, csrf = _csrf(app_client, f"/labs/{activity.id}", headers)
+    response = app_client.post(
+        f"/labs/instances/{instance.id}/reset",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+
+    assert response.status_code == 200
+    assert str(operation.id) in response.text
+    assert admin_session.query(LabOperation).filter_by(instance_id=instance.id).count() == 1
+
+
+def test_check_refuses_when_a_deploy_operation_is_already_open(
+    app_client, admin_session, tenant_a
+):
+    person = _make_person(admin_session, tenant_a, "check-during-reset@a.edu")
+    course, activity, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        instance_name="dal-check-during-reset",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    operation = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="deploy",
+        requested_by=person.id,
+    )
+    admin_session.add(operation)
+    admin_session.commit()
+
+    headers = _login(app_client, person.email)
+    _, csrf = _csrf(app_client, f"/labs/{activity.id}", headers)
+    response = app_client.post(
+        f"/labs/instances/{instance.id}/check",
+        headers={**headers, "x-csrf-token": csrf},
+    )
+
+    assert response.status_code == 409
+    assert admin_session.query(LabOperation).filter_by(instance_id=instance.id).count() == 1
+    assert operation.kind == "deploy"
+
+
+def test_completed_check_operation_poll_renders_its_durable_score(
+    app_client, admin_session, tenant_a
+):
+    person = _make_person(admin_session, tenant_a, "poll-owner@a.edu")
+    course, activity, _ = _seed_lab(admin_session, tenant_a)
+    _entitle(admin_session, tenant_a, person, course)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        instance_name="dal-poll-score",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    checked_at = datetime.now(UTC)
+    operation = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="check",
+        state="succeeded",
+        requested_by=person.id,
+        claimed_at=checked_at - timedelta(seconds=1),
+        finished_at=checked_at + timedelta(seconds=1),
+    )
+    submission = Submission(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        answers={"instance": str(instance.id), "seed": {}},
+        attempt_no=1,
+        created_at=checked_at,
+    )
+    admin_session.add_all([operation, submission])
+    admin_session.flush()
+    admin_session.add(
+        Score(
+            tenant_id=tenant_a.id,
+            submission_id=submission.id,
+            score=1,
+            max_score=1,
+            fraction=1,
+            passed=True,
+            per_item=[],
+            source="auto",
+        )
+    )
+    later_submission = Submission(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=person.id,
+        answers={"instance": str(instance.id), "seed": {}},
+        attempt_no=2,
+        created_at=checked_at + timedelta(minutes=1),
+    )
+    admin_session.add(later_submission)
+    admin_session.flush()
+    admin_session.add(
+        Score(
+            tenant_id=tenant_a.id,
+            submission_id=later_submission.id,
+            score=0,
+            max_score=1,
+            fraction=0,
+            passed=False,
+            per_item=[],
+            source="auto",
+        )
+    )
+    admin_session.commit()
+
+    headers = _login(app_client, person.email)
+    response = app_client.get(f"/labs/operations/{operation.id}", headers=headers)
+    assert response.status_code == 200
+    assert "Passed" in response.text
+    assert "1.0/1.0" in response.text
+
+
+def test_operation_poll_rejects_another_person(app_client, admin_session, tenant_a):
+    owner = _make_person(admin_session, tenant_a, "poll-real-owner@a.edu")
+    intruder = _make_person(admin_session, tenant_a, "poll-intruder@a.edu")
+    _course, activity, _ = _seed_lab(admin_session, tenant_a)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=activity.id,
+        person_id=owner.id,
+        instance_name="dal-poll-owner",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    operation = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="check",
+        requested_by=owner.id,
+    )
+    admin_session.add(operation)
+    admin_session.commit()
+
+    headers = _login(app_client, intruder.email)
+    response = app_client.get(f"/labs/operations/{operation.id}", headers=headers)
+    assert response.status_code == 403
+
+
+def test_operation_poll_hides_another_tenant(
+    app_client, admin_session, tenant_a, tenant_b
+):
+    viewer = _make_person(admin_session, tenant_a, "poll-viewer@a.edu")
+    owner = Person(
+        tenant_id=tenant_b.id,
+        email="poll-owner@b.edu",
+        first_name="B",
+        last_name="Owner",
+    )
+    admin_session.add(owner)
+    admin_session.flush()
+    _course, activity, _ = _seed_lab(admin_session, tenant_b)
+    instance = LabInstance(
+        tenant_id=tenant_b.id,
+        activity_id=activity.id,
+        person_id=owner.id,
+        instance_name="dal-poll-tenant-b",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    operation = LabOperation(
+        tenant_id=tenant_b.id,
+        instance_id=instance.id,
+        kind="check",
+        requested_by=owner.id,
+    )
+    admin_session.add(operation)
+    admin_session.commit()
+
+    headers = _login(app_client, viewer.email)
+    response = app_client.get(f"/labs/operations/{operation.id}", headers=headers)
+    assert response.status_code == 404

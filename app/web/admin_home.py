@@ -49,7 +49,10 @@ def admin_console(request: Request, db: Session = Depends(get_db)):
         "people": _count(Person),
         "cohorts": _count(Cohort),
         "courses": _count(Course),
-        "labs": _count(LabInstance, LabInstance.status.in_(("active", "provisioning"))),
+        "labs": _count(
+            LabInstance,
+            LabInstance.status.in_(("active", "provisioning", "resetting")),
+        ),
     }
     return templates.TemplateResponse(
         request,

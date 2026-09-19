@@ -23,14 +23,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 @pytest.fixture(scope="session")
 def admin_engine():
-    """Migration/superuser connection (postgres in CI), not app_admin.
+    """Migration/superuser connection (postgres in CI), not the worker role.
 
     Bound to ``TEST_MIGRATION_DATABASE_URL`` (falling back to
     ``TEST_DATABASE_URL``), which in CI authenticates as the ``postgres``
     superuser used to run migrations — it is not RLS-bypassed via the
-    ``app_admin`` role. Tests that need real ``app_admin`` evidence (e.g. its
-    grants) must use the dedicated ``lab_worker_engine``/``lab_worker_session``
-    fixtures below instead.
+    ``app_admin`` role. Dedicated worker privilege tests use the separate
+    ``lab_worker_engine``/``lab_worker_session`` fixtures below.
     """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
@@ -89,37 +88,74 @@ def admin_session(admin_engine) -> Generator[Session, None, None]:
 
 @pytest.fixture(scope="session")
 def lab_worker_engine():
-    """Real ``app_admin`` engine, bound exclusively to ``TEST_LAB_WORKER_DATABASE_URL``.
+    """Real ``academy_lab_worker`` engine, bound exclusively to the test DSN.
 
     Skips cleanly when the env var is absent so local dev without a lab-worker
     DSN configured is unaffected. Deliberately does NOT fall back to
     ``TEST_MIGRATION_DATABASE_URL``/``TEST_DATABASE_URL`` like ``admin_engine``
     does — this fixture's whole purpose is to guarantee the connection actually
-    authenticates as ``app_admin``, so a silent fallback to another role would
+    authenticates as ``academy_lab_worker``, so a silent fallback to another role would
     defeat it.
     """
     url = os.getenv("TEST_LAB_WORKER_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_LAB_WORKER_DATABASE_URL not set — app_admin privilege tests skipped")
+        pytest.skip("TEST_LAB_WORKER_DATABASE_URL not set — lab-worker privilege tests skipped")
     engine = create_engine(url, future=True)
     with engine.connect() as conn:
         current_user = conn.execute(text("SELECT current_user")).scalar()
-        if current_user != "app_admin":
+        if current_user != "academy_lab_worker":
             raise AssertionError(
-                f"TEST_LAB_WORKER_DATABASE_URL authenticated as {current_user!r}, not app_admin"
+                f"TEST_LAB_WORKER_DATABASE_URL authenticated as {current_user!r}, not academy_lab_worker"
             )
         bypassrls = conn.execute(
-            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'app_admin'")
+            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'academy_lab_worker'")
         ).scalar()
         if not bypassrls:
-            raise AssertionError("app_admin role does not have rolbypassrls = true")
+            raise AssertionError("academy_lab_worker role does not have rolbypassrls = true")
+        safe_posture = conn.execute(
+            text(
+                """SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+                    AND NOT rolreplication AND NOT rolinherit
+                    AND NOT EXISTS (
+                        SELECT 1 FROM pg_auth_members m
+                        WHERE m.member = r.oid OR m.roleid = r.oid
+                    )
+                FROM pg_roles r
+                WHERE r.rolname = 'academy_lab_worker'"""
+            )
+        ).scalar()
+        if not safe_posture:
+            raise AssertionError("academy_lab_worker has unsafe attributes or memberships")
+        owns = conn.execute(
+            text(
+                """SELECT EXISTS (
+                    SELECT 1 FROM pg_database
+                    WHERE datname = current_database()
+                      AND pg_get_userbyid(datdba) = 'academy_lab_worker'
+                ) OR EXISTS (
+                    SELECT 1 FROM pg_namespace
+                    WHERE pg_get_userbyid(nspowner) = 'academy_lab_worker'
+                      AND nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND nspname NOT LIKE 'pg_toast%'
+                ) OR EXISTS (
+                    SELECT 1 FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE pg_get_userbyid(c.relowner) = 'academy_lab_worker'
+                      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND n.nspname NOT LIKE 'pg_toast%'
+                      AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+                )"""
+            )
+        ).scalar()
+        if owns:
+            raise AssertionError("academy_lab_worker must not own database, schema, or application relations")
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
 def lab_worker_session(lab_worker_engine) -> Generator[Session, None, None]:
-    """Real ``app_admin`` session for asserting the lab worker's live ACL matrix."""
+    """Real dedicated worker session for asserting the live ACL matrix."""
     SessionLocal = sessionmaker(bind=lab_worker_engine, autocommit=False, autoflush=False)
     db = SessionLocal()
     try:

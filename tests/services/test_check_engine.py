@@ -28,6 +28,30 @@ def test_probe_ping_pass():
     assert out["per_check"][0]["pass"] is True
 
 
+def test_run_checks_refreshes_the_lease_before_every_external_check():
+    eng = _engine(stdout="1 packets transmitted, 1 received", code=0)
+    checks = [
+        {
+            "id": f"ping-{index}",
+            "type": "probe",
+            "node": "client",
+            "probe": {"kind": "ping", "target": "127.0.0.1", "count": 1},
+        }
+        for index in range(2)
+    ]
+    refresh = MagicMock()
+
+    run_checks(
+        checks,
+        eng,
+        MagicMock(nodes={"client": "c"}),
+        {},
+        before_each=refresh,
+    )
+
+    assert refresh.call_count == 2
+
+
 def test_command_jsonpath_fail_reports_actual():
     eng = _engine(stdout='{"state":"Idle"}', code=0)
     checks = [

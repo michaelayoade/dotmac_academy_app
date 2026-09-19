@@ -1,14 +1,17 @@
 """TDD tests for the lab lifecycle service (Task 6): quota + grade-to-ledger."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.models.assessment import Activity, Submission
 from app.models.course import Course
-from app.models.lab import LabInstance, LabTemplate
+from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
 from app.services import lab_lifecycle
 from app.services.exceptions import ConflictError
@@ -67,15 +70,66 @@ def test_request_lab_queues_when_full(admin_session, tenant_a, monkeypatch):
     admin_session.rollback()
 
 
-def test_request_lab_provisions_with_capacity(admin_session, tenant_a, monkeypatch):
+def test_request_lab_always_queues_worker_owned_deploy(admin_session, tenant_a, monkeypatch):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     monkeypatch.setattr(settings, "max_concurrent_labs", 20)
     inst = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
                                      person_id=p.id, activity=act, template=lt)
     admin_session.flush()
-    assert inst.status == "provisioning"
-    assert lab_lifecycle.active_count(admin_session, tenant_a.id) == 1
+    assert inst.status == "queued"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=inst.id).one()
+    assert operation.kind == "deploy"
+    assert operation.requested_by == p.id
     admin_session.rollback()
+
+
+def test_concurrent_launches_reuse_one_instance(
+    admin_engine, admin_session, tenant_a
+):
+    _course, activity, template, person = _seed(admin_session, tenant_a.id)
+    activity_id = activity.id
+    template_id = template.id
+    person_id = person.id
+    tenant_id = tenant_a.id
+    admin_session.commit()
+    start = Barrier(2)
+    factory = sessionmaker(bind=admin_engine)
+
+    def _launch() -> object:
+        db = factory()
+        try:
+            local_activity = db.get(Activity, activity_id)
+            local_template = db.get(LabTemplate, template_id)
+            assert local_activity is not None
+            assert local_template is not None
+            start.wait(timeout=5)
+            instance = lab_lifecycle.request_lab(
+                db,
+                tenant_id=tenant_id,
+                person_id=person_id,
+                activity=local_activity,
+                template=local_template,
+            )
+            instance_id = instance.id
+            db.commit()
+            return instance_id
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        instance_ids = list(pool.map(lambda _: _launch(), range(2)))
+
+    assert instance_ids[0] == instance_ids[1]
+    assert (
+        admin_session.query(LabInstance)
+        .filter_by(
+            tenant_id=tenant_id,
+            person_id=person_id,
+            activity_id=activity_id,
+        )
+        .count()
+        == 1
+    )
 
 
 def test_provision_sets_consoles_and_active(admin_session, tenant_a):
@@ -280,7 +334,7 @@ def test_reset_refuses_a_reaped_instance_without_touching_the_engine(admin_sessi
 
 
 def test_reset_refuses_a_queued_instance_without_touching_the_engine(admin_session, tenant_a):
-    """queued is lab_jobs.drain_once()'s capacity-controlled deployment path —
+    """queued is lab_operations.run_claimed()'s capacity-controlled path —
     resetting a queued instance directly would deploy it immediately and
     bypass MAX_CONCURRENT_LABS entirely."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
@@ -354,6 +408,74 @@ def test_grade_writes_score_and_submission(admin_session, tenant_a):
     assert sub is not None
     assert sub.answers["seed"] == {"o": 5}
     assert sub.answers["instance"] == str(inst.id)
+    admin_session.rollback()
+
+
+@pytest.mark.parametrize("status", ["queued", "provisioning", "resetting", "error", "reaped"])
+def test_grade_refuses_non_active_without_writing_submission(
+    admin_session, tenant_a, status
+):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name=f"dal-grade-{status}",
+        seed={"o": 5},
+        status=status,
+        consoles={},
+    )
+    admin_session.add(inst)
+    admin_session.flush()
+    before = admin_session.query(Submission).count()
+    engine = MagicMock()
+
+    with pytest.raises(ConflictError):
+        lab_lifecycle.grade(
+            admin_session,
+            inst,
+            engine,
+            lt,
+            LabHandle(instance_name=inst.instance_name, nodes={}, mgmt={}, kinds={}),
+        )
+
+    assert admin_session.query(Submission).count() == before
+    engine.exec.assert_not_called()
+    engine.ssh_exec.assert_not_called()
+    admin_session.rollback()
+
+
+def test_grade_refuses_degraded_active_without_writing_submission(
+    admin_session, tenant_a
+):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-grade-degraded",
+        seed={"o": 5},
+        status="active",
+        error="destroy failed; external resources may still exist",
+        consoles={},
+    )
+    admin_session.add(inst)
+    admin_session.flush()
+    before = admin_session.query(Submission).count()
+    engine = MagicMock()
+
+    with pytest.raises(ConflictError):
+        lab_lifecycle.grade(
+            admin_session,
+            inst,
+            engine,
+            lt,
+            LabHandle(instance_name=inst.instance_name, nodes={}, mgmt={}, kinds={}),
+        )
+
+    assert admin_session.query(Submission).count() == before
+    engine.exec.assert_not_called()
+    engine.ssh_exec.assert_not_called()
     admin_session.rollback()
 
 

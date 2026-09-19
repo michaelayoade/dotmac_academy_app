@@ -100,6 +100,30 @@ def test_admin_post_blank_password_keeps_existing(app_client, admin_session, ten
     assert row is not None and row.value == "keep-me"
 
 
+def test_admin_post_rejects_negative_per_tenant_lab_limit(
+    app_client, admin_session, tenant_a
+):
+    h = _seed_login(app_client, admin_session, tenant_a, "cap-admin@a.edu", "admin")
+    app_client.get("/admin/settings", headers=h)
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        "/admin/settings",
+        headers={**h, "x-csrf-token": csrf},
+        data={
+            "branding_name": "Dotmac Academy",
+            "smtp_port": "587",
+            "max_concurrent_labs": "20",
+            "max_concurrent_labs_per_tenant": "-1",
+            "lab_idle_minutes": "60",
+        },
+    )
+    assert response.status_code == 422
+    assert (
+        admin_session.get(PlatformSetting, "max_concurrent_labs_per_tenant")
+        is None
+    )
+
+
 def test_test_email_invokes_send_email(app_client, admin_session, tenant_a, monkeypatch):
     set_many(admin_session, {"smtp_host": "smtp.example"})
     admin_session.commit()

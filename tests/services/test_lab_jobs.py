@@ -44,22 +44,22 @@ def _seed(db, tid):
     return c, act, lt, p
 
 
-def test_worker_session_refuses_a_non_app_admin_dsn(monkeypatch):
+def test_worker_session_refuses_a_non_worker_dsn(monkeypatch):
     monkeypatch.setattr(
         settings,
         "lab_worker_database_url",
         "postgresql+psycopg://postgres@db/academy",
     )
-    with pytest.raises(RuntimeError, match="must authenticate as app_admin"):
+    with pytest.raises(RuntimeError, match="must authenticate as academy_lab_worker"):
         with lab_jobs.lab_worker_session():
             pytest.fail("must refuse before opening a session")
 
 
-def test_worker_session_refuses_app_admin_without_bypassrls(monkeypatch):
-    """A live app_admin role that has lost BYPASSRLS must fail loudly, not go quiet.
+def test_worker_session_refuses_worker_without_bypassrls(monkeypatch):
+    """A live worker role that has lost BYPASSRLS must fail loudly, not go quiet.
 
     Regression coverage for the guard added alongside the ``current_user``
-    check: ``lab_operations`` has FORCE ROW LEVEL SECURITY, so an app_admin
+    check: ``lab_operations`` has FORCE ROW LEVEL SECURITY, so a worker
     connection without BYPASSRLS would otherwise silently see an empty queue
     instead of raising. This mocks the DB round-trips so it never needs a live
     Postgres connection — only the URL-username prefilter is real.
@@ -67,10 +67,10 @@ def test_worker_session_refuses_app_admin_without_bypassrls(monkeypatch):
     monkeypatch.setattr(
         settings,
         "lab_worker_database_url",
-        "postgresql+psycopg://app_admin@db/academy",
+        "postgresql+psycopg://academy_lab_worker@db/academy",
     )
     fake_session = MagicMock()
-    fake_session.scalar.side_effect = ["app_admin", False]
+    fake_session.scalar.side_effect = ["academy_lab_worker", False]
     monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
     monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
 
@@ -78,6 +78,40 @@ def test_worker_session_refuses_app_admin_without_bypassrls(monkeypatch):
         with lab_jobs.lab_worker_session():
             pytest.fail("must refuse before yielding a session")
     assert fake_session.scalar.call_count == 2
+    fake_session.close.assert_called_once()
+
+
+def test_worker_session_refuses_worker_that_owns_application_objects(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "lab_worker_database_url",
+        "postgresql+psycopg://academy_lab_worker@db/academy",
+    )
+    fake_session = MagicMock()
+    fake_session.scalar.side_effect = ["academy_lab_worker", True, True, True]
+    monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+
+    with pytest.raises(RuntimeError, match="must not own"):
+        with lab_jobs.lab_worker_session():
+            pytest.fail("must refuse an owning worker role")
+    fake_session.close.assert_called_once()
+
+
+def test_worker_session_refuses_unsafe_role_attributes(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "lab_worker_database_url",
+        "postgresql+psycopg://academy_lab_worker@db/academy",
+    )
+    fake_session = MagicMock()
+    fake_session.scalar.side_effect = ["academy_lab_worker", True, False]
+    monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+
+    with pytest.raises(RuntimeError, match="unsafe attributes or role memberships"):
+        with lab_jobs.lab_worker_session():
+            pytest.fail("must refuse unsafe role posture")
     fake_session.close.assert_called_once()
 
 

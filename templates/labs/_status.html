@@ -1,5 +1,5 @@
 <div class="card p-6">
-  {% if instance.status in ("queued", "provisioning") %}
+  {% if instance.status in ("queued", "provisioning", "resetting") %}
     <div class="flex items-center gap-2.5">
       <span class="h-2 w-2 animate-pulse rounded-full bg-clay-500"></span>
       <span class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Status</span>
@@ -29,10 +29,18 @@
     {% endfor %}
     </ul>
 
+    {% if instance.error %}
+      <p class="mt-4 rounded-lg bg-clay-500/10 px-4 py-3 text-sm text-clay-700">
+        This lab has an unresolved infrastructure error and cannot be checked yet: {{ instance.error }}
+      </p>
+    {% endif %}
+
     <div class="mt-6 flex flex-wrap gap-3 border-t border-sand-200 pt-5">
+      {% if not instance.error %}
       <form hx-post="/labs/instances/{{ instance.id }}/check" hx-target="#lab-checks" hx-swap="innerHTML">
         <button class="btn-primary" type="submit">Run checks</button>
       </form>
+      {% endif %}
       <form hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML">
         <button class="btn-ghost" type="submit">Reset lab</button>
       </form>
@@ -44,5 +52,8 @@
       <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-clay-600">{{ instance.status }}</span>
     </div>
     <p class="mt-3 text-clay-600">{{ instance.error }}</p>
+    <form class="mt-5" hx-post="/labs/instances/{{ instance.id }}/reset" hx-target="#lab-state" hx-swap="innerHTML">
+      <button class="btn-primary" type="submit">Retry lab</button>
+    </form>
   {% endif %}
 </div>

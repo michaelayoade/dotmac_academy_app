@@ -18,6 +18,7 @@ import shutil
 import signal
 import socket
 import subprocess
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -30,8 +31,6 @@ from app.services.checks.engine import run_checks
 from app.services.exceptions import ConflictError
 from app.services.lab_seed import generate_seed, interpolate
 from app.services.labengine.interface import LabEngine, LabHandle
-
-_ACTIVE_STATUSES = ("provisioning", "active")
 
 #: URL prefix under which every console is served. Defined once: it is both the
 #: ttyd ``-b`` base path and the pattern the orphan sweep matches on.
@@ -202,19 +201,6 @@ def handle_for(instance: LabInstance) -> LabHandle:
     )
 
 
-def active_count(db: Session, tenant_id) -> int:
-    """Count instances currently consuming capacity (provisioning|active)."""
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(LabInstance)
-            .where(LabInstance.tenant_id == tenant_id)
-            .where(LabInstance.status.in_(_ACTIVE_STATUSES))
-        )
-        or 0
-    )
-
-
 def instance_name(tenant_id, person_id, activity_id, n) -> str:
     """Stable, human-traceable instance name: ``dal-<t8>-<p8>-<a8>-<n>``."""
     return f"dal-{str(tenant_id)[:8]}-{str(person_id)[:8]}-{str(activity_id)[:8]}-{n}"
@@ -226,12 +212,41 @@ def _attempt_seed_id(person_id, activity_id, n: int) -> int:
     return int(h[:8], 16)
 
 
+def _launch_lock_key(tenant_id, person_id, activity_id) -> int:
+    """Stable signed bigint key for one learner/activity launch stream."""
+    digest = hashlib.sha256(
+        f"lab-launch:{tenant_id}:{person_id}:{activity_id}".encode()
+    ).digest()
+    unsigned = int.from_bytes(digest[:8], "big")
+    return unsigned if unsigned < (1 << 63) else unsigned - (1 << 64)
+
+
 def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, template: LabTemplate) -> LabInstance:
     """Create a LabInstance for the next attempt — does NOT deploy.
 
-    Queued if at/over ``MAX_CONCURRENT_LABS``, else marked ``provisioning`` for
-    the worker to pick up. Seed is generated deterministically per attempt.
+    Always queued for the worker-owned admission path. Concurrent or retried
+    launches for the same learner/activity serialize and reuse the current
+    non-reaped instance. Seed generation, instance creation, and the deploy
+    intent otherwise occur atomically in the same request transaction.
     """
+    db.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                _launch_lock_key(tenant_id, person_id, activity.id)
+            )
+        )
+    )
+    current = db.scalars(
+        select(LabInstance)
+        .where(LabInstance.tenant_id == tenant_id)
+        .where(LabInstance.activity_id == activity.id)
+        .where(LabInstance.person_id == person_id)
+        .where(LabInstance.status != "reaped")
+        .order_by(LabInstance.created_at.desc())
+    ).first()
+    if current is not None:
+        return current
+
     prev = db.scalar(
         select(func.count())
         .select_from(LabInstance)
@@ -241,20 +256,18 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     )
     n = int(prev or 0) + 1
     seed = generate_seed(template.seed_spec, attempt_id=_attempt_seed_id(person_id, activity.id, n))
-    from app.services.settings_store import effective
-
-    at_capacity = active_count(db, tenant_id) >= effective(db).max_concurrent_labs
     inst = LabInstance(
         tenant_id=tenant_id,
         activity_id=activity.id,
         person_id=person_id,
         instance_name=instance_name(tenant_id, person_id, activity.id, n),
         seed=seed,
-        status="queued" if at_capacity else "provisioning",
-        consoles={},
     )
     db.add(inst)
     db.flush()
+    from app.services.lab_operations import enqueue
+
+    enqueue(db, instance=inst, kind="deploy", requested_by=person_id)
     from app.services import learning_events
 
     learning_events.emit(
@@ -293,14 +306,35 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     return instance
 
 
-def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate, handle: LabHandle) -> Score:
+def grade(
+    db: Session,
+    instance: LabInstance,
+    engine: LabEngine,
+    template: LabTemplate,
+    handle: LabHandle,
+    *,
+    before_each_check: Callable[[], None] | None = None,
+) -> Score:
     """Run the template checks against the live instance and write Submission+Score.
 
     The caller supplies ``handle`` (the live :class:`LabHandle` — see the web/CLI
     callers which reconstruct it via the engine); this keeps grade pure and
     testable. Mirrors ``submit_activity``: ``attempt_no`` = max+1, flush, no commit.
     """
-    result = run_checks(template.checks, engine, handle, instance.seed)
+    if instance.status != "active" or instance.error is not None:
+        detail = (
+            f"status {instance.status!r}"
+            if instance.status != "active"
+            else "an unresolved infrastructure error"
+        )
+        raise ConflictError(f"cannot check a lab instance with {detail}")
+    result = run_checks(
+        template.checks,
+        engine,
+        handle,
+        instance.seed,
+        before_each=before_each_check,
+    )
     score_val = result["score"]
     max_score = result["max_score"]
     fraction = (score_val / max_score) if max_score else 0.0
@@ -385,14 +419,19 @@ def grade(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 
 
 def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
-    """Tear down and redeploy the instance topology in place (fresh state).
+    """Legacy direct reset helper retained until the separately gated removal phase.
+
+    Web routes never call this helper: they enqueue a durable deploy operation,
+    and the lab worker owns destroy-then-deploy, capacity admission, leases,
+    and settlement. This guard still keeps any direct service caller from
+    bypassing those boundaries while the compatibility helper remains.
 
     Only ``active`` or ``error`` (a previously-failed deploy, retryable) may
     be reset; every other status is refused up front, before any engine
     interaction. This is an allow-list, not just a reaped exclusion:
     ``queued``/``provisioning`` are the capacity-controlled deployment path
-    owned by ``lab_jobs.drain_once()`` (which enforces ``MAX_CONCURRENT_LABS``
-    before calling ``provision()``) — resetting a ``queued`` instance would
+    owned by ``lab_operations.run_claimed()`` (which enforces the effective
+    capacity limit before calling ``provision()``) — resetting a ``queued`` instance would
     deploy it immediately and bypass that cap entirely, and resetting a
     ``provisioning`` one would race the worker's own ``provision()`` call on
     the same row/work directory. ``reaped`` (already-destroyed) is refused
@@ -408,8 +447,8 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     wrong name and silently desync from every other reader of ``consoles``.
     An engine/interpolation failure is recorded onto the row
     (``status="error"``) rather than propagating out as an unhandled
-    exception — the caller (the reset route) always gets a normal return to
-    render, in either outcome. Only the ``db.flush()`` itself is left
+    exception — a legacy direct caller gets a normal return in either outcome.
+    Only the ``db.flush()`` itself is left
     unguarded, since a database/transaction failure is not something this
     function can meaningfully paper over.
 
@@ -455,8 +494,8 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
 
 def destroy(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstance:
     """Destroy the underlying lab and mark the instance ``reaped``."""
-    stop_consoles(instance)
     engine.destroy(instance.instance_name)
+    stop_consoles(instance)
     instance.status = "reaped"
     db.flush()
     return instance

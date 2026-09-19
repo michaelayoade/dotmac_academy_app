@@ -9,6 +9,10 @@ class ExecResult:
     exit_code: int
 
 
+class WrongLabHostError(RuntimeError):
+    """Raised when a lab engine operation is attempted on a non-lab host."""
+
+
 @dataclass
 class LabHandle:
     instance_name: str
@@ -18,6 +22,11 @@ class LabHandle:
 
 
 class LabEngine(ABC):
+    @abstractmethod
+    def inventory(self) -> dict[str, str]:
+        """Return running lab names mapped to their authoritative topology paths."""
+        ...
+
     @abstractmethod
     def deploy(self, topology_text: str, instance_name: str) -> LabHandle: ...
 

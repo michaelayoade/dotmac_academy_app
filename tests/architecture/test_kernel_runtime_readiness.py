@@ -194,8 +194,8 @@ def _validate_record(record: dict[str, Any]) -> None:
     # Composition-specific checks: the systemd application shape.
     service_files = sorted((ROOT / "deploy").glob("*.service"))
     timer_files = sorted((ROOT / "deploy").glob("*.timer"))
-    assert len(service_files) == 9, f"expected 9 systemd .service units, found {len(service_files)}"
-    assert len(timer_files) == 8, f"expected 8 systemd .timer units, found {len(timer_files)}"
+    assert len(service_files) == 10, f"expected 10 systemd .service units, found {len(service_files)}"
+    assert len(timer_files) == 9, f"expected 9 systemd .timer units, found {len(timer_files)}"
     for service_file in service_files:
         text = service_file.read_text(encoding="utf-8")
         assert ".venv/bin/python -m app.cli" in text, (

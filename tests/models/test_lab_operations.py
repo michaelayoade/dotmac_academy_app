@@ -1,8 +1,8 @@
-"""Schema-shape and ownership-boundary tests for `lab_operations` (Phase 1).
+"""Schema-shape and ownership-boundary tests for `lab_operations`.
 
-Nothing reads or writes this table yet — these tests exist to prove the table
-itself is exactly what the design commits to: a claimable work queue where
-the web tier may request and observe, but only `app_admin` may settle a row.
+These tests prove the durable queue remains exactly what the design commits
+to: the web tier may request and observe, but only `academy_lab_worker` may claim or
+settle a row. Worker behavior is covered separately in the service tests.
 """
 
 from __future__ import annotations
@@ -81,6 +81,17 @@ def test_columns_match_contract(admin_engine):
     assert columns["state"]["type"].length == 16
     assert columns["claimed_by"]["type"].length == 200
 
+    checks = {
+        row["name"]: str(row["sqltext"])
+        for row in inspector.get_check_constraints("lab_operations")
+    }
+    assert set(checks) == {"ck_lab_operations_kind", "ck_lab_operations_state"}
+    assert all(kind in checks["ck_lab_operations_kind"] for kind in ("deploy", "destroy", "check"))
+    assert all(
+        state in checks["ck_lab_operations_state"]
+        for state in ("queued", "claimed", "succeeded", "failed", "cancelled")
+    )
+
 
 def test_foreign_keys_cascade(admin_engine):
     inspector = inspect(admin_engine)
@@ -115,7 +126,7 @@ def test_grants_are_exactly_the_ownership_boundary(admin_session):
     rows = admin_session.execute(
         text("SELECT grantee, privilege_type FROM information_schema.role_table_grants "
              "WHERE table_name = 'lab_operations' "
-             "AND grantee IN ('app_user', 'platform_api', 'app_admin')")
+             "AND grantee IN ('app_user', 'platform_api', 'app_admin', 'academy_lab_worker')")
     ).all()
     by_grantee: dict[str, set[str]] = {}
     for grantee, privilege in rows:
@@ -131,6 +142,7 @@ def test_grants_are_exactly_the_ownership_boundary(admin_session):
     # gets nothing on this table in CI without this grant, even though it is
     # the table owner (and needs nothing extra) in production.
     assert by_grantee.get("app_admin") == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+    assert by_grantee.get("academy_lab_worker") == {"SELECT", "INSERT", "UPDATE"}
 
     insert_columns = set(
         admin_session.execute(
@@ -144,6 +156,31 @@ def test_grants_are_exactly_the_ownership_boundary(admin_session):
     # must be absent — otherwise app_user could forge worker-owned state at
     # INSERT time even though it can never UPDATE a row afterwards.
     assert insert_columns == {"id", "tenant_id", "instance_id", "kind", "requested_by"}
+
+
+def test_lab_instance_grants_make_runtime_state_worker_owned(admin_session):
+    rows = admin_session.execute(
+        text("SELECT grantee, privilege_type FROM information_schema.role_table_grants "
+             "WHERE table_name = 'lab_instances' "
+             "AND grantee IN ('app_user', 'platform_api', 'academy_lab_worker')")
+    ).all()
+    by_grantee: dict[str, set[str]] = {}
+    for grantee, privilege in rows:
+        by_grantee.setdefault(grantee, set()).add(privilege)
+    assert by_grantee.get("app_user") == {"SELECT"}
+    assert by_grantee.get("platform_api") == {"SELECT"}
+    assert by_grantee.get("academy_lab_worker") == {"SELECT", "UPDATE"}
+
+    insert_columns = set(
+        admin_session.execute(
+            text("SELECT column_name FROM information_schema.column_privileges "
+                 "WHERE table_name = 'lab_instances' AND grantee = 'app_user' "
+                 "AND privilege_type = 'INSERT'")
+        ).scalars().all()
+    )
+    assert insert_columns == {
+        "id", "tenant_id", "activity_id", "person_id", "instance_name", "seed",
+    }
 
 
 # --- the core guarantee: one open operation per instance ----------------
@@ -233,6 +270,35 @@ def test_app_user_can_request_an_operation_for_its_own_tenant_instance(
     ).one()
     assert row.state == "queued"
     assert row.attempts == 0
+
+
+def test_app_user_can_create_only_queued_instance_state(
+    admin_session, app_user_session, tenant_a
+):
+    _set_tenant(app_user_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=uuid4(),
+        person_id=uuid4(),
+        instance_name=f"dal-request-{uuid4().hex[:8]}",
+        seed={},
+    )
+    app_user_session.add(instance)
+    app_user_session.commit()
+    instance_id = instance.id
+    assert instance.status == "queued"
+    assert instance.consoles == {}
+
+    with pytest.raises(ProgrammingError):
+        app_user_session.execute(
+            text("UPDATE lab_instances SET status = 'active' WHERE id = :id"),
+            {"id": str(instance_id)},
+        )
+    app_user_session.rollback()
+    _reset_tenant(app_user_session)
+
+    stored = admin_session.get(LabInstance, instance_id)
+    assert stored is not None and stored.status == "queued"
 
 
 def test_app_user_cannot_reference_an_instance_owned_by_another_tenant(

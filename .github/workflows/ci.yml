@@ -29,10 +29,10 @@ jobs:
       # conftest fixture can patch it), so it must be present in the job env too.
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
-      # Real app_admin evidence for lab-worker privilege tests (see
+      # Real dedicated-role evidence for lab-worker privilege tests (see
       # tests/services/test_lab_worker_privileges.py) — distinct from the
       # migration/superuser DSN above.
-      TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy
+      TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://academy_lab_worker:academy_lab_worker@localhost:5437/academy
       # Platform-scoped writes (e.g. admin settings) run as the platform_api role,
       # which holds INSERT/UPDATE on platform_settings; app_user is SELECT-only there.
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy

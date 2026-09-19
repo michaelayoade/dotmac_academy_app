@@ -22,12 +22,18 @@ from app.models.platform_settings import PlatformSetting
 logger = logging.getLogger(__name__)
 
 # Keys whose stored string value is coerced to a non-str type on read.
-_INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "lab_idle_minutes",
+_INT_KEYS = frozenset({"smtp_port", "max_concurrent_labs", "max_concurrent_labs_per_tenant",
+                       "lab_idle_minutes",
                        "reminder_inactivity_days", "reminder_digest_hour", "reminder_digest_weekday",
                        "success_inactive_days", "success_min_grade_pct",
                        "success_certificate_grace_hours", "reminder_inactivity_max_nudges"})
 _BOOL_KEYS = frozenset({"smtp_starttls", "email_auto_on_pass", "email_digest_enabled",
                         "reminders_enabled", "learner_digest_enabled"})
+_INT_MINIMUMS = {
+    "max_concurrent_labs": 1,
+    "max_concurrent_labs_per_tenant": 0,
+    "lab_idle_minutes": 1,
+}
 
 # The full set of known keys, with their default sourced live from `settings`
 # (or a literal) so monkeypatching `settings.*` in tests is reflected here.
@@ -43,6 +49,7 @@ KNOWN_KEYS: tuple[str, ...] = (
     "branding_name",
     "management_inquiry_recipient",
     "max_concurrent_labs",
+    "max_concurrent_labs_per_tenant",
     "lab_idle_minutes",
     "reminders_enabled",
     "reminder_inactivity_days",
@@ -74,6 +81,7 @@ def _defaults() -> dict[str, object]:
         "branding_name": "Dotmac Academy",
         "management_inquiry_recipient": settings.management_inquiry_recipient,
         "max_concurrent_labs": settings.max_concurrent_labs,
+        "max_concurrent_labs_per_tenant": settings.max_concurrent_labs_per_tenant,
         "lab_idle_minutes": settings.lab_idle_minutes,
         "reminders_enabled": True,
         "reminder_inactivity_days": 7,
@@ -104,9 +112,11 @@ def _coerce(key: str, value: str | None, default: object) -> object:
         return _coerce_bool(value)
     if key in _INT_KEYS:
         try:
-            return int(value)
+            parsed = int(value)
         except (TypeError, ValueError):
             return default
+        minimum = _INT_MINIMUMS.get(key)
+        return default if minimum is not None and parsed < minimum else parsed
     return value
 
 
@@ -118,6 +128,16 @@ def get_all(db: Session) -> dict[str, str]:
 
 def set_many(db: Session, values: dict[str, str | None]) -> None:
     """Upsert each ``key -> value`` (string). Flushes; never commits."""
+    for key, value in values.items():
+        if key not in _INT_MINIMUMS or value is None or not value.strip():
+            continue
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ValueError(f"{key} must be an integer") from exc
+        minimum = _INT_MINIMUMS[key]
+        if parsed < minimum:
+            raise ValueError(f"{key} must be at least {minimum}")
     for key, value in values.items():
         existing = db.get(PlatformSetting, key)
         if existing is None:
@@ -153,6 +173,7 @@ class EffectiveSettings:
     branding_name: str
     management_inquiry_recipient: str
     max_concurrent_labs: int
+    max_concurrent_labs_per_tenant: int
     lab_idle_minutes: int
 
     def __init__(self, values: dict[str, object]) -> None:

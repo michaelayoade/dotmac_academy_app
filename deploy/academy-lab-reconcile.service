@@ -1,0 +1,12 @@
+[Unit]
+Description=Dotmac Academy lab operation and orphan reconciliation
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+Environment=LAB_HOST_ROLE=lab
+ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli lab-reconcile

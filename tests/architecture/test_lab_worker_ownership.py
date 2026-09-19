@@ -75,7 +75,7 @@ def _references_name(function_node: ast.FunctionDef, name: str) -> bool:
 
     Matches a bare reference (``admin_session``) or an attribute access
     (``lab_jobs.admin_session``) — either form would mean the wrong,
-    non-app_admin session got used for containerlab work.
+    non-worker session got used for containerlab work.
     """
     return any(
         (isinstance(node, ast.Name) and node.id == name)
@@ -101,7 +101,7 @@ def test_lab_host_commands_use_the_dedicated_worker_session_only():
     assert "lab_worker_session" in bodies["_lab_reconcile"]
     assert "lab_worker_session" not in bodies["_reap_labs"]
     # A substring check on "lab_worker_session" alone would still pass if
-    # these functions ALSO called admin_session (the wrong, non-app_admin
+    # these functions ALSO called admin_session (the wrong, non-worker
     # session) for containerlab work — require exclusivity, not just presence.
     assert not _references_name(functions["_lab_worker"], "admin_session")
     assert not _references_name(functions["_lab_reconcile"], "admin_session")

@@ -79,6 +79,12 @@ def test_lab_host_probe_reports_up_and_down(app_client, tenant_a, monkeypatch):
     assert "academy_lab_host_up 0.0" in r.text
 
 
+def test_wrong_lab_host_refusal_metric_is_declared():
+    from app.metrics import LAB_WRONG_HOST_REFUSALS
+
+    assert LAB_WRONG_HOST_REFUSALS._name == "academy_lab_wrong_host_refusals"
+
+
 def test_pipeline_metrics_snapshot_all_statuses(app_client, tenant_a, admin_session, monkeypatch):
     """Pipeline gauges cover every known status (including zeros) and are cached."""
     import app.metrics as m

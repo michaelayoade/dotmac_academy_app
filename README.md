@@ -14,6 +14,7 @@ Architecture:
 - [ADR 0007 — Academy Is a Kernel Product Assembly](docs/adr/0007-academy-is-a-kernel-assembly.md)
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
 - [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
+- [ADR 0008 — Dedicated non-owning lab-worker database role](docs/adr/0008-lab-worker-database-role.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
 - [Direct external-connector surface](docs/external-connector-surface.md) — the
   measured baselines the accepted Governance ratchet freezes
@@ -113,11 +114,19 @@ explicit transport diagnostic, not a domain consequence.
 - `app_user`: request role with RLS enforced.
 - `platform_api`: restricted settings-writer role retained under its historical
   name; it does not expose a tenant-provisioning API.
-- `app_admin`: migration and offline maintenance role with `BYPASSRLS`; never
-  used by request handlers.
+- `app_admin`: schema-owning offline migration/maintenance role; never used by
+  continuous workers or request handlers.
+- `academy_lab_worker`: non-owning `LOGIN NOINHERIT BYPASSRLS NOSUPERUSER
+  NOCREATEDB NOCREATEROLE NOREPLICATION` role used only by the continuous lab
+  worker. It owns neither the current database nor any non-system schema or
+  application relation, including sequences.
 
 `DATABASE_URL` uses `app_user`, `PLATFORM_DATABASE_URL` uses the restricted
-settings writer, and `MIGRATION_DATABASE_URL` uses the offline migration role.
+settings writer, `MIGRATION_DATABASE_URL` uses the offline migration role, and
+`LAB_WORKER_DATABASE_URL` must authenticate specifically as
+`academy_lab_worker` for the continuous lab worker/reconciler. The worker
+refuses a migration/superuser DSN and rejects any database, schema, or
+application-relation ownership by that role.
 
 ## Validation
 

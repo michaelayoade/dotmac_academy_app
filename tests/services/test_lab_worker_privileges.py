@@ -1,8 +1,8 @@
-"""Real ``app_admin`` privilege matrix and worker-consequence integration test.
+"""Real ``academy_lab_worker`` privilege matrix and worker-consequence integration test.
 
 Skips cleanly when ``TEST_LAB_WORKER_DATABASE_URL`` is unset (see the
 ``lab_worker_session`` fixture in ``tests/conftest.py``) — this is the one test
-in the suite that requires a real, live-verified ``app_admin`` role rather than
+in the suite that requires a real, live-verified ``academy_lab_worker`` role rather than
 the migration/superuser connection ``admin_session`` provides, because its
 whole point is to catch an incomplete or overbroad grant that a superuser
 connection would never surface.
@@ -34,7 +34,7 @@ SELECT_INSERT_TABLES = (
     "notifications",
     "email_outbox",
 )
-LAB_INSTANCES_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
+LAB_INSTANCES_PRIVILEGES = ("SELECT", "UPDATE")
 
 
 def _stub_engine(instance_name: str) -> MagicMock:
@@ -54,14 +54,14 @@ def _stub_engine(instance_name: str) -> MagicMock:
 def _has_privilege(session, table: str, privilege: str) -> bool:
     return bool(
         session.scalar(
-            text("SELECT has_table_privilege('app_admin', :table, :priv)").bindparams(
+            text("SELECT has_table_privilege('academy_lab_worker', :table, :priv)").bindparams(
                 table=table, priv=privilege
             )
         )
     )
 
 
-def test_app_admin_privilege_matrix_and_worker_consequences(
+def test_lab_worker_privilege_matrix_and_worker_consequences(
     admin_session, lab_worker_session, tenant_a
 ):
     instance, person = _seed(admin_session, tenant_a.id, name="privileges")
@@ -83,28 +83,59 @@ def test_app_admin_privilege_matrix_and_worker_consequences(
     admin_session.commit()
 
     # --- explicit ACL matrix -----------------------------------------------
+    expected_direct_acl = {
+        "lab_operations": {"INSERT", "SELECT", "UPDATE"},
+        "lab_instances": {"SELECT", "UPDATE"},
+        **{table: {"SELECT"} for table in SELECT_ONLY_TABLES},
+        **{table: {"INSERT", "SELECT"} for table in SELECT_INSERT_TABLES},
+    }
+    direct_acl = {
+        table: set(privileges)
+        for table, privileges in lab_worker_session.execute(
+            text(
+                """SELECT c.relname, array_agg(DISTINCT p.privilege_type ORDER BY p.privilege_type)
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(c.relacl, acldefault('r', c.relowner))
+                ) p
+                WHERE n.nspname = 'public'
+                  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND pg_get_userbyid(p.grantee) = 'academy_lab_worker'
+                GROUP BY c.relname"""
+            )
+        ).all()
+    }
+    assert direct_acl == expected_direct_acl
+    assert not lab_worker_session.scalar(
+        text("SELECT has_schema_privilege('academy_lab_worker', 'public', 'CREATE')")
+    )
+    assert lab_worker_session.scalar(
+        text("SELECT NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = 'academy_lab_worker'::regrole OR m.roleid = 'academy_lab_worker'::regrole)")
+    )
+
     for table in SELECT_ONLY_TABLES:
         assert _has_privilege(lab_worker_session, table, "SELECT"), f"expected SELECT on {table}"
         assert not _has_privilege(
             lab_worker_session, table, "INSERT"
-        ), f"app_admin should not have INSERT on {table}"
+        ), f"academy_lab_worker should not have INSERT on {table}"
 
     for table in SELECT_INSERT_TABLES:
         assert _has_privilege(lab_worker_session, table, "SELECT"), f"expected SELECT on {table}"
         assert _has_privilege(lab_worker_session, table, "INSERT"), f"expected INSERT on {table}"
         assert not _has_privilege(
             lab_worker_session, table, "UPDATE"
-        ), f"app_admin should not have UPDATE on {table}"
+        ), f"academy_lab_worker should not have UPDATE on {table}"
         assert not _has_privilege(
             lab_worker_session, table, "DELETE"
-        ), f"app_admin should not have DELETE on {table}"
+        ), f"academy_lab_worker should not have DELETE on {table}"
 
     for privilege in LAB_INSTANCES_PRIVILEGES:
         assert _has_privilege(
             lab_worker_session, "lab_instances", privilege
         ), f"expected {privilege} on lab_instances"
 
-    # --- deploy, then a passing check, through the real app_admin session --
+    # --- deploy, then a passing check, through the real worker session --
     engine = _stub_engine(instance.instance_name)
     assert lab_jobs.drain_once(lab_worker_session, engine) == 1
     lab_worker_session.commit()

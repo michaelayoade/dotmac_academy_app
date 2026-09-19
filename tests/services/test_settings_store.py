@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.config import settings
 from app.models.platform_settings import PlatformSetting
 from app.services import settings_store
@@ -18,10 +20,12 @@ def test_effective_falls_back_to_env_defaults(admin_session, monkeypatch):
     _clear(admin_session)
     monkeypatch.setattr(settings, "smtp_host", "env-host.example", raising=False)
     monkeypatch.setattr(settings, "max_concurrent_labs", 7, raising=False)
+    monkeypatch.setattr(settings, "max_concurrent_labs_per_tenant", 0, raising=False)
 
     cfg = effective(admin_session)
     assert cfg.smtp_host == "env-host.example"
     assert cfg.max_concurrent_labs == 7
+    assert cfg.max_concurrent_labs_per_tenant == 0
     # Literal defaults for keys with no env source.
     assert cfg.branding_name == "Dotmac Academy"
     assert cfg.email_auto_on_pass is True
@@ -41,6 +45,7 @@ def test_effective_db_overrides_with_type_coercion(admin_session):
             "email_auto_on_pass": "false",
             "branding_name": "Acme Academy",
             "max_concurrent_labs": "3",
+            "max_concurrent_labs_per_tenant": "2",
             "lab_idle_minutes": "15",
         },
     )
@@ -52,6 +57,7 @@ def test_effective_db_overrides_with_type_coercion(admin_session):
     assert cfg.email_auto_on_pass is False
     assert cfg.branding_name == "Acme Academy"
     assert cfg.max_concurrent_labs == 3
+    assert cfg.max_concurrent_labs_per_tenant == 2
     assert cfg.lab_idle_minutes == 15
 
     # get_all returns the raw stored strings.
@@ -74,6 +80,21 @@ def test_set_many_upserts(admin_session):
     set_many(admin_session, {"branding_name": "Second"})
     assert get_all(admin_session)["branding_name"] == "Second"
     assert effective(admin_session).branding_name == "Second"
+    admin_session.rollback()
+
+
+def test_lab_limits_reject_invalid_writes_and_ignore_legacy_invalid_rows(
+    admin_session,
+):
+    _clear(admin_session)
+    with pytest.raises(ValueError, match="max_concurrent_labs_per_tenant must be at least 0"):
+        set_many(admin_session, {"max_concurrent_labs_per_tenant": "-1"})
+
+    admin_session.add(
+        PlatformSetting(key="max_concurrent_labs_per_tenant", value="-1")
+    )
+    admin_session.flush()
+    assert effective(admin_session).max_concurrent_labs_per_tenant == 0
     admin_session.rollback()
 
 

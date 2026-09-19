@@ -1199,7 +1199,7 @@ def main() -> None:
         "lab-worker",
         help="Run the cross-tenant durable lab-operation worker.",
         description=(
-            "Long-running background worker: every ~5s, opens an app_admin "
+            "Long-running background worker: every ~5s, opens an academy_lab_worker "
             "(BYPASSRLS) session and claims queued lab operations across all tenants. "
             "It must run with LAB_HOST_ROLE=lab on the containerlab host. Intended to "
             "run under systemd (academy-lab-worker.service, Restart=always)."
@@ -1228,7 +1228,7 @@ def main() -> None:
         "email-digest",
         help="One-shot: email each cohort's instructor(s) a progress digest.",
         description=(
-            "Cross-tenant: open an app_admin (BYPASSRLS) session, build the "
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session, build the "
             "cohort progress matrix for every cohort in every tenant, and email "
             "each cohort's enrolled instructor(s) a summary. Email failures are "
             "non-fatal. Intended to run on a timer "
@@ -1241,7 +1241,7 @@ def main() -> None:
         "learner-digest",
         help="One-shot: email each learner their weekly progress summary.",
         description=(
-            "Cross-tenant: open an app_admin (BYPASSRLS) session and queue one "
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session and queue one "
             "weekly progress email per active student learner — what they did, "
             "where they are, what is next. Distinct from email-digest, which is "
             "the instructor cohort matrix. Idempotent per ISO week. Gated by the "

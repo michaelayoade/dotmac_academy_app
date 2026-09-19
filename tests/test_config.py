@@ -31,6 +31,56 @@ def test_production_requires_single_tenancy():
     assert not any("TENANCY" in e for e in validate_settings(_production_settings(tenancy="single")))
 
 
+def test_lab_host_role_defaults_to_web():
+    assert Settings(_env_file=None).lab_host_role == "web"
+
+
+def test_lab_host_role_parses_environment(monkeypatch):
+    monkeypatch.setenv("LAB_HOST_ROLE", "lab")
+    assert Settings(_env_file=None).lab_host_role == "lab"
+
+
+def test_lab_host_role_rejects_unknown_values():
+    errors = validate_settings(_production_settings(lab_host_role="workerish"))
+    assert "LAB_HOST_ROLE must be 'web' or 'lab'" in errors
+
+
+def test_per_tenant_lab_limit_defaults_to_global_inheritance():
+    assert Settings(_env_file=None).max_concurrent_labs_per_tenant == 0
+
+
+def test_lab_capacity_limits_fail_closed_on_invalid_values():
+    assert "MAX_CONCURRENT_LABS must be positive" in validate_settings(
+        _production_settings(max_concurrent_labs=0)
+    )
+    assert "MAX_CONCURRENT_LABS_PER_TENANT must be zero or positive" in validate_settings(
+        _production_settings(max_concurrent_labs_per_tenant=-1)
+    )
+
+
+def test_lab_host_requires_a_dedicated_worker_dsn():
+    missing = validate_settings(
+        _production_settings(lab_host_role="lab", lab_worker_database_url="")
+    )
+    assert "LAB_WORKER_DATABASE_URL is required when LAB_HOST_ROLE=lab" in missing
+
+    wrong_role = validate_settings(
+        _production_settings(
+            lab_host_role="lab",
+            lab_worker_database_url="postgresql+psycopg://postgres@db/academy",
+        )
+    )
+    assert "LAB_WORKER_DATABASE_URL must authenticate as academy_lab_worker" in wrong_role
+
+    valid = validate_settings(
+        _production_settings(
+            lab_host_role="lab",
+        lab_worker_database_url="postgresql+psycopg://academy_lab_worker@db/academy",
+        )
+    )
+    assert not any("LAB_WORKER_DATABASE_URL" in error for error in valid)
+
+
 def test_production_rejects_disabled_browser_guards():
     errors = validate_settings(
         _production_settings(

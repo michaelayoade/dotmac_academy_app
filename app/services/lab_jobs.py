@@ -5,7 +5,7 @@ Unlike the per-request lifecycle helpers in :mod:`app.services.lab_lifecycle`
 transaction), these are background jobs that run across ALL tenants. They need
 an offline/BYPASSRLS session that can see every tenant's rows and they OWN their
 transaction boundary, so they ``commit``. Containerlab execution is narrower:
-it requires the exact dedicated ``app_admin`` worker identity.
+it requires the exact dedicated ``academy_lab_worker`` identity.
 
 Use :func:`lab_worker_session` for containerlab worker/reconciler execution.
 The pre-existing :func:`admin_session` remains the generic offline session used
@@ -54,31 +54,71 @@ def admin_session() -> Iterator[Session]:
 
 @contextmanager
 def lab_worker_session() -> Iterator[Session]:
-    """Yield a dedicated, live-verified ``app_admin`` lab-worker Session."""
+    """Yield a dedicated, live-verified ``academy_lab_worker`` Session."""
     worker_url = settings.lab_worker_database_url
     try:
         worker_role = make_url(worker_url).username
     except Exception as exc:
         raise RuntimeError("LAB_WORKER_DATABASE_URL is invalid") from exc
-    if worker_role != "app_admin":
-        raise RuntimeError("LAB_WORKER_DATABASE_URL must authenticate as app_admin")
+    if worker_role != "academy_lab_worker":
+        raise RuntimeError("LAB_WORKER_DATABASE_URL must authenticate as academy_lab_worker")
     engine = create_engine(worker_url, future=True)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     db = factory()
     try:
-        if db.scalar(text("SELECT current_user")) != "app_admin":
-            raise RuntimeError("lab worker database session is not app_admin")
+        if db.scalar(text("SELECT current_user")) != "academy_lab_worker":
+            raise RuntimeError("lab worker database session is not academy_lab_worker")
         # ``lab_operations`` has FORCE ROW LEVEL SECURITY with a tenant_id GUC
-        # policy (see 0055_lab_operations.py). Being the app_admin role is not
+        # policy (see 0055_lab_operations.py). Being the worker role is not
         # enough on its own — if BYPASSRLS were ever missing or revoked from
         # an already-existing role, the worker would silently see an empty
         # queue (RLS resolves against a NULL tenant GUC) and stop processing
         # with no error at all. Check the actual role attribute, not just the
         # role name, so that failure mode raises instead of going quiet.
         if not db.scalar(
-            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'app_admin'")
+            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'academy_lab_worker'")
         ):
-            raise RuntimeError("app_admin role does not have BYPASSRLS")
+            raise RuntimeError("academy_lab_worker role does not have BYPASSRLS")
+        safe_posture = db.scalar(
+            text(
+                """SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+                    AND NOT rolreplication AND NOT rolinherit
+                    AND NOT EXISTS (
+                        SELECT 1 FROM pg_auth_members m
+                        WHERE m.member = r.oid OR m.roleid = r.oid
+                    )
+                FROM pg_roles r
+                WHERE r.rolname = 'academy_lab_worker'"""
+            )
+        )
+        if not safe_posture:
+            raise RuntimeError(
+                "academy_lab_worker role has unsafe attributes or role memberships"
+            )
+        owns = db.scalar(
+            text(
+                """SELECT EXISTS (
+                    SELECT 1 FROM pg_database
+                    WHERE datname = current_database()
+                      AND pg_get_userbyid(datdba) = 'academy_lab_worker'
+                ) OR EXISTS (
+                    SELECT 1 FROM pg_namespace
+                    WHERE pg_get_userbyid(nspowner) = 'academy_lab_worker'
+                      AND nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND nspname NOT LIKE 'pg_toast%'
+                ) OR EXISTS (
+                    SELECT 1
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE pg_get_userbyid(c.relowner) = 'academy_lab_worker'
+                      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND n.nspname NOT LIKE 'pg_toast%'
+                      AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+                )"""
+            )
+        )
+        if owns:
+            raise RuntimeError("academy_lab_worker must not own the database, schema, or application relations")
         yield db
     finally:
         db.close()
@@ -142,7 +182,7 @@ def sweep_orphan_consoles(db: Session) -> int:
 
     A console is an orphan when its instance id (parsed from the ttyd ``-b`` base
     path) has no ``provisioning``/``resetting``/``active`` row. Cross-tenant, so it needs the
-    ``app_admin`` session :func:`admin_session` yields — a tenant-scoped session
+    offline session :func:`admin_session` yields — a tenant-scoped session
     would see another tenant's live console as an orphan and kill it.
     """
     running = console_pids()
