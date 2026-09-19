@@ -348,3 +348,69 @@ def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent
     assert instance.status == "active"
     assert instance.error is None
     admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
+    admin_session, tenant_a, monkeypatch
+):
+    """The status/open-op pre-check narrows the race, it does not close it.
+
+    A concurrent enqueue can still land in the gap between
+    ``fresh_open_instance_ids``'s query and this exact instance's ``enqueue()``
+    call further down the same loop iteration — the pre-check has already
+    passed by then. The only correctness guarantee is ``enqueue()``'s own
+    atomic return value (backed by the database's partial unique index):
+    if it hands back an operation of a different kind than requested, a
+    genuinely concurrent operation won, and this pass must not claim its own
+    destroy was enqueued.
+
+    The race is reproduced faithfully — through the real ``on_conflict_do_
+    nothing`` + re-select path in ``lab_operations.enqueue``, not a mock —
+    by wrapping ``lab_operations.enqueue`` so that its first invocation
+    inserts a genuinely competing ``"deploy"`` operation for this instance
+    immediately before letting the real, intended ``"destroy"`` enqueue
+    call proceed and lose that race.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-destroy-enqueue",
+        seed={},
+        status="reaped",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.return_value = {instance.instance_name: "/labs/race.clab.yml"}
+
+    real_enqueue = lab_operations.enqueue
+    calls = {"n": 0}
+
+    def _enqueue_with_late_concurrent_winner(db, *, instance, kind, requested_by):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A real, concurrent user-initiated reset's enqueue landing
+            # after reconcile_runtime's fresh_open_instance_ids query
+            # already ran (and found nothing) for this instance, but
+            # before reconcile_runtime's own enqueue() call for it below.
+            real_enqueue(db, instance=instance, kind="deploy", requested_by=p.id)
+        return real_enqueue(db, instance=instance, kind=kind, requested_by=requested_by)
+
+    monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_late_concurrent_winner)
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    # The concurrent deploy is the only operation that actually exists — no
+    # destroy was ALSO created, and none of this pass's destroy-enqueued
+    # fields were written despite losing the race.
+    ops = admin_session.query(LabOperation).filter_by(instance_id=instance.id).all()
+    assert [op.kind for op in ops] == ["deploy"]
+    assert instance.status == "reaped"
+    assert instance.error is None
+    admin_session.rollback()

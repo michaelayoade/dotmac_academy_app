@@ -304,24 +304,40 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
     queued = 0
     for instance in db_only_repairs:
         # Re-check this exact instance's current state immediately before
-        # mutating it — Phase 2 only proved it looked eligible at snapshot
+        # acting on it — Phase 2 only proved it looked eligible at snapshot
         # time. If a concurrent operation now has it live or already claimed,
         # something else is handling it and this pass must not interfere.
+        # This is a cheap optimization to skip the obvious case, NOT the
+        # correctness guarantee: a concurrent enqueue can still land after
+        # this check and before the enqueue() call below, so instance fields
+        # are only mutated once enqueue()'s own return value (the one
+        # atomic, race-safe primitive here, backed by the database's partial
+        # unique index) confirms the operation actually created is the one
+        # this pass intended — never on the assumption that it was.
         db.refresh(instance)
         if (
             instance.status in ("provisioning", "active", "resetting")
             or instance.id in fresh_open_instance_ids
         ):
             continue
+        op = lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
+        if op.kind != "destroy":
+            # Lost the race to a genuinely concurrent operation (e.g. a user
+            # reset) that landed between the check above and this call —
+            # enqueue() returned THAT operation instead of creating ours.
+            # Nothing was enqueued on this pass's behalf, so nothing about
+            # this instance may be claimed as having happened.
+            continue
         instance.status = "active"
         instance.error = "runtime existed for a non-live database row; destroy enqueued"
-        lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
         queued += 1
 
     for instance in missing_runtime:
         # Same re-validation, mirrored: a concurrent redeploy since Phase 2
         # would have left the instance live again and/or claimed by an open
         # operation, and must not be paved over with a stale destroy/deploy.
+        # Same caveat as above: this pre-check is an optimization only, not
+        # the correctness guarantee for the enqueue() branch below it.
         db.refresh(instance)
         if (
             instance.status not in ("provisioning", "active", "resetting")
@@ -332,13 +348,19 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             # A prior failure was conservatively capacity-counted because
             # runtime absence was unknown. Inventory has now proved absence,
             # so expose a retryable error without starting a fresh automatic
-            # attempt loop or retaining a phantom capacity reservation.
+            # attempt loop or retaining a phantom capacity reservation. This
+            # branch never calls enqueue(), so there is no race to close here.
             instance.status = "error"
             instance.error = f"{instance.error}; containerlab runtime is absent"
-        else:
-            instance.error = "database row was live but no containerlab runtime was found"
-            lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
-            queued += 1
+            continue
+        op = lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
+        if op.kind != "deploy":
+            # Same race as the destroy branch above: a genuinely concurrent
+            # operation won, so this pass enqueued nothing and must not say
+            # otherwise.
+            continue
+        instance.error = "database row was live but no containerlab runtime was found"
+        queued += 1
 
     db.flush()
     return queued, destroyed
