@@ -12,7 +12,7 @@ import os
 import socket
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, func, select, update
@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.services import lab_lifecycle
+from app.services.exceptions import ConflictError
+from app.services.host_lock import HostLockUnavailable
 from app.services.labengine.interface import LabEngine, WrongLabHostError
 from app.services.settings_store import effective
 
@@ -43,25 +45,18 @@ def worker_identity() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{_BOOT_TOKEN}"
 
 
-def enqueue(
-    db: Session,
-    *,
-    instance: LabInstance,
-    kind: str,
-    requested_by: UUID | None,
-) -> LabOperation:
-    """Insert one open intent per instance, returning the existing one on races.
+def _insert_open_operation_stmt(
+    *, instance: LabInstance, kind: str, requested_by: UUID | None
+) -> Any:
+    """Build one insert-or-skip statement for the open-per-instance constraint.
 
     The explicit value list is security-sensitive: it is exactly the five
     columns granted to ``app_user`` by migration 0055.
     """
-    if kind not in KINDS:
-        raise ValueError(f"unsupported lab operation kind {kind!r}")
-    op_id = uuid4()
-    stmt = (
+    return (
         insert(LabOperation)
         .values(
-            id=op_id,
+            id=uuid4(),
             tenant_id=instance.tenant_id,
             instance_id=instance.id,
             kind=kind,
@@ -73,14 +68,64 @@ def enqueue(
         )
         .returning(LabOperation.id)
     )
-    inserted_id = db.scalar(stmt)
-    if inserted_id is not None:
-        return db.scalars(select(LabOperation).where(LabOperation.id == inserted_id)).one()
+
+
+def _select_open_operation(db: Session, instance: LabInstance) -> LabOperation | None:
+    """Return the current open (queued/claimed) operation for ``instance``, if any.
+
+    Kept as its own call so a conflicting insert's re-check can observe the
+    conflicting row settling out from under it between the insert and the
+    re-select (see :func:`enqueue`).
+    """
     return db.scalars(
         select(LabOperation)
         .where(LabOperation.instance_id == instance.id)
         .where(LabOperation.state.in_(OPEN_STATES))
-    ).one()
+    ).first()
+
+
+def enqueue(
+    db: Session,
+    *,
+    instance: LabInstance,
+    kind: str,
+    requested_by: UUID | None,
+) -> LabOperation:
+    """Insert one open intent per instance, returning the existing one on races.
+
+    Under READ COMMITTED, the conflicting operation can settle (leave
+    ``OPEN_STATES``) in the gap between our insert's conflict and the re-select
+    that follows it. When that happens the re-select legitimately finds
+    nothing — retry the whole insert once, since the conflict should now be
+    gone. If the retried insert conflicts again and the re-select once more
+    finds nothing (the new conflicting row also settled in that same narrow
+    window), give up with a clean, callable-facing error rather than raising
+    ``NoResultFound``.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"unsupported lab operation kind {kind!r}")
+    inserted_id = db.scalar(
+        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+    )
+    if inserted_id is not None:
+        return db.scalars(select(LabOperation).where(LabOperation.id == inserted_id)).one()
+    existing = _select_open_operation(db, instance)
+    if existing is not None:
+        return existing
+    # The conflicting row settled between our insert-conflict and the
+    # re-select above. Retry the complete insert exactly once.
+    retried_id = db.scalar(
+        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+    )
+    if retried_id is not None:
+        return db.scalars(select(LabOperation).where(LabOperation.id == retried_id)).one()
+    existing_after_retry = _select_open_operation(db, instance)
+    if existing_after_retry is not None:
+        return existing_after_retry
+    raise ConflictError(
+        f"could not enqueue {kind} operation for lab instance {instance.id}: "
+        "a conflicting operation resolved during the enqueue retry"
+    )
 
 
 def claim_next(db: Session, *, claimed_by: str) -> LabOperation | None:
@@ -175,6 +220,77 @@ def _requeue_for_capacity(db: Session, op: LabOperation, instance: LabInstance) 
     db.flush()
 
 
+def _requeue_after_host_lock(
+    db: Session,
+    op: LabOperation,
+    instance: LabInstance,
+    *,
+    status: str,
+    error: str | None,
+) -> None:
+    """Return a claim to the queue after transient host-lock contention.
+
+    Unlike :func:`_requeue_for_capacity` (which always projects a fresh
+    admission attempt as ``queued``), host-lock contention can interrupt any
+    operation kind mid-flight, so the instance's pre-execution status/error is
+    restored verbatim instead of being forced to a specific value.
+    """
+    instance.status = status
+    instance.error = error
+    op.state = "queued"
+    op.claimed_by = None
+    op.claimed_at = None
+    op.heartbeat_at = None
+    op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
+    op.last_error = None
+    op.attempts = max(op.attempts - 1, 0)
+    db.flush()
+
+
+def _automatic_destroy_escalation_message(
+    db: Session, *, instance_id: UUID, current_operation_id: UUID
+) -> str | None:
+    """Return an escalation message once cumulative automatic destroy failures
+    for ``instance_id`` reach the destroy attempt ceiling, else ``None``.
+
+    Counts only ``failed``, ``kind="destroy"``, ``requested_by IS NULL``
+    operations (automatic reaper-triggered destroys — user-initiated destroys
+    pass a real person id) for this instance, including the current failure.
+    Only failures after the instance's most recent *successful* ``deploy``
+    operation count, so a successful manual redeploy starts a fresh window.
+    The scan is bounded at the threshold rather than unbounded history.
+    """
+    threshold = MAX_ATTEMPTS_BY_KIND["destroy"]
+    last_deploy_success_at = db.scalar(
+        select(func.max(LabOperation.finished_at))
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "deploy")
+        .where(LabOperation.state == "succeeded")
+    )
+    prior_failure_query = (
+        select(LabOperation.id)
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "destroy")
+        .where(LabOperation.state == "failed")
+        .where(LabOperation.requested_by.is_(None))
+        .where(LabOperation.id != current_operation_id)
+    )
+    if last_deploy_success_at is not None:
+        prior_failure_query = prior_failure_query.where(
+            LabOperation.finished_at > last_deploy_success_at
+        )
+    bounded = (
+        prior_failure_query.order_by(LabOperation.finished_at.desc())
+        .limit(threshold)
+        .subquery()
+    )
+    prior_failures = int(db.scalar(select(func.count()).select_from(bounded)) or 0)
+    failure_count = min(prior_failures + 1, threshold)
+    if failure_count < threshold:
+        return None
+    return f"automatic destroy failed {failure_count} times; manual intervention required"
+
+
 def _capacity_available(db: Session, instance: LabInstance) -> bool:
     """Serialize admission and evaluate the effective, global capacity limit."""
     db.execute(select(func.pg_advisory_xact_lock(_CAPACITY_LOCK_KEY)))
@@ -233,7 +349,11 @@ def _run_deploy(
         after_destroy()
     lab_lifecycle.stop_consoles(instance)
     result = lab_lifecycle.provision(db, instance, engine, template)
-    if result.status != "active":
+    # ``provision`` may conservatively leave a failed deploy's status as
+    # "active" (capacity-counted, unproven-absent runtime) rather than
+    # "error" — its cleared-on-success ``error`` field is the authoritative
+    # failure signal, not ``status`` alone.
+    if result.status != "active" or result.error is not None:
         raise RuntimeError(result.error or "lab deployment failed")
 
 
@@ -268,6 +388,7 @@ def run_claimed(
         return "failed"
     operation_kind = op.kind
     operation_instance_id = op.instance_id
+    operation_requested_by = op.requested_by
     initial_instance_status = instance.status
     initial_instance_error = instance.error
 
@@ -362,6 +483,31 @@ def run_claimed(
             return "stale"
         db.commit()
         return "failed"
+    except HostLockUnavailable:
+        # Another process holds the host containerlab lock. This is transient
+        # host contention, not a workload failure or a fencing loss: restore
+        # the instance to its pre-execution state, refund the attempt charged
+        # by claim_next, and requeue the same row for a prompt retry.
+        db.rollback()
+        unchanged_instance = db.get(LabInstance, operation_instance_id)
+        refreshed_op = db.get(LabOperation, operation_id)
+        if (
+            unchanged_instance is None
+            or refreshed_op is None
+            or refreshed_op.state != "claimed"
+            or refreshed_op.claimed_by != claimed_by
+        ):
+            db.rollback()
+            return "stale"
+        _requeue_after_host_lock(
+            db,
+            refreshed_op,
+            unchanged_instance,
+            status=initial_instance_status,
+            error=initial_instance_error,
+        )
+        db.commit()
+        return "deferred"
     except Exception as exc:
         deploy_failure_status: str | None = None
         if operation_kind == "deploy":
@@ -379,6 +525,20 @@ def run_claimed(
             if failed_instance is not None:
                 failed_instance.status = deploy_failure_status
                 failed_instance.error = str(exc)
+        elif operation_kind == "destroy" and operation_requested_by is None:
+            # Automatic (reaper-triggered) destroys escalate after enough
+            # cumulative failures instead of retrying forever; user-initiated
+            # destroys (a real requested_by) are never subject to this check.
+            escalation_message = _automatic_destroy_escalation_message(
+                db,
+                instance_id=operation_instance_id,
+                current_operation_id=operation_id,
+            )
+            if escalation_message is not None:
+                escalated_instance = db.get(LabInstance, operation_instance_id)
+                if escalated_instance is not None:
+                    escalated_instance.status = "error"
+                    escalated_instance.error = escalation_message
         if not _settle(
             db,
             operation_id=operation_id,
