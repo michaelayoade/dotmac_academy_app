@@ -42,14 +42,18 @@ def upgrade() -> None:
     # migration while the ADD already durably exists — a rerun would then
     # hard-fail on a duplicate constraint. The ADD is guarded with an
     # existence check so a rerun is a no-op instead of a manual-recovery
-    # incident. VALIDATE and the GRANTs below are NOT guarded: Postgres
-    # already makes re-validating an already-valid constraint and re-granting
-    # an already-held privilege no-ops on their own.
+    # incident. The guard checks ``conrelid`` alongside ``conname`` because
+    # Postgres constraint names are only unique per-table, not globally — a
+    # same-named constraint on an unrelated table would otherwise make this
+    # guard wrongly skip the ADD here. VALIDATE and the GRANTs below are NOT
+    # guarded: Postgres already makes re-validating an already-valid
+    # constraint and re-granting an already-held privilege no-ops on their
+    # own.
     with op.get_context().autocommit_block():
         op.execute(
             "DO $$ BEGIN "
             "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
-            "'ck_lab_operations_kind') THEN "
+            "'ck_lab_operations_kind' AND conrelid = 'lab_operations'::regclass) THEN "
             "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_kind "
             "CHECK (kind IN ('deploy', 'destroy', 'check')) NOT VALID; "
             "END IF; END $$;"
@@ -60,7 +64,7 @@ def upgrade() -> None:
         op.execute(
             "DO $$ BEGIN "
             "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
-            "'ck_lab_operations_state') THEN "
+            "'ck_lab_operations_state' AND conrelid = 'lab_operations'::regclass) THEN "
             "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_state "
             "CHECK (state IN ('queued', 'claimed', 'succeeded', 'failed', 'cancelled')) "
             "NOT VALID; "
