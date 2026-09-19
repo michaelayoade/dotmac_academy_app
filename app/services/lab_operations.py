@@ -252,14 +252,27 @@ def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
 
 
 def _automatic_destroy_escalation_message(
-    db: Session, *, instance_id: UUID, current_operation_id: UUID
+    db: Session,
+    *,
+    instance_id: UUID,
+    current_operation_id: UUID,
+    current_operation_attempts: int,
 ) -> str | None:
-    """Return an escalation message once cumulative automatic destroy failures
-    for ``instance_id`` reach the destroy attempt ceiling, else ``None``.
+    """Return an escalation message once cumulative automatic destroy
+    ATTEMPTS for ``instance_id`` reach the destroy attempt ceiling, else
+    ``None``.
 
-    Counts only ``failed``, ``kind="destroy"``, ``requested_by IS NULL``
-    operations (automatic reaper-triggered destroys — user-initiated destroys
-    pass a real person id) for this instance, including the current failure.
+    Sums ``attempts`` (not row count) across ``failed``, ``kind="destroy"``,
+    ``requested_by IS NULL`` operations (automatic reaper-triggered destroys
+    — user-initiated destroys pass a real person id) for this instance, plus
+    the current failure's own ``attempts``. Summing attempts rather than
+    counting rows matters because a single operation that hangs and burns its
+    full attempt budget via lease-expiry (``reconcile_stuck`` reclaiming and
+    re-attempting the same row) already represents up to
+    ``MAX_ATTEMPTS_BY_KIND["destroy"]`` real attempts on its own — it must
+    escalate at least as fast as that many separate single-attempt failures
+    would, not need several more rows on top of it.
+
     Operator-placement refusals (``WrongLabHostError``, marked with
     ``_OPERATOR_REFUSAL_LAST_ERROR_PREFIX`` at settle time) are excluded: a
     misconfigured host role is not a genuine destroy execution failure. Rows
@@ -270,7 +283,10 @@ def _automatic_destroy_escalation_message(
     no unmarked wrong-host refusal able to count toward the threshold. Only
     failures after the instance's most recent *successful* ``deploy``
     operation count, so a successful manual redeploy starts a fresh window.
-    The scan is bounded at the threshold rather than unbounded history.
+    The scan is bounded at the threshold rather than unbounded history: no
+    single row can carry more attempts than the ceiling itself, so the most
+    recent ``threshold`` failed rows are always enough to reach it if it can
+    be reached at all.
     """
     threshold = MAX_ATTEMPTS_BY_KIND["destroy"]
     last_deploy_success_at = db.scalar(
@@ -280,7 +296,7 @@ def _automatic_destroy_escalation_message(
         .where(LabOperation.state == "succeeded")
     )
     prior_failure_query = (
-        select(LabOperation.id)
+        select(LabOperation.attempts)
         .where(LabOperation.instance_id == instance_id)
         .where(LabOperation.kind == "destroy")
         .where(LabOperation.state == "failed")
@@ -298,7 +314,7 @@ def _automatic_destroy_escalation_message(
             or_(
                 LabOperation.last_error.is_(None),
                 ~LabOperation.last_error.contains(
-                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING
+                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True
                 ),
             )
         )
@@ -312,11 +328,16 @@ def _automatic_destroy_escalation_message(
         .limit(threshold)
         .subquery()
     )
-    prior_failures = int(db.scalar(select(func.count()).select_from(bounded)) or 0)
-    failure_count = min(prior_failures + 1, threshold)
-    if failure_count < threshold:
+    prior_attempts = int(db.scalar(select(func.sum(bounded.c.attempts))) or 0)
+    cumulative_attempts = min(
+        prior_attempts + current_operation_attempts, threshold
+    )
+    if cumulative_attempts < threshold:
         return None
-    return f"automatic destroy failed {failure_count} times; manual intervention required"
+    return (
+        f"automatic destroy failed {cumulative_attempts} times; "
+        "manual intervention required"
+    )
 
 
 def _capacity_available(db: Session, instance: LabInstance) -> bool:
@@ -417,6 +438,7 @@ def run_claimed(
     operation_kind = op.kind
     operation_instance_id = op.instance_id
     operation_requested_by = op.requested_by
+    operation_attempts = op.attempts
     initial_instance_status = instance.status
     initial_instance_error = instance.error
 
@@ -569,6 +591,7 @@ def run_claimed(
                 db,
                 instance_id=operation_instance_id,
                 current_operation_id=operation_id,
+                current_operation_attempts=operation_attempts,
             )
             if escalation_message is not None:
                 escalated_instance = db.get(LabInstance, operation_instance_id)
@@ -641,7 +664,10 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                 # hanging engine lets the idle reaper re-enqueue destroys for
                 # this instance forever.
                 escalation_message = _automatic_destroy_escalation_message(
-                    db, instance_id=op.instance_id, current_operation_id=op.id
+                    db,
+                    instance_id=op.instance_id,
+                    current_operation_id=op.id,
+                    current_operation_attempts=op.attempts,
                 )
                 if escalation_message is not None:
                     instance.status = "error"

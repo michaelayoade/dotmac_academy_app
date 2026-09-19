@@ -1055,6 +1055,38 @@ def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
     )
 
 
+def test_single_stuck_destroy_row_escalates_via_reconcile_stuck_alone(
+    admin_session, tenant_a
+):
+    """Escalation sums attempts, not distinct failed rows: a single operation
+    that hangs and burns its full attempt budget via repeated lease-expiry/
+    reclaim cycles on the SAME row already represents a full attempt budget
+    and must escalate on its own, with no other prior failed rows needed."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="single-row-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    stuck_operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    admin_session.refresh(stuck_operation)
+    assert stuck_operation.state == "failed"
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+
+
 def test_host_lock_during_redeploy_provision_does_not_falsely_restore_active(
     admin_session, tenant_a, monkeypatch
 ):
