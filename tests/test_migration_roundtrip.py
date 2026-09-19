@@ -21,7 +21,11 @@ Nothing in CI exercises either property today. This module proves both:
   (and restored ``app_user``/``platform_api``'s prior grants on
   ``lab_instances``) — a full-cycle-only comparison can't catch a downgrade
   that fails to revoke, since the following upgrade would just silently
-  re-grant everything and paper over it.
+  re-grant everything and paper over it. Grant checks go down to the exact
+  *column* set for ``app_user``'s INSERT on ``lab_operations``/
+  ``lab_instances``, not just table-level ``has_table_privilege`` — that
+  column list, not "no UPDATE", is the actual boundary stopping ``app_user``
+  from forging worker-owned columns at row creation.
 * ``test_0056_interrupted_upgrade_is_resumable`` (D2) — a simulated crash
   between the first ``ADD CONSTRAINT`` and the first ``VALIDATE CONSTRAINT``
   leaves a partial, ``alembic_version``-unbumped state that a plain,
@@ -75,6 +79,17 @@ WORKER_ONLY_SELECT_TABLES = ("lab_templates", "platform_settings", "activities",
 WORKER_SELECT_INSERT_TABLES = ("submissions", "scores", "learning_events", "notifications", "email_outbox")
 LAB_INSTANCES_WORKER_PRIVILEGES = ("SELECT", "UPDATE")
 LAB_INSTANCES_APP_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
+
+# has_table_privilege('app_user', table, 'INSERT') is True as soon as ANY
+# column is granted — it cannot distinguish "narrowed to the request columns"
+# from "app_user can forge every worker-owned column at row creation". These
+# are the exact column sets 0055/0056 establish for that INSERT grant; see
+# 0055_lab_operations.py's module docstring for why this exact column list is
+# the actual security boundary, not "no UPDATE".
+LAB_OPERATIONS_APP_USER_INSERT_COLUMNS = frozenset({"id", "tenant_id", "instance_id", "kind", "requested_by"})
+LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD = frozenset(
+    {"id", "tenant_id", "activity_id", "person_id", "instance_name", "seed"}
+)
 
 
 def _migration_url() -> str:
@@ -149,12 +164,53 @@ def _grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
     return {(row[0], row[1], row[2]): bool(row[3]) for row in rows}
 
 
+def _column_insert_grant(conn, table: str, role: str = "app_user") -> frozenset[str]:
+    """Exact columns ``role`` may INSERT on ``table`` — ``has_table_privilege``
+    can only see that *some* column is grantable, not which ones, and the
+    whole point of 0055's column-scoped INSERT grant is which columns."""
+    rows = conn.execute(
+        text(
+            """SELECT column_name
+               FROM information_schema.column_privileges
+               WHERE grantee = :role
+                 AND table_schema = 'public'
+                 AND table_name = :table
+                 AND privilege_type = 'INSERT'"""
+        ),
+        {"role": role, "table": table},
+    ).all()
+    return frozenset(row[0] for row in rows)
+
+
+def _all_columns(conn, table: str) -> frozenset[str]:
+    rows = conn.execute(
+        text(
+            """SELECT column_name
+               FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = :table"""
+        ),
+        {"table": table},
+    ).all()
+    return frozenset(row[0] for row in rows)
+
+
+def _column_insert_snapshot(conn) -> dict[str, frozenset[str]]:
+    return {
+        "lab_operations": _column_insert_grant(conn, "lab_operations"),
+        "lab_instances": _column_insert_grant(conn, "lab_instances"),
+    }
+
+
 def _current_version(conn) -> str | None:
     return conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
 
 
 def _full_snapshot(conn) -> dict[str, object]:
-    return {"constraints": _constraint_snapshot(conn), "grants": _grant_snapshot(conn)}
+    return {
+        "constraints": _constraint_snapshot(conn),
+        "grants": _grant_snapshot(conn),
+        "column_insert": _column_insert_snapshot(conn),
+    }
 
 
 def _assert_at_0055_grants(conn) -> None:
@@ -185,6 +241,22 @@ def _assert_at_0055_grants(conn) -> None:
                 grants[(role, "lab_instances", priv)] is True
             ), f"downgrade failed to restore {role}'s {priv} on lab_instances at 0055"
 
+    # 0055 alone establishes lab_operations' column-scoped INSERT grant, and
+    # 0056 never touches it, so it must hold at 0055 exactly as at head.
+    assert _column_insert_grant(conn, "lab_operations") == LAB_OPERATIONS_APP_USER_INSERT_COLUMNS, (
+        "app_user's column-scoped INSERT grant on lab_operations at 0055 does "
+        "not match the exact column set 0055 establishes"
+    )
+    # 0056's downgrade explicitly restores an unrestricted, table-wide INSERT
+    # on lab_instances ("GRANT SELECT, INSERT, UPDATE, DELETE ON lab_instances
+    # TO app_user, platform_api") — not the column-scoped grant 0056's upgrade
+    # narrows it to. At 0055 that must mean every current column, not 0056's
+    # 6-column subset.
+    assert _column_insert_grant(conn, "lab_instances") == _all_columns(conn, "lab_instances"), (
+        "downgrade should leave app_user with an unrestricted, table-wide "
+        "INSERT on lab_instances, not a column-restricted one"
+    )
+
 
 def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     """Two downgrade/upgrade cycles across 0056 reproduce the exact starting
@@ -204,6 +276,10 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
             _current_version(conn) == TARGET_REVISION
         ), "expected the CI database to already be migrated to head before this test runs"
         baseline = _full_snapshot(conn)
+        assert baseline["column_insert"] == {
+            "lab_operations": LAB_OPERATIONS_APP_USER_INSERT_COLUMNS,
+            "lab_instances": LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD,
+        }, "app_user's column-scoped INSERT grants at head don't match 0055/0056's exact column lists"
 
     with _migration_env(url):
         try:
@@ -260,6 +336,10 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
         # A same-run reference: the state a normal, uninterrupted migration
         # produces, captured before this test disturbs anything.
         reference = _full_snapshot(conn)
+        assert reference["column_insert"] == {
+            "lab_operations": LAB_OPERATIONS_APP_USER_INSERT_COLUMNS,
+            "lab_instances": LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD,
+        }, "app_user's column-scoped INSERT grants at head don't match 0055/0056's exact column lists"
 
     script = ScriptDirectory.from_config(cfg)
     revision_script = script.get_revision(TARGET_REVISION)
