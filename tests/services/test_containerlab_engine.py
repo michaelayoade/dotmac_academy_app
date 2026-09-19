@@ -122,14 +122,39 @@ def test_destroy_treats_an_absent_topology_as_already_destroyed(tmp_path):
     assert not (tmp_path / "missing").exists()
 
 
-def test_destroy_uses_the_inspected_path_when_the_expected_topology_is_missing(tmp_path):
+def test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_topology(tmp_path):
+    """An exact-name collision must not get destroyed at an unverified path.
+
+    ``inspect`` reporting a different path for this exact instance_name would
+    be anomalous for a lab this engine actually deployed (it always writes to
+    ``self._topo_path(instance_name)``) — but nothing ruled that out before,
+    so a same-named lab from elsewhere would have been destroyed wherever
+    ``inspect`` said it lived. It must be refused instead.
+    """
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.run") as run:
+        run.return_value = MagicMock(
+            stdout=(
+                '[{"lab_name":"missing","absLabPath":"/srv/labs/missing.clab.yml",'
+                '"state":"running"}]'
+            ),
+            stderr="",
+            returncode=0,
+        )
+        with pytest.raises(RuntimeError, match="destroy refused"):
+            eng.destroy("missing")
+    run.assert_called_once()  # only the inspect call; never proceeds to destroy
+
+
+def test_destroy_uses_the_inspected_path_when_it_matches_the_expected_topology(tmp_path):
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    expected_path = str(tmp_path / "missing" / "topo.clab.yml")
     with patch("subprocess.run") as run:
         run.side_effect = [
             MagicMock(
                 stdout=(
-                    '[{"lab_name":"missing","absLabPath":"/srv/labs/missing.clab.yml",'
-                    '"state":"running"}]'
+                    f'[{{"lab_name":"missing","absLabPath":"{expected_path}",'
+                    f'"state":"running"}}]'
                 ),
                 stderr="",
                 returncode=0,
@@ -144,7 +169,7 @@ def test_destroy_uses_the_inspected_path_when_the_expected_topology_is_missing(t
         "containerlab",
         "destroy",
         "-t",
-        "/srv/labs/missing.clab.yml",
+        expected_path,
         "--cleanup",
     ]
     assert not (tmp_path / "missing").exists()

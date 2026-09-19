@@ -204,15 +204,20 @@ class ContainerlabEngine(LabEngine):
             # instance_name (by row identity) as the one to destroy, so an
             # ownership judgement about the path is not needed here — only
             # reconcile_runtime's "which orphans are ours" decision needs the
-            # ownership-filtered inventory().
+            # ownership-filtered inventory(). But an exact-name collision is
+            # still (however unlikely, given the name embeds tenant/person/
+            # activity UUID fragments) not ruled out by name alone, so the
+            # discovered path must match the one this engine would itself
+            # have written before it's trusted — anything else is refused
+            # rather than silently destroyed at an unverified location.
             discovered_path = self._inspect_lab_paths().get(instance_name)
             if discovered_path is None:
                 return
-            if not discovered_path:
+            if discovered_path != path:
                 raise RuntimeError(
-                    f"destroy refused: deployed lab {instance_name!r} has no discoverable topology path"
+                    f"destroy refused: deployed lab {instance_name!r} was inspected at "
+                    f"{discovered_path!r}, not the expected {path!r}"
                 )
-            path = discovered_path
         r = subprocess.run(
             [*_CLAB, "destroy", "-t", path, "--cleanup"],
             capture_output=True,
