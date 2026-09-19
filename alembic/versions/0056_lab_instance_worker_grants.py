@@ -35,18 +35,36 @@ def upgrade() -> None:
     # commits the ambient transaction, runs in autocommit mode, and resumes
     # afterward — this is the one place in this repo that needs it; don't
     # "simplify" it back to ``create_check_constraint`` or a plain ``execute``.
+    # Each autocommit_block durably commits before alembic records this
+    # revision as applied (that only happens at the very end of upgrade()), so
+    # a later statement failing here (e.g. a GRANT on a table absent in some
+    # environment, or VALIDATE catching a real data violation) would abort the
+    # migration while the ADD already durably exists — a rerun would then
+    # hard-fail on a duplicate constraint. The ADD is guarded with an
+    # existence check so a rerun is a no-op instead of a manual-recovery
+    # incident. VALIDATE and the GRANTs below are NOT guarded: Postgres
+    # already makes re-validating an already-valid constraint and re-granting
+    # an already-held privilege no-ops on their own.
     with op.get_context().autocommit_block():
         op.execute(
+            "DO $$ BEGIN "
+            "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
+            "'ck_lab_operations_kind') THEN "
             "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_kind "
-            "CHECK (kind IN ('deploy', 'destroy', 'check')) NOT VALID;"
+            "CHECK (kind IN ('deploy', 'destroy', 'check')) NOT VALID; "
+            "END IF; END $$;"
         )
     with op.get_context().autocommit_block():
         op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_kind;")
     with op.get_context().autocommit_block():
         op.execute(
+            "DO $$ BEGIN "
+            "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
+            "'ck_lab_operations_state') THEN "
             "ALTER TABLE lab_operations ADD CONSTRAINT ck_lab_operations_state "
             "CHECK (state IN ('queued', 'claimed', 'succeeded', 'failed', 'cancelled')) "
-            "NOT VALID;"
+            "NOT VALID; "
+            "END IF; END $$;"
         )
     with op.get_context().autocommit_block():
         op.execute("ALTER TABLE lab_operations VALIDATE CONSTRAINT ck_lab_operations_state;")

@@ -13,9 +13,9 @@ import pytest
 from app.config import settings
 from app.models.assessment import Activity
 from app.models.course import Course
-from app.models.lab import LabInstance, LabTemplate
+from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
-from app.services import lab_jobs
+from app.services import lab_jobs, lab_operations
 from app.services.labengine.interface import LabHandle
 
 
@@ -44,13 +44,52 @@ def _seed(db, tid):
     return c, act, lt, p
 
 
+def test_worker_session_refuses_a_non_app_admin_dsn(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "lab_worker_database_url",
+        "postgresql+psycopg://postgres@db/academy",
+    )
+    with pytest.raises(RuntimeError, match="must authenticate as app_admin"):
+        with lab_jobs.lab_worker_session():
+            pytest.fail("must refuse before opening a session")
+
+
+def test_worker_session_refuses_app_admin_without_bypassrls(monkeypatch):
+    """A live app_admin role that has lost BYPASSRLS must fail loudly, not go quiet.
+
+    Regression coverage for the guard added alongside the ``current_user``
+    check: ``lab_operations`` has FORCE ROW LEVEL SECURITY, so an app_admin
+    connection without BYPASSRLS would otherwise silently see an empty queue
+    instead of raising. This mocks the DB round-trips so it never needs a live
+    Postgres connection — only the URL-username prefilter is real.
+    """
+    monkeypatch.setattr(
+        settings,
+        "lab_worker_database_url",
+        "postgresql+psycopg://app_admin@db/academy",
+    )
+    fake_session = MagicMock()
+    fake_session.scalar.side_effect = ["app_admin", False]
+    monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+
+    with pytest.raises(RuntimeError, match="does not have BYPASSRLS"):
+        with lab_jobs.lab_worker_session():
+            pytest.fail("must refuse before yielding a session")
+    assert fake_session.scalar.call_count == 2
+    fake_session.close.assert_called_once()
+
+
 def test_drain_once_provisions_pending(admin_session, tenant_a, monkeypatch):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     monkeypatch.setattr(settings, "max_concurrent_labs", 20)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-drain", seed={"o": 5},
-                       status="provisioning", consoles={})
+                       status="queued", consoles={})
     admin_session.add(inst)
+    admin_session.flush()
+    lab_operations.enqueue(admin_session, instance=inst, kind="deploy", requested_by=p.id)
     admin_session.commit()
 
     engine = MagicMock()
@@ -66,7 +105,7 @@ def test_drain_once_provisions_pending(admin_session, tenant_a, monkeypatch):
     engine.deploy.assert_called_once()
 
 
-def test_reap_idle_destroys_stale(admin_session, tenant_a):
+def test_reap_idle_enqueues_destroy_without_touching_engine(admin_session, tenant_a):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-reap", seed={"o": 5},
@@ -75,13 +114,14 @@ def test_reap_idle_destroys_stale(admin_session, tenant_a):
     admin_session.add(inst)
     admin_session.commit()
 
-    engine = MagicMock()
-    n = lab_jobs.reap_idle(admin_session, engine)
+    n = lab_jobs.request_idle_reaps(admin_session)
 
     assert n == 1
     admin_session.refresh(inst)
-    assert inst.status == "reaped"
-    engine.destroy.assert_called_once_with("dal-reap")
+    assert inst.status == "active"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=inst.id).one()
+    assert operation.kind == "destroy"
+    assert operation.state == "queued"
 
 
 def test_sweep_kills_consoles_whose_instance_is_not_live(admin_session, tenant_a, monkeypatch):
@@ -113,3 +153,99 @@ def test_sweep_is_a_no_op_when_no_consoles_are_running(admin_session, monkeypatc
     monkeypatch.setattr(lab_jobs, "kill_consoles",
                         lambda pids: pytest.fail("must not kill anything"))
     assert lab_jobs.sweep_orphan_consoles(admin_session) == 0
+
+
+def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
+    admin_session, tenant_a
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-runtime-leak",
+        seed={},
+        status="reaped",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {instance.instance_name: "/labs/leak.clab.yml"}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert instance.status == "active"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "destroy"
+    engine.destroy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_destroys_only_rowless_academy_labs(
+    admin_session, tenant_a
+):
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        "dal-rowless": "/labs/rowless.clab.yml",
+        "shared-infrastructure": "/labs/shared.clab.yml",
+    }
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 1)
+    engine.destroy.assert_called_once_with("dal-rowless")
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
+    admin_session, tenant_a
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-runtime-missing",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "deploy"
+    assert "no containerlab runtime" in instance.error
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
+    admin_session, tenant_a
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-runtime-confirmed-absent",
+        seed={},
+        status="active",
+        error="worker lease expired after 3 attempts",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 0)
+    assert instance.status == "error"
+    assert "runtime is absent" in instance.error
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .count()
+        == 0
+    )
+    admin_session.rollback()
