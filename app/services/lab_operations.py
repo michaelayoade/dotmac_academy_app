@@ -607,15 +607,31 @@ def run_claimed(
             deploy_failure_status = (
                 "active" if observed_status in ("active", "resetting") else "error"
             )
+            # Capture the presence observed just before rollback. A deploy
+            # that fails after a successful destroy but before engine.deploy()
+            # was ever invoked (e.g. topology preparation raises inside
+            # provision()) already proved absence via provision()'s
+            # pre-deploy-invocation failure path. Losing that signal here
+            # would strand a proven-absent runtime as permanently
+            # capacity-counted, since reconcile_runtime's repair branches
+            # both exclude status="error" rows. This can only ever be
+            # "absent" or "unknown" at this point: a successful deploy would
+            # not have raised, so "present" is not reachable here.
+            observed_presence = instance.__dict__.get("runtime_presence")
         db.rollback()
         if deploy_failure_status is not None:
             failed_instance = db.get(LabInstance, operation_instance_id)
             if failed_instance is not None:
                 failed_instance.status = deploy_failure_status
                 failed_instance.error = str(exc)
-                # A failed deploy cannot prove the runtime is absent, whatever
-                # the (possibly conservative) status projection above says.
-                failed_instance.runtime_presence = "unknown"
+                # Preserve a proven "absent" observed just before rollback;
+                # any other observed value (deploy was actually invoked and
+                # failed, or the failure happened before provision() ever set
+                # anything) stays conservatively "unknown" — a failed deploy
+                # alone cannot otherwise prove absence.
+                failed_instance.runtime_presence = (
+                    "absent" if observed_presence == "absent" else "unknown"
+                )
         elif operation_kind == "destroy":
             # A failed destroy (manual or automatic) cannot prove the runtime
             # is absent either — set this unconditionally, before the

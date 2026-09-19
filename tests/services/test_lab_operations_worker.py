@@ -935,6 +935,56 @@ def test_deploy_failure_detected_even_when_provision_leaves_status_active(
     assert "runtime creation began but deploy failed" in operation.last_error
 
 
+def test_deploy_failure_after_proven_destroy_preserves_absent_presence(
+    admin_session, tenant_a, monkeypatch
+):
+    """A pre-deploy-invocation failure inside provision() (topology prep)
+    that follows a successful destroy proves the runtime absent. The generic
+    failure handler in run_claimed must preserve that, not regress it to
+    "unknown" and permanently strand a capacity slot.
+    """
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="destroyed-then-preflight-fail", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    def _proven_absent_failure(db, inst, engine, template):
+        inst.status = "error"
+        inst.error = "bad topology template"
+        inst.runtime_presence = "absent"
+        db.flush()
+        return inst
+
+    monkeypatch.setattr(lab_operations.lab_lifecycle, "provision", _proven_absent_failure)
+
+    engine = _engine(instance.instance_name)  # destroy() has no side_effect, so it succeeds
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=engine,
+    )
+
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.runtime_presence == "absent"
+    engine.deploy.assert_not_called()
+
+    # And: the now-proven-absent instance must not still consume capacity —
+    # another tenant instance should be admissible even at a cap of 1.
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+    another, _ = _seed(admin_session, tenant_a.id, name="another", presence="absent")
+    assert lab_operations._capacity_available(admin_session, another) is True
+
+
 def test_wrong_host_refusals_do_not_contribute_to_destroy_escalation_count(
     admin_session, tenant_a, tmp_path
 ):
