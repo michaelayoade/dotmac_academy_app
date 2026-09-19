@@ -23,6 +23,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 @pytest.fixture(scope="session")
 def admin_engine():
+    """Migration/superuser connection (postgres in CI), not app_admin.
+
+    Bound to ``TEST_MIGRATION_DATABASE_URL`` (falling back to
+    ``TEST_DATABASE_URL``), which in CI authenticates as the ``postgres``
+    superuser used to run migrations — it is not RLS-bypassed via the
+    ``app_admin`` role. Tests that need real ``app_admin`` evidence (e.g. its
+    grants) must use the dedicated ``lab_worker_engine``/``lab_worker_session``
+    fixtures below instead.
+    """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
@@ -64,12 +73,58 @@ def _no_real_console_spawn(monkeypatch):
 
 @pytest.fixture
 def admin_session(admin_engine) -> Generator[Session, None, None]:
-    """Connection as app_admin — RLS bypassed. Used by fixtures to set up data."""
+    """Migration/superuser session used by fixtures to set up cross-tenant data.
+
+    Bound to ``admin_engine`` — see that fixture's docstring: this is the
+    migration/superuser connection, not an ``app_admin`` connection.
+    """
     SessionLocal = sessionmaker(bind=admin_engine, autocommit=False, autoflush=False)
     db = SessionLocal()
     try:
         yield db
         db.rollback()  # keep test DB clean — explicit commits required where needed
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="session")
+def lab_worker_engine():
+    """Real ``app_admin`` engine, bound exclusively to ``TEST_LAB_WORKER_DATABASE_URL``.
+
+    Skips cleanly when the env var is absent so local dev without a lab-worker
+    DSN configured is unaffected. Deliberately does NOT fall back to
+    ``TEST_MIGRATION_DATABASE_URL``/``TEST_DATABASE_URL`` like ``admin_engine``
+    does — this fixture's whole purpose is to guarantee the connection actually
+    authenticates as ``app_admin``, so a silent fallback to another role would
+    defeat it.
+    """
+    url = os.getenv("TEST_LAB_WORKER_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_LAB_WORKER_DATABASE_URL not set — app_admin privilege tests skipped")
+    engine = create_engine(url, future=True)
+    with engine.connect() as conn:
+        current_user = conn.execute(text("SELECT current_user")).scalar()
+        if current_user != "app_admin":
+            raise AssertionError(
+                f"TEST_LAB_WORKER_DATABASE_URL authenticated as {current_user!r}, not app_admin"
+            )
+        bypassrls = conn.execute(
+            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'app_admin'")
+        ).scalar()
+        if not bypassrls:
+            raise AssertionError("app_admin role does not have rolbypassrls = true")
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def lab_worker_session(lab_worker_engine) -> Generator[Session, None, None]:
+    """Real ``app_admin`` session for asserting the lab worker's live ACL matrix."""
+    SessionLocal = sessionmaker(bind=lab_worker_engine, autocommit=False, autoflush=False)
+    db = SessionLocal()
+    try:
+        yield db
+        db.rollback()
     finally:
         db.close()
 
