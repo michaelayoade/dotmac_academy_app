@@ -414,3 +414,57 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
     assert instance.status == "reaped"
     assert instance.error is None
     admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeared_during_phase_3(
+    admin_session, tenant_a
+):
+    """Phase 1's runtime snapshot can go stale exactly like Phase 2's database
+    snapshot did in earlier rounds — a concurrent deploy elsewhere can SETTLE
+    (not merely get enqueued; that race is covered by the previous test)
+    while Phase 3's destroy loop is still running, making an instance no
+    longer "missing" by the time Phase 4 needs to decide. Phase 4 must
+    re-verify against a fresh, second ``engine.inventory()`` call, not
+    Phase 1's now-stale one.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-fresh-inventory",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    # A concurrent worker's deploy for this instance has already SETTLED by
+    # the time Phase 4 runs (a terminal state, not an open one) — the
+    # instance is genuinely running again, not merely claimed.
+    settled = LabOperation(
+        tenant_id=tenant_a.id,
+        instance_id=instance.id,
+        kind="deploy",
+        state="succeeded",
+        requested_by=p.id,
+    )
+    admin_session.add(settled)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.side_effect = [
+        {},  # Phase 1: genuinely missing at snapshot time
+        {instance.instance_name: "/labs/settled.clab.yml"},  # Phase 4's fresh re-check
+    ]
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    assert engine.inventory.call_count == 2
+    ops = admin_session.query(LabOperation).filter_by(instance_id=instance.id).all()
+    assert [op.kind for op in ops] == ["deploy"]  # only the pre-existing settled one
+    assert instance.status == "active"
+    assert instance.error is None
+    admin_session.rollback()

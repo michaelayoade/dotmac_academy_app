@@ -156,7 +156,16 @@ class ContainerlabEngine(LabEngine):
         return instance_name in self._inventory_unlocked()
 
     def _deploy_unlocked(self, topology_text: str, instance_name: str) -> LabHandle:
-        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
+        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`.
+
+        The KVM fail-closed check lives here, not only in the public
+        ``deploy()`` wrapper, so every caller of this helper — including
+        ``reset()``, which calls it directly to avoid a nested lock
+        acquisition — gets it automatically rather than relying on each
+        caller to have remembered its own copy.
+        """
+        if _requires_kvm(topology_text) and not os.path.exists("/dev/kvm"):
+            raise RuntimeError("vr-* lab deployment requires /dev/kvm")
         path = self._topo_path(instance_name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -189,8 +198,8 @@ class ContainerlabEngine(LabEngine):
 
     def deploy(self, topology_text: str, instance_name: str) -> LabHandle:
         self._require_lab_host()
-        if _requires_kvm(topology_text) and not os.path.exists("/dev/kvm"):
-            raise RuntimeError("vr-* lab deployment requires /dev/kvm")
+        # The KVM check itself lives in _deploy_unlocked (see its docstring)
+        # so reset() gets it too without a second, driftable copy here.
         with host_lock(self.lock_label, directory=self.workdir):
             return self._deploy_unlocked(topology_text, instance_name)
 

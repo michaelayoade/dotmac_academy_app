@@ -224,27 +224,33 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
        independently acquiring/releasing the host lock). No database row is
        mutated in this phase, so if the host lock is contended partway
        through this loop, there is nothing to unwind.
-    4. Database projections/enqueues, only after every host operation this
-       pass needed has already completed. This phase cannot raise
-       ``HostLockUnavailable`` — it never touches the engine. Phase 3's
-       destroys each carry their own multi-minute timeout, so real time
-       passes between Phase 2's snapshot and Phase 4's mutations — long
-       enough for an unrelated, concurrent operation (e.g. a user-initiated
-       reset running via the normal worker path) to change an instance's
-       true state in the meantime. Phase 4 therefore re-validates each
-       candidate's CURRENT status and CURRENT open-operation membership
-       immediately before mutating it, rather than trusting the Phase 2
-       snapshot for anything beyond "this instance was structurally
-       interesting enough to look at again" — otherwise a freshly-succeeded
-       redeploy could be paved over with a destroy enqueued against stale
-       data.
+    4. One more locked, fresh ``engine.inventory()`` call (replacing Phase
+       1's snapshot for every decision below), followed by database
+       projections/enqueues, only after every host operation this pass
+       needed has already completed. Phase 3's destroys each carry their
+       own multi-minute timeout, so real time passes between Phase 1/2's
+       snapshots and Phase 4's mutations — long enough for an unrelated,
+       concurrent operation (e.g. a user-initiated reset running via the
+       normal worker path) to change an instance's true state, INCLUDING
+       its actual runtime existence, in the meantime. Phase 4 therefore
+       re-validates each candidate's CURRENT status, CURRENT open-operation
+       membership, AND CURRENT runtime presence immediately before mutating
+       it, rather than trusting either the Phase 1 or Phase 2 snapshot for
+       anything beyond "this instance was structurally interesting enough
+       to look at again" — otherwise a freshly-succeeded redeploy could be
+       paved over with a needless destroy+redeploy cycle enqueued against
+       stale data. (This function has now had four rounds of staleness
+       hardening across its database and runtime state; a further
+       staleness angle beyond this should be raised as a tracked decision
+       rather than another silent patch here.)
 
-    If ``engine.inventory()`` or a ``engine.destroy()`` call raises
-    ``HostLockUnavailable``, this function does not catch it: it propagates
-    to :func:`app.cli._lab_reconcile`, which rolls back this pass's
-    (nonexistent, by construction — phases 1-3 make no database writes) and
-    exits cleanly rather than raising, so the reconciler simply retries on
-    its own 1-minute timer.
+    If either ``engine.inventory()`` call or an ``engine.destroy()`` call
+    raises ``HostLockUnavailable``, this function does not catch it: it
+    propagates to :func:`app.cli._lab_reconcile`, which rolls back this
+    pass's (nonexistent, by construction — phases 1-3 make no database
+    writes, and Phase 4's own re-inventory call happens before any of its
+    mutations) and exits cleanly rather than raising, so the reconciler
+    simply retries on its own 1-minute timer.
     """
     # Phase 1 — locked inventory.
     runtime = engine.inventory()
@@ -288,6 +294,16 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         engine.destroy(name)
         destroyed += 1
 
+    # Phase 1's runtime snapshot is just as capable of going stale across
+    # Phase 3's (potentially long, per-orphan) destroy loop as Phase 2's
+    # database snapshot — a concurrent deploy elsewhere can SETTLE during
+    # that window, making an instance no longer "missing" (or a rowless
+    # orphan no longer present) by the time Phase 4 needs to decide. One
+    # fresh, locked re-inventory here — not one per candidate, since
+    # `containerlab inspect --all` is not cheap enough to run per instance —
+    # replaces Phase 1's snapshot for every Phase 4 eligibility check below.
+    fresh_runtime = engine.inventory()
+
     # Phase 4 — database projections/enqueues, after all required host
     # operations for this pass have completed. Re-fetch open-operation
     # membership fresh here rather than reusing Phase 2's — Phase 3's
@@ -318,6 +334,10 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         if (
             instance.status in ("provisioning", "active", "resetting")
             or instance.id in fresh_open_instance_ids
+            # Phase 1 said this name was running; if the fresh, post-Phase-3
+            # inventory no longer shows it, something else already destroyed
+            # it and there is nothing left here to enqueue a destroy for.
+            or instance.instance_name not in fresh_runtime
         ):
             continue
         op = lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
@@ -342,6 +362,12 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         if (
             instance.status not in ("provisioning", "active", "resetting")
             or instance.id in fresh_open_instance_ids
+            # Phase 1 said this instance's runtime was missing; if the
+            # fresh, post-Phase-3 inventory now shows it, a concurrent
+            # deploy elsewhere already settled and this is no longer
+            # missing — enqueueing a replay now would be a needless
+            # destroy+redeploy cycle on a lab that just came back up.
+            or instance.instance_name in fresh_runtime
         ):
             continue
         if instance.error is not None:
