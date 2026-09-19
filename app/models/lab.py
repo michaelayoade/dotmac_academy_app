@@ -58,8 +58,14 @@ class LabInstance(Base, TimestampMixin):
         UniqueConstraint("tenant_id", "id", name="uq_lab_instances_tenant_id_id"),
         # Global (not tenant-scoped) — containerlab's runtime namespace is
         # host-global, not tenant-scoped, so a tenant-scoped constraint would
-        # not be sufficient to prevent a runtime name collision.
-        UniqueConstraint("instance_name", name="uq_lab_instances_instance_name"),
+        # not be sufficient to prevent a runtime name collision. Modeled as a
+        # standalone unique ``Index`` (not ``UniqueConstraint``) because
+        # that's the actual DB object `0057_lab_instance_name_unique.py`
+        # creates via ``op.create_index(..., unique=True)`` — a UNIQUE
+        # constraint would additionally create a `pg_constraint` row with no
+        # backing migration for it, which `--autogenerate` would then flag as
+        # drift on this table.
+        Index("uq_lab_instances_instance_name", "instance_name", unique=True),
     )
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = _tenant_fk()

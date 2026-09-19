@@ -637,7 +637,15 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
                 command.upgrade(cfg, TARGET_REVISION_0057)
             message = str(excinfo.value)
             assert dup_name in message, "the raised error must name the actual duplicate value"
-            assert "2" in message, "the raised error must name the actual duplicate count"
+            # A bare "2" in message is not guard-sensitive — SQLAlchemy
+            # exception text commonly contains unrelated digits (e.g. a
+            # trailing `/e/20/...` documentation-link suffix), so assert the
+            # exact fragment the migration's `format('%s (x%s)', ...)` shape
+            # actually produces instead.
+            assert f"{dup_name} (x2)" in message, (
+                "the raised error must name the actual duplicate value's count "
+                "in the exact shape the migration's DO $$ block produces"
+            )
 
             with admin_engine.connect() as conn:
                 assert _current_version(conn) == DOWN_REVISION_0057, (
