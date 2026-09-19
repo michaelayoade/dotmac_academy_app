@@ -22,7 +22,7 @@ from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import LabHandle
 
 
-def _seed(db, tenant_id, *, name: str = "one", status: str = "queued"):
+def _seed(db, tenant_id, *, name: str = "one", status: str = "queued", presence: str | None = None):
     course = Course(
         tenant_id=tenant_id,
         slug=f"worker-{name}",
@@ -75,6 +75,15 @@ def _seed(db, tenant_id, *, name: str = "one", status: str = "queued"):
         status=status,
         consoles={},
     )
+    if presence is None:
+        # Preserve prior (status-derived) capacity semantics for every
+        # existing caller that doesn't care about presence directly: a
+        # "provisioning"/"active"/"resetting" seed is a stand-in for a
+        # successfully-running lab ("present"); anything else defaults to
+        # "absent". Callers exercising presence/status divergence directly
+        # pass an explicit `presence=`.
+        presence = "present" if status in ("provisioning", "active", "resetting") else "absent"
+    instance.runtime_presence = presence
     db.add(instance)
     db.flush()
     return instance, person
@@ -1133,3 +1142,418 @@ def test_host_lock_during_redeploy_provision_does_not_falsely_restore_active(
     assert operation.state == "queued"
     assert operation.claimed_by is None
     assert operation.attempts == 0
+
+
+# --- runtime_presence: capacity accounting ----------------------------------
+
+
+def test_present_presence_consumes_capacity_regardless_of_lifecycle_status(
+    admin_session, tenant_a, monkeypatch
+):
+    """An "error" instance whose presence is "present" must still be counted
+    against global capacity — capacity is keyed off runtime_presence, not
+    lifecycle status."""
+    present_but_errored, _ = _seed(
+        admin_session, tenant_a.id, name="present-error", status="error", presence="present"
+    )
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+    fresh, person = _seed(admin_session, tenant_a.id, name="present-blocked")
+    operation = lab_operations.enqueue(
+        admin_session, instance=fresh, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = operation.claimed_at
+    admin_session.commit()
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(fresh.instance_name),
+    )
+    assert outcome == "deferred"
+    admin_session.refresh(fresh)
+    assert fresh.status == "queued"
+    admin_session.refresh(present_but_errored)
+    assert present_but_errored.runtime_presence == "present"
+
+
+def test_unknown_presence_consumes_capacity_regardless_of_lifecycle_status(
+    admin_session, tenant_a, monkeypatch
+):
+    """A "queued" instance whose presence is "unknown" (e.g. a pre-cutover
+    repair row) must still be counted against global capacity."""
+    unknown_but_queued, _ = _seed(
+        admin_session, tenant_a.id, name="unknown-queued", status="queued", presence="unknown"
+    )
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+    fresh, person = _seed(admin_session, tenant_a.id, name="unknown-blocked")
+    operation = lab_operations.enqueue(
+        admin_session, instance=fresh, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = operation.claimed_at
+    admin_session.commit()
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(fresh.instance_name),
+    )
+    assert outcome == "deferred"
+    admin_session.refresh(fresh)
+    assert fresh.status == "queued"
+
+
+def test_absent_presence_does_not_consume_capacity(admin_session, tenant_a, monkeypatch):
+    """An "active"-status instance whose presence is "absent" (contradictory
+    in practice, but proves the accounting is presence-keyed) must NOT count
+    against the cap."""
+    active_but_absent, _ = _seed(
+        admin_session, tenant_a.id, name="active-absent", status="active", presence="absent"
+    )
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+    fresh, person = _seed(admin_session, tenant_a.id, name="absent-not-blocked")
+    operation = lab_operations.enqueue(
+        admin_session, instance=fresh, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = operation.claimed_at
+    admin_session.commit()
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(fresh.instance_name),
+    )
+    assert outcome == "succeeded"
+    admin_session.refresh(fresh)
+    assert fresh.status == "active"
+    admin_session.refresh(active_but_absent)
+    assert active_but_absent.runtime_presence == "absent"  # untouched by this pass
+
+
+def test_capacity_deferral_preserves_presence(admin_session, tenant_a, monkeypatch):
+    """A deferred admission (capacity full) must not mutate the deferred
+    instance's presence — only its status/operation are requeued."""
+    blocker, _ = _seed(admin_session, tenant_a.id, name="deferral-blocker", status="active")
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+    retry, person = _seed(
+        admin_session, tenant_a.id, name="deferral-retry", status="error", presence="unknown"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=retry, kind="deploy", requested_by=person.id
+    )
+    admin_session.commit()
+    claimed = lab_operations.claim_next(admin_session, claimed_by="worker")
+    assert claimed is not None and claimed.id == operation.id
+    admin_session.commit()
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=_engine(retry.instance_name)
+    )
+    assert outcome == "deferred"
+    admin_session.refresh(retry)
+    assert retry.status == "queued"
+    assert retry.runtime_presence == "unknown"
+
+
+def test_deploy_reservation_sets_unknown_before_external_work(
+    admin_engine, admin_session, tenant_a, monkeypatch
+):
+    """The durable deploy reservation (committed before slow external work)
+    must set presence to "unknown" in the same commit — a crash right after
+    must leave "unknown" durably visible to another session."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reservation-crash")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+    engine = MagicMock()
+    engine.destroy.side_effect = KeyboardInterrupt("simulated hard stop")
+
+    try:
+        lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+    except KeyboardInterrupt:
+        admin_session.rollback()
+
+    factory = sessionmaker(bind=admin_engine, autoflush=False)
+    check = factory()
+    try:
+        stored = check.get(LabInstance, instance.id)
+        assert stored is not None
+        assert stored.runtime_presence == "unknown"
+    finally:
+        check.close()
+
+
+def test_failed_deploy_persists_unknown_presence(admin_session, tenant_a, monkeypatch):
+    instance, person = _seed(admin_session, tenant_a.id, name="deploy-fail-presence")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    def _conservative_failure(db, inst, engine, template):
+        inst.status = "active"
+        inst.error = "deploy failed"
+        db.flush()
+        return inst
+
+    monkeypatch.setattr(lab_operations.lab_lifecycle, "provision", _conservative_failure)
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(instance.instance_name),
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "unknown"
+
+
+def test_failed_destroy_persists_unknown_presence_manual(admin_session, tenant_a):
+    """A manual (user requested_by) destroy failure also sets "unknown" —
+    the presence assignment is unconditional on requested_by, unlike the
+    escalation check."""
+    instance, person = _seed(admin_session, tenant_a.id, name="manual-destroy-fail", status="active")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "unknown"
+    assert instance.status == "active"  # manual failures are never escalated
+
+
+def test_wrong_host_refusal_restores_initial_presence(
+    admin_session, tenant_a, tmp_path, monkeypatch
+):
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="wrong-host-presence", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = operation.claimed_at
+    operation.attempts = 1
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 20)
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=ContainerlabEngine(str(tmp_path), lab_host_role="web"),
+    )
+
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "present"
+
+
+def test_host_lock_non_deploy_restores_initial_presence(admin_session, tenant_a):
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="host-lock-presence", status="active", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+    engine = MagicMock()
+    engine.destroy.side_effect = host_lock.HostLockUnavailable("host lock held")
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+    assert outcome == "deferred"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "present"
+
+
+def test_host_lock_post_destroy_deploy_retains_unknown(
+    admin_session, tenant_a, monkeypatch
+):
+    """Host-lock contention hit AFTER the destroy half of a deploy already
+    succeeded must retain "unknown", not restore the pre-op presence — the
+    old runtime may genuinely be gone."""
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="host-lock-deploy-presence", status="active", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+
+    engine = MagicMock()
+    engine.destroy.return_value = None  # the old runtime is genuinely torn down
+
+    def _provision_hits_host_lock(db, inst, eng, template):
+        raise host_lock.HostLockUnavailable("host lock held during redeploy")
+
+    monkeypatch.setattr(lab_operations.lab_lifecycle, "provision", _provision_hits_host_lock)
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "deferred"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "unknown"
+
+
+def test_lease_expiry_over_ceiling_retains_unknown(admin_session, tenant_a):
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="lease-ceiling-presence", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    operation.heartbeat_at = operation.claimed_at
+    operation.attempts = lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    admin_session.flush()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    assert instance.runtime_presence == "unknown"
+    admin_session.rollback()
+
+
+def test_lease_expiry_under_ceiling_sets_unknown_on_requeue(admin_session, tenant_a):
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="lease-requeue-presence", status="provisioning", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC) - timedelta(minutes=20)
+    operation.heartbeat_at = operation.claimed_at
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    assert instance.status == "queued"
+    assert instance.runtime_presence == "unknown"
+
+
+def test_stuck_destroy_escalation_retains_unknown(admin_session, tenant_a):
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="stuck-destroy-presence", status="active", presence="present"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+    stuck_operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = stuck_operation.claimed_at
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.runtime_presence == "unknown"  # escalation never forces "absent"
+
+
+def test_successful_deploy_becomes_present(admin_session, tenant_a):
+    instance, person = _seed(admin_session, tenant_a.id, name="deploy-success-presence")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(instance.instance_name),
+    )
+    assert outcome == "succeeded"
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "present"
+
+
+def test_successful_destroy_becomes_absent(admin_session, tenant_a):
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="destroy-success-presence", status="active", presence="present"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+    engine = MagicMock()
+    engine.destroy.return_value = None
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+    assert outcome == "succeeded"
+    admin_session.refresh(instance)
+    assert instance.status == "reaped"
+    assert instance.runtime_presence == "absent"

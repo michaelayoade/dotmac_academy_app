@@ -188,11 +188,14 @@ def sweep_orphan_consoles(db: Session) -> int:
     running = console_pids()
     if not running:
         return 0
+    # Presence-based, not status-based: an escalated-but-possibly-present
+    # runtime (`status="error"`) must still be protected — status alone
+    # cannot express physical runtime existence (see app/models/lab.py).
     live = {
         str(row)
         for row in db.scalars(
             select(LabInstance.id).where(
-                LabInstance.status.in_(("provisioning", "active", "resetting"))
+                LabInstance.runtime_presence.in_(("present", "unknown"))
             )
         ).all()
     }
@@ -362,6 +365,9 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             continue
         instance.status = "active"
         instance.error = "runtime existed for a non-live database row; destroy enqueued"
+        # Positive inventory: fresh_runtime confirmed this instance's runtime
+        # name is actually live.
+        instance.runtime_presence = "present"
         queued += 1
 
     for instance in missing_runtime:
@@ -390,6 +396,9 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             # branch never calls enqueue(), so there is no race to close here.
             instance.status = "error"
             instance.error = f"{instance.error}; containerlab runtime is absent"
+            # Escalating uncertain ("unknown") to definite absence, now that
+            # inventory has confirmed it.
+            instance.runtime_presence = "absent"
             continue
         op = lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
         if op.kind != "deploy":
@@ -398,6 +407,11 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             # otherwise.
             continue
         instance.error = "database row was live but no containerlab runtime was found"
+        # Runtime confirmed absent by this same inventory check. This will
+        # correctly transition to "unknown" again once a worker actually
+        # claims the resulting deploy operation, per the normal deploy-start
+        # transition.
+        instance.runtime_presence = "absent"
         queued += 1
 
     db.flush()

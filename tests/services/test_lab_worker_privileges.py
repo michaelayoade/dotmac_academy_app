@@ -61,6 +61,16 @@ def _has_privilege(session, table: str, privilege: str) -> bool:
     )
 
 
+def _has_column_privilege(session, role: str, table: str, column: str, privilege: str) -> bool:
+    return bool(
+        session.scalar(
+            text(
+                "SELECT has_column_privilege(:role, :table, :column, :priv)"
+            ).bindparams(role=role, table=table, column=column, priv=privilege)
+        )
+    )
+
+
 def test_lab_worker_privilege_matrix_and_worker_consequences(
     admin_session, lab_worker_session, tenant_a
 ):
@@ -134,6 +144,21 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         assert _has_privilege(
             lab_worker_session, "lab_instances", privilege
         ), f"expected {privilege} on lab_instances"
+
+    # --- runtime_presence column-level ACL ---------------------------------
+    # academy_lab_worker's grant is table-wide (see 0056/0058), so it must
+    # cover this column exactly like every other worker-owned one; app_user's
+    # INSERT grant is column-scoped and must NOT include it, and platform_api
+    # must never get write access to it either.
+    for privilege in ("SELECT", "UPDATE"):
+        assert _has_column_privilege(
+            lab_worker_session, "academy_lab_worker", "lab_instances", "runtime_presence", privilege
+        ), f"expected academy_lab_worker to have {privilege} on lab_instances.runtime_presence"
+    for role in ("app_user", "platform_api"):
+        for privilege in ("INSERT", "UPDATE"):
+            assert not _has_column_privilege(
+                lab_worker_session, role, "lab_instances", "runtime_presence", privilege
+            ), f"{role} must not have {privilege} on lab_instances.runtime_presence"
 
     # --- deploy, then a passing check, through the real worker session --
     engine = _stub_engine(instance.instance_name)

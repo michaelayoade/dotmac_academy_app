@@ -740,6 +740,150 @@ def test_kill_consoles_counts_only_what_it_signalled(monkeypatch):
     assert signalled == [111, 222]
 
 
+# --- runtime_presence transitions ------------------------------------------
+
+
+def test_request_lab_is_absent_after_flush(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = lab_lifecycle.request_lab(admin_session, tenant_id=tenant_a.id,
+                                     person_id=p.id, activity=act, template=lt)
+    admin_session.flush()
+    assert inst.runtime_presence == "absent"
+    admin_session.rollback()
+
+
+def test_provision_pre_deploy_failure_sets_absent(admin_session, tenant_a, monkeypatch):
+    """Nothing was ever attempted, so presence is "absent", not just status."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-preflight", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+
+    def _boom(text, seed):
+        raise ValueError("bad topology template")
+
+    monkeypatch.setattr(lab_lifecycle, "interpolate", _boom)
+    engine = MagicMock()
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert out.runtime_presence == "absent"
+    engine.deploy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_provision_deploy_failure_sets_unknown(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-invoke-fail", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy.side_effect = RuntimeError("boom")
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.runtime_presence == "unknown"
+    admin_session.rollback()
+
+
+def test_provision_success_sets_present(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-success", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy.return_value = LabHandle(
+        instance_name="dal-presence-success", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.runtime_presence == "present"
+    admin_session.rollback()
+
+
+def test_reset_pre_call_failure_preserves_prior_presence(admin_session, tenant_a, monkeypatch):
+    """A failure before engine.reset() is ever invoked (topology
+    interpolation) must leave the PRIOR presence value untouched."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-reset-preflight", seed={"o": 5},
+                       status="active", consoles={})
+    inst.runtime_presence = "present"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    def _boom(text, seed):
+        raise ValueError("bad topology template")
+
+    monkeypatch.setattr(lab_lifecycle, "interpolate", _boom)
+    engine = MagicMock()
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert out.runtime_presence == "present"  # unchanged — reset() was never invoked
+    engine.reset.assert_not_called()
+    admin_session.rollback()
+
+
+def test_reset_invocation_failure_sets_unknown(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-reset-fail", seed={"o": 5},
+                       status="active", consoles={})
+    inst.runtime_presence = "present"
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.side_effect = RuntimeError("engine boom")
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert out.runtime_presence == "unknown"
+    admin_session.rollback()
+
+
+def test_reset_success_sets_present(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-reset-ok", seed={"o": 5}, status="error",
+                       consoles={})
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.return_value = LabHandle(
+        instance_name="dal-presence-reset-ok", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.runtime_presence == "present"
+    admin_session.rollback()
+
+
+def test_destroy_success_sets_absent(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-presence-destroy", seed={"o": 5}, status="active",
+                       consoles={})
+    inst.runtime_presence = "present"
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    out = lab_lifecycle.destroy(admin_session, inst, engine)
+    admin_session.flush()
+    assert out.status == "reaped"
+    assert out.runtime_presence == "absent"
+    admin_session.rollback()
+
+
 def test_the_no_real_spawn_guard_still_bites():
     """The guard is about the NEXT forgotten patch, not the last one.
 

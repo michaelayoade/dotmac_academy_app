@@ -88,6 +88,17 @@ class LabInstance(Base, TimestampMixin):
     last_active_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=FetchedValue()
     )
+    # Worker-owned, independent of `status` (see migration
+    # 0058_lab_instance_runtime_presence.py's module docstring): `status`
+    # carries lifecycle/UI meaning and cannot simultaneously express physical
+    # runtime existence. Exactly three values — "absent" (proven absent),
+    # "present" (observed or successfully created), "unknown" (external
+    # mutation began, result uncertain). Capacity accounting
+    # (`_capacity_available` in `app/services/lab_operations.py`) counts
+    # "present" and "unknown" together, regardless of lifecycle `status`.
+    runtime_presence: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'absent'")
+    )
 
 
 class LabOperation(Base, TimestampMixin):

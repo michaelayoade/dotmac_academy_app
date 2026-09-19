@@ -63,21 +63,28 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0057 (see HEAD_REVISION), and the 0055/0056 tests are
-# updated to assert against that instead of assuming 0056 is still head.
+# repo head is now 0058 (see HEAD_REVISION), and the 0055/0056 and 0056/0057
+# tests are updated to assert against that instead of assuming an earlier
+# revision is still head.
 DOWN_REVISION = "0055_lab_operations"
 TARGET_REVISION = "0056_lab_instance_worker"
 
 # The actual current repo head. Kept as its own constant (rather than reusing
-# TARGET_REVISION) specifically so the 0055/0056 tests below stop silently
-# assuming 0056 is head once 0057 exists.
-HEAD_REVISION = "0057_lab_instance_name_unique"
+# TARGET_REVISION/TARGET_REVISION_0057) specifically so the 0055/0056 and
+# 0056/0057 tests below stop silently assuming an earlier revision is head
+# once a later one exists.
+HEAD_REVISION = "0058_lab_instance_runtime_presence"
 
-# 0056 <-> 0057 boundary, for the new tests further down this file.
+# 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
-TARGET_REVISION_0057 = HEAD_REVISION  # "0057_lab_instance_name_unique"
+TARGET_REVISION_0057 = "0057_lab_instance_name_unique"
+
+# 0057 <-> 0058 boundary, for the new tests further down this file.
+DOWN_REVISION_0058 = TARGET_REVISION_0057  # "0057_lab_instance_name_unique"
+TARGET_REVISION_0058 = HEAD_REVISION  # "0058_lab_instance_runtime_presence"
 
 INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
+RUNTIME_PRESENCE_CHECK = "ck_lab_instances_runtime_presence"
 
 WORKER_ROLE = "academy_lab_worker"
 
@@ -513,16 +520,22 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     cfg = _make_config()
     url = _migration_url()
 
+    # Checks the actual repo head (now 0058, not 0057 — see HEAD_REVISION):
+    # this test's own upgrade/downgrade calls stay pinned to the 0056/0057
+    # boundary specifically via DOWN_REVISION_0057/TARGET_REVISION_0057, but
+    # the sanity check that the CI database starts at head must track
+    # whatever head actually is, or it would silently stop verifying anything
+    # the moment a later migration (0058+) is added.
     head = _head_revision(cfg)
-    assert head == TARGET_REVISION_0057, (
-        f"expected repo head to be {TARGET_REVISION_0057!r}, got {head!r} — a "
-        "migration was added after 0057 without updating this test's fixed "
-        "anchor revisions"
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added without updating this test's fixed anchor "
+        "revisions"
     )
 
     with admin_engine.connect() as conn:
         assert (
-            _current_version(conn) == TARGET_REVISION_0057
+            _current_version(conn) == HEAD_REVISION
         ), "expected the CI database to already be migrated to head before this test runs"
         baseline_index = _instance_name_index_snapshot(conn)
         assert baseline_index == {"unique": True, "columns": ["instance_name"]}
@@ -553,7 +566,9 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         "the unique index's shape after a downgrade/upgrade round trip does "
         "not match the pre-cycle baseline — 0057 leaks or loses state across cycles"
     )
-    assert final_version == TARGET_REVISION_0057
+    # The `finally` block above always ends at real head (now 0058), not at
+    # the 0057 boundary this test's own round trip exercises.
+    assert final_version == HEAD_REVISION
 
 
 def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
@@ -566,7 +581,7 @@ def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
     legacy_name = "dal-1a2b3c4d-5e6f7a8b-9c0d1e2f-3"
 
     with admin_engine.connect() as conn:
-        assert _current_version(conn) == TARGET_REVISION_0057
+        assert _current_version(conn) == HEAD_REVISION
         tenant_id = _insert_tenant(conn, "roundtrip-0057-legacy")
         instance_row = conn.execute(
             text("SELECT gen_random_uuid()")
@@ -616,7 +631,7 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
     dup_name = "dal-duplicate-preexisting-name"
 
     with admin_engine.connect() as conn:
-        assert _current_version(conn) == TARGET_REVISION_0057
+        assert _current_version(conn) == HEAD_REVISION
         tenant_id = _insert_tenant(conn, "roundtrip-0057-dupe")
 
     with _migration_env(url):
@@ -675,3 +690,253 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
             command.upgrade(cfg, "head")
             with admin_engine.connect() as conn:
                 _delete_tenant(conn, tenant_id)
+
+
+# --- 0058: worker-owned `lab_instances.runtime_presence` --------------------
+
+
+RUNTIME_PRESENCE_ROLES = ("app_user", "platform_api", "academy_lab_worker")
+RUNTIME_PRESENCE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE")
+
+
+def _runtime_presence_column_snapshot(conn) -> dict[str, object] | None:
+    """``None`` when the column doesn't exist (0057 state); otherwise its
+    nullability and column default expression."""
+    row = conn.execute(
+        text(
+            """SELECT is_nullable, column_default
+               FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'lab_instances'
+                 AND column_name = 'runtime_presence'"""
+        )
+    ).first()
+    if row is None:
+        return None
+    return {"nullable": row[0], "default": row[1]}
+
+
+def _runtime_presence_constraint_snapshot(conn) -> dict[str, object] | None:
+    row = conn.execute(
+        text(
+            """SELECT pg_get_constraintdef(oid), convalidated
+               FROM pg_constraint
+               WHERE conname = :name AND conrelid = 'lab_instances'::regclass"""
+        ),
+        {"name": RUNTIME_PRESENCE_CHECK},
+    ).first()
+    if row is None:
+        return None
+    return {"definition": row[0], "validated": row[1]}
+
+
+def _runtime_presence_grant_snapshot(conn) -> dict[tuple[str, str], bool]:
+    """``has_column_privilege`` for every (role, privilege) this migration
+    governs on ``runtime_presence`` specifically — table-wide grants (e.g.
+    academy_lab_worker's SELECT/UPDATE from 0056) already extend to it
+    automatically, so this is what actually proves the column-level ACL
+    posture, not just the table-wide one."""
+    result: dict[tuple[str, str], bool] = {}
+    for role in RUNTIME_PRESENCE_ROLES:
+        for privilege in RUNTIME_PRESENCE_PRIVILEGES:
+            result[(role, privilege)] = bool(
+                conn.execute(
+                    text(
+                        "SELECT has_column_privilege(:role, 'lab_instances', "
+                        "'runtime_presence', :priv)"
+                    ),
+                    {"role": role, "priv": privilege},
+                ).scalar()
+            )
+    return result
+
+
+def _runtime_presence_full_snapshot(conn) -> dict[str, object]:
+    return {
+        "column": _runtime_presence_column_snapshot(conn),
+        "constraint": _runtime_presence_constraint_snapshot(conn),
+        "grants": _runtime_presence_grant_snapshot(conn),
+    }
+
+
+def _select_runtime_presence(conn, instance_id: str) -> str:
+    return conn.execute(
+        text("SELECT runtime_presence FROM lab_instances WHERE id = :id"),
+        {"id": instance_id},
+    ).scalar()
+
+
+def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+    """0057 <-> 0058 round trip: the column, its CHECK constraint, and the
+    explicit grant posture are added and removed cleanly across repeated
+    cycles, mirroring the 0055/0056 round-trip test's shape (D1 above)."""
+    cfg = _make_config()
+    url = _migration_url()
+
+    head = _head_revision(cfg)
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added without updating this test's fixed anchor "
+        "revisions"
+    )
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        baseline = _runtime_presence_full_snapshot(conn)
+        assert baseline["column"] is not None
+        assert baseline["column"]["nullable"] == "NO"
+        # Exact Postgres cast formatting of a VARCHAR default isn't asserted
+        # here (brittle across versions) — just that the literal default
+        # value is actually "absent", not merely present.
+        assert baseline["column"]["default"] is not None and "'absent'" in baseline["column"]["default"]
+        assert baseline["constraint"] is not None and baseline["constraint"]["validated"] is True
+        for role in ("app_user", "platform_api"):
+            assert baseline["grants"][(role, "INSERT")] is False
+            assert baseline["grants"][(role, "UPDATE")] is False
+            assert baseline["grants"][(role, "SELECT")] is True
+        assert baseline["grants"][("academy_lab_worker", "SELECT")] is True
+        assert baseline["grants"][("academy_lab_worker", "UPDATE")] is True
+
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0058)
+            with admin_engine.connect() as conn:
+                assert _runtime_presence_column_snapshot(conn) is None, (
+                    "downgrade must drop the column, not just rename it"
+                )
+                assert _runtime_presence_constraint_snapshot(conn) is None
+            command.upgrade(cfg, TARGET_REVISION_0058)
+            command.downgrade(cfg, DOWN_REVISION_0058)
+            with admin_engine.connect() as conn:
+                assert _runtime_presence_column_snapshot(conn) is None
+            command.upgrade(cfg, TARGET_REVISION_0058)
+        finally:
+            command.upgrade(cfg, "head")
+
+    with admin_engine.connect() as conn:
+        final = _runtime_presence_full_snapshot(conn)
+        final_version = _current_version(conn)
+
+    assert final == baseline, (
+        "column/constraint/grant state after a downgrade/upgrade round trip "
+        "does not match the pre-cycle baseline — 0058 leaks or loses state "
+        "across cycles"
+    )
+    assert final_version == HEAD_REVISION
+
+
+def test_0058_backfill_is_exact_for_reaped_vs_every_other_status(admin_engine):
+    """`status == "reaped"` rows become "absent"; every other existing status
+    becomes "unknown" — proven across a representative spread, not just one
+    status each."""
+    cfg = _make_config()
+    url = _migration_url()
+    reaped_statuses = ("reaped",)
+    non_reaped_statuses = ("queued", "provisioning", "active", "resetting", "error")
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, "roundtrip-0058-backfill")
+
+    ids_by_status: dict[str, str] = {}
+    try:
+        with _migration_env(url):
+            try:
+                command.downgrade(cfg, DOWN_REVISION_0058)
+                with admin_engine.connect() as conn:
+                    for status in (*reaped_statuses, *non_reaped_statuses):
+                        instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+                        conn.execute(
+                            text(
+                                "INSERT INTO lab_instances "
+                                "(id, tenant_id, activity_id, person_id, instance_name, "
+                                "seed, status) VALUES "
+                                "(:id, :tenant_id, gen_random_uuid(), gen_random_uuid(), "
+                                ":name, '{}'::jsonb, :status)"
+                            ),
+                            {
+                                "id": instance_id,
+                                "tenant_id": tenant_id,
+                                "name": f"dal-backfill-{status}",
+                                "status": status,
+                            },
+                        )
+                        ids_by_status[status] = instance_id
+                    conn.commit()
+
+                command.upgrade(cfg, TARGET_REVISION_0058)
+
+                with admin_engine.connect() as conn:
+                    for status in reaped_statuses:
+                        assert _select_runtime_presence(conn, ids_by_status[status]) == "absent", (
+                            f"status={status!r} must backfill to 'absent'"
+                        )
+                    for status in non_reaped_statuses:
+                        assert _select_runtime_presence(conn, ids_by_status[status]) == "unknown", (
+                            f"status={status!r} must backfill to 'unknown'"
+                        )
+            finally:
+                command.upgrade(cfg, "head")
+    finally:
+        with admin_engine.connect() as conn:
+            conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
+            conn.commit()
+            _delete_tenant(conn, tenant_id)
+
+
+def test_0058_new_insert_omitting_column_defaults_to_absent(admin_engine):
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, "roundtrip-0058-default")
+
+    try:
+        with admin_engine.connect() as conn:
+            instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            _insert_lab_instance(
+                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0058-default"
+            )
+            assert _select_runtime_presence(conn, instance_id) == "absent"
+    finally:
+        with admin_engine.connect() as conn:
+            _delete_tenant(conn, tenant_id)
+
+
+def test_0058_check_constraint_rejects_a_value_outside_the_allowed_set(admin_engine):
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, "roundtrip-0058-check")
+
+    try:
+        with admin_engine.connect() as conn:
+            instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            with pytest.raises(Exception) as excinfo:
+                conn.execute(
+                    text(
+                        "INSERT INTO lab_instances "
+                        "(id, tenant_id, activity_id, person_id, instance_name, seed, "
+                        "runtime_presence) VALUES "
+                        "(:id, :tenant_id, gen_random_uuid(), gen_random_uuid(), :name, "
+                        "'{}'::jsonb, 'bogus')"
+                    ),
+                    {"id": instance_id, "tenant_id": tenant_id, "name": "dal-0058-bogus"},
+                )
+            assert RUNTIME_PRESENCE_CHECK in str(excinfo.value)
+            conn.rollback()
+    finally:
+        with admin_engine.connect() as conn:
+            _delete_tenant(conn, tenant_id)
+
+
+def test_0058_grant_posture_matches_academy_lab_worker_ownership(admin_engine):
+    """`app_user`/`platform_api` may read but never write `runtime_presence`;
+    `academy_lab_worker` may read and write it — the same posture 0056
+    established for every other worker-owned column on this table."""
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        grants = _runtime_presence_grant_snapshot(conn)
+
+    for role in ("app_user", "platform_api"):
+        assert grants[(role, "SELECT")] is True, f"{role} should be able to SELECT runtime_presence"
+        assert grants[(role, "INSERT")] is False, f"{role} must not INSERT runtime_presence"
+        assert grants[(role, "UPDATE")] is False, f"{role} must not UPDATE runtime_presence"
+    assert grants[("academy_lab_worker", "SELECT")] is True
+    assert grants[("academy_lab_worker", "UPDATE")] is True

@@ -341,18 +341,28 @@ def _automatic_destroy_escalation_message(
 
 
 def _capacity_available(db: Session, instance: LabInstance) -> bool:
-    """Serialize admission and evaluate the effective, global capacity limit."""
+    """Serialize admission and evaluate the effective, global capacity limit.
+
+    Capacity is now keyed off ``runtime_presence`` ("present" or "unknown"),
+    not lifecycle ``status`` — see ``app/models/lab.py`` — because ``status``
+    cannot simultaneously carry lifecycle/UI meaning and physical runtime
+    existence. ``already_consuming`` preserves its exact prior semantic ("is
+    THIS instance already counted, so admit it regardless of the cap"): it
+    was ``instance.status in ("active", "resetting")`` when presence didn't
+    exist; it is now the presence-based equivalent of that same "already
+    capacity-counted" condition.
+    """
     db.execute(select(func.pg_advisory_xact_lock(_CAPACITY_LOCK_KEY)))
     cfg = effective(db)
     consuming = int(
         db.scalar(
             select(func.count())
             .select_from(LabInstance)
-            .where(LabInstance.status.in_(("provisioning", "active", "resetting")))
+            .where(LabInstance.runtime_presence.in_(("present", "unknown")))
         )
         or 0
     )
-    already_consuming = instance.status in ("active", "resetting")
+    already_consuming = instance.runtime_presence in ("present", "unknown")
     if already_consuming:
         return True
     tenant_consuming = int(
@@ -360,7 +370,7 @@ def _capacity_available(db: Session, instance: LabInstance) -> bool:
             select(func.count())
             .select_from(LabInstance)
             .where(LabInstance.tenant_id == instance.tenant_id)
-            .where(LabInstance.status.in_(("provisioning", "active", "resetting")))
+            .where(LabInstance.runtime_presence.in_(("present", "unknown")))
         )
         or 0
     )
@@ -384,6 +394,11 @@ def _run_deploy(
     # The caller committed this reservation before engine work. Reasserting it
     # here is harmless and keeps the helper safe if called independently.
     instance.status = "resetting" if was_active else "provisioning"
+    # Defensive restatement for standalone callers — the FIRST/authoritative
+    # assignment of "unknown" for this deploy is made in run_claimed(), in the
+    # same commit as the status reservation above, before this function ever
+    # runs.
+    instance.runtime_presence = "unknown"
     try:
         engine.destroy(instance.instance_name)
     except Exception as exc:
@@ -391,6 +406,7 @@ def _run_deploy(
         # instance conservatively even for an initial/error retry so another
         # admission cannot consume the same capacity behind a leaked lab.
         instance.status = "active"
+        instance.runtime_presence = "unknown"
         instance.error = str(exc)
         db.flush()
         raise
@@ -441,6 +457,7 @@ def run_claimed(
     operation_attempts = op.attempts
     initial_instance_status = instance.status
     initial_instance_error = instance.error
+    initial_instance_presence = instance.runtime_presence
 
     try:
         if operation_kind == "deploy":
@@ -454,6 +471,11 @@ def run_claimed(
             instance.status = (
                 "resetting" if instance.status in ("active", "resetting") else "provisioning"
             )
+            # First/authoritative presence assignment for this deploy: this is
+            # the durable reservation, committed before slow external work, so
+            # a crash after this point must already treat the runtime as
+            # uncertain rather than proven absent.
+            instance.runtime_presence = "unknown"
             db.commit()
             refreshed_op = db.get(LabOperation, operation_id)
             refreshed_instance = (
@@ -521,6 +543,9 @@ def run_claimed(
         if unchanged_instance is not None:
             unchanged_instance.status = initial_instance_status
             unchanged_instance.error = initial_instance_error
+            # A host refusal proves no workload invocation occurred at all —
+            # restore presence exactly as status/error are restored above.
+            unchanged_instance.runtime_presence = initial_instance_presence
         if not _settle(
             db,
             operation_id=operation_id,
@@ -555,6 +580,7 @@ def run_claimed(
             # pre-execution instance state verbatim.
             unchanged_instance.status = initial_instance_status
             unchanged_instance.error = initial_instance_error
+            unchanged_instance.runtime_presence = initial_instance_presence
         # For "deploy", _run_deploy already set instance.status to
         # "resetting"/"provisioning" for the whole destroy-then-provision
         # sequence before attempting the (possibly already-succeeded) destroy.
@@ -562,7 +588,11 @@ def run_claimed(
         # treats provisioning/active/resetting alike) and, unlike the
         # pre-reset "active", does not falsely claim a working lab when the
         # real runtime may have just been torn down and not yet redeployed.
-        # Leave it untouched.
+        # Leave it untouched. Presence is likewise left as "unknown" (already
+        # set by _run_deploy/run_claimed's reservation) rather than restored:
+        # a deploy may have already destroyed the old runtime before
+        # contention hit during the subsequent provision call, so blindly
+        # restoring the pre-op presence would be a false projection.
         _requeue_operation_after_host_lock(db, refreshed_op)
         db.commit()
         return "deferred"
@@ -583,21 +613,36 @@ def run_claimed(
             if failed_instance is not None:
                 failed_instance.status = deploy_failure_status
                 failed_instance.error = str(exc)
-        elif operation_kind == "destroy" and operation_requested_by is None:
-            # Automatic (reaper-triggered) destroys escalate after enough
-            # cumulative failures instead of retrying forever; user-initiated
-            # destroys (a real requested_by) are never subject to this check.
-            escalation_message = _automatic_destroy_escalation_message(
-                db,
-                instance_id=operation_instance_id,
-                current_operation_id=operation_id,
-                current_operation_attempts=operation_attempts,
-            )
-            if escalation_message is not None:
-                escalated_instance = db.get(LabInstance, operation_instance_id)
-                if escalated_instance is not None:
-                    escalated_instance.status = "error"
-                    escalated_instance.error = escalation_message
+                # A failed deploy cannot prove the runtime is absent, whatever
+                # the (possibly conservative) status projection above says.
+                failed_instance.runtime_presence = "unknown"
+        elif operation_kind == "destroy":
+            # A failed destroy (manual or automatic) cannot prove the runtime
+            # is absent either — set this unconditionally, before the
+            # automatic-only escalation check below, which never overrides
+            # presence (see the destroy-escalation branch's comment).
+            failed_instance = db.get(LabInstance, operation_instance_id)
+            if failed_instance is not None:
+                failed_instance.runtime_presence = "unknown"
+            if operation_requested_by is None:
+                # Automatic (reaper-triggered) destroys escalate after enough
+                # cumulative failures instead of retrying forever;
+                # user-initiated destroys (a real requested_by) are never
+                # subject to this check.
+                escalation_message = _automatic_destroy_escalation_message(
+                    db,
+                    instance_id=operation_instance_id,
+                    current_operation_id=operation_id,
+                    current_operation_attempts=operation_attempts,
+                )
+                if escalation_message is not None:
+                    escalated_instance = db.get(LabInstance, operation_instance_id)
+                    if escalated_instance is not None:
+                        escalated_instance.status = "error"
+                        escalated_instance.error = escalation_message
+                        # Never force "absent" here — escalation must not
+                        # falsely claim the runtime is gone. Presence stays
+                        # "unknown", already set above.
         if not _settle(
             db,
             operation_id=operation_id,
@@ -653,6 +698,7 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                 # An interrupted external mutation cannot prove runtime absence.
                 instance.status = "active"
                 instance.error = op.last_error
+                instance.runtime_presence = "unknown"
             if (
                 instance is not None
                 and op.kind == "destroy"
@@ -672,12 +718,20 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                 if escalation_message is not None:
                     instance.status = "error"
                     instance.error = escalation_message
+                    # Presence stays "unknown" (set above) — never forced to
+                    # "absent" by escalation.
             continue
         if instance is not None:
             if instance.status == "provisioning":
                 instance.status = "queued"
             elif instance.status == "resetting":
                 instance.status = "active"
+            if op.kind in ("deploy", "destroy"):
+                # The expired claim may have crossed the external mutation
+                # boundary before the lease lapsed — set/retain "unknown" for
+                # both requeue directions and for a destroy under the ceiling
+                # (whose status stays "active" and hits neither branch above).
+                instance.runtime_presence = "unknown"
         op.state = "queued"
         op.claimed_by = None
         op.claimed_at = None
@@ -701,6 +755,10 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
     ).all()
     for instance in missing:
         instance.status = "active" if instance.status == "resetting" else "queued"
+        # Provenance is ambiguous for these old, pre-cutover rows — set
+        # "unknown" before enqueueing rather than trusting whatever presence
+        # value (if any) they already carry.
+        instance.runtime_presence = "unknown"
         enqueue(db, instance=instance, kind="deploy", requested_by=None)
     db.flush()
     return len(stuck) + len(missing)

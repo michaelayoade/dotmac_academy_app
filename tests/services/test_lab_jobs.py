@@ -164,8 +164,10 @@ def test_sweep_kills_consoles_whose_instance_is_not_live(admin_session, tenant_a
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     live = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-live", seed={"o": 5}, status="active", consoles={})
+    live.runtime_presence = "present"
     dead = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-dead", seed={"o": 5}, status="reaped", consoles={})
+    dead.runtime_presence = "absent"
     admin_session.add_all([live, dead])
     admin_session.flush()
 
@@ -514,6 +516,164 @@ def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_
     )
     assert instance.status == "error"
     assert instance.error == "automatic destroy failed 5 time(s); escalated for manual review"
+    admin_session.rollback()
+
+
+def test_sweep_protects_present_and_unknown_including_escalated_error(
+    admin_session, tenant_a, monkeypatch
+):
+    """The protected set is now presence-based: an escalated instance
+    (status="error") whose runtime may still be present/unknown must be
+    protected exactly like a live one — killing its console would be wrong."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    present = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                          instance_name="dal-presence-present", seed={"o": 5}, status="active",
+                          consoles={})
+    present.runtime_presence = "present"
+    unknown_errored = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                                  instance_name="dal-presence-unknown-error", seed={"o": 5},
+                                  status="error", consoles={})
+    unknown_errored.runtime_presence = "unknown"
+    absent = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                         instance_name="dal-presence-absent", seed={"o": 5}, status="reaped",
+                         consoles={})
+    absent.runtime_presence = "absent"
+    admin_session.add_all([present, unknown_errored, absent])
+    admin_session.flush()
+
+    monkeypatch.setattr(lab_jobs, "console_pids", lambda: {
+        str(present.id): [111],
+        str(unknown_errored.id): [222],
+        str(absent.id): [333],
+    })
+    killed = []
+    monkeypatch.setattr(lab_jobs, "kill_consoles",
+                        lambda pids: killed.extend(pids) or len(killed))
+
+    assert lab_jobs.sweep_orphan_consoles(admin_session) == 1
+    assert killed == [333]  # only the confirmed-absent instance's console is killed
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_db_only_repair_sets_present_on_positive_observation(
+    admin_session, tenant_a
+):
+    """A reaped row whose runtime is confirmed live by fresh inventory must
+    be marked "present", not just made capacity-counted via status."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-positive-observation",
+        seed={},
+        status="reaped",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {instance.instance_name: "/labs/leak.clab.yml"}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.runtime_presence == "present"
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_missing_runtime_with_prior_error_sets_absent(
+    admin_session, tenant_a
+):
+    """Escalating uncertain ("unknown") presence to definite absence, now
+    that inventory has confirmed the runtime is gone."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-confirmed-absent",
+        seed={},
+        status="active",
+        error="worker lease expired after 3 attempts",
+        consoles={},
+    )
+    instance.runtime_presence = "unknown"
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 0)
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.runtime_presence == "absent"
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_missing_runtime_fresh_redeploy_sets_absent(
+    admin_session, tenant_a
+):
+    """No prior error: a fresh redeploy is enqueued, and presence is set to
+    "absent" immediately (confirmed by this same inventory check) — it will
+    correctly transition back to "unknown" once a worker claims the deploy."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-fresh-redeploy",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    instance.runtime_presence = "present"
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {}
+
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "absent"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "deploy"
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_escalated_instance_keeps_its_presence_value(
+    admin_session, tenant_a
+):
+    """An escalated instance (status="error") excluded from automatic destroy
+    must keep whatever presence value it already carries — reconcile_runtime
+    must not touch it at all."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-escalated",
+        seed={},
+        status="error",
+        error="automatic destroy failed 5 time(s); escalated for manual review",
+        consoles={},
+    )
+    instance.runtime_presence = "unknown"
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        instance.instance_name: "/labs/escalated-presence.clab.yml",
+    }
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    engine.destroy.assert_not_called()
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.runtime_presence == "unknown"
     admin_session.rollback()
 
 
