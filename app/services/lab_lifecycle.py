@@ -29,6 +29,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabTemplate
 from app.services.checks.engine import run_checks
 from app.services.exceptions import ConflictError
+from app.services.host_lock import HostLockUnavailable
 from app.services.lab_seed import generate_seed, interpolate
 from app.services.labengine.interface import LabEngine, LabHandle
 
@@ -279,9 +280,33 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
 
 
 def provision(db: Session, instance: LabInstance, engine: LabEngine, template: LabTemplate) -> LabInstance:
-    """Deploy the topology for ``instance`` and record consoles / activate it."""
+    """Deploy the topology for ``instance`` and record consoles / activate it.
+
+    A failure BEFORE ``engine.deploy()`` is ever invoked (topology
+    interpolation, name substitution) proves no runtime was created, so it is
+    recorded as ``error``. A failure AT OR AFTER the ``engine.deploy()`` call
+    does not prove the runtime is absent — the underlying containerlab
+    process may still be running in the background — so the instance
+    conservatively stays ``active`` instead, mirroring ``_run_deploy``'s
+    destroy-failure handling in ``lab_operations.py``. Capacity accounting
+    (``_capacity_available``) excludes only ``error``, and over-counting a
+    phantom-but-live instance self-heals via ``reconcile_runtime`` once
+    inventory proves absence, whereas under-counting would not self-correct
+    as safely. ``instance.error`` is set to a non-``None`` message on every
+    failure path — callers (``_run_deploy``) key off it, not just ``status``,
+    to detect a failed deploy now that a failure can leave ``status ==
+    "active"``. ``HostLockUnavailable`` is transient host-lock contention, not
+    a deployment failure, and is re-raised unchanged rather than recorded here.
+    """
     try:
         topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
+    except Exception as exc:  # nothing was ever attempted; no runtime to protect
+        instance.status = "error"
+        instance.error = str(exc)
+        db.flush()
+        return instance
+
+    try:
         handle = engine.deploy(topology_text, instance.instance_name)
         consoles: dict = {}
         for node in handle.nodes:
@@ -299,8 +324,10 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
         instance.started_at = now
         instance.last_active_at = now
         instance.error = None
-    except Exception as exc:  # surface any deploy failure onto the row
-        instance.status = "error"
+    except HostLockUnavailable:
+        raise
+    except Exception as exc:  # deploy was invoked; failure doesn't prove absence
+        instance.status = "active"
         instance.error = str(exc)
     db.flush()
     return instance
