@@ -468,3 +468,49 @@ def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeare
     assert instance.status == "active"
     assert instance.error is None
     admin_session.rollback()
+
+
+def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_present(
+    admin_session, tenant_a
+):
+    """An instance already escalated to status="error" (Stream A's destroy-
+    escalation feature, which sets this specifically to stop automatic
+    destroy retries once cumulative failures hit its threshold) must not get
+    ANOTHER automatic destroy enqueued by reconcile_runtime just because its
+    status is not one of the "live" ones. The idle reaper already respects
+    this (it only selects "active" instances) — reconcile_runtime's
+    db_only_repairs path is a different automatic path to the same
+    containerlab destroy, and must respect the same escalation.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-escalated-runtime-present",
+        seed={},
+        status="error",
+        error="automatic destroy failed 5 time(s); escalated for manual review",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        instance.instance_name: "/labs/escalated-runtime-present.clab.yml",
+    }
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0
+    engine.destroy.assert_not_called()
+    assert (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .count()
+        == 0
+    )
+    assert instance.status == "error"
+    assert instance.error == "automatic destroy failed 5 time(s); escalated for manual review"
+    admin_session.rollback()

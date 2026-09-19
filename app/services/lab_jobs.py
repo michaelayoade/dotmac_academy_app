@@ -275,7 +275,16 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         instance
         for name in sorted(runtime)
         if name.startswith("dal-") and (instance := by_name.get(name)) is not None
-        and instance.status not in ("provisioning", "active", "resetting")
+        # "error" is deliberately excluded from eligibility, not just from the
+        # live-status tuple below: Stream A's destroy-escalation feature sets
+        # status="error" specifically to stop automatic destroy retries once
+        # cumulative failures hit its threshold (the idle reaper already
+        # respects this by only selecting "active" instances). Without this
+        # exclusion, an escalated instance whose runtime is still present
+        # would be treated as "non-live" here and get ANOTHER automatic
+        # destroy enqueued — bypassing the escalation's intent through a
+        # different code path than the one it was designed to block.
+        and instance.status not in ("provisioning", "active", "resetting", "error")
         and instance.id not in open_instance_ids
     ]
     missing_runtime = [
@@ -332,7 +341,10 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         # this pass intended — never on the assumption that it was.
         db.refresh(instance)
         if (
-            instance.status in ("provisioning", "active", "resetting")
+            # Re-check the same escalation exclusion as Phase 2's list-build
+            # above — a concurrent escalation could equally have landed
+            # between the two.
+            instance.status in ("provisioning", "active", "resetting", "error")
             or instance.id in fresh_open_instance_ids
             # Phase 1 said this name was running; if the fresh, post-Phase-3
             # inventory no longer shows it, something else already destroyed
