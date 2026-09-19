@@ -210,8 +210,35 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
     Returns ``(queued_repairs, destroyed_rowless_orphans)``. Only Academy's
     ``dal-`` namespace is eligible for direct cleanup; unrelated containerlab
     runtimes on the same host are never touched.
+
+    Structured in four phases so that host-lock contention (raised as
+    :class:`~app.services.host_lock.HostLockUnavailable`, propagated to the
+    caller) can never leave a half-applied repair plan behind:
+
+    1. Locked inventory (``engine.inventory()`` — the lock is acquired and
+       released inside the engine call itself).
+    2. Database reads and repair-plan calculation. No row locks and no host
+       lock are held here — this is pure computation over already-fetched
+       data.
+    3. Locked rowless-orphan destroys (``engine.destroy()`` per orphan, each
+       independently acquiring/releasing the host lock). No database row is
+       mutated in this phase, so if the host lock is contended partway
+       through this loop, there is nothing to unwind.
+    4. Database projections/enqueues, only after every host operation this
+       pass needed has already completed. This phase cannot raise
+       ``HostLockUnavailable`` — it never touches the engine.
+
+    If ``engine.inventory()`` or a ``engine.destroy()`` call raises
+    ``HostLockUnavailable``, this function does not catch it: it propagates
+    to :func:`app.cli._lab_reconcile`, which rolls back this pass's
+    (nonexistent, by construction — phases 1-3 make no database writes) and
+    exits cleanly rather than raising, so the reconciler simply retries on
+    its own 1-minute timer.
     """
+    # Phase 1 — locked inventory.
     runtime = engine.inventory()
+
+    # Phase 2 — database reads and repair-plan calculation; no locks held.
     rows = db.scalars(select(LabInstance)).all()
     if len({row.instance_name for row in rows}) != len(rows):
         raise RuntimeError("duplicate lab instance names prevent safe runtime reconciliation")
@@ -223,47 +250,54 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             )
         ).all()
     )
-    queued = 0
+
+    rowless_orphans = [
+        name for name in sorted(runtime) if name.startswith("dal-") and name not in by_name
+    ]
+    db_only_repairs = [
+        instance
+        for name in sorted(runtime)
+        if name.startswith("dal-") and (instance := by_name.get(name)) is not None
+        and instance.status not in ("provisioning", "active", "resetting")
+        and instance.id not in open_instance_ids
+    ]
+    missing_runtime = [
+        instance
+        for instance in rows
+        if instance.status in ("provisioning", "active", "resetting")
+        and instance.instance_name not in runtime
+        and instance.id not in open_instance_ids
+    ]
+
+    # Phase 3 — locked rowless-orphan destroys. No database row is mutated
+    # above or here, so a HostLockUnavailable raised mid-loop leaves nothing
+    # for the caller to roll back.
     destroyed = 0
+    for name in rowless_orphans:
+        engine.destroy(name)
+        destroyed += 1
 
-    for name in sorted(runtime):
-        if not name.startswith("dal-"):
-            continue
-        instance = by_name.get(name)
-        if instance is None:
-            engine.destroy(name)
-            destroyed += 1
-            continue
-        if (
-            instance.status not in ("provisioning", "active", "resetting")
-            and instance.id not in open_instance_ids
-        ):
-            instance.status = "active"
-            instance.error = "runtime existed for a non-live database row; destroy enqueued"
-            lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
-            open_instance_ids.add(instance.id)
+    # Phase 4 — database projections/enqueues, after all required host
+    # operations for this pass have completed.
+    queued = 0
+    for instance in db_only_repairs:
+        instance.status = "active"
+        instance.error = "runtime existed for a non-live database row; destroy enqueued"
+        lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
+        queued += 1
+
+    for instance in missing_runtime:
+        if instance.error is not None:
+            # A prior failure was conservatively capacity-counted because
+            # runtime absence was unknown. Inventory has now proved absence,
+            # so expose a retryable error without starting a fresh automatic
+            # attempt loop or retaining a phantom capacity reservation.
+            instance.status = "error"
+            instance.error = f"{instance.error}; containerlab runtime is absent"
+        else:
+            instance.error = "database row was live but no containerlab runtime was found"
+            lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
             queued += 1
-
-    for instance in rows:
-        if (
-            instance.status in ("provisioning", "active", "resetting")
-            and instance.instance_name not in runtime
-            and instance.id not in open_instance_ids
-        ):
-            if instance.error is not None:
-                # A prior failure was conservatively capacity-counted because
-                # runtime absence was unknown. Inventory has now proved absence,
-                # so expose a retryable error without starting a fresh automatic
-                # attempt loop or retaining a phantom capacity reservation.
-                instance.status = "error"
-                instance.error = f"{instance.error}; containerlab runtime is absent"
-            else:
-                instance.error = "database row was live but no containerlab runtime was found"
-                lab_operations.enqueue(
-                    db, instance=instance, kind="deploy", requested_by=None
-                )
-                open_instance_ids.add(instance.id)
-                queued += 1
 
     db.flush()
     return queued, destroyed

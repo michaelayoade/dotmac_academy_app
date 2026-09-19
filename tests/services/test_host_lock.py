@@ -1,0 +1,225 @@
+"""Host-wide containerlab lock: contention, holder naming, and crash-release.
+
+No live database is needed anywhere in this file — the lock is pure
+filesystem/fcntl behavior, and the one ``reconcile_runtime``/``_lab_reconcile``
+test doubles the database session entirely because both functions are proven
+here to make no database call before a host-lock contention can be raised.
+
+Worker-side deferral/refund behavior on ``HostLockUnavailable`` (Stream A's
+``run_claimed`` contract) belongs in that stream's own test file and is
+deliberately not duplicated here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import os
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.services import host_lock as host_lock_module
+from app.services.host_lock import HostLockUnavailable
+from app.services.labengine.containerlab import ContainerlabEngine
+
+
+def _hold_manually(path: str) -> int:
+    """Open+flock ``path`` on a fresh fd, simulating an external holder.
+
+    Returns the fd; the caller is responsible for unlocking and closing it.
+    Deliberately bypasses :func:`host_lock` so this fd is a genuinely separate
+    open file description from anything the module under test opens — the
+    same distinction that makes two processes (or, as here, two independent
+    fds in one process) contend on a real ``flock``.
+    """
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def test_second_acquisition_raises_host_lock_unavailable(tmp_path):
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    os.write(holder_fd, f"{os.getpid()} academy-lab-worker\n".encode())
+    try:
+        with pytest.raises(HostLockUnavailable):
+            with host_lock_module.host_lock("academy-lab-reconcile", directory=str(tmp_path)):
+                pass
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+
+def test_contention_message_names_the_first_holder(tmp_path):
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    holder_pid = os.getpid()
+    os.write(holder_fd, f"{holder_pid} academy-lab-worker\n".encode())
+    try:
+        with pytest.raises(HostLockUnavailable) as exc_info:
+            with host_lock_module.host_lock("academy-lab-reconcile", directory=str(tmp_path)):
+                pass
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+    message = str(exc_info.value)
+    assert str(holder_pid) in message
+    assert "academy-lab-worker" in message
+
+
+def test_lock_is_released_when_the_holding_process_is_killed(tmp_path):
+    """A killed holder's fcntl lock is released by the kernel, not by cleanup code."""
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    script = (
+        "import fcntl, os, time\n"
+        f"fd = os.open({str(path)!r}, os.O_RDWR | os.O_CREAT, 0o644)\n"
+        "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "os.write(fd, b'held by crash-test child\\n')\n"
+        "time.sleep(60)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script])  # noqa: S603
+    try:
+        deadline = time.monotonic() + 10
+        contended = False
+        while time.monotonic() < deadline:
+            try:
+                with host_lock_module.host_lock("probe", directory=str(tmp_path)):
+                    pass
+            except HostLockUnavailable:
+                contended = True
+                break
+            time.sleep(0.05)
+        assert contended, "child process never actually took the lock"
+
+        proc.kill()
+        proc.wait(timeout=10)
+
+        deadline = time.monotonic() + 10
+        acquired = False
+        while time.monotonic() < deadline:
+            try:
+                with host_lock_module.host_lock("after-crash", directory=str(tmp_path)):
+                    acquired = True
+                break
+            except HostLockUnavailable:
+                time.sleep(0.05)
+        assert acquired, "lock was not released after its holder was killed"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def test_worker_and_reconciler_engines_contend_on_the_same_lock_file(tmp_path):
+    """Different labels must not mean different locks — they share one file."""
+    worker_engine = ContainerlabEngine(
+        str(tmp_path), lab_host_role="lab", lock_label="academy-lab-worker"
+    )
+    reconciler_engine = ContainerlabEngine(
+        str(tmp_path), lab_host_role="lab", lock_label="academy-lab-reconcile"
+    )
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    try:
+        with patch("subprocess.run") as run:
+            with pytest.raises(HostLockUnavailable):
+                worker_engine.status("i")
+            with pytest.raises(HostLockUnavailable):
+                reconciler_engine.status("i")
+            run.assert_not_called()
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+    # Once released, both engines succeed against the same file — proving the
+    # contention above was one shared lock, not one lock each that happened
+    # to both be unheld.
+    with patch("subprocess.run") as run:
+        run.return_value = MagicMock(stdout="{}", stderr="", returncode=0)
+        assert worker_engine.status("i") == "absent"
+        assert reconciler_engine.status("i") == "absent"
+
+
+def test_contended_deploy_raises_without_starting_a_subprocess(tmp_path):
+    eng = ContainerlabEngine(str(tmp_path), lab_host_role="lab")
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    try:
+        with patch("subprocess.run") as run:
+            with pytest.raises(HostLockUnavailable):
+                eng.deploy("name: x", "i")
+            run.assert_not_called()
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+    assert not (tmp_path / "i").exists()
+
+
+def test_reconcile_runtime_propagates_contention_before_touching_the_database():
+    """Proves the phase ordering: the locked inventory call happens first,
+    before any database read — so a contention here needs nothing rolled
+    back, and reconcile_runtime does not swallow it into a fabricated
+    successful-looking result.
+    """
+    from app.services import lab_jobs
+
+    engine = MagicMock()
+    engine.inventory.side_effect = HostLockUnavailable(
+        "containerlab host lock is already held — held by '999 academy-lab-worker'"
+    )
+    db = MagicMock()
+
+    with pytest.raises(HostLockUnavailable):
+        lab_jobs.reconcile_runtime(db, engine)
+
+    db.scalars.assert_not_called()
+
+
+def test_lab_reconcile_skips_cleanly_on_host_lock_contention(monkeypatch, capsys):
+    """The CLI command itself must not raise or partially commit on contention.
+
+    reconcile_runtime propagates HostLockUnavailable (proven above);
+    _lab_reconcile is the layer that must catch it, roll back, skip the
+    console sweep, and return normally so the process exits 0 and the
+    1-minute timer simply retries.
+    """
+    from app import cli
+    from app.config import settings
+    from app.services import lab_jobs, lab_operations
+
+    monkeypatch.setattr(settings, "lab_host_role", "lab")
+    monkeypatch.setattr("app.config.validate_settings", lambda s: [])
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/containerlab")
+
+    fake_db = MagicMock()
+
+    @contextmanager
+    def fake_session():
+        yield fake_db
+
+    monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+
+    def _raise_contention(db, engine):
+        raise HostLockUnavailable(
+            "containerlab host lock is already held — held by '123 academy-lab-worker'"
+        )
+
+    monkeypatch.setattr(lab_jobs, "reconcile_runtime", _raise_contention)
+    sweep = MagicMock()
+    monkeypatch.setattr(lab_jobs, "sweep_orphan_consoles", sweep)
+
+    cli._lab_reconcile(argparse.Namespace())
+
+    sweep.assert_not_called()
+    fake_db.rollback.assert_called_once()
+    # Only reconcile_stuck's own short-transaction commit happened; nothing
+    # from the abandoned reconcile_runtime pass was committed afterwards.
+    assert fake_db.commit.call_count == 1
+    assert "skipped" in capsys.readouterr().out

@@ -5,6 +5,7 @@ import subprocess
 import yaml
 
 from app.config import settings
+from app.services.host_lock import host_lock
 
 from .interface import ExecResult, LabEngine, LabHandle, WrongLabHostError
 
@@ -41,9 +42,17 @@ def _requires_kvm(topology_text: str) -> bool:
 
 
 class ContainerlabEngine(LabEngine):
-    def __init__(self, workdir: str, lab_host_role: str | None = None):
+    def __init__(
+        self,
+        workdir: str,
+        lab_host_role: str | None = None,
+        lock_label: str = "containerlab-engine",
+    ):
         self.workdir = workdir
         self.lab_host_role = lab_host_role if lab_host_role is not None else settings.lab_host_role
+        # Identifies this engine's caller (worker vs. reconciler) in the host
+        # lock file / contention messages — see app.services.host_lock.
+        self.lock_label = lock_label
 
     def _require_lab_host(self) -> None:
         if self.lab_host_role.lower() != "lab":
@@ -71,17 +80,24 @@ class ContainerlabEngine(LabEngine):
         except json.JSONDecodeError as exc:
             raise RuntimeError("inspect returned invalid JSON") from exc
 
-    def _inspect_lab_paths(self) -> dict[str, str]:
+    def _inspect_lab_paths_unlocked(self) -> dict[str, str]:
         """Every containerlab-reported lab name -> its real topology path.
 
         Unfiltered by design: a caller that already knows (by row identity)
-        which specific instance it means to act on — e.g. ``destroy()``
+        which specific instance it means to act on — e.g. ``_destroy_unlocked``
         below, recovering the real path for a lab whose expected topology
         file went missing — needs whatever path containerlab actually
         reports, not an ownership judgement about it. :meth:`inventory` is
         the ownership-filtered view built on top of this for callers (like
         ``reconcile_runtime``) that must decide *which* names are Academy's
         to manage in the first place.
+
+        Unlocked: callers must already hold ``host_lock``. Never call this
+        (or any other ``_*_unlocked`` helper) from a public method other than
+        the one already holding the lock — public methods must not call each
+        other, since a second ``host_lock`` acquisition within the same
+        process on a fresh fd does not merge with the first and instead
+        fails as if a different process held it.
         """
         self._require_lab_host()
         raw = self._inspect_all()
@@ -107,7 +123,7 @@ class ContainerlabEngine(LabEngine):
         _walk(raw)
         return found
 
-    def inventory(self) -> dict[str, str]:
+    def _inventory_unlocked(self) -> dict[str, str]:
         """Inspect every containerlab runtime, keeping only labs this engine owns.
 
         A ``dal-``-prefixed name alone is not proof of ownership — an unrelated
@@ -120,19 +136,27 @@ class ContainerlabEngine(LabEngine):
         carry partial path info for labs this engine has no reason to trust
         anyway. This is the entrypoint used to decide *which* runtime names
         are eligible for orphan cleanup (``reconcile_runtime``); it is
-        deliberately narrower than :meth:`_inspect_lab_paths`.
+        deliberately narrower than :meth:`_inspect_lab_paths_unlocked`.
+
+        Unlocked — see :meth:`_inspect_lab_paths_unlocked`.
         """
-        found = self._inspect_lab_paths()
+        found = self._inspect_lab_paths_unlocked()
         return {name: path for name, path in found.items() if path == self._topo_path(name)}
 
-    def _lab_is_deployed(self, instance_name: str) -> bool:
-        """Inspect runtime state without trusting the expected topology file."""
-        return instance_name in self.inventory()
-
-    def deploy(self, topology_text: str, instance_name: str) -> LabHandle:
+    def inventory(self) -> dict[str, str]:
         self._require_lab_host()
-        if _requires_kvm(topology_text) and not os.path.exists("/dev/kvm"):
-            raise RuntimeError("vr-* lab deployment requires /dev/kvm")
+        with host_lock(self.lock_label, directory=self.workdir):
+            return self._inventory_unlocked()
+
+    def _lab_is_deployed_unlocked(self, instance_name: str) -> bool:
+        """Inspect runtime state without trusting the expected topology file.
+
+        Unlocked — see :meth:`_inspect_lab_paths_unlocked`.
+        """
+        return instance_name in self._inventory_unlocked()
+
+    def _deploy_unlocked(self, topology_text: str, instance_name: str) -> LabHandle:
+        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
         path = self._topo_path(instance_name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -163,15 +187,22 @@ class ContainerlabEngine(LabEngine):
             kinds[logical] = item.get("kind", "linux")
         return LabHandle(instance_name=instance_name, nodes=nodes, mgmt=mgmt, kinds=kinds)
 
-    def ssh_exec(
+    def deploy(self, topology_text: str, instance_name: str) -> LabHandle:
+        self._require_lab_host()
+        if _requires_kvm(topology_text) and not os.path.exists("/dev/kvm"):
+            raise RuntimeError("vr-* lab deployment requires /dev/kvm")
+        with host_lock(self.lock_label, directory=self.workdir):
+            return self._deploy_unlocked(topology_text, instance_name)
+
+    def _ssh_exec_unlocked(
         self,
         handle: LabHandle,
         node: str,
         command: str,
-        user: str = "admin",
-        password: str = "",
+        user: str,
+        password: str,
     ) -> ExecResult:
-        self._require_lab_host()
+        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
         ip = handle.mgmt[node]
         ssh = [
             "sshpass",
@@ -193,8 +224,20 @@ class ContainerlabEngine(LabEngine):
         )
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)
 
-    def destroy(self, instance_name: str) -> None:
+    def ssh_exec(
+        self,
+        handle: LabHandle,
+        node: str,
+        command: str,
+        user: str = "admin",
+        password: str = "",
+    ) -> ExecResult:
         self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            return self._ssh_exec_unlocked(handle, node, command, user, password)
+
+    def _destroy_unlocked(self, instance_name: str) -> None:
+        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
         path = self._topo_path(instance_name)
         # First deploys and replay after an already-completed destroy may have
         # no topology file. Confirm runtime absence rather than equating a lost
@@ -210,7 +253,7 @@ class ContainerlabEngine(LabEngine):
             # discovered path must match the one this engine would itself
             # have written before it's trusted — anything else is refused
             # rather than silently destroyed at an unverified location.
-            discovered_path = self._inspect_lab_paths().get(instance_name)
+            discovered_path = self._inspect_lab_paths_unlocked().get(instance_name)
             if discovered_path is None:
                 return
             if discovered_path != path:
@@ -227,13 +270,23 @@ class ContainerlabEngine(LabEngine):
         if r.returncode != 0:
             raise RuntimeError(f"destroy failed: {r.stderr}")
 
+    def destroy(self, instance_name: str) -> None:
+        self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            self._destroy_unlocked(instance_name)
+
     def reset(self, topology_text: str, instance_name: str) -> LabHandle:
         self._require_lab_host()
-        self.destroy(instance_name)
-        return self.deploy(topology_text, instance_name)
+        # Held for the whole destroy+deploy pair so no other host operation
+        # can interleave between them — calling the public destroy()/deploy()
+        # in sequence would each acquire and fully release the lock, leaving
+        # a window between the two where another process could run.
+        with host_lock(self.lock_label, directory=self.workdir):
+            self._destroy_unlocked(instance_name)
+            return self._deploy_unlocked(topology_text, instance_name)
 
-    def exec(self, handle: LabHandle, node: str, command: list) -> ExecResult:
-        self._require_lab_host()
+    def _exec_unlocked(self, handle: LabHandle, node: str, command: list) -> ExecResult:
+        """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
         cname = handle.nodes[node]
         r = subprocess.run(
             ["docker", "exec", cname, *command],
@@ -243,9 +296,15 @@ class ContainerlabEngine(LabEngine):
         )
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)
 
+    def exec(self, handle: LabHandle, node: str, command: list) -> ExecResult:
+        self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            return self._exec_unlocked(handle, node, command)
+
     def status(self, instance_name: str) -> str:
         self._require_lab_host()
-        return "running" if self._lab_is_deployed(instance_name) else "absent"
+        with host_lock(self.lock_label, directory=self.workdir):
+            return "running" if self._lab_is_deployed_unlocked(instance_name) else "absent"
 
     def console_target(self, handle: LabHandle, node: str) -> str:
         return handle.nodes[node]
