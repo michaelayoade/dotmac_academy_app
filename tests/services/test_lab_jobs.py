@@ -283,3 +283,68 @@ def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
         == 0
     )
     admin_session.rollback()
+
+
+def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent_reset(
+    admin_session, tenant_a
+):
+    """Phase 4 must re-validate, not trust, Phase 2's snapshot.
+
+    ``missing_runtime`` is computed once, in Phase 2, before Phase 3's
+    (potentially multi-minute, per orphan) destroy loop runs. If a real,
+    concurrent, user-initiated reset completes for one of those instances
+    while Phase 3 is still running, Phase 4 must not enqueue a destroy
+    against it using the now-stale Phase 2 snapshot — that would tear down a
+    lab that just came back up.
+
+    The concurrent mutation is injected via ``engine.destroy``'s side effect
+    for the one rowless orphan this test also seeds — ``engine.destroy`` is
+    the last thing Phase 3 does before Phase 4 runs, so performing the
+    "concurrent" enqueue from inside it deterministically reproduces "some
+    real time and a real database write happened between Phase 2 and Phase
+    4" without needing an actual second thread or process.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-missing-runtime",
+        seed={},
+        status="active",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    def _concurrent_reset_during_phase_3(name: str) -> None:
+        assert name == "dal-rowless-race-trigger"
+        # Simulate a real worker completing an unrelated, concurrent
+        # user-initiated redeploy for `instance` while this destroy is
+        # "in flight" — it now has a genuinely open operation.
+        lab_operations.enqueue(admin_session, instance=instance, kind="deploy", requested_by=p.id)
+        admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.return_value = {
+        "dal-rowless-race-trigger": "/labs/rowless-race-trigger.clab.yml",
+    }
+    engine.destroy.side_effect = _concurrent_reset_during_phase_3
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 1
+    engine.destroy.assert_called_once_with("dal-rowless-race-trigger")
+    # The concurrent deploy is the only operation queued for `instance` — no
+    # destroy/deploy was ALSO enqueued against the stale Phase 2 snapshot.
+    ops = (
+        admin_session.query(LabOperation)
+        .filter_by(instance_id=instance.id)
+        .all()
+    )
+    assert [op.kind for op in ops] == ["deploy"]
+    assert queued == 0
+    # Untouched by Phase 4 — it was skipped, not mutated.
+    assert instance.status == "active"
+    assert instance.error is None
+    admin_session.rollback()

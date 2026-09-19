@@ -226,7 +226,18 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
        through this loop, there is nothing to unwind.
     4. Database projections/enqueues, only after every host operation this
        pass needed has already completed. This phase cannot raise
-       ``HostLockUnavailable`` — it never touches the engine.
+       ``HostLockUnavailable`` — it never touches the engine. Phase 3's
+       destroys each carry their own multi-minute timeout, so real time
+       passes between Phase 2's snapshot and Phase 4's mutations — long
+       enough for an unrelated, concurrent operation (e.g. a user-initiated
+       reset running via the normal worker path) to change an instance's
+       true state in the meantime. Phase 4 therefore re-validates each
+       candidate's CURRENT status and CURRENT open-operation membership
+       immediately before mutating it, rather than trusting the Phase 2
+       snapshot for anything beyond "this instance was structurally
+       interesting enough to look at again" — otherwise a freshly-succeeded
+       redeploy could be paved over with a destroy enqueued against stale
+       data.
 
     If ``engine.inventory()`` or a ``engine.destroy()`` call raises
     ``HostLockUnavailable``, this function does not catch it: it propagates
@@ -278,15 +289,45 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         destroyed += 1
 
     # Phase 4 — database projections/enqueues, after all required host
-    # operations for this pass have completed.
+    # operations for this pass have completed. Re-fetch open-operation
+    # membership fresh here rather than reusing Phase 2's — Phase 3's
+    # destroys can each take minutes, plenty of time for a concurrent,
+    # unrelated operation to appear against one of these instances.
+    fresh_open_instance_ids = set(
+        db.scalars(
+            select(LabOperation.instance_id).where(
+                LabOperation.state.in_(lab_operations.OPEN_STATES)
+            )
+        ).all()
+    )
+
     queued = 0
     for instance in db_only_repairs:
+        # Re-check this exact instance's current state immediately before
+        # mutating it — Phase 2 only proved it looked eligible at snapshot
+        # time. If a concurrent operation now has it live or already claimed,
+        # something else is handling it and this pass must not interfere.
+        db.refresh(instance)
+        if (
+            instance.status in ("provisioning", "active", "resetting")
+            or instance.id in fresh_open_instance_ids
+        ):
+            continue
         instance.status = "active"
         instance.error = "runtime existed for a non-live database row; destroy enqueued"
         lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
         queued += 1
 
     for instance in missing_runtime:
+        # Same re-validation, mirrored: a concurrent redeploy since Phase 2
+        # would have left the instance live again and/or claimed by an open
+        # operation, and must not be paved over with a stale destroy/deploy.
+        db.refresh(instance)
+        if (
+            instance.status not in ("provisioning", "active", "resetting")
+            or instance.id in fresh_open_instance_ids
+        ):
+            continue
         if instance.error is not None:
             # A prior failure was conservatively capacity-counted because
             # runtime absence was unknown. Inventory has now proved absence,
