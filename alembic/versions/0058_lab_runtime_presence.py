@@ -95,7 +95,7 @@ established: `REVOKE ALL ... FROM app_user, platform_api` followed by the
 same `SELECT`/column-scoped-`INSERT`/`SELECT, UPDATE` grants. `app_admin`'s
 migration/offline privileges are untouched (never revoked by 0056 either).
 
-Revision ID: 0058_lab_instance_runtime_presence
+Revision ID: 0058_lab_runtime_presence
 Revises: 0057_lab_instance_name_unique
 """
 
@@ -103,7 +103,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0058_lab_instance_runtime_presence"
+revision = "0058_lab_runtime_presence"
 down_revision = "0057_lab_instance_name_unique"
 branch_labels = None
 depends_on = None

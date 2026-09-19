@@ -73,7 +73,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # TARGET_REVISION/TARGET_REVISION_0057) specifically so the 0055/0056 and
 # 0056/0057 tests below stop silently assuming an earlier revision is head
 # once a later one exists.
-HEAD_REVISION = "0058_lab_instance_runtime_presence"
+HEAD_REVISION = "0058_lab_runtime_presence"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -81,7 +81,7 @@ TARGET_REVISION_0057 = "0057_lab_instance_name_unique"
 
 # 0057 <-> 0058 boundary, for the new tests further down this file.
 DOWN_REVISION_0058 = TARGET_REVISION_0057  # "0057_lab_instance_name_unique"
-TARGET_REVISION_0058 = HEAD_REVISION  # "0058_lab_instance_runtime_presence"
+TARGET_REVISION_0058 = HEAD_REVISION  # "0058_lab_runtime_presence"
 
 INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
 RUNTIME_PRESENCE_CHECK = "ck_lab_instances_runtime_presence"

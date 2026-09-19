@@ -89,7 +89,7 @@ class LabInstance(Base, TimestampMixin):
         DateTime(timezone=True), server_default=FetchedValue()
     )
     # Worker-owned, independent of `status` (see migration
-    # 0058_lab_instance_runtime_presence.py's module docstring): `status`
+    # 0058_lab_runtime_presence.py's module docstring): `status`
     # carries lifecycle/UI meaning and cannot simultaneously express physical
     # runtime existence. Exactly three values — "absent" (proven absent),
     # "present" (observed or successfully created), "unknown" (external
