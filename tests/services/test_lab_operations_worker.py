@@ -1249,13 +1249,21 @@ def test_absent_presence_does_not_consume_capacity(admin_session, tenant_a, monk
 
 def test_capacity_deferral_preserves_presence(admin_session, tenant_a, monkeypatch):
     """A deferred admission (capacity full) must not mutate the deferred
-    instance's presence — only its status/operation are requeued."""
+    instance's presence — only its status/operation are requeued.
+
+    The deferred candidate must genuinely NOT already be capacity-counted
+    (presence="absent"): `_capacity_available`'s `already_consuming` check
+    treats "present"/"unknown" as already-counted-so-admit-regardless-of-cap,
+    so seeding this instance with either of those values would make it
+    ineligible for deferral in the first place, contradicting the very
+    scenario this test means to exercise.
+    """
     blocker, _ = _seed(admin_session, tenant_a.id, name="deferral-blocker", status="active")
     admin_session.commit()
     monkeypatch.setattr(settings, "max_concurrent_labs", 1)
 
     retry, person = _seed(
-        admin_session, tenant_a.id, name="deferral-retry", status="error", presence="unknown"
+        admin_session, tenant_a.id, name="deferral-retry", status="error", presence="absent"
     )
     operation = lab_operations.enqueue(
         admin_session, instance=retry, kind="deploy", requested_by=person.id
@@ -1271,7 +1279,52 @@ def test_capacity_deferral_preserves_presence(admin_session, tenant_a, monkeypat
     assert outcome == "deferred"
     admin_session.refresh(retry)
     assert retry.status == "queued"
-    assert retry.runtime_presence == "unknown"
+    assert retry.runtime_presence == "absent"  # untouched — never became capacity-counted
+
+
+def test_already_consuming_presence_is_admitted_even_when_cap_is_full(
+    admin_session, tenant_a, monkeypatch
+):
+    """The inverse of the deferral test above: an instance whose OWN presence
+    is already "present"/"unknown" is the `already_consuming` short-circuit's
+    actual job to admit regardless of the cap — it is already occupying a
+    capacity slot, so refusing it would not free any capacity, only stall a
+    redeploy of an instance that's already counted."""
+    for presence in ("present", "unknown"):
+        blocker, _ = _seed(
+            admin_session, tenant_a.id, name=f"already-consuming-blocker-{presence}", status="active"
+        )
+        admin_session.commit()
+        monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+        candidate, person = _seed(
+            admin_session,
+            tenant_a.id,
+            name=f"already-consuming-{presence}",
+            status="active",
+            presence=presence,
+        )
+        operation = lab_operations.enqueue(
+            admin_session, instance=candidate, kind="deploy", requested_by=person.id
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = operation.claimed_at
+        admin_session.commit()
+
+        outcome = lab_operations.run_claimed(
+            admin_session,
+            operation_id=operation.id,
+            claimed_by="worker",
+            engine=_engine(candidate.instance_name),
+        )
+        # The global cap (1) is already fully occupied by `blocker` alone —
+        # admission only succeeds because `candidate` was already counted.
+        assert outcome == "succeeded", (
+            f"presence={presence!r} candidate should be admitted regardless of "
+            "the cap via the already_consuming short-circuit"
+        )
 
 
 def test_deploy_reservation_sets_unknown_before_external_work(

@@ -304,7 +304,10 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     process may still be running in the background — so the instance
     conservatively stays ``active`` instead, mirroring ``_run_deploy``'s
     destroy-failure handling in ``lab_operations.py``. Capacity accounting
-    (``_capacity_available``) excludes only ``error``, and over-counting a
+    (``_capacity_available``) is presence-based, not status-based: this
+    failure path sets ``instance.runtime_presence = "unknown"`` (set the
+    moment invocation is reached, see below), which keeps it capacity-counted
+    exactly like a genuinely active instance would be, and over-counting a
     phantom-but-live instance self-heals via ``reconcile_runtime`` once
     inventory proves absence, whereas under-counting would not self-correct
     as safely. ``instance.error`` is set to a non-``None`` message on every
