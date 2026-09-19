@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
@@ -34,6 +34,11 @@ MAX_ATTEMPTS_BY_KIND = {"deploy": 3, "destroy": 5, "check": 3}
 RETRY_DELAY_SECONDS = 5
 _CAPACITY_LOCK_KEY = 0x44414C  # "DAL"; one global Academy lab-capacity lock.
 _BOOT_TOKEN = uuid4().hex[:8]
+# Marks a `last_error` recorded for an operator-placement refusal (wrong lab
+# host) rather than a genuine execution failure, so the automatic-destroy
+# escalation count (a structural signal, not a message-substring guess about
+# an engine's wording) can exclude these rows from the cumulative threshold.
+_OPERATOR_REFUSAL_LAST_ERROR_PREFIX = "[operator-refusal] "
 
 
 def _now() -> datetime:
@@ -220,23 +225,16 @@ def _requeue_for_capacity(db: Session, op: LabOperation, instance: LabInstance) 
     db.flush()
 
 
-def _requeue_after_host_lock(
-    db: Session,
-    op: LabOperation,
-    instance: LabInstance,
-    *,
-    status: str,
-    error: str | None,
-) -> None:
-    """Return a claim to the queue after transient host-lock contention.
+def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
+    """Return a claim's operation row to the queue after transient host-lock
+    contention.
 
-    Unlike :func:`_requeue_for_capacity` (which always projects a fresh
-    admission attempt as ``queued``), host-lock contention can interrupt any
-    operation kind mid-flight, so the instance's pre-execution status/error is
-    restored verbatim instead of being forced to a specific value.
+    Only touches the operation row. Callers decide separately whether the
+    instance's status/error should be restored: for a "deploy" operation,
+    ``_run_deploy`` may already have genuinely destroyed the old runtime
+    before the lock contention was hit, so blindly restoring the pre-op
+    instance state would be a false projection, not merely a conservative one.
     """
-    instance.status = status
-    instance.error = error
     op.state = "queued"
     op.claimed_by = None
     op.claimed_at = None
@@ -256,7 +254,10 @@ def _automatic_destroy_escalation_message(
     Counts only ``failed``, ``kind="destroy"``, ``requested_by IS NULL``
     operations (automatic reaper-triggered destroys — user-initiated destroys
     pass a real person id) for this instance, including the current failure.
-    Only failures after the instance's most recent *successful* ``deploy``
+    Operator-placement refusals (``WrongLabHostError``, marked with
+    ``_OPERATOR_REFUSAL_LAST_ERROR_PREFIX`` at settle time) are excluded: a
+    misconfigured host role is not a genuine destroy execution failure. Only
+    failures after the instance's most recent *successful* ``deploy``
     operation count, so a successful manual redeploy starts a fresh window.
     The scan is bounded at the threshold rather than unbounded history.
     """
@@ -274,6 +275,14 @@ def _automatic_destroy_escalation_message(
         .where(LabOperation.state == "failed")
         .where(LabOperation.requested_by.is_(None))
         .where(LabOperation.id != current_operation_id)
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.startswith(
+                    _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
+                ),
+            )
+        )
     )
     if last_deploy_success_at is not None:
         prior_failure_query = prior_failure_query.where(
@@ -476,7 +485,7 @@ def run_claimed(
             operation_id=operation_id,
             claimed_by=claimed_by,
             state="failed",
-            error=str(exc),
+            error=f"{_OPERATOR_REFUSAL_LAST_ERROR_PREFIX}{exc}",
             refund_attempt=True,
         ):
             db.rollback()
@@ -485,9 +494,9 @@ def run_claimed(
         return "failed"
     except HostLockUnavailable:
         # Another process holds the host containerlab lock. This is transient
-        # host contention, not a workload failure or a fencing loss: restore
-        # the instance to its pre-execution state, refund the attempt charged
-        # by claim_next, and requeue the same row for a prompt retry.
+        # host contention, not a workload failure or a fencing loss: refund
+        # the attempt charged by claim_next and requeue the same row for a
+        # prompt retry.
         db.rollback()
         unchanged_instance = db.get(LabInstance, operation_instance_id)
         refreshed_op = db.get(LabOperation, operation_id)
@@ -499,13 +508,21 @@ def run_claimed(
         ):
             db.rollback()
             return "stale"
-        _requeue_after_host_lock(
-            db,
-            refreshed_op,
-            unchanged_instance,
-            status=initial_instance_status,
-            error=initial_instance_error,
-        )
+        if operation_kind != "deploy":
+            # Nothing destructive has necessarily happened yet for
+            # destroy/check before this handler fires — safe to restore the
+            # pre-execution instance state verbatim.
+            unchanged_instance.status = initial_instance_status
+            unchanged_instance.error = initial_instance_error
+        # For "deploy", _run_deploy already set instance.status to
+        # "resetting"/"provisioning" for the whole destroy-then-provision
+        # sequence before attempting the (possibly already-succeeded) destroy.
+        # That value stays correctly capacity-counted (_capacity_available
+        # treats provisioning/active/resetting alike) and, unlike the
+        # pre-reset "active", does not falsely claim a working lab when the
+        # real runtime may have just been torn down and not yet redeployed.
+        # Leave it untouched.
+        _requeue_operation_after_host_lock(db, refreshed_op)
         db.commit()
         return "deferred"
     except Exception as exc:
@@ -594,6 +611,22 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                 # An interrupted external mutation cannot prove runtime absence.
                 instance.status = "active"
                 instance.error = op.last_error
+            if (
+                instance is not None
+                and op.kind == "destroy"
+                and op.requested_by is None
+            ):
+                # A stuck/lease-expired automatic destroy is the same
+                # persistent-failure signal as a synchronous one — it must
+                # count toward the same cumulative escalation threshold, or a
+                # hanging engine lets the idle reaper re-enqueue destroys for
+                # this instance forever.
+                escalation_message = _automatic_destroy_escalation_message(
+                    db, instance_id=op.instance_id, current_operation_id=op.id
+                )
+                if escalation_message is not None:
+                    instance.status = "error"
+                    instance.error = escalation_message
             continue
         if instance is not None:
             if instance.status == "provisioning":

@@ -921,3 +921,132 @@ def test_deploy_failure_detected_even_when_provision_leaves_status_active(
     assert instance.error == "runtime creation began but deploy failed"
     assert operation.state == "failed"
     assert "runtime creation began but deploy failed" in operation.last_error
+
+
+def test_wrong_host_refusals_do_not_contribute_to_destroy_escalation_count(
+    admin_session, tenant_a, tmp_path
+):
+    """WrongLabHostError refusals are operator/placement misconfiguration, not
+    genuine destroy execution failures, and must not count toward the
+    cumulative automatic-destroy escalation threshold."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="wrong-host-destroy", status="active"
+    )
+    refusing_engine = ContainerlabEngine(str(tmp_path), lab_host_role="web")
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+
+    for _ in range(threshold + 2):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        admin_session.commit()
+
+        outcome = lab_operations.run_claimed(
+            admin_session,
+            operation_id=operation.id,
+            claimed_by="worker",
+            engine=refusing_engine,
+        )
+        assert outcome == "failed"
+
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.error is None
+
+
+def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
+    admin_session, tenant_a
+):
+    """A destroy that exhausts its attempts via lease expiry (worker
+    crash/hang), not a synchronous exception, must escalate the same way a
+    synchronously-failing destroy does — otherwise a hanging engine lets the
+    idle reaper re-enqueue destroys for this instance forever."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="stuck-destroy-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+    engine = MagicMock()
+    engine.destroy.side_effect = RuntimeError("destroy refused")
+
+    for _ in range(threshold - 1):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        admin_session.commit()
+        lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+
+    stuck_operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    admin_session.refresh(stuck_operation)
+    assert stuck_operation.state == "failed"
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+
+
+def test_host_lock_during_redeploy_provision_does_not_falsely_restore_active(
+    admin_session, tenant_a, monkeypatch
+):
+    """If the destroy half of a deploy's destroy-then-provision sequence
+    already succeeded (the real runtime is torn down) and it is the
+    subsequent provision/deploy call that hits HostLockUnavailable, restoring
+    the pre-op "active" status would falsely claim a working lab. The
+    instance must stay in the mid-flight "resetting"/"provisioning" state
+    _run_deploy already left it in."""
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="host-lock-redeploy", status="active"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+
+    engine = MagicMock()
+    engine.destroy.return_value = None  # the old runtime is genuinely torn down
+
+    def _provision_hits_host_lock(db, inst, eng, template):
+        raise host_lock.HostLockUnavailable("host lock held during redeploy")
+
+    monkeypatch.setattr(
+        lab_operations.lab_lifecycle, "provision", _provision_hits_host_lock
+    )
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+
+    assert outcome == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "resetting"
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    assert operation.attempts == 0
