@@ -41,7 +41,14 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`a3838b848c3a881e35d9cac84fd38e7b5c7924c9b564c59ce8f8ed34341a478d`
+`b3714e5347c57c1efb3614630de4eb4238b2713a2b2b3d489e28025e0c4fd198`
+
+Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
+implementation itself is unchanged; the fingerprint moved because the module's
+runtime imports changed when direct `ContainerlabEngine` execution was removed
+from the web tier and replaced by durable operation enqueueing. The conserved
+surface remains the same authenticated, tenant/instance-owner-gated console
+reverse proxy, not a newly accepted connector or broader egress path.
 
 This is not a claim that the proxy is test code or harmless. If reachability
 changes, the fingerprint changes, or the surface is deleted, the conservation
