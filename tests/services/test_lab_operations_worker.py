@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
@@ -1998,3 +2000,141 @@ def test_structural_ownership_fields_play_no_part_in_any_fencing_predicate(
         engine=_engine(instance.instance_name),
     )
     assert outcome == "succeeded"
+
+
+# --- reclaim_previous_epoch: attempt-ceiling and lock-wait hardening --------
+
+
+def test_reclaim_previous_epoch_stops_after_kind_attempt_ceiling(admin_session, tenant_a):
+    """A restart-reclaimed row already at its kind's attempt ceiling must be
+    marked "failed", not requeued with a refunded attempt — otherwise a
+    worker process that repeatedly crashes before ever settling this same
+    claim would unconditionally refund the attempt `claim_next` charged on
+    every restart, silently defeating `MAX_ATTEMPTS_BY_KIND` forever. Mirrors
+    `test_expired_claim_stops_after_kind_attempt_ceiling`'s assertions for the
+    `reconcile_stuck` path, adapted for `reclaim_previous_epoch`."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-ceiling")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation,
+        claimed_by="host-a:111:oldboot",
+        claimed_host="host-a",
+        claimed_epoch="111:oldboot",
+    )
+    operation.attempts = lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.commit()
+    admin_session.refresh(operation)
+    admin_session.refresh(instance)
+
+    assert operation.state == "failed"
+    assert operation.finished_at is not None
+    # Not refunded: an at-ceiling row must never get its attempt back.
+    assert operation.attempts == lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    assert "attempt ceiling" in operation.last_error
+    # Terminal settlement retains claim fields as audit provenance, exactly
+    # like reconcile_stuck's own ceiling branch — never cleared here.
+    assert operation.claimed_by == "host-a:111:oldboot"
+    assert operation.claimed_host == "host-a"
+    assert operation.claimed_epoch == "111:oldboot"
+
+    assert instance.status == "active"
+    assert instance.error == operation.last_error
+    assert instance.runtime_presence == "unknown"
+
+
+def test_reclaim_previous_epoch_escalates_automatic_destroy_at_ceiling(
+    admin_session, tenant_a
+):
+    """An automatic (`requested_by=None`) destroy already at the destroy
+    attempt ceiling, when matched by a restart-reclaim scan, must trigger the
+    same escalation-to-"error" path `reconcile_stuck`'s own ceiling branch
+    already applies — a crashing worker must not be able to dodge escalation
+    just because it never lived long enough to hit `reconcile_stuck`'s
+    lease-expiry check first. Mirrors
+    `test_single_stuck_destroy_row_escalates_via_reconcile_stuck_alone`."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="reclaim-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"]
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    _claim_row(
+        operation,
+        claimed_by="host-a:111:oldboot",
+        claimed_host="host-a",
+        claimed_epoch="111:oldboot",
+    )
+    operation.attempts = threshold
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.commit()
+    admin_session.refresh(operation)
+    admin_session.refresh(instance)
+
+    assert operation.state == "failed"
+    assert operation.attempts == threshold  # not refunded
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+    assert instance.runtime_presence == "unknown"
+
+
+def test_reclaim_previous_epoch_lock_wait_is_bounded_by_lock_timeout(
+    admin_engine, admin_session, tenant_a
+):
+    """`reclaim_previous_epoch`'s blocking (deliberately non-`SKIP LOCKED`)
+    `FOR UPDATE` scan must not be able to hang the whole worker's startup
+    indefinitely: a `lock_timeout` set on its own transaction bounds the
+    wait, so a real conflicting row lock held open by another transaction
+    (e.g. the separate `lab-reconcile` process, which is not covered by this
+    worker's own singleton lock) makes this call raise within seconds instead
+    of blocking forever."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-lock-timeout")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation,
+        claimed_by="host-a:111:oldboot",
+        claimed_host="host-a",
+        claimed_epoch="111:oldboot",
+    )
+    admin_session.commit()
+
+    factory = sessionmaker(bind=admin_engine, autoflush=False)
+    holder = factory()
+    # Take and deliberately hold a real conflicting row lock in a separate
+    # session/connection — left open (no commit/rollback) across the
+    # assertion below, simulating another transaction contending for the
+    # exact row reclaim_previous_epoch's FOR UPDATE will try to lock.
+    holder.execute(
+        select(LabOperation).where(LabOperation.id == operation.id).with_for_update()
+    )
+    try:
+        start = time.monotonic()
+        with pytest.raises(OperationalError):
+            lab_operations.reclaim_previous_epoch(
+                admin_session, host="host-a", epoch="222:newboot"
+            )
+        elapsed = time.monotonic() - start
+        # Comfortably above the 5s lock_timeout, nowhere near "forever" —
+        # proves the wait is bounded rather than merely "usually fast".
+        assert elapsed < 10
+    finally:
+        admin_session.rollback()
+        holder.rollback()
+        holder.close()

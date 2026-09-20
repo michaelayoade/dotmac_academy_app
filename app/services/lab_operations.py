@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
@@ -771,6 +771,55 @@ def run_claimed(
     return "succeeded"
 
 
+def _fail_operation_at_ceiling(
+    db: Session,
+    op: LabOperation,
+    instance: LabInstance | None,
+    *,
+    now: datetime,
+    last_error: str,
+) -> None:
+    """Mark ``op`` "failed" instead of requeuing it, because it has already
+    reached its kind's attempt ceiling (``MAX_ATTEMPTS_BY_KIND``).
+
+    Shared by ``reconcile_stuck``'s ordinary lease-expiry path and
+    ``reclaim_previous_epoch``'s restart-reclaim path so the ceiling check and
+    its instance projection — including automatic-destroy escalation — cannot
+    drift apart between the two recovery paths: a worker process that
+    repeatedly crashes before settling an operation must eventually stop
+    retrying exactly like a repeatedly-hanging one does. Each caller supplies
+    its own ``last_error`` message text; the projection/escalation logic
+    itself is identical for both callers. Deliberately does NOT call
+    ``_clear_claim_fields`` — like every other terminal settlement, the claim
+    fields stay behind as audit provenance.
+    """
+    op.state = "failed"
+    op.finished_at = now
+    op.last_error = last_error
+    if instance is not None and op.kind in ("deploy", "destroy"):
+        # An interrupted external mutation cannot prove runtime absence.
+        instance.status = "active"
+        instance.error = op.last_error
+        instance.runtime_presence = "unknown"
+    if instance is not None and op.kind == "destroy" and op.requested_by is None:
+        # A stuck/lease-expired/crash-reclaimed automatic destroy is the same
+        # persistent-failure signal as a synchronous one — it must count
+        # toward the same cumulative escalation threshold, or a hanging or
+        # repeatedly-crashing engine lets the idle reaper re-enqueue destroys
+        # for this instance forever.
+        escalation_message = _automatic_destroy_escalation_message(
+            db,
+            instance_id=op.instance_id,
+            current_operation_id=op.id,
+            current_operation_attempts=op.attempts,
+        )
+        if escalation_message is not None:
+            instance.status = "error"
+            instance.error = escalation_message
+            # Presence stays "unknown" (set above) — never forced to
+            # "absent" by escalation.
+
+
 def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
     """Return expired claims and pre-cutover in-flight instances to the queue."""
     now = _now()
@@ -795,35 +844,13 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
     for op in stuck:
         instance = db.get(LabInstance, op.instance_id)
         if op.attempts >= MAX_ATTEMPTS_BY_KIND.get(op.kind, 3):
-            op.state = "failed"
-            op.finished_at = now
-            op.last_error = f"worker lease expired after {op.attempts} attempts"
-            if instance is not None and op.kind in ("deploy", "destroy"):
-                # An interrupted external mutation cannot prove runtime absence.
-                instance.status = "active"
-                instance.error = op.last_error
-                instance.runtime_presence = "unknown"
-            if (
-                instance is not None
-                and op.kind == "destroy"
-                and op.requested_by is None
-            ):
-                # A stuck/lease-expired automatic destroy is the same
-                # persistent-failure signal as a synchronous one — it must
-                # count toward the same cumulative escalation threshold, or a
-                # hanging engine lets the idle reaper re-enqueue destroys for
-                # this instance forever.
-                escalation_message = _automatic_destroy_escalation_message(
-                    db,
-                    instance_id=op.instance_id,
-                    current_operation_id=op.id,
-                    current_operation_attempts=op.attempts,
-                )
-                if escalation_message is not None:
-                    instance.status = "error"
-                    instance.error = escalation_message
-                    # Presence stays "unknown" (set above) — never forced to
-                    # "absent" by escalation.
+            _fail_operation_at_ceiling(
+                db,
+                op,
+                instance,
+                now=now,
+                last_error=f"worker lease expired after {op.attempts} attempts",
+            )
             continue
         if instance is not None:
             # The expired claim may have crossed the external mutation
@@ -880,7 +907,27 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
     silently degrading that one row to lease-expiry-only recovery — which
     defeats the point of running this scan at all. Paying a brief blocking
     wait once at startup is an acceptable cost that ``reconcile_stuck``'s
-    repeated per-poll scan would not want to pay.
+    repeated per-poll scan would not want to pay — but that wait is bounded,
+    not unbounded: a ``lock_timeout`` is set on this same transaction before
+    the ``FOR UPDATE`` query, so a conflicting lock held by some other
+    transaction (most plausibly the separate ``lab-reconcile`` process, which
+    is not covered by this worker's own singleton lock) makes this call raise
+    rather than hang the whole worker's startup indefinitely. The caller
+    (``app.cli._lab_worker``) already rolls back and re-raises any exception
+    from this call, and a worker crashing on an unresolvable startup lock
+    timeout — rather than hanging forever — is the correct, acceptable
+    fail-fast behavior: ``Restart=always`` means systemd simply gives it a
+    fresh attempt.
+
+    A matched row already at its kind's attempt ceiling
+    (``MAX_ATTEMPTS_BY_KIND``) is marked "failed" instead of requeued —
+    exactly like ``reconcile_stuck``'s own ceiling check — via the same
+    shared ``_fail_operation_at_ceiling`` helper: this worker's own repeated
+    crashes before ever settling the row must eventually stop retrying just
+    as a repeatedly-hanging worker's lease-expiry retries do, or the ceiling
+    and automatic-destroy escalation this codebase treats as load-bearing
+    would be silently defeated by unconditionally refunding the attempt this
+    same row's claim charged on every restart.
 
     Never touches a different host's claims, or a row with a null/legacy
     ``claimed_host``/``claimed_epoch`` (pre-0059 rows, or rows claimed by a
@@ -888,6 +935,7 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
     exactly as they were before this function existed.
     """
     now = _now()
+    db.execute(text("SET LOCAL lock_timeout = '5s'"))
     matched = db.scalars(
         select(LabOperation)
         .where(LabOperation.state == "claimed")
@@ -898,9 +946,22 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
     ).all()
     for op in matched:
         instance = db.get(LabInstance, op.instance_id)
+        old_epoch = op.claimed_epoch
+        if op.attempts >= MAX_ATTEMPTS_BY_KIND.get(op.kind, 3):
+            _fail_operation_at_ceiling(
+                db,
+                op,
+                instance,
+                now=now,
+                last_error=(
+                    f"restart reclaim: previous worker epoch {old_epoch} "
+                    f"superseded by {epoch} on {host}, but already at "
+                    f"attempt ceiling after {op.attempts} attempts"
+                ),
+            )
+            continue
         if instance is not None:
             _project_requeued_instance_state(instance, op.kind)
-        old_epoch = op.claimed_epoch
         op.state = "queued"
         _clear_claim_fields(op)
         op.not_before = now

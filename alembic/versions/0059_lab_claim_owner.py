@@ -53,6 +53,19 @@ therefore tolerable, not merely "safe if you're careful" — worth stating
 explicitly since it is the exception rather than the rule among this table's
 recent migrations.
 
+The reverse direction is NOT equally tolerant, and is a hard ordering
+requirement rather than a tolerable window: a 0059-aware worker process
+unconditionally reads and writes `claimed_host`/`claimed_epoch` on every
+`claim_next` call for as long as it keeps running. If this migration is
+downgraded (dropping both columns) while a 0059-aware worker process is
+still alive, that worker's code has no way to learn the columns disappeared
+mid-lifetime — its very next claim attempt fails with a SQL error (column
+does not exist), rather than degrading gracefully the way the forward
+direction does. Application code must therefore be stopped or rolled back to
+a pre-0059 version BEFORE this migration is downgraded, never after or
+concurrently with it — the inverse of the forward case's tolerance, not an
+extension of it.
+
 Revision ID: 0059_lab_claim_owner
 Revises: 0058_lab_runtime_presence
 """
