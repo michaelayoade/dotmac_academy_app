@@ -363,11 +363,15 @@ def test_error_retry_stays_queued_when_global_capacity_is_full(
     )
     admin_session.commit()
 
-    claimed = lab_operations.claim_next(admin_session, claimed_by="worker")
+    claimed = lab_operations.claim_next(
+        admin_session, claimed_by="worker", claimed_host="some-host", claimed_epoch="111:oldboot"
+    )
     assert claimed is not None and claimed.id == operation.id
     admin_session.commit()
     admin_session.refresh(operation)
     assert operation.attempts == 1
+    assert operation.claimed_host == "some-host"
+    assert operation.claimed_epoch == "111:oldboot"
 
     monkeypatch.setattr(settings, "max_concurrent_labs", 1)
     engine = _engine(retry.instance_name)
@@ -384,6 +388,11 @@ def test_error_retry_stays_queued_when_global_capacity_is_full(
     assert retry.status == "queued"
     assert operation.state == "queued"
     assert operation.attempts == 0
+    # Capacity deferral is a requeue path — the two structural claim-ownership
+    # columns (migration 0059) must be cleared alongside claimed_by, exactly
+    # like every other requeue path.
+    assert operation.claimed_host is None
+    assert operation.claimed_epoch is None
     engine.destroy.assert_not_called()
     engine.deploy.assert_not_called()
 
@@ -420,12 +429,20 @@ def test_expired_claim_is_requeued_and_stale_worker_cannot_settle(admin_session,
     )
     operation.state = "claimed"
     operation.claimed_by = "stale-worker"
+    operation.claimed_host = "stale-host"
+    operation.claimed_epoch = "111:staleboot"
     operation.claimed_at = datetime.now(UTC) - timedelta(minutes=20)
     operation.heartbeat_at = datetime.now(UTC) - timedelta(minutes=20)
     admin_session.commit()
 
     assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
     admin_session.commit()
+    admin_session.refresh(operation)
+    # Ordinary lease recovery is a requeue path too — the two structural
+    # claim-ownership columns (migration 0059) must be cleared alongside
+    # claimed_by, exactly like every other requeue path.
+    assert operation.claimed_host is None
+    assert operation.claimed_epoch is None
     replacement = lab_operations.claim_next(admin_session, claimed_by="new-worker")
     assert replacement is not None
     admin_session.commit()
@@ -874,6 +891,8 @@ def test_host_lock_contention_defers_without_charging_attempt_or_altering_state(
     )
     operation.state = "claimed"
     operation.claimed_by = "worker"
+    operation.claimed_host = "some-host"
+    operation.claimed_epoch = "111:oldboot"
     operation.claimed_at = datetime.now(UTC)
     operation.heartbeat_at = datetime.now(UTC)
     operation.attempts = 1
@@ -892,6 +911,11 @@ def test_host_lock_contention_defers_without_charging_attempt_or_altering_state(
     assert instance.error is None
     assert operation.state == "queued"
     assert operation.claimed_by is None
+    # Host-lock contention is a requeue path — the two structural claim-
+    # ownership columns (migration 0059) must be cleared alongside claimed_by,
+    # exactly like every other requeue path.
+    assert operation.claimed_host is None
+    assert operation.claimed_epoch is None
     assert operation.attempts == 0
 
 
@@ -1660,3 +1684,317 @@ def test_successful_destroy_becomes_absent(admin_session, tenant_a):
     admin_session.refresh(instance)
     assert instance.status == "reaped"
     assert instance.runtime_presence == "absent"
+
+
+# --- Stage 2: structural claim ownership and restart reclaim ---------------
+
+
+def test_claim_next_persists_structural_ownership_alongside_unchanged_claimed_by(
+    admin_session, tenant_a
+):
+    """``claimed_by`` stays byte-for-byte what ``worker_identity()`` already
+    produces; ``claimed_host``/``claimed_epoch`` are persisted alongside it
+    from the same ``WorkerIdentity``."""
+    instance, person = _seed(admin_session, tenant_a.id, name="claim-persist")
+    lab_operations.enqueue(admin_session, instance=instance, kind="deploy", requested_by=person.id)
+    admin_session.commit()
+
+    identity = lab_operations.worker_identity_parts()
+    claimed = lab_operations.claim_next(
+        admin_session,
+        claimed_by=identity.claimed_by,
+        claimed_host=identity.host,
+        claimed_epoch=identity.epoch,
+    )
+    assert claimed is not None
+    assert claimed.claimed_by == lab_operations.worker_identity()
+    assert claimed.claimed_host == identity.host
+    assert claimed.claimed_epoch == identity.epoch
+    admin_session.rollback()
+
+
+def _claim_row(op, *, claimed_by, claimed_host, claimed_epoch, age=None):
+    age = age or timedelta(seconds=0)
+    op.state = "claimed"
+    op.claimed_by = claimed_by
+    op.claimed_host = claimed_host
+    op.claimed_epoch = claimed_epoch
+    op.claimed_at = datetime.now(UTC) - age
+    op.heartbeat_at = datetime.now(UTC) - age
+
+
+def test_reclaim_previous_epoch_reclaims_same_host_different_epoch_claim(
+    admin_session, tenant_a
+):
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-basic", status="provisioning")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation, claimed_by="host-a:111:oldboot", claimed_host="host-a", claimed_epoch="111:oldboot"
+    )
+    operation.attempts = 1
+    admin_session.commit()
+
+    reclaimed = lab_operations.reclaim_previous_epoch(
+        admin_session, host="host-a", epoch="222:newboot"
+    )
+    admin_session.commit()
+
+    assert reclaimed == 1
+    admin_session.refresh(operation)
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    assert operation.claimed_host is None
+    assert operation.claimed_epoch is None
+    assert operation.claimed_at is None
+    assert operation.heartbeat_at is None
+    assert operation.attempts == 0
+    assert "restart reclaim" in operation.last_error
+    assert "111:oldboot" in operation.last_error
+    assert "222:newboot" in operation.last_error
+    assert "host-a" in operation.last_error
+
+    admin_session.refresh(instance)
+    assert instance.status == "queued"  # provisioning -> queued, same as reconcile_stuck
+    assert instance.runtime_presence == "unknown"
+
+
+def test_reclaim_previous_epoch_projects_resetting_to_active_for_destroy(
+    admin_session, tenant_a
+):
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="reclaim-resetting", status="resetting", presence="unknown"
+    )
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    _claim_row(
+        operation, claimed_by="host-a:111:oldboot", claimed_host="host-a", claimed_epoch="111:oldboot"
+    )
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.commit()
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+    assert instance.runtime_presence == "unknown"
+
+
+def test_reclaim_previous_epoch_leaves_current_epoch_claim_untouched(admin_session, tenant_a):
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-current-epoch")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation, claimed_by="host-a:333:thisboot", claimed_host="host-a", claimed_epoch="333:thisboot"
+    )
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="333:thisboot")
+        == 0
+    )
+    admin_session.refresh(operation)
+    assert operation.state == "claimed"
+    assert operation.claimed_by == "host-a:333:thisboot"
+    assert operation.claimed_host == "host-a"
+    assert operation.claimed_epoch == "333:thisboot"
+    admin_session.rollback()
+
+
+def test_reclaim_previous_epoch_leaves_different_host_claim_untouched(admin_session, tenant_a):
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-other-host")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation, claimed_by="host-b:111:oldboot", claimed_host="host-b", claimed_epoch="111:oldboot"
+    )
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 0
+    )
+    admin_session.refresh(operation)
+    assert operation.state == "claimed"
+    assert operation.claimed_host == "host-b"
+    admin_session.rollback()
+
+
+def test_reclaim_previous_epoch_leaves_legacy_null_ownership_claim_untouched(
+    admin_session, tenant_a
+):
+    """A row claimed by a pre-0059 worker (or a caller that never supplied
+    structural ownership) has null ``claimed_host``/``claimed_epoch`` and must
+    remain lease-expiry-only — exactly as before this function existed."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-legacy")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(operation, claimed_by="host-a:111:oldboot", claimed_host=None, claimed_epoch=None)
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 0
+    )
+    admin_session.refresh(operation)
+    assert operation.state == "claimed"
+    assert operation.claimed_by == "host-a:111:oldboot"
+    admin_session.rollback()
+
+
+def test_reclaim_previous_epoch_refunds_exactly_one_attempt_with_zero_floor(
+    admin_session, tenant_a
+):
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-zero-floor")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation, claimed_by="host-a:111:oldboot", claimed_host="host-a", claimed_epoch="111:oldboot"
+    )
+    operation.attempts = 0
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.refresh(operation)
+    assert operation.attempts == 0  # never goes negative
+
+    other_instance, other_person = _seed(admin_session, tenant_a.id, name="reclaim-nonzero")
+    other_operation = lab_operations.enqueue(
+        admin_session, instance=other_instance, kind="deploy", requested_by=other_person.id
+    )
+    _claim_row(
+        other_operation,
+        claimed_by="host-a:333:oldboot2",
+        claimed_host="host-a",
+        claimed_epoch="333:oldboot2",
+    )
+    other_operation.attempts = 2
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="444:newboot2")
+        == 1
+    )
+    admin_session.refresh(other_operation)
+    assert other_operation.attempts == 1
+
+
+def test_reclaim_previous_epoch_rollback_leaves_original_claim_intact(admin_session, tenant_a):
+    """Simulates an interrupted reclaim transaction (e.g. a SIGTERM arriving
+    mid-reclaim): if the caller rolls back instead of committing, the
+    original claim must be left completely intact — not partially modified.
+    """
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-rollback")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation, claimed_by="host-a:111:oldboot", claimed_host="host-a", claimed_epoch="111:oldboot"
+    )
+    operation.attempts = 1
+    admin_session.commit()
+    operation_id = operation.id
+
+    reclaimed = lab_operations.reclaim_previous_epoch(
+        admin_session, host="host-a", epoch="222:newboot"
+    )
+    assert reclaimed == 1
+    admin_session.rollback()
+
+    current = admin_session.scalar(select(LabOperation).where(LabOperation.id == operation_id))
+    assert current.state == "claimed"
+    assert current.claimed_by == "host-a:111:oldboot"
+    assert current.claimed_host == "host-a"
+    assert current.claimed_epoch == "111:oldboot"
+    assert current.attempts == 1
+    assert current.last_error is None
+
+
+def test_reclaimed_old_claimed_by_cannot_heartbeat_or_settle_after_a_new_claim(
+    admin_session, tenant_a
+):
+    """After restart reclaim requeues a row and a new worker claims it, the
+    OLD ``claimed_by`` must be rejected by the existing exact-string fence
+    alone — a regression test proving structural fields were never needed in
+    that fence, and it still works unchanged."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-fence", status="provisioning")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    old_claimed_by = "host-a:111:oldboot"
+    _claim_row(operation, claimed_by=old_claimed_by, claimed_host="host-a", claimed_epoch="111:oldboot")
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.commit()
+
+    new_claimed_by = "host-a:222:newboot"
+    new_claim = lab_operations.claim_next(
+        admin_session,
+        claimed_by=new_claimed_by,
+        claimed_host="host-a",
+        claimed_epoch="222:newboot",
+    )
+    assert new_claim is not None and new_claim.id == operation.id
+    admin_session.commit()
+
+    assert (
+        lab_operations.heartbeat(admin_session, operation_id=operation.id, claimed_by=old_claimed_by)
+        is False
+    )
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by=old_claimed_by,
+        engine=_engine(instance.instance_name),
+    )
+    assert outcome == "stale"
+
+
+def test_structural_ownership_fields_play_no_part_in_any_fencing_predicate(
+    admin_session, tenant_a
+):
+    """``claimed_host``/``claimed_epoch`` are informational only — every
+    fencing predicate (``heartbeat``, ``_refresh_claim``/``run_claimed``,
+    ``_settle``) compares ``claimed_by`` alone. A deliberately mismatched/
+    garbage pair of structural fields must not affect whether a claim's real
+    owner can heartbeat or settle it — planting a defect that added either
+    field to a fencing predicate's WHERE clause would make this fail."""
+    instance, person = _seed(admin_session, tenant_a.id, name="fencing-guard")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    _claim_row(
+        operation,
+        claimed_by="worker",
+        claimed_host="deliberately-wrong-host",
+        claimed_epoch="deliberately-wrong-epoch",
+    )
+    admin_session.commit()
+
+    assert (
+        lab_operations.heartbeat(admin_session, operation_id=operation.id, claimed_by="worker")
+        is True
+    )
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=operation.id,
+        claimed_by="worker",
+        engine=_engine(instance.instance_name),
+    )
+    assert outcome == "succeeded"

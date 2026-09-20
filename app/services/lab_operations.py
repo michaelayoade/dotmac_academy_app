@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -51,9 +52,47 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+@dataclass(frozen=True)
+class WorkerIdentity:
+    """Structural decomposition of one worker process's fencing identity.
+
+    ``claimed_by`` (the composite ``host:epoch`` string) remains the sole
+    value ever compared in a fencing predicate (``heartbeat``,
+    ``_refresh_claim``, ``_settle``, ``run_claimed``'s staleness checks) —
+    unchanged by this dataclass's existence. ``host``/``epoch`` exist only so
+    a freshly started worker process can find rows it claimed under a
+    *different* (crashed/replaced) incarnation of itself without parsing
+    that composite string — see :func:`reclaim_previous_epoch`.
+    """
+
+    host: str
+    epoch: str
+
+    @property
+    def claimed_by(self) -> str:
+        return f"{self.host}:{self.epoch}"
+
+
+def worker_identity_parts() -> WorkerIdentity:
+    """Compute this worker process's identity.
+
+    Cheap and deterministic for the whole process lifetime (hostname/pid/boot
+    token never change once the process starts) — callers needing the value
+    more than once (e.g. the CLI's startup reclaim call and its later
+    ``claim_next`` calls) may call this repeatedly without risk of producing
+    two different values, but should prefer computing it once and reusing
+    the result within one call site.
+    """
+    return WorkerIdentity(host=socket.gethostname(), epoch=f"{os.getpid()}:{_BOOT_TOKEN}")
+
+
 def worker_identity() -> str:
-    """Process-unique identity used to fence one running worker incarnation."""
-    return f"{socket.gethostname()}:{os.getpid()}:{_BOOT_TOKEN}"
+    """Process-unique identity used to fence one running worker incarnation.
+
+    Must stay byte-identical to ``worker_identity_parts().claimed_by`` —
+    existing rows/fencing predicates depend on this exact format.
+    """
+    return worker_identity_parts().claimed_by
 
 
 def _insert_open_operation_stmt(
@@ -139,8 +178,22 @@ def enqueue(
     )
 
 
-def claim_next(db: Session, *, claimed_by: str) -> LabOperation | None:
-    """Claim the next ready operation; caller must commit immediately."""
+def claim_next(
+    db: Session,
+    *,
+    claimed_by: str,
+    claimed_host: str | None = None,
+    claimed_epoch: str | None = None,
+) -> LabOperation | None:
+    """Claim the next ready operation; caller must commit immediately.
+
+    ``claimed_by`` remains the sole fencing value. ``claimed_host``/
+    ``claimed_epoch`` are optional structural ownership fields (see
+    ``WorkerIdentity``/``reclaim_previous_epoch``) — every real worker claim
+    site should pass both together (derived from the same
+    ``WorkerIdentity``), but callers that only need `claimed_by`'s existing
+    fencing behavior (most of this test suite) may omit them.
+    """
     now = _now()
     op = db.scalars(
         select(LabOperation)
@@ -161,6 +214,8 @@ def claim_next(db: Session, *, claimed_by: str) -> LabOperation | None:
         return None
     op.state = "claimed"
     op.claimed_by = claimed_by
+    op.claimed_host = claimed_host
+    op.claimed_epoch = claimed_epoch
     op.claimed_at = now
     op.heartbeat_at = now
     op.attempts += 1
@@ -219,12 +274,47 @@ def _settle(
     return bool(result.rowcount)
 
 
+def _clear_claim_fields(op: LabOperation) -> None:
+    """Clear every claim/lease field together.
+
+    Shared by every requeue path (capacity deferral, host-lock contention,
+    ordinary lease recovery in ``reconcile_stuck``, and restart reclaim in
+    ``reclaim_previous_epoch``) so ``claimed_host``/``claimed_epoch`` can
+    never be left behind alongside a cleared ``claimed_by``, or vice versa —
+    a stale structural-ownership pair surviving next to a fresh claim would
+    make a future restart-reclaim scan misattribute the row. Terminal
+    settlement (``_settle``, success or failure) does NOT call this: it
+    deliberately retains these fields as audit provenance.
+    """
+    op.claimed_by = None
+    op.claimed_host = None
+    op.claimed_epoch = None
+    op.claimed_at = None
+    op.heartbeat_at = None
+
+
+def _project_requeued_instance_state(instance: LabInstance, kind: str) -> None:
+    """Apply the standard "operation returned to the queue mid-flight"
+    instance projection.
+
+    Shared by ``reconcile_stuck``'s ordinary lease-expiry requeue and
+    ``reclaim_previous_epoch``'s restart-reclaim requeue, so the two paths
+    cannot drift apart over time: an under-ceiling ``provisioning``/
+    ``resetting`` instance folds back to its pre-transition status, and an
+    interrupted deploy/destroy can never prove the runtime absent.
+    """
+    if instance.status == "provisioning":
+        instance.status = "queued"
+    elif instance.status == "resetting":
+        instance.status = "active"
+    if kind in ("deploy", "destroy"):
+        instance.runtime_presence = "unknown"
+
+
 def _requeue_for_capacity(db: Session, op: LabOperation, instance: LabInstance) -> None:
     instance.status = "queued"
     op.state = "queued"
-    op.claimed_by = None
-    op.claimed_at = None
-    op.heartbeat_at = None
+    _clear_claim_fields(op)
     op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
     op.last_error = None
     op.attempts = max(op.attempts - 1, 0)
@@ -242,9 +332,7 @@ def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
     instance state would be a false projection, not merely a conservative one.
     """
     op.state = "queued"
-    op.claimed_by = None
-    op.claimed_at = None
-    op.heartbeat_at = None
+    _clear_claim_fields(op)
     op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
     op.last_error = None
     op.attempts = max(op.attempts - 1, 0)
@@ -738,20 +826,14 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
                     # "absent" by escalation.
             continue
         if instance is not None:
-            if instance.status == "provisioning":
-                instance.status = "queued"
-            elif instance.status == "resetting":
-                instance.status = "active"
-            if op.kind in ("deploy", "destroy"):
-                # The expired claim may have crossed the external mutation
-                # boundary before the lease lapsed — set/retain "unknown" for
-                # both requeue directions and for a destroy under the ceiling
-                # (whose status stays "active" and hits neither branch above).
-                instance.runtime_presence = "unknown"
+            # The expired claim may have crossed the external mutation
+            # boundary before the lease lapsed — _project_requeued_instance_state
+            # sets/retains "unknown" for both requeue directions and for a
+            # destroy under the ceiling (whose status stays "active" and hits
+            # neither status branch).
+            _project_requeued_instance_state(instance, op.kind)
         op.state = "queued"
-        op.claimed_by = None
-        op.claimed_at = None
-        op.heartbeat_at = None
+        _clear_claim_fields(op)
         op.not_before = now
         op.last_error = "worker lease expired; operation requeued"
     # Phase-1-to-worker cutover: old queued/provisioning LabInstance rows have
@@ -778,3 +860,54 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
         enqueue(db, instance=instance, kind="deploy", requested_by=None)
     db.flush()
     return len(stuck) + len(missing)
+
+
+def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
+    """One-shot startup scan: reclaim every claim this same host took under a
+    DIFFERENT (previous, presumably crashed-or-replaced) worker epoch.
+
+    Intended to run exactly once, immediately after a worker acquires its
+    startup singleton lock and before its ordinary polling loop begins — see
+    ``app.cli._lab_worker``. This is strictly an acceleration of recovery for
+    the narrow "this same host restarted" case; ``reconcile_stuck``'s
+    ordinary lease-expiry recovery remains the general-purpose backstop and
+    is unaffected and unduplicated by this function.
+
+    Uses a plain ``FOR UPDATE`` — deliberately NOT ``SKIP LOCKED``. This scan
+    runs once per worker process lifetime, not once per poll: a matching row
+    skipped here because something else briefly held its lock would never be
+    revisited by this mechanism again for the rest of this incarnation,
+    silently degrading that one row to lease-expiry-only recovery — which
+    defeats the point of running this scan at all. Paying a brief blocking
+    wait once at startup is an acceptable cost that ``reconcile_stuck``'s
+    repeated per-poll scan would not want to pay.
+
+    Never touches a different host's claims, or a row with a null/legacy
+    ``claimed_host``/``claimed_epoch`` (pre-0059 rows, or rows claimed by a
+    worker that predates migration 0059) — those remain lease-expiry-only,
+    exactly as they were before this function existed.
+    """
+    now = _now()
+    matched = db.scalars(
+        select(LabOperation)
+        .where(LabOperation.state == "claimed")
+        .where(LabOperation.claimed_host == host)
+        .where(LabOperation.claimed_epoch.is_not(None))
+        .where(LabOperation.claimed_epoch != epoch)
+        .with_for_update()
+    ).all()
+    for op in matched:
+        instance = db.get(LabInstance, op.instance_id)
+        if instance is not None:
+            _project_requeued_instance_state(instance, op.kind)
+        old_epoch = op.claimed_epoch
+        op.state = "queued"
+        _clear_claim_fields(op)
+        op.not_before = now
+        op.attempts = max(op.attempts - 1, 0)
+        op.last_error = (
+            f"restart reclaim: previous worker epoch {old_epoch} superseded "
+            f"by {epoch} on {host}"
+        )
+    db.flush()
+    return len(matched)

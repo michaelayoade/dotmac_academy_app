@@ -63,8 +63,8 @@ def test_columns_match_contract(admin_engine):
         "requested_at", "not_before", "attempts",
     }
     expected_nullable = {
-        "requested_by", "claimed_by", "claimed_at", "heartbeat_at",
-        "finished_at", "last_error",
+        "requested_by", "claimed_by", "claimed_host", "claimed_epoch",
+        "claimed_at", "heartbeat_at", "finished_at", "last_error",
     }
     for name in expected_not_null:
         assert name in columns, f"missing column {name}"
@@ -80,6 +80,14 @@ def test_columns_match_contract(admin_engine):
     assert columns["kind"]["type"].length == 16
     assert columns["state"]["type"].length == 16
     assert columns["claimed_by"]["type"].length == 200
+    assert columns["claimed_host"]["type"].length == 255
+    assert columns["claimed_epoch"]["type"].length == 64
+    # No DDL default and no new index for either column (see 0059's module
+    # docstring): the existing ix_lab_operations_claim scan is sufficient for
+    # the ordinary claim-queue path, and the startup reclaim scan runs once
+    # per worker process lifetime, not per poll.
+    assert columns["claimed_host"]["default"] is None
+    assert columns["claimed_epoch"]["default"] is None
 
     checks = {
         row["name"]: str(row["sqltext"])
@@ -152,10 +160,34 @@ def test_grants_are_exactly_the_ownership_boundary(admin_session):
         ).scalars().all()
     )
     # Exactly the "request" columns. Every worker-owned column (state,
-    # claimed_by, claimed_at, heartbeat_at, attempts, finished_at, last_error)
-    # must be absent — otherwise app_user could forge worker-owned state at
-    # INSERT time even though it can never UPDATE a row afterwards.
+    # claimed_by, claimed_host, claimed_epoch, claimed_at, heartbeat_at,
+    # attempts, finished_at, last_error) must be absent — otherwise app_user
+    # could forge worker-owned state at INSERT time even though it can never
+    # UPDATE a row afterwards.
     assert insert_columns == {"id", "tenant_id", "instance_id", "kind", "requested_by"}
+
+
+def test_app_user_cannot_insert_or_update_structural_claim_ownership_columns(admin_session):
+    """``claimed_host``/``claimed_epoch`` (migration 0059) get the exact same
+    ACL treatment as every other worker-owned column added before them:
+    ``app_user`` may never write either one, at INSERT or via UPDATE."""
+    for column in ("claimed_host", "claimed_epoch"):
+        assert not admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('app_user', 'lab_operations', :column, 'INSERT')"
+            ).bindparams(column=column)
+        )
+        assert not admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('app_user', 'lab_operations', :column, 'UPDATE')"
+            ).bindparams(column=column)
+        )
+        assert admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('academy_lab_worker', 'lab_operations', "
+                ":column, 'UPDATE')"
+            ).bindparams(column=column)
+        ), f"academy_lab_worker should be able to UPDATE {column}"
 
 
 def test_lab_instance_grants_make_runtime_state_worker_owned(admin_session):

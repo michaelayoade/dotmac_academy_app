@@ -165,6 +165,21 @@ class LabOperation(Base, TimestampMixin):
     # column-level INSERT grant is never tripped by an otherwise-normal
     # insert that doesn't set it.
     claimed_by: Mapped[str | None] = mapped_column(String(200), server_default=FetchedValue())
+    # Structural decomposition of `claimed_by` for restart-reclaim (migration
+    # 0059_lab_claim_owner.py): `claimed_by` stays the sole fencing value
+    # (byte-identical to `worker_identity()`'s composite string, compared
+    # exactly everywhere a lease is checked); these two columns exist purely
+    # so a freshly-started worker can find "rows I claimed in a PREVIOUS
+    # incarnation on this same host" without parsing that composite string.
+    # Same `FetchedValue()` reasoning as `claimed_by` above: metadata-only
+    # server-generation marker, so app_user's column-scoped INSERT grant (see
+    # migration 0055) never needs to cover these worker-owned columns either.
+    claimed_host: Mapped[str | None] = mapped_column(
+        String(255), server_default=FetchedValue()
+    )
+    claimed_epoch: Mapped[str | None] = mapped_column(
+        String(64), server_default=FetchedValue()
+    )
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
                                                          server_default=FetchedValue())
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),

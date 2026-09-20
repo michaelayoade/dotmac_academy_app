@@ -125,17 +125,46 @@ def lab_worker_session() -> Iterator[Session]:
         engine.dispose()
 
 
-def drain_once(db: Session, engine: LabEngine, *, claimed_by: str | None = None) -> int:
+def drain_once(
+    db: Session,
+    engine: LabEngine,
+    *,
+    claimed_by: str | None = None,
+    claimed_host: str | None = None,
+    claimed_epoch: str | None = None,
+) -> int:
     """Claim and execute ready operations until the queue has no ready row.
 
     Each claim is committed before external work starts, keeping
     ``FOR UPDATE SKIP LOCKED`` inside a short transaction. Settlement is fenced
     by the worker identity in :func:`lab_operations.run_claimed`.
+
+    When ``claimed_by`` is left as its default, this process computes its own
+    ``WorkerIdentity`` (host/epoch included) fresh here. A caller that already
+    computed its own ``WorkerIdentity`` (the CLI's main polling loop, so the
+    exact same identity flows through as the one used for its startup
+    restart-reclaim call) should pass all three of ``claimed_by``/
+    ``claimed_host``/``claimed_epoch`` explicitly instead of relying on this
+    default. Passing only ``claimed_by`` (as this test suite does throughout)
+    keeps the prior behavior — no structural ownership fields recorded —
+    since an arbitrary test string isn't necessarily a real
+    ``WorkerIdentity``-shaped value.
     """
-    worker = claimed_by or lab_operations.worker_identity()
+    if claimed_by is None:
+        identity = lab_operations.worker_identity_parts()
+        worker = identity.claimed_by
+        claimed_host = identity.host
+        claimed_epoch = identity.epoch
+    else:
+        worker = claimed_by
     completed = 0
     while True:
-        op = lab_operations.claim_next(db, claimed_by=worker)
+        op = lab_operations.claim_next(
+            db,
+            claimed_by=worker,
+            claimed_host=claimed_host,
+            claimed_epoch=claimed_epoch,
+        )
         if op is None:
             db.rollback()
             break

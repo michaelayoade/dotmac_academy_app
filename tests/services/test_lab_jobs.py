@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.config import settings
 from app.models.assessment import Activity
@@ -138,6 +139,39 @@ def test_drain_once_provisions_pending(admin_session, tenant_a, monkeypatch):
     admin_session.refresh(inst)
     assert inst.status == "active"
     engine.deploy.assert_called_once()
+
+
+def test_drain_once_default_identity_persists_structural_claim_ownership(
+    admin_session, tenant_a, monkeypatch
+):
+    """When ``drain_once`` is left to compute its own identity (the CLI's
+    production path, `claimed_by=` omitted), the settled operation's
+    ``claimed_by`` matches ``worker_identity()`` exactly and
+    ``claimed_host``/``claimed_epoch`` are populated from the same identity —
+    retained as audit provenance by a terminal settlement, not cleared."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    monkeypatch.setattr(settings, "max_concurrent_labs", 20)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-drain-identity", seed={"o": 5},
+                       status="queued", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    operation = lab_operations.enqueue(admin_session, instance=inst, kind="deploy", requested_by=p.id)
+    admin_session.commit()
+    operation_id = operation.id
+
+    identity = lab_operations.worker_identity_parts()
+    engine = MagicMock()
+    engine.deploy.return_value = LabHandle(
+        instance_name="dal-drain-identity", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+
+    assert lab_jobs.drain_once(admin_session, engine) == 1
+
+    settled = admin_session.scalar(select(LabOperation).where(LabOperation.id == operation_id))
+    assert settled.claimed_by == lab_operations.worker_identity()
+    assert settled.claimed_host == identity.host
+    assert settled.claimed_epoch == identity.epoch
 
 
 def test_reap_idle_enqueues_destroy_without_touching_engine(admin_session, tenant_a):

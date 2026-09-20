@@ -931,12 +931,47 @@ def _lab_worker(args: argparse.Namespace) -> None:
     # instead of killing the process with no cleanup running at all.
     try:
         with _sigterm_raises_shutdown_requested(), worker_singleton_lock():
+            # Startup restart-reclaim: exactly once, immediately after the
+            # singleton lock is held and before any ordinary poll iteration.
+            # Computed once here and passed explicitly into every later
+            # drain_once() call below, so the identity used to reclaim this
+            # host's own previous-epoch claims is the exact same value later
+            # used to make this process's own claims — never recomputed.
+            identity = lab_operations.worker_identity_parts()
+            with lab_jobs.lab_worker_session() as db:
+                try:
+                    reclaimed = lab_operations.reclaim_previous_epoch(
+                        db, host=identity.host, epoch=identity.epoch
+                    )
+                    db.commit()
+                except BaseException:
+                    # Includes _WorkerShutdownRequested (a SIGTERM arriving
+                    # mid-reclaim), which deliberately subclasses
+                    # BaseException rather than Exception. Postgres
+                    # transactions are atomic, so an interrupted commit
+                    # either fully lands or not at all — either outcome here
+                    # is safe. Re-raised so the outer
+                    # except _WorkerShutdownRequested: handler below still
+                    # catches it with no further changes needed there.
+                    db.rollback()
+                    raise
+            if reclaimed:
+                print(
+                    f"reclaimed {reclaimed} operation(s) from a previous worker "
+                    "epoch on this host"
+                )
             print("lab-worker started; draining durable operations every 5s")
             while True:
                 with lab_jobs.lab_worker_session() as db:
                     repaired = lab_operations.reconcile_stuck(db)
                     db.commit()
-                    n = lab_jobs.drain_once(db, engine)
+                    n = lab_jobs.drain_once(
+                        db,
+                        engine,
+                        claimed_by=identity.claimed_by,
+                        claimed_host=identity.host,
+                        claimed_epoch=identity.epoch,
+                    )
                 if repaired:
                     print(f"reconciled {repaired} lab operation(s)")
                 if n:
