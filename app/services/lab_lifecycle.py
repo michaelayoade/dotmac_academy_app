@@ -374,6 +374,115 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     return instance
 
 
+def provision_if_absent(
+    db: Session,
+    instance: LabInstance,
+    engine: LabEngine,
+    template: LabTemplate,
+    *,
+    preserved_status: str,
+    preserved_error: str | None,
+) -> LabInstance:
+    """Conditional deploy for a reconciler-originated "runtime_repair" intent.
+
+    LOAD-BEARING ORDERING (see migration ``0060_lab_conditional_ops.py``'s
+    module docstring for the full design rationale — an earlier, unauthorized
+    attempt at this exact slice got this ordering wrong):
+
+        locked precondition check
+        -> conditional containerlab mutation, IF the precondition allows it
+        -> console teardown, ONLY IF a mutation actually occurred
+        -> console recreation / final state projection
+
+    ``engine.deploy_if_absent()`` performs the precondition check AND the
+    mutation atomically inside one host-lock acquisition (see
+    ``ContainerlabEngine.deploy_if_absent``) — this function never calls
+    ``stop_consoles``/``start_console``/any topology mutation before that
+    call has already returned a real handle proving the mutation occurred.
+
+    A precondition MISMATCH (``deploy_if_absent`` returns ``None`` — the
+    runtime was found genuinely present, whether by this call's own
+    authoritative check or a caller's own earlier preliminary check racing
+    against it) is the no-op path: ``status``/``error`` are restored to
+    ``preserved_status``/``preserved_error`` (the instance's values from
+    immediately before the caller's capacity-admission reservation
+    overwrote them with a "resetting"/"provisioning" placeholder — see
+    ``app/services/lab_operations.py``'s conditional-deploy branch), and only
+    ``runtime_presence`` is refreshed to ``"present"`` from this genuine,
+    fresh observation. ``consoles`` is untouched throughout — nothing above
+    this call ever writes it. No call to ``stop_consoles``, ``engine.deploy``,
+    or any topology/filesystem mutation happens on this path.
+    """
+    topology_text = _set_topology_name(
+        interpolate(template.topology, instance.seed), instance.instance_name
+    )
+    # Set immediately before invocation, mirroring provision()'s own
+    # reasoning: an exception at or after this point does not prove the
+    # runtime is absent.
+    instance.runtime_presence = "unknown"
+    handle = engine.deploy_if_absent(topology_text, instance.instance_name)
+    if handle is None:
+        # Precondition mismatch — runtime is genuinely present. NOTHING was
+        # mutated: restore status/error to their pre-admission values and
+        # only refresh presence from this fresh observation.
+        instance.status = preserved_status
+        instance.error = preserved_error
+        instance.runtime_presence = "present"
+        db.flush()
+        return instance
+    # Precondition held (genuinely absent) and deploy_if_absent has already
+    # performed the real mutation atomically — console teardown/recreation
+    # may only run now, after that mutation is proven to have happened.
+    stop_consoles(instance)
+    consoles: dict = {}
+    for node in handle.nodes:
+        kind = handle.kinds.get(node)
+        spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
+        if _is_linux_kind(kind):
+            spec["port"] = start_console(
+                handle.nodes[node],
+                f"{_CONSOLE_BASE}{instance.id}/console/{node}",
+            )
+        consoles[node] = spec
+    instance.consoles = consoles
+    instance.status = "active"
+    now = _now()
+    instance.started_at = now
+    instance.last_active_at = now
+    instance.error = None
+    instance.runtime_presence = "present"
+    db.flush()
+    return instance
+
+
+def destroy_if_present(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstance:
+    """Conditional destroy for a reconciler-originated "runtime_cleanup" intent.
+
+    Mirrors :func:`provision_if_absent`'s load-bearing ordering exactly:
+    locked precondition check -> conditional mutation (only if present) ->
+    console teardown (only if a mutation actually occurred) -> final
+    projection. ``engine.destroy_if_present()`` performs the precondition
+    check and the mutation atomically inside one host-lock acquisition.
+
+    A precondition MISMATCH (``destroy_if_present`` returns ``False`` — the
+    runtime was found genuinely absent already) is the no-op path:
+    ``status``/``error``/``consoles`` are left completely untouched, and only
+    ``runtime_presence`` is refreshed to ``"absent"`` from this genuine
+    observation. No call to ``stop_consoles`` or any other mutation happens
+    on this path.
+    """
+    destroyed = engine.destroy_if_present(instance.instance_name)
+    if not destroyed:
+        instance.runtime_presence = "absent"
+        db.flush()
+        return instance
+    stop_consoles(instance)
+    instance.status = "reaped"
+    instance.runtime_presence = "absent"
+    db.flush()
+    return instance
+
+
 def grade(
     db: Session,
     instance: LabInstance,

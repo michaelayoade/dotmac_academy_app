@@ -384,19 +384,33 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             or instance.instance_name not in fresh_runtime
         ):
             continue
-        op = lab_operations.enqueue(db, instance=instance, kind="destroy", requested_by=None)
-        if op.kind != "destroy":
-            # Lost the race to a genuinely concurrent operation (e.g. a user
-            # reset) that landed between the check above and this call —
-            # enqueue() returned THAT operation instead of creating ours.
-            # Nothing was enqueued on this pass's behalf, so nothing about
-            # this instance may be claimed as having happened.
+        op = lab_operations.enqueue(
+            db,
+            instance=instance,
+            kind="destroy",
+            requested_by=None,
+            origin="runtime_cleanup",
+            runtime_precondition="present",
+        )
+        if (
+            op.kind != "destroy"
+            or op.origin != "runtime_cleanup"
+            or op.runtime_precondition != "present"
+        ):
+            # Lost the race to a genuinely concurrent operation (this pass's
+            # OWN intended (kind, origin, runtime_precondition) tuple did not
+            # come back) — enqueue() returned some other operation instead of
+            # creating ours. Nothing was enqueued on this pass's behalf, and
+            # nothing about this instance may be claimed as having happened.
             continue
-        instance.status = "active"
-        instance.error = "runtime existed for a non-live database row; destroy enqueued"
-        # Positive inventory: fresh_runtime confirmed this instance's runtime
-        # name is actually live.
-        instance.runtime_presence = "present"
+        # This branch no longer projects repaired lifecycle state itself —
+        # only the worker's own locked, authoritative recheck
+        # (lab_lifecycle.destroy_if_present, via the conditional operation
+        # just enqueued) may settle status/error/runtime_presence, since only
+        # it observes the runtime under the host lock at execution time. See
+        # migration 0060_lab_conditional_ops.py's module docstring for why:
+        # projecting here would assert an outcome this pass never verified
+        # under lock, which is exactly the ordering bug this design closes.
         queued += 1
 
     for instance in missing_runtime:
@@ -417,30 +431,32 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             or instance.instance_name in fresh_runtime
         ):
             continue
-        if instance.error is not None:
-            # A prior failure was conservatively capacity-counted because
-            # runtime absence was unknown. Inventory has now proved absence,
-            # so expose a retryable error without starting a fresh automatic
-            # attempt loop or retaining a phantom capacity reservation. This
-            # branch never calls enqueue(), so there is no race to close here.
-            instance.status = "error"
-            instance.error = f"{instance.error}; containerlab runtime is absent"
-            # Escalating uncertain ("unknown") to definite absence, now that
-            # inventory has confirmed it.
-            instance.runtime_presence = "absent"
+        # A prior error no longer bypasses the worker's own conditional
+        # recheck: it must ALSO go through the same conditional enqueue()
+        # below as a fresh instance, not settle status="error" directly from
+        # this snapshot. Only the worker's locked, authoritative observation
+        # (lab_lifecycle.provision_if_absent, via the conditional operation
+        # enqueued here) may decide the outcome.
+        op = lab_operations.enqueue(
+            db,
+            instance=instance,
+            kind="deploy",
+            requested_by=None,
+            origin="runtime_repair",
+            runtime_precondition="absent",
+        )
+        if (
+            op.kind != "deploy"
+            or op.origin != "runtime_repair"
+            or op.runtime_precondition != "absent"
+        ):
+            # Same race as the destroy branch above: this pass's own intended
+            # (kind, origin, runtime_precondition) tuple did not come back —
+            # a genuinely concurrent operation won, so this pass enqueued
+            # nothing and must not say otherwise.
             continue
-        op = lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=None)
-        if op.kind != "deploy":
-            # Same race as the destroy branch above: a genuinely concurrent
-            # operation won, so this pass enqueued nothing and must not say
-            # otherwise.
-            continue
-        instance.error = "database row was live but no containerlab runtime was found"
-        # Runtime confirmed absent by this same inventory check. This will
-        # correctly transition to "unknown" again once a worker actually
-        # claims the resulting deploy operation, per the normal deploy-start
-        # transition.
-        instance.runtime_presence = "absent"
+        # This branch no longer projects repaired lifecycle state itself —
+        # see the db_only_repairs branch's identical comment above for why.
         queued += 1
 
     db.flush()

@@ -590,6 +590,38 @@ class ContainerlabEngine(LabEngine):
         with host_lock(self.lock_label, directory=self.workdir):
             self._destroy_unlocked(instance_name)
 
+    def deploy_if_absent(self, topology_text: str, instance_name: str) -> LabHandle | None:
+        """Observe-then-deploy inside exactly one ``host_lock`` acquisition.
+
+        Deliberately does NOT compose the public :meth:`inventory`/
+        :meth:`deploy` — each already acquires and releases its own
+        ``host_lock`` independently, which would reopen a window between
+        the observation and the mutation for another process to deploy the
+        same instance in between. Instead this calls the already-existing
+        unlocked helpers (``_lab_is_deployed_unlocked``/``_deploy_unlocked``)
+        directly, within a single ``with host_lock(...):`` block: observe
+        first, and only if genuinely absent, mutate — all before the lock is
+        released. No mutation helper is called at all if the instance is
+        already present.
+        """
+        self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            if self._lab_is_deployed_unlocked(instance_name):
+                return None
+            return self._deploy_unlocked(topology_text, instance_name)
+
+    def destroy_if_present(self, instance_name: str) -> bool:
+        """Observe-then-destroy inside exactly one ``host_lock`` acquisition.
+
+        Same single-acquisition reasoning as :meth:`deploy_if_absent`.
+        """
+        self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            if not self._lab_is_deployed_unlocked(instance_name):
+                return False
+            self._destroy_unlocked(instance_name)
+            return True
+
     def reset(self, topology_text: str, instance_name: str) -> LabHandle:
         self._require_lab_host()
         # Held for the whole destroy+deploy pair so no other host operation

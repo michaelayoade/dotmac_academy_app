@@ -96,22 +96,37 @@ def worker_identity() -> str:
 
 
 def _insert_open_operation_stmt(
-    *, instance: LabInstance, kind: str, requested_by: UUID | None
+    *,
+    instance: LabInstance,
+    kind: str,
+    requested_by: UUID | None,
+    origin: str | None,
+    runtime_precondition: str | None,
 ) -> Any:
     """Build one insert-or-skip statement for the open-per-instance constraint.
 
-    The explicit value list is security-sensitive: it is exactly the five
-    columns granted to ``app_user`` by migration 0055.
+    The explicit value list is security-sensitive: the five base columns are
+    exactly what migration 0055 grants ``app_user`` INSERT on. ``origin``/
+    ``runtime_precondition`` (migration 0060) are worker-owned and excluded
+    from that grant identically — they are only ever included in the values
+    dict (never left implicit) when a caller actually passes them, so an
+    ordinary web-tier enqueue (which never supplies them) sends exactly the
+    same five-column INSERT it always has.
     """
+    values: dict[str, object] = {
+        "id": uuid4(),
+        "tenant_id": instance.tenant_id,
+        "instance_id": instance.id,
+        "kind": kind,
+        "requested_by": requested_by,
+    }
+    if origin is not None:
+        values["origin"] = origin
+    if runtime_precondition is not None:
+        values["runtime_precondition"] = runtime_precondition
     return (
         insert(LabOperation)
-        .values(
-            id=uuid4(),
-            tenant_id=instance.tenant_id,
-            instance_id=instance.id,
-            kind=kind,
-            requested_by=requested_by,
-        )
+        .values(**values)
         .on_conflict_do_nothing(
             index_elements=[LabOperation.instance_id],
             index_where=LabOperation.state.in_(OPEN_STATES),
@@ -140,6 +155,8 @@ def enqueue(
     instance: LabInstance,
     kind: str,
     requested_by: UUID | None,
+    origin: str | None = None,
+    runtime_precondition: str | None = None,
 ) -> LabOperation:
     """Insert one open intent per instance, returning the existing one on races.
 
@@ -151,11 +168,24 @@ def enqueue(
     finds nothing (the new conflicting row also settled in that same narrow
     window), give up with a clean, callable-facing error rather than raising
     ``NoResultFound``.
+
+    ``origin``/``runtime_precondition`` (migration 0060) are optional and
+    included in the insert only when a caller actually passes them (see
+    ``_insert_open_operation_stmt``) — every ordinary caller
+    (``lab_lifecycle.request_lab``, ``request_idle_reaps``,
+    ``reconcile_stuck``, ``reclaim_previous_epoch``) leaves both ``None``,
+    naming only the five columns ``app_user`` may ever INSERT.
     """
     if kind not in KINDS:
         raise ValueError(f"unsupported lab operation kind {kind!r}")
     inserted_id = db.scalar(
-        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+        _insert_open_operation_stmt(
+            instance=instance,
+            kind=kind,
+            requested_by=requested_by,
+            origin=origin,
+            runtime_precondition=runtime_precondition,
+        )
     )
     if inserted_id is not None:
         return db.scalars(select(LabOperation).where(LabOperation.id == inserted_id)).one()
@@ -165,7 +195,13 @@ def enqueue(
     # The conflicting row settled between our insert-conflict and the
     # re-select above. Retry the complete insert exactly once.
     retried_id = db.scalar(
-        _insert_open_operation_stmt(instance=instance, kind=kind, requested_by=requested_by)
+        _insert_open_operation_stmt(
+            instance=instance,
+            kind=kind,
+            requested_by=requested_by,
+            origin=origin,
+            runtime_precondition=runtime_precondition,
+        )
     )
     if retried_id is not None:
         return db.scalars(select(LabOperation).where(LabOperation.id == retried_id)).one()
@@ -543,64 +579,151 @@ def run_claimed(
     operation_instance_id = op.instance_id
     operation_requested_by = op.requested_by
     operation_attempts = op.attempts
+    operation_origin = op.origin
+    operation_runtime_precondition = op.runtime_precondition
     initial_instance_status = instance.status
     initial_instance_error = instance.error
     initial_instance_presence = instance.runtime_presence
+    # Both must match (kind, origin, precondition) exactly — origin alone is
+    # audit/provenance and is never a decision input on its own; see migration
+    # 0060_lab_conditional_ops.py's module docstring for the full shape.
+    is_conditional_deploy = (
+        operation_kind == "deploy"
+        and operation_origin == "runtime_repair"
+        and operation_runtime_precondition == "absent"
+    )
+    is_conditional_destroy = (
+        operation_kind == "destroy"
+        and operation_origin == "runtime_cleanup"
+        and operation_runtime_precondition == "present"
+    )
 
     try:
         if operation_kind == "deploy":
-            if not _capacity_available(db, instance):
+            if is_conditional_deploy:
+                # LOAD-BEARING ORDERING: locked precondition check -> conditional
+                # containerlab mutation (only if the precondition allows it) ->
+                # console teardown (only if a mutation actually occurred) ->
+                # console recreation / final projection. A precondition mismatch
+                # must settle BEFORE stop_consoles/engine.deploy/any topology
+                # mutation ever runs — see migration 0060's module docstring.
+                _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
+                # Optimization only, NOT the correctness guarantee: an
+                # already-known-present runtime may settle immediately as a
+                # no-op without holding a capacity slot for an operation about
+                # to no-op anyway. The mandatory, authoritative recheck is
+                # inside lab_lifecycle.provision_if_absent()'s call to
+                # engine.deploy_if_absent() below — a race that flips this
+                # preliminary observation is still caught there.
+                try:
+                    preliminary_present = engine.status(instance.instance_name) == "running"
+                except HostLockUnavailable:
+                    raise
+                if preliminary_present:
+                    instance.runtime_presence = "present"
+                    db.flush()
+                else:
+                    if not _capacity_available(db, instance):
+                        _requeue_for_capacity(db, op, instance)
+                        db.commit()
+                        return "deferred"
+                    instance.status = (
+                        "resetting"
+                        if instance.status in ("active", "resetting")
+                        else "provisioning"
+                    )
+                    instance.runtime_presence = "unknown"
+                    db.commit()
+                    refreshed_op = db.get(LabOperation, operation_id)
+                    refreshed_instance = (
+                        db.get(LabInstance, refreshed_op.instance_id)
+                        if refreshed_op is not None
+                        else None
+                    )
+                    if (
+                        refreshed_op is None
+                        or refreshed_instance is None
+                        or refreshed_op.state != "claimed"
+                        or refreshed_op.claimed_by != claimed_by
+                    ):
+                        db.rollback()
+                        return "stale"
+                    op = refreshed_op
+                    instance = refreshed_instance
+                    template = db.scalars(
+                        select(LabTemplate)
+                        .where(LabTemplate.tenant_id == instance.tenant_id)
+                        .where(LabTemplate.activity_id == instance.activity_id)
+                    ).one()
+                    _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
+                    lab_lifecycle.provision_if_absent(
+                        db,
+                        instance,
+                        engine,
+                        template,
+                        preserved_status=initial_instance_status,
+                        preserved_error=initial_instance_error,
+                    )
+            elif not _capacity_available(db, instance):
                 _requeue_for_capacity(db, op, instance)
                 db.commit()
                 return "deferred"
-            # Make the reservation visible and release the advisory transaction
-            # lock before slow external work. A crash now leaves a counted
-            # transient state that reconcile_stuck() can repair and replay.
-            instance.status = (
-                "resetting" if instance.status in ("active", "resetting") else "provisioning"
-            )
-            # First/authoritative presence assignment for this deploy: this is
-            # the durable reservation, committed before slow external work, so
-            # a crash after this point must already treat the runtime as
-            # uncertain rather than proven absent.
-            instance.runtime_presence = "unknown"
-            db.commit()
-            refreshed_op = db.get(LabOperation, operation_id)
-            refreshed_instance = (
-                db.get(LabInstance, refreshed_op.instance_id)
-                if refreshed_op is not None
-                else None
-            )
-            if (
-                refreshed_op is None
-                or refreshed_instance is None
-                or refreshed_op.state != "claimed"
-                or refreshed_op.claimed_by != claimed_by
-            ):
-                db.rollback()
-                return "stale"
-            op = refreshed_op
-            instance = refreshed_instance
-            template = db.scalars(
-                select(LabTemplate)
-                .where(LabTemplate.tenant_id == instance.tenant_id)
-                .where(LabTemplate.activity_id == instance.activity_id)
-            ).one()
-            _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
-            _run_deploy(
-                db,
-                instance,
-                template,
-                engine,
-                after_destroy=lambda: _refresh_claim(
+            else:
+                # Make the reservation visible and release the advisory
+                # transaction lock before slow external work. A crash now
+                # leaves a counted transient state that reconcile_stuck() can
+                # repair and replay.
+                instance.status = (
+                    "resetting" if instance.status in ("active", "resetting") else "provisioning"
+                )
+                # First/authoritative presence assignment for this deploy: this
+                # is the durable reservation, committed before slow external
+                # work, so a crash after this point must already treat the
+                # runtime as uncertain rather than proven absent.
+                instance.runtime_presence = "unknown"
+                db.commit()
+                refreshed_op = db.get(LabOperation, operation_id)
+                refreshed_instance = (
+                    db.get(LabInstance, refreshed_op.instance_id)
+                    if refreshed_op is not None
+                    else None
+                )
+                if (
+                    refreshed_op is None
+                    or refreshed_instance is None
+                    or refreshed_op.state != "claimed"
+                    or refreshed_op.claimed_by != claimed_by
+                ):
+                    db.rollback()
+                    return "stale"
+                op = refreshed_op
+                instance = refreshed_instance
+                template = db.scalars(
+                    select(LabTemplate)
+                    .where(LabTemplate.tenant_id == instance.tenant_id)
+                    .where(LabTemplate.activity_id == instance.activity_id)
+                ).one()
+                _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
+                _run_deploy(
                     db,
-                    operation_id=operation_id,
-                    claimed_by=claimed_by,
-                ),
-            )
+                    instance,
+                    template,
+                    engine,
+                    after_destroy=lambda: _refresh_claim(
+                        db,
+                        operation_id=operation_id,
+                        claimed_by=claimed_by,
+                    ),
+                )
         elif operation_kind == "destroy":
             _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
-            lab_lifecycle.destroy(db, instance, engine)
+            if is_conditional_destroy:
+                # Same load-bearing ordering as the conditional-deploy branch
+                # above, mirrored for destroy: precondition check -> mutation
+                # (only if present) -> console teardown (only if destroyed).
+                lab_lifecycle.destroy_if_present(db, instance, engine)
+            else:
+                lab_lifecycle.destroy(db, instance, engine)
         elif operation_kind == "check":
             template = db.scalars(
                 select(LabTemplate)
@@ -662,25 +785,42 @@ def run_claimed(
         ):
             db.rollback()
             return "stale"
-        if operation_kind != "deploy":
+        if is_conditional_deploy or is_conditional_destroy:
+            # deploy_if_absent()/destroy_if_present() acquire host_lock
+            # exactly ONCE for the whole observe-then-mutate operation — if
+            # that single acquisition itself raises HostLockUnavailable,
+            # NOTHING has been mutated yet (not even the precondition check
+            # ran), unlike the ordinary destroy-then-deploy path below, which
+            # cannot make that guarantee since it is two separate engine
+            # calls. It is therefore safe — and more accurate, not merely
+            # conservative — to restore the instance's exact pre-operation
+            # state here, even for a conditional "deploy" whose capacity
+            # reservation may have already committed a "resetting"/
+            # "provisioning"/"unknown" placeholder in an earlier transaction.
+            unchanged_instance.status = initial_instance_status
+            unchanged_instance.error = initial_instance_error
+            unchanged_instance.runtime_presence = initial_instance_presence
+        elif operation_kind != "deploy":
             # Nothing destructive has necessarily happened yet for
             # destroy/check before this handler fires — safe to restore the
             # pre-execution instance state verbatim.
             unchanged_instance.status = initial_instance_status
             unchanged_instance.error = initial_instance_error
             unchanged_instance.runtime_presence = initial_instance_presence
-        # For "deploy", _run_deploy already set instance.status to
-        # "resetting"/"provisioning" for the whole destroy-then-provision
-        # sequence before attempting the (possibly already-succeeded) destroy.
-        # That value stays correctly capacity-counted (_capacity_available
-        # treats provisioning/active/resetting alike) and, unlike the
-        # pre-reset "active", does not falsely claim a working lab when the
-        # real runtime may have just been torn down and not yet redeployed.
-        # Leave it untouched. Presence is likewise left as "unknown" (already
-        # set by _run_deploy/run_claimed's reservation) rather than restored:
-        # a deploy may have already destroyed the old runtime before
-        # contention hit during the subsequent provision call, so blindly
-        # restoring the pre-op presence would be a false projection.
+        # For an ordinary (non-conditional) "deploy", _run_deploy already set
+        # instance.status to "resetting"/"provisioning" for the whole
+        # destroy-then-provision sequence before attempting the (possibly
+        # already-succeeded) destroy. That value stays correctly
+        # capacity-counted (_capacity_available treats provisioning/active/
+        # resetting alike) and, unlike the pre-reset "active", does not
+        # falsely claim a working lab when the real runtime may have just
+        # been torn down and not yet redeployed. Leave it untouched. Presence
+        # is likewise left as "unknown" (already set by _run_deploy/
+        # run_claimed's reservation) rather than restored: an ordinary deploy
+        # may have already destroyed the old runtime before contention hit
+        # during the subsequent provision call, so blindly restoring the
+        # pre-op presence would be a false projection. This is exactly the
+        # ambiguity the conditional path above does NOT have.
         _requeue_operation_after_host_lock(db, refreshed_op)
         db.commit()
         return "deferred"

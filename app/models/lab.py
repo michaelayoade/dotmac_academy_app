@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     FetchedValue,
     ForeignKey,
@@ -133,6 +134,20 @@ class LabOperation(Base, TimestampMixin):
             postgresql_where=text("state IN ('queued', 'claimed')"),
         ),
         Index("ix_lab_operations_claim", "state", "not_before", "requested_at"),
+        # Mirrors migration 0060_lab_conditional_ops.py's CHECK exactly —
+        # see that migration's module docstring for why every branch below
+        # uses explicit `IS NOT NULL`/`IS NULL` guards rather than a bare `=`
+        # comparison: Postgres's three-valued CHECK logic treats a NULL
+        # comparison result as "not FALSE" (i.e. satisfied), so a half-null
+        # (origin, runtime_precondition) tuple could otherwise silently pass.
+        CheckConstraint(
+            "(origin IS NULL AND runtime_precondition IS NULL) "
+            "OR (kind = 'deploy' AND origin = 'runtime_repair' "
+            "AND runtime_precondition = 'absent') "
+            "OR (kind = 'destroy' AND origin = 'runtime_cleanup' "
+            "AND runtime_precondition = 'present')",
+            name="ck_lab_operations_conditional_runtime",
+        ),
     )
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
@@ -189,3 +204,16 @@ class LabOperation(Base, TimestampMixin):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
                                                           server_default=FetchedValue())
     last_error: Mapped[str | None] = mapped_column(Text, server_default=FetchedValue())
+    # Reconciler conditional operations (migration 0060_lab_conditional_ops.py):
+    # worker-owned, like every column above. `origin` is audit/provenance
+    # only ("runtime_repair" for a conditional deploy, "runtime_cleanup" for
+    # a conditional destroy) and is NEVER itself compared in a decision
+    # predicate; `run_claimed()`/`_run_deploy()` branch only on
+    # `runtime_precondition` ("absent"/"present"). Same `FetchedValue()`
+    # reasoning as `claimed_host`/`claimed_epoch` above: metadata-only
+    # server-generation marker, so app_user's column-scoped INSERT grant (see
+    # migration 0055) never needs to cover these worker-owned columns either.
+    origin: Mapped[str | None] = mapped_column(String(32), server_default=FetchedValue())
+    runtime_precondition: Mapped[str | None] = mapped_column(
+        String(16), server_default=FetchedValue()
+    )
