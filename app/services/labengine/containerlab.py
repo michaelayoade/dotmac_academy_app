@@ -651,5 +651,60 @@ class ContainerlabEngine(LabEngine):
         with host_lock(self.lock_label, directory=self.workdir):
             return "running" if self._lab_is_deployed_unlocked(instance_name) else "absent"
 
+    def _inspect_running_handle_unlocked(self, instance_name: str) -> LabHandle | None:
+        """Reconstruct a live :class:`LabHandle` for ``instance_name`` from
+        ``containerlab inspect --all``'s own per-node fields, never a
+        redeploy. Returns ``None`` if not currently running.
+
+        Assumes ``inspect --all --format json`` reports the same per-node
+        ``name``/``ipv4_address``/``kind`` fields :meth:`_deploy_unlocked`
+        already relies on from ``deploy``'s own JSON output — both are the
+        same underlying containerlab container inventory, so this is a
+        reasonable assumption, but (like the sudo/session-propagation
+        caveat already documented on :func:`_terminate_process_group`) it
+        cannot be fully proven from this repository alone and should be
+        spot-checked against the real lab host as part of rollout.
+
+        Unlocked — see :meth:`_inspect_lab_paths_unlocked`.
+        """
+        raw = self._inspect_all()
+        prefix = f"clab-{instance_name}-"
+        nodes: dict = {}
+        mgmt: dict = {}
+        kinds: dict = {}
+        found_any = False
+
+        def _walk(value: object, hinted_name: str | None = None) -> None:
+            nonlocal found_any
+            if isinstance(value, dict):
+                lab_name = value.get("lab_name")
+                if not isinstance(lab_name, str) or not lab_name:
+                    lab_name = hinted_name
+                cname = value.get("name")
+                if lab_name == instance_name and isinstance(cname, str) and cname:
+                    found_any = True
+                    logical = (
+                        cname[len(prefix):] if cname.startswith(prefix) else cname.split("-")[-1]
+                    )
+                    nodes[logical] = cname
+                    mgmt[logical] = (value.get("ipv4_address") or "").split("/")[0]
+                    kinds[logical] = value.get("kind", "linux")
+                for key, child in value.items():
+                    child_hint = key if isinstance(child, list) else lab_name
+                    _walk(child, child_hint)
+            elif isinstance(value, list):
+                for child in value:
+                    _walk(child, hinted_name)
+
+        _walk(raw)
+        if not found_any:
+            return None
+        return LabHandle(instance_name=instance_name, nodes=nodes, mgmt=mgmt, kinds=kinds)
+
+    def inspect_running(self, instance_name: str) -> LabHandle | None:
+        self._require_lab_host()
+        with host_lock(self.lock_label, directory=self.workdir):
+            return self._inspect_running_handle_unlocked(instance_name)
+
     def console_target(self, handle: LabHandle, node: str) -> str:
         return handle.nodes[node]

@@ -2207,6 +2207,101 @@ def _claim(db, operation, *, claimed_by="worker"):
     db.commit()
 
 
+def test_conditional_deploy_crash_then_reclaim_then_retry_resyncs_consoles_and_status(
+    admin_session, tenant_a
+):
+    """Reproduces the exact crash-then-retry gap: a conditional deploy's
+    ``deploy_if_absent()`` genuinely succeeds, but the worker process crashes
+    before ``provision_if_absent`` ever records ``consoles``/``status``.
+    ``reclaim_previous_epoch`` requeues the still-``claimed`` row (projecting
+    a defensive, stale ``status``/``runtime_presence`` it has no way to know
+    is wrong). A second worker then claims the SAME operation; its
+    preliminary check correctly observes the runtime IS present (it really
+    was deployed). Without the resync fix, this would settle "succeeded"
+    with empty ``consoles`` and a stale, non-"active" ``status`` — a live,
+    running lab that looks like nothing happened. With the fix, the
+    preliminary-present path detects the empty ``consoles`` and performs a
+    real inspection to converge on the same end state a normal successful
+    deploy would reach.
+    """
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-crash-resync",
+        status="queued", presence="absent",
+    )
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    # First worker incarnation claims the row.
+    _claim_row(
+        operation, claimed_by="host-a:1:boot1", claimed_host="host-a", claimed_epoch="1:boot1",
+    )
+    operation.attempts = 1
+    admin_session.commit()
+
+    # Simulate run_claimed's capacity-admission reservation commit — this is
+    # the durable, pre-slow-work checkpoint that genuinely happens before
+    # deploy_if_absent() is ever called, and it is the ONLY DB state a crash
+    # immediately after a genuinely successful deploy_if_absent() would ever
+    # leave behind (provision_if_absent's own success projection — building
+    # consoles, setting status="active" — never got to run).
+    instance.status = "provisioning"
+    instance.runtime_presence = "unknown"
+    admin_session.commit()
+
+    # The worker process crashes here — never runs provision_if_absent's
+    # console/status projection, despite the runtime genuinely now running.
+    # A fresh worker incarnation's startup reclaim requeues this claim.
+    reclaimed = lab_operations.reclaim_previous_epoch(
+        admin_session, host="host-a", epoch="2:boot2"
+    )
+    admin_session.commit()
+    assert reclaimed == 1
+    admin_session.refresh(operation)
+    admin_session.refresh(instance)
+    assert operation.state == "queued"
+    assert instance.status == "queued"  # provisioning -> queued, same as reconcile_stuck
+    assert instance.consoles == {}  # never recorded — the crash gap
+
+    # The new worker incarnation claims the same operation and retries.
+    _claim_row(
+        operation, claimed_by="host-a:2:boot2", claimed_host="host-a", claimed_epoch="2:boot2",
+    )
+    operation.attempts += 1
+    admin_session.commit()
+
+    engine = _engine(instance.instance_name)
+    # Preliminary check correctly observes the runtime IS present — it
+    # really was deployed by the crashed attempt.
+    engine.status.return_value = "running"
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={"client": f"clab-{instance.instance_name}-client"},
+        mgmt={"client": "172.20.20.9"},
+        kinds={"client": "linux"},
+    )
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="host-a:2:boot2", engine=engine,
+    ) == "succeeded"
+
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert operation.state == "succeeded"
+    # The gap this test guards against: without the resync fix, this would
+    # be "queued" with empty consoles despite a genuinely running lab.
+    assert instance.status == "active"
+    assert instance.consoles != {}
+    assert instance.consoles["client"]["mgmt"] == "172.20.20.9"
+    assert instance.runtime_presence == "present"
+    engine.inspect_running.assert_called_once()
+    engine.deploy_if_absent.assert_not_called()  # preliminary short-circuit, never reached
+
+
 def test_conditional_deploy_precondition_holds_deploys_and_succeeds(admin_session, tenant_a):
     instance, _person = _seed(
         admin_session, tenant_a.id, name="cond-deploy-ok", status="active", presence="unknown"
@@ -2287,12 +2382,22 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     """The preliminary check says absent, but a race makes the runtime
     genuinely present by the time deploy_if_absent's own lock-protected check
     runs — proves the SECOND (authoritative) check is the one that actually
-    matters, not the first."""
+    matters, not the first.
+
+    ``consoles`` is pre-populated here, representing the OTHER, genuinely
+    concurrent operation's own already-completed deploy (a real race,
+    distinct from the crash-then-retry scenario covered by
+    ``test_conditional_deploy_crash_then_reclaim_then_retry_resyncs_consoles_and_status``,
+    where empty consoles are the signal that this instance's OWN prior
+    attempt never got to record them) — so this stays the "preserve as-is"
+    path, not the resync path.
+    """
     instance, _person = _seed(
         admin_session, tenant_a.id, name="cond-deploy-race",
         status="active", presence="unknown",
     )
     instance.error = None
+    instance.consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.5"}}
     admin_session.flush()
     operation = lab_operations.enqueue(
         admin_session,
@@ -2319,8 +2424,10 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     assert instance.status == "active"  # restored, not left at "resetting"
     assert instance.error is None
     assert instance.runtime_presence == "present"
+    assert instance.consoles == {"client": {"kind": "linux", "mgmt": "10.0.0.5"}}  # untouched
     assert stop_calls == []
     engine.deploy.assert_not_called()
+    engine.inspect_running.assert_not_called()  # non-empty consoles: no resync needed
 
 
 def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(

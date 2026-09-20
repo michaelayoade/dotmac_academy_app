@@ -374,6 +374,92 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     return instance
 
 
+def _build_consoles_from_handle(instance: LabInstance, handle: LabHandle) -> dict:
+    """Shared node/console-spec construction — the same shape ``provision``,
+    ``reset``, and the conditional deploy paths below all build from a fresh
+    :class:`LabHandle`."""
+    consoles: dict = {}
+    for node in handle.nodes:
+        kind = handle.kinds.get(node)
+        spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
+        if _is_linux_kind(kind):
+            spec["port"] = start_console(
+                handle.nodes[node],
+                f"{_CONSOLE_BASE}{instance.id}/console/{node}",
+            )
+        consoles[node] = spec
+    return consoles
+
+
+def _rebuild_consoles_from_live_inspection(
+    db: Session, instance: LabInstance, engine: LabEngine
+) -> None:
+    """Resync ``consoles``/``status``/``error`` for an instance whose runtime
+    is known to be present but whose own ``consoles`` are empty.
+
+    This is the crash-then-retry gap a conditional deploy's own prior
+    attempt can leave behind: a worker crash between ``engine.
+    deploy_if_absent()`` genuinely succeeding and this same attempt ever
+    recording ``consoles``/``status`` leaves a real, running lab whose row
+    still shows no consoles and a stale lifecycle status once
+    ``reclaim_previous_epoch`` requeues the interrupted operation (see
+    ``app/services/lab_operations.py``'s conditional-deploy branch for the
+    full sequence this closes). "Runtime present but consoles empty" is
+    treated as this scenario — never as proof that everything is already
+    fine — because a genuinely fresh, healthy deploy always writes
+    ``consoles`` in the very same transaction that sets ``status="active"``;
+    empty ``consoles`` alongside a present runtime is never the ordinary,
+    "someone else's legitimate deploy is already fine" case, so it always
+    needs a real resync rather than a bare presence refresh.
+
+    Performs a REAL, fresh, locked inspection (``engine.inspect_running`` —
+    never a redeploy) and converges to exactly the same end state a normal
+    successful deploy would reach. If the fresh inspection unexpectedly
+    disagrees (does not find the instance running after all — e.g. a
+    genuine, separate destroy raced in in the meantime), presence is
+    conservatively set to "unknown" rather than asserting a lifecycle state
+    with no real console data behind it; ``status``/``error`` are left
+    untouched in that case, since this function never had grounds to change
+    them to anything more specific than the ambiguous state it started from.
+    """
+    handle = engine.inspect_running(instance.instance_name)
+    if handle is None:
+        instance.runtime_presence = "unknown"
+        db.flush()
+        return
+    instance.consoles = _build_consoles_from_handle(instance, handle)
+    instance.status = "active"
+    now = _now()
+    instance.started_at = now
+    instance.last_active_at = now
+    instance.error = None
+    instance.runtime_presence = "present"
+    db.flush()
+
+
+def resync_present_preliminary(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstance:
+    """Conditional deploy's cheap preliminary check (``engine.status()``)
+    found the runtime already present, before any capacity admission ever
+    ran — this attempt has touched nothing else about the instance yet.
+
+    Non-empty ``consoles``: the ordinary case — someone else's deploy is
+    genuinely live and already has working consoles recorded; leave
+    everything but ``runtime_presence`` untouched (never tear down or
+    rebuild a console session that may already be open for a learner).
+
+    Empty ``consoles``: see :func:`_rebuild_consoles_from_live_inspection` —
+    most plausibly THIS SAME conditional deploy's own prior, crashed
+    attempt already deployed successfully and was reclaimed before ever
+    recording consoles/status.
+    """
+    if instance.consoles:
+        instance.runtime_presence = "present"
+        db.flush()
+        return instance
+    _rebuild_consoles_from_live_inspection(db, instance, engine)
+    return instance
+
+
 def provision_if_absent(
     db: Session,
     instance: LabInstance,
@@ -403,15 +489,24 @@ def provision_if_absent(
     A precondition MISMATCH (``deploy_if_absent`` returns ``None`` — the
     runtime was found genuinely present, whether by this call's own
     authoritative check or a caller's own earlier preliminary check racing
-    against it) is the no-op path: ``status``/``error`` are restored to
-    ``preserved_status``/``preserved_error`` (the instance's values from
-    immediately before the caller's capacity-admission reservation
-    overwrote them with a "resetting"/"provisioning" placeholder — see
-    ``app/services/lab_operations.py``'s conditional-deploy branch), and only
-    ``runtime_presence`` is refreshed to ``"present"`` from this genuine,
-    fresh observation. ``consoles`` is untouched throughout — nothing above
-    this call ever writes it. No call to ``stop_consoles``, ``engine.deploy``,
-    or any topology/filesystem mutation happens on this path.
+    against it) is the no-op path, split by whether ``consoles`` are already
+    populated:
+
+    * Non-empty ``consoles``: a genuine race — something else already has
+      this instance running with working consoles. ``status``/``error`` are
+      restored to ``preserved_status``/``preserved_error`` (the instance's
+      values from immediately before the caller's capacity-admission
+      reservation overwrote them with a "resetting"/"provisioning"
+      placeholder — see ``app/services/lab_operations.py``'s
+      conditional-deploy branch), and only ``runtime_presence`` is
+      refreshed. ``consoles`` is left alone — never torn down/rebuilt for a
+      session that may already be open for a learner.
+    * Empty ``consoles``: see :func:`_rebuild_consoles_from_live_inspection`
+      — this attempt's own prior, crashed attempt most plausibly already
+      deployed successfully and was reclaimed before ever recording
+      consoles/status; a real, fresh inspection resyncs to the exact same
+      end state a normal successful deploy would reach, rather than leaving
+      a live, console-less lab looking like nothing happened.
     """
     topology_text = _set_topology_name(
         interpolate(template.topology, instance.seed), instance.instance_name
@@ -422,29 +517,22 @@ def provision_if_absent(
     instance.runtime_presence = "unknown"
     handle = engine.deploy_if_absent(topology_text, instance.instance_name)
     if handle is None:
-        # Precondition mismatch — runtime is genuinely present. NOTHING was
-        # mutated: restore status/error to their pre-admission values and
-        # only refresh presence from this fresh observation.
-        instance.status = preserved_status
-        instance.error = preserved_error
-        instance.runtime_presence = "present"
-        db.flush()
+        if instance.consoles:
+            # Genuine race, not a crash-recovery gap: NOTHING was mutated by
+            # THIS attempt — restore status/error to their pre-admission
+            # values and leave the already-working console session alone.
+            instance.status = preserved_status
+            instance.error = preserved_error
+            instance.runtime_presence = "present"
+            db.flush()
+            return instance
+        _rebuild_consoles_from_live_inspection(db, instance, engine)
         return instance
     # Precondition held (genuinely absent) and deploy_if_absent has already
     # performed the real mutation atomically — console teardown/recreation
     # may only run now, after that mutation is proven to have happened.
     stop_consoles(instance)
-    consoles: dict = {}
-    for node in handle.nodes:
-        kind = handle.kinds.get(node)
-        spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
-        if _is_linux_kind(kind):
-            spec["port"] = start_console(
-                handle.nodes[node],
-                f"{_CONSOLE_BASE}{instance.id}/console/{node}",
-            )
-        consoles[node] = spec
-    instance.consoles = consoles
+    instance.consoles = _build_consoles_from_handle(instance, handle)
     instance.status = "active"
     now = _now()
     instance.started_at = now

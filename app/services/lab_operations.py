@@ -620,8 +620,16 @@ def run_claimed(
                 except HostLockUnavailable:
                     raise
                 if preliminary_present:
-                    instance.runtime_presence = "present"
-                    db.flush()
+                    # "Present" is ambiguous — see
+                    # lab_lifecycle.resync_present_preliminary's own
+                    # docstring: it could be someone else's genuinely
+                    # pre-existing, working deploy (consoles already
+                    # recorded), or THIS SAME conditional deploy's own
+                    # prior, crashed attempt already succeeded and was
+                    # reclaimed before ever recording consoles/status. A
+                    # bare presence refresh here would settle a live,
+                    # console-less lab as if nothing had happened.
+                    lab_lifecycle.resync_present_preliminary(db, instance, engine)
                 else:
                     if not _capacity_available(db, instance):
                         _requeue_for_capacity(db, op, instance)

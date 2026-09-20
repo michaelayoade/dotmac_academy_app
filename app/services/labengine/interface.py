@@ -79,4 +79,19 @@ class LabEngine(ABC):
     def status(self, instance_name: str) -> str: ...
 
     @abstractmethod
+    def inspect_running(self, instance_name: str) -> LabHandle | None:
+        """Reconstruct a live :class:`LabHandle` for an already-running
+        ``instance_name`` from a fresh, locked inspection — never a
+        redeploy. Returns ``None`` if the instance is not currently running.
+
+        Used exclusively to resync ``consoles``/``status`` for a conditional
+        deploy whose runtime is observed present but whose own DB row has
+        empty ``consoles`` — the gap a worker crash between a successful
+        ``deploy_if_absent()`` and that same attempt ever recording consoles
+        can leave behind (see ``app/services/lab_lifecycle.py``'s
+        ``_rebuild_consoles_from_live_inspection`` for the full scenario).
+        """
+        ...
+
+    @abstractmethod
     def console_target(self, handle: LabHandle, node: str) -> str: ...

@@ -22,9 +22,17 @@ after.
 
 `origin` is audit/provenance only — it identifies WHY a conditional operation
 was created (`"runtime_repair"` for a conditional deploy, `"runtime_cleanup"`
-for a conditional destroy) but is never itself compared in a decision
-predicate; only `runtime_precondition` (`"absent"`/`"present"`) is ever
-branched on. Both are nullable and NULL for the overwhelming majority of rows
+for a conditional destroy). It never INDEPENDENTLY determines whether a
+precondition holds — only `runtime_precondition` (`"absent"`/`"present"`)
+does that. `origin` (together with `kind`) IS compared, but only to confirm
+which of the two valid conditional shapes a row claims to be
+(`app/services/lab_operations.py`'s `is_conditional_deploy`/
+`is_conditional_destroy`); a malformed or mismatched shape (any tuple outside
+the three this migration's CHECK constraint permits) is already rejected at
+the database layer before this application code ever runs, so that
+comparison can never itself misclassify an ordinary operation as
+conditional or vice versa. Both columns are nullable and NULL for the
+overwhelming majority of rows
 (every ordinary, unconditional operation `request_idle_reaps`/
 `reconcile_stuck`/`reclaim_previous_epoch` create) — this migration adds no
 backfill, since every existing row already satisfies the "both NULL" CHECK
@@ -63,16 +71,28 @@ owned column on this table. `platform_api` keeps `SELECT`; `academy_lab_worker`
 keeps `SELECT, INSERT, UPDATE`; `app_admin`'s explicit migration/offline grant
 (established by 0055, restated by 0059) is restated identically here too.
 
-Rollout and rollback concerns: forward rollout is tolerant, mirroring 0059's
-own reasoning, not 0058's — an old (pre-0060) worker process running against
-this new schema simply never sets `origin`/`runtime_precondition` on the
-operations it enqueues (`request_idle_reaps`/`reconcile_stuck`/
-`reclaim_previous_epoch` never pass them), and an old worker claiming a row a
-NEW reconciler enqueued with these fields set would not understand the
-conditional branches in `run_claimed()` at all — but that is a
-mixed-worker-version rollout hazard, not something this migration's schema
-alone can prevent; it is the same class of tolerable-but-not-ideal window
-0059's own module docstring describes for `claimed_host`/`claimed_epoch`.
+Rollout and rollback concerns: forward rollout is a HARD synchronization
+requirement, NOT a tolerable mixed-version window — the inverse of 0059's own
+precedent for `claimed_host`/`claimed_epoch`, and more severe than 0058's.
+An old (pre-0060) worker process has no concept of `origin`/
+`runtime_precondition` at all: if a NEW (post-0060) reconciler enqueues a
+conditional row while an old worker is still running, that old worker's
+`run_claimed()` has no `is_conditional_deploy`/`is_conditional_destroy`
+branch to take — it claims the row via its ordinary, UNCONDITIONAL deploy/
+destroy code path instead, which can tear down or redeploy a runtime the
+conditional operation's whole precondition-check design exists specifically
+to protect. This is unlike 0059's `claimed_host`/`claimed_epoch` (an old
+worker simply leaves two audit columns NULL and degrades gracefully to
+lease-expiry recovery) and unlike 0058's `runtime_presence` (an old worker
+under-counts capacity, a safety-preserving direction): here, an old worker
+does not degrade gracefully or under-count — it takes an actively wrong,
+potentially destructive action against a live runtime. Both the
+`academy-labs` worker AND the `lab-reconcile` reconciler process MUST be
+running post-0060 code before EITHER is allowed to enqueue or claim a row
+against this schema; this is a mandatory input to the (separate,
+not-yet-authorized) production rollout runbook, not something this migration
+or any new application code can enforce or retrofit onto an
+already-running old worker process by itself.
 
 Downgrade must NEVER silently discard live conditional intent for an old
 worker to misinterpret as unconditional: dropping `runtime_precondition` out

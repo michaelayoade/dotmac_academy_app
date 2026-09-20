@@ -207,12 +207,16 @@ class LabOperation(Base, TimestampMixin):
     # Reconciler conditional operations (migration 0060_lab_conditional_ops.py):
     # worker-owned, like every column above. `origin` is audit/provenance
     # only ("runtime_repair" for a conditional deploy, "runtime_cleanup" for
-    # a conditional destroy) and is NEVER itself compared in a decision
-    # predicate; `run_claimed()`/`_run_deploy()` branch only on
-    # `runtime_precondition` ("absent"/"present"). Same `FetchedValue()`
-    # reasoning as `claimed_host`/`claimed_epoch` above: metadata-only
-    # server-generation marker, so app_user's column-scoped INSERT grant (see
-    # migration 0055) never needs to cover these worker-owned columns either.
+    # a conditional destroy) and never INDEPENDENTLY determines whether a
+    # precondition holds — only `runtime_precondition` ("absent"/"present")
+    # does that. `origin` (with `kind`) IS compared in `run_claimed()`'s
+    # `is_conditional_deploy`/`is_conditional_destroy`, but only to confirm
+    # which of the two valid conditional shapes a row claims to be; a
+    # malformed/mismatched shape is already rejected by the CHECK constraint
+    # below before this code ever runs. Same `FetchedValue()` reasoning as
+    # `claimed_host`/`claimed_epoch` above: metadata-only server-generation
+    # marker, so app_user's column-scoped INSERT grant (see migration 0055)
+    # never needs to cover these worker-owned columns either.
     origin: Mapped[str | None] = mapped_column(String(32), server_default=FetchedValue())
     runtime_precondition: Mapped[str | None] = mapped_column(
         String(16), server_default=FetchedValue()

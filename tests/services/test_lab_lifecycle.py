@@ -947,6 +947,74 @@ def test_provision_if_absent_settles_noop_without_any_mutation_when_precondition
     assert stopped == []  # no console teardown on the no-op path
     assert started == []  # no console recreation on the no-op path
     engine.deploy.assert_not_called()
+    engine.inspect_running.assert_not_called()  # non-empty consoles: no resync needed
+    admin_session.rollback()
+
+
+def test_provision_if_absent_resyncs_from_a_live_inspection_when_consoles_are_empty(
+    admin_session, tenant_a
+):
+    """``deploy_if_absent`` returns ``None`` (runtime present) AND consoles
+    are empty — the crash-then-retry gap: this instance's own prior,
+    crashed attempt most plausibly already deployed successfully but never
+    recorded consoles/status. A real, fresh inspection (engine.
+    inspect_running, never a redeploy) must resync to the exact same end
+    state a normal successful deploy would reach."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-resync", seed={"o": 5},
+                       status="provisioning", consoles={})
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = None  # precondition mismatch: genuinely present
+    engine.inspect_running.return_value = LabHandle(
+        instance_name="dal-cond-deploy-resync", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.7"}, kinds={"client": "linux"})
+
+    out = lab_lifecycle.provision_if_absent(
+        admin_session, inst, engine, lt,
+        preserved_status="active", preserved_error=None,
+    )
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.error is None
+    assert out.consoles["client"]["mgmt"] == "172.20.20.7"
+    assert out.runtime_presence == "present"
+    engine.inspect_running.assert_called_once_with("dal-cond-deploy-resync")
+    engine.deploy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_provision_if_absent_resync_sets_unknown_when_the_fresh_inspection_disagrees(
+    admin_session, tenant_a
+):
+    """A genuinely unexpected disagreement (the fresh inspection no longer
+    finds the instance running) must not assert a lifecycle state with no
+    real console data behind it — presence is conservatively set to
+    "unknown" and status/error are left untouched."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-resync-miss", seed={"o": 5},
+                       status="provisioning", consoles={})
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = None
+    engine.inspect_running.return_value = None  # disagrees: not actually running
+
+    out = lab_lifecycle.provision_if_absent(
+        admin_session, inst, engine, lt,
+        preserved_status="active", preserved_error=None,
+    )
+    admin_session.flush()
+    assert out.status == "provisioning"  # untouched — no grounds to change it
+    assert out.consoles == {}
+    assert out.runtime_presence == "unknown"
     admin_session.rollback()
 
 

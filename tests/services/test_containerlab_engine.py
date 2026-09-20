@@ -97,7 +97,8 @@ def test_ssh_exec_uses_mgmt_ip():
 
 
 @pytest.mark.parametrize(
-    "method", ["inventory", "deploy", "ssh_exec", "destroy", "reset", "exec", "status"]
+    "method", ["inventory", "deploy", "ssh_exec", "destroy", "reset", "exec", "status",
+               "inspect_running"]
 )
 def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="web")
@@ -112,6 +113,7 @@ def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
                 "reset": lambda: eng.reset("name: x", "i"),
                 "exec": lambda: eng.exec(handle, "r1", ["true"]),
                 "status": lambda: eng.status("i"),
+                "inspect_running": lambda: eng.inspect_running("i"),
             }[method]()
         popen.assert_not_called()
     assert not (tmp_path / "i").exists()
@@ -280,6 +282,31 @@ def test_destroy_if_present_acquires_host_lock_exactly_once_and_noops_when_absen
     assert destroyed is False  # precondition mismatch: already absent
     popen.assert_called_once()  # only the inspect — no destroy call at all
     assert len(calls) == 1
+
+
+def test_inspect_running_reconstructs_a_handle_for_an_already_running_instance(tmp_path):
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(
+            stdout=(
+                '[{"lab_name":"i","name":"clab-i-r1",'
+                '"ipv4_address":"172.20.20.5/24","kind":"linux"}]'
+            ),
+        )
+        handle = eng.inspect_running("i")
+    assert handle is not None
+    assert handle.nodes["r1"] == "clab-i-r1"
+    assert handle.mgmt["r1"] == "172.20.20.5"
+    assert handle.kinds["r1"] == "linux"
+    popen.assert_called_once()  # only the inspect — never a redeploy
+
+
+def test_inspect_running_returns_none_when_not_actually_running(tmp_path):
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout="{}")
+        handle = eng.inspect_running("i")
+    assert handle is None
 
 
 def test_inventory_maps_lab_names_to_inspected_topology_paths(tmp_path):
