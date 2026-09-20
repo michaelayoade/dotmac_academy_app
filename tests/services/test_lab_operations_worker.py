@@ -2856,6 +2856,182 @@ def test_conditional_deploy_escalated_settlement_does_not_reset_destroy_failure_
     )
 
 
+def test_conditional_deploy_ambiguous_non_escalated_outcome_still_marks_operation_last_error(
+    admin_session, tenant_a, monkeypatch
+):
+    """Proves the specific gap this fix closes: the preliminary/authoritative
+    check misses (genuinely present after all, per a race), the follow-up
+    ``inspect_running`` is ALSO ambiguous (returns ``None``), but the
+    instance's TRUE prior status is "active" — NOT one of the transient
+    values ("queued"/"provisioning"/"resetting") that ``provision_if_absent``
+    escalates to ``status="error"``. "active" is deliberately never
+    escalated (it has its own safe self-healing path via
+    ``reconcile_runtime``'s next pass), so ``instance.status`` stays
+    "active" here — but the outcome is JUST AS UNCONFIRMED as the escalated
+    case. Checking ``instance.status == "error"`` alone (the pre-fix trigger)
+    missed this case entirely; the fix (``instance.runtime_presence !=
+    "present"``) must still mark the OPERATION's own ``last_error`` so
+    neither escalation function's window-reset query mistakes this for a
+    genuinely healthy redeploy."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-ambiguous-active",
+        status="active", presence="present",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"  # preliminary check misses the race
+    engine.deploy_if_absent.return_value = None  # authoritative check: genuinely present
+    engine.inspect_running.return_value = None  # follow-up inspection also can't confirm
+
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    engine.deploy_if_absent.assert_called_once()
+    assert operation.state == "succeeded"
+    # NOT escalated: "active" is never escalated by design (its own
+    # self-healing path via reconcile_runtime's next pass handles it) — this
+    # is the case the pre-fix trigger missed entirely.
+    assert instance.status == "active"
+    assert instance.runtime_presence == "unknown"
+    assert stop_calls == []  # never confirmed present; nothing torn down
+    engine.deploy.assert_not_called()
+    # The actual property this fix proves: last_error is set even though
+    # status never became "error".
+    assert operation.last_error
+
+
+def test_conditional_deploy_ambiguous_non_escalated_settlement_does_not_reset_repair_deploy_failure_window(
+    admin_session, tenant_a
+):
+    """End-to-end proof of the consequence: a genuine repair-deploy failure,
+    then this exact ambiguous-but-NOT-escalated no-op (instance status stays
+    "active" throughout, never touches "error"), then another genuine
+    repair-deploy failure — the cumulative escalation count used by
+    ``_automatic_repair_deploy_escalation_message`` must still include BOTH
+    genuine failures; the ambiguous no-op in between must not reset the
+    window. Mirrors ``test_conditional_deploy_escalated_settlement_does_not_
+    reset_destroy_failure_window``'s structure, but for the repair-deploy
+    escalation function and for this specific non-escalated-but-ambiguous
+    case (rather than the escalated-to-error case that test already
+    covers)."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-window-no-reset",
+        status="active", presence="present",
+    )
+    instance.error = None
+    admin_session.flush()
+
+    # Genuine failure #1: burns 2 attempts on one row (mirrors a
+    # lease-expiry/restart-reclaim burning multiple attempts on a single
+    # operation — see _automatic_repair_deploy_escalation_message's own
+    # docstring on why attempts, not row count, are summed).
+    first_failure = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    first_failure.state = "claimed"
+    first_failure.claimed_by = "worker"
+    first_failure.claimed_at = datetime.now(UTC)
+    first_failure.heartbeat_at = datetime.now(UTC)
+    first_failure.attempts = 2
+    admin_session.commit()
+
+    failing_engine = MagicMock()
+    failing_engine.status.return_value = "absent"
+    failing_engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged")
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=first_failure.id, claimed_by="worker", engine=failing_engine,
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "active"  # under the deploy ceiling, not escalated
+
+    # The ambiguous, non-escalated no-op: preliminary/authoritative checks
+    # miss, follow-up inspection also can't confirm, TRUE prior status
+    # ("active") is not one of the transient values, so it settles
+    # "succeeded" WITHOUT escalating status to "error" — exactly the
+    # previously-missed case.
+    noop_op = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, noop_op)
+    noop_engine = _engine(instance.instance_name)
+    noop_engine.status.return_value = "absent"
+    noop_engine.deploy_if_absent.return_value = None
+    noop_engine.inspect_running.return_value = None
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=noop_op.id, claimed_by="worker", engine=noop_engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(noop_op)
+    assert instance.status == "active"  # NOT escalated — the case this fix covers
+    assert noop_op.state == "succeeded"
+    assert noop_op.last_error  # marked so it can't be mistaken for a healthy redeploy
+
+    # Genuine failure #2: with the ceiling at 3 and failure #1 having burned
+    # 2 attempts, this single-attempt failure's cumulative count (2 + 1 = 3)
+    # reaches the ceiling and escalates — but ONLY if failure #1's attempts
+    # still count, i.e. only if the no-op above did NOT reset the window.
+    # Before this fix, the no-op would have settled with last_error=None,
+    # which _automatic_repair_deploy_escalation_message's own
+    # last_deploy_success_at query treats as proof of a genuinely healthy
+    # redeploy, silently excluding failure #1 from the count and leaving
+    # this second failure short of the ceiling (cumulative 1 < 3, not
+    # escalated).
+    second_failure = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    second_failure.state = "claimed"
+    second_failure.claimed_by = "worker"
+    second_failure.claimed_at = datetime.now(UTC)
+    second_failure.heartbeat_at = datetime.now(UTC)
+    second_failure.attempts = 1
+    admin_session.commit()
+
+    final_engine = MagicMock()
+    final_engine.status.return_value = "absent"
+    final_engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged again")
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=second_failure.id, claimed_by="worker", engine=final_engine,
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic repair deploy failed {lab_operations.MAX_ATTEMPTS_BY_KIND['deploy']} "
+        "times; manual intervention required"
+    )
+
+
 def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(
     admin_session, tenant_a, monkeypatch
 ):

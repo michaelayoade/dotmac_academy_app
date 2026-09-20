@@ -772,23 +772,30 @@ def run_claimed(
                         preserved_status=initial_instance_status,
                         preserved_error=initial_instance_error,
                     )
-                if instance.status == "error":
-                    # Both lab_lifecycle.resync_present_preliminary and
+                if instance.runtime_presence != "present":
+                    # Neither resync_present_preliminary nor
                     # provision_if_absent's own ambiguous-outcome branches
-                    # escalate to status="error" rather than raising — this
-                    # settles "succeeded" at the shared tail below like any
-                    # other non-exceptional outcome, but it must not be
-                    # mistaken for a genuinely healthy redeploy by
-                    # _automatic_destroy_escalation_message's own
-                    # window-reset query: mark the OPERATION's own
-                    # last_error too, the only signal that query has to
-                    # distinguish the two. An instance can only reach
-                    # status="error" here as a direct result of this
-                    # escalation — reconcile_runtime's missing_runtime
-                    # eligibility never selects an instance already at
-                    # status="error" in the first place.
+                    # ever confirmed the runtime is genuinely present here
+                    # — this settles "succeeded" at the shared tail below
+                    # like any other non-exceptional outcome (an idempotent
+                    # no-op is not a failure), but it must not be mistaken
+                    # for a genuinely healthy redeploy by either escalation
+                    # function's own window-reset query: mark the
+                    # OPERATION's own last_error too, the only signal those
+                    # queries have to distinguish "actually confirmed
+                    # healthy" from "settled without ever confirming
+                    # anything." This covers BOTH the escalated (status
+                    # forced to "error") and non-escalated (status
+                    # reverted/restored to its own prior value, e.g.
+                    # "active") ambiguous sub-cases — checking `status ==
+                    # "error"` alone missed the non-escalated sub-case
+                    # entirely, since an "active" prior status is
+                    # deliberately never escalated (it has its own safe
+                    # self-healing path via reconcile_runtime's next pass)
+                    # but is JUST AS UNCONFIRMED as the escalated case for
+                    # the purpose of resetting either escalation window.
                     settle_error = instance.error or (
-                        "conditional deploy escalated to manual verification"
+                        "conditional deploy could not confirm runtime presence"
                     )
             elif not _capacity_available(db, instance):
                 _requeue_for_capacity(db, op, instance)
