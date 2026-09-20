@@ -1093,3 +1093,84 @@ def test_terminate_process_group_swallows_already_terminated_process():
     ):
         containerlab._terminate_process_group(proc)  # must not raise
     proc.wait.assert_called_once()
+
+
+def test_unblock_call_itself_raising_still_reaches_terminate_process_group(monkeypatch):
+    """Pins the exact mechanism behind the construction-window fix, independent
+    of real OS signal timing: CPython's own
+    ``signal.pthread_sigmask(SIG_UNBLOCK, ...)`` can synchronously raise a
+    pending signal's handler exception as a side effect of that call
+    returning — before any following bytecode runs. If that unblock call
+    lived in a bare ``finally`` after ``Popen(...)`` (as it did pre-fix)
+    rather than inside the ``try`` guarding ``communicate()``, an exception
+    raised there would propagate straight out of ``_run_contained`` without
+    ever reaching ``_terminate_process_group`` — leaking the child with no
+    cleanup attempt at all.
+
+    ``signal.pthread_sigmask`` is mocked to raise only on its *second* call
+    (the ``SIG_UNBLOCK`` immediately before ``communicate()``) — the first
+    call (``SIG_BLOCK``, before ``Popen(...)``) must succeed normally so
+    ``proc`` gets bound. This proves: (a) the exception surfaces at exactly
+    that call, and (b) ``_terminate_process_group`` still runs, with the
+    correct ``proc``, despite it.
+    """
+    real_mask = signal.pthread_sigmask
+    calls: list[tuple[int, object]] = []
+
+    class _Boom(BaseException):
+        pass
+
+    def _fake_mask(how, mask):
+        calls.append((how, mask))
+        if len(calls) == 2:
+            raise _Boom("simulated pending-signal delivery on unblock")
+        return real_mask(how, mask)
+
+    monkeypatch.setattr(signal, "pthread_sigmask", _fake_mask)
+
+    fake_proc = _fake_popen()
+    with patch("subprocess.Popen", return_value=fake_proc):
+        with patch(
+            "app.services.labengine.containerlab._terminate_process_group"
+        ) as terminate:
+            with pytest.raises(_Boom):
+                containerlab._run_contained(["true"], timeout=5)
+            terminate.assert_called_once_with(fake_proc)
+    fake_proc.communicate.assert_not_called()
+
+
+def test_final_reap_does_not_block_indefinitely_on_a_process_that_never_exits(
+    monkeypatch,
+):
+    """The last ``proc.wait()`` in ``_terminate_process_group`` — after the
+    SIGTERM/grace/SIGKILL sequence has already run — must be bounded, not an
+    unbounded blocking wait. A real process wedged in an uninterruptible
+    kernel sleep (D-state) cannot be interrupted even by SIGKILL, so an
+    unbounded wait here would hold this worker's locks hostage forever.
+
+    A genuinely unkillable real process is not practically constructible in
+    a test, so ``proc.wait`` is monkeypatched to always raise
+    ``subprocess.TimeoutExpired`` — simulating a process that never actually
+    exits no matter how long is waited. The grace period is shrunk so the
+    test itself stays fast. The function must still return (not hang, not
+    raise) within a bounded time.
+    """
+    monkeypatch.setattr(containerlab, "_GROUP_KILL_GRACE_SECONDS", 0.05)
+
+    proc = MagicMock()
+    proc.pid = 99999999  # exceedingly unlikely to be a real pid
+    proc.wait.side_effect = subprocess.TimeoutExpired(cmd="x", timeout=0.05)
+
+    with patch(
+        "app.services.labengine.containerlab.os.killpg",
+        side_effect=ProcessLookupError,
+    ):
+        started = time.monotonic()
+        containerlab._terminate_process_group(proc)  # must not hang
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 5, f"final reap blocked for {elapsed}s instead of returning promptly"
+    # Called once for the (skipped, since killpg raised ProcessLookupError)
+    # grace-period loop path is never entered here — only the final bounded
+    # reap call itself.
+    proc.wait.assert_called_once_with(timeout=containerlab._GROUP_KILL_GRACE_SECONDS)

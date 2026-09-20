@@ -129,6 +129,22 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     already-fully-empty group just raises ``ProcessLookupError``, handled
     the same as the SIGTERM step above.
 
+    The final reap of the direct child (after the SIGTERM/grace/SIGKILL
+    sequence above has run) is itself bounded by
+    ``_GROUP_KILL_GRACE_SECONDS``, not an unbounded ``proc.wait()``. SIGKILL
+    cannot interrupt a process stuck inside an uninterruptible kernel sleep
+    (D-state, e.g. from stuck I/O) — the kill is queued but only takes effect
+    once that syscall returns, which can be indefinitely far in the future.
+    This function runs while the worker still holds both the singleton lock
+    and the per-operation host lock, so blocking here forever would prevent
+    worker restart/reclaim forever too — the exact "no external command
+    interaction may hang the worker indefinitely" property this module is
+    built around. If the bounded wait still times out, there is nothing more
+    user-space code can do about a process wedged in the kernel: this is a
+    deliberate fail-stop/give-up policy, not a bug to fix further. The
+    caller proceeds (and releases its locks) rather than holding every lock
+    hostage on a single stuck process.
+
     The whole body runs with this thread's own delivery of
     ``_DEFERRED_SIGNALS`` (SIGTERM and SIGINT) blocked (via
     ``signal.pthread_sigmask``), unblocked again in a ``finally`` on every
@@ -201,7 +217,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
                 except ProcessLookupError:
                     pass
         try:
-            proc.wait()
+            proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
         except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
             pass
     finally:
@@ -229,8 +245,7 @@ def _run_contained(
 
     Delivery of ``_DEFERRED_SIGNALS`` (SIGTERM and SIGINT) to this thread is
     blocked (via ``signal.pthread_sigmask``) around ``subprocess.Popen(...)``
-    itself, unblocked again immediately once ``proc`` is bound.
-    ``Popen.__init__`` forks+execs the child and then does further
+    itself. ``Popen.__init__`` forks+execs the child and then does further
     Python-level bookkeeping before returning; a SIGTERM or a real terminal
     Ctrl+C (-> KeyboardInterrupt, via SIGINT) landing anywhere in that window
     — including after the fork but before this function's own ``proc`` local
@@ -239,17 +254,45 @@ def _run_contained(
     BaseException:`` cleanup below can only ever act on ``proc``, which would
     not exist yet in that window, so the child would leak permanently and
     untrackably. Blocking defers any such signal that arrives during
-    construction until right after ``proc`` is bound, at which point it is
-    delivered and the existing ``try``/``except BaseException:`` below runs
-    exactly as it already does for a signal arriving during
-    ``communicate()``.
+    construction until the mask is unblocked again.
+
+    That unblock is deliberately performed inside the ``try`` guarding
+    ``proc.communicate()``, immediately before the call, and NOT in a bare
+    ``finally`` attached to the ``Popen(...)`` call. CPython's
+    ``signal.pthread_sigmask(SIG_UNBLOCK, ...)`` does not merely flip the OS
+    mask and return: if a signal in the set being unblocked is already
+    pending (i.e. it was delivered while blocked), CPython synchronously
+    invokes that signal's registered Python-level handler as part of the
+    ``pthread_sigmask()`` call itself returning — before control returns to
+    the calling bytecode. Concretely: ``signal.signal(signal.SIGTERM,
+    handler); signal.pthread_sigmask(SIG_BLOCK, {SIGTERM});
+    os.kill(os.getpid(), signal.SIGTERM); signal.pthread_sigmask(SIG_UNBLOCK,
+    {SIGTERM})`` — the final call itself raises whatever ``handler`` raises.
+    So if the unblock lived in a bare ``finally`` after ``Popen(...)``, a
+    signal that arrived (and was deferred) during construction would be
+    raised BY that ``finally`` clause, propagating straight out of this
+    function without ever reaching the ``except BaseException:`` block below
+    — the exact case this docstring says must be caught. Performing the
+    unblock inside the ``try`` immediately above ``communicate()`` instead
+    means any such re-raised signal is caught by the same ``except
+    BaseException:`` that already handles a signal landing during
+    ``communicate()`` itself, and ``_terminate_process_group(proc)`` runs
+    correctly since ``proc`` is already bound by that point.
+
+    ``Popen(...)`` itself can still fail before any child exists (e.g. a
+    missing binary raising ``FileNotFoundError``) — that failure is caught
+    separately, immediately around construction, purely to unblock the mask
+    before re-raising. There is no process to tear down in that case, but
+    leaving the mask blocked would otherwise cost this process
+    SIGTERM/SIGINT responsiveness for the rest of its lifetime over an
+    unrelated construction failure.
 
     The forked child itself must not inherit this blocked mask: a forked
     child's own copy of its signal mask is fixed at the moment of fork,
-    independent of the parent's, and this function's own ``finally: unblock``
-    only ever affects the parent's mask going forward — never the child's.
-    ``exec()`` does not clear a blocked signal either. Left unhandled, every
-    process this module spawns (containerlab, docker, ssh — and anything they
+    independent of the parent's, and unblocking in the parent only ever
+    affects the parent's mask going forward — never the child's. ``exec()``
+    does not clear a blocked signal either. Left unhandled, every process
+    this module spawns (containerlab, docker, ssh — and anything they
     themselves fork) would have SIGTERM (and SIGINT) permanently blocked from
     the moment of fork, so a SIGTERM sent to it by
     :func:`_terminate_process_group`'s escalation could never be
@@ -269,9 +312,22 @@ def _run_contained(
             start_new_session=True,
             preexec_fn=_unblock_worker_signals_in_child,
         )
-    finally:
+    except BaseException:
+        # Popen() itself failed before any child exists to clean up — no
+        # _terminate_process_group call is possible or needed, but the mask
+        # must still be unblocked so this process doesn't lose SIGTERM/SIGINT
+        # responsiveness for the rest of its lifetime.
         signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
+        raise
     try:
+        # Unblocking here, immediately before communicate() and inside this
+        # try (not in a bare `finally` after Popen(...)), is deliberate: if a
+        # signal was pending during construction, this very unblock call can
+        # itself synchronously raise it (see the docstring above) — and
+        # doing that inside this `try` means the `except` below still runs
+        # `_terminate_process_group(proc)` correctly, since `proc` already
+        # exists and is bound by this point.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
         stdout, stderr = proc.communicate(timeout=timeout)
     except BaseException:
         _terminate_process_group(proc)
