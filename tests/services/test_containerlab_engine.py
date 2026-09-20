@@ -331,6 +331,54 @@ def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(tmp
     assert handle is None
 
 
+def test_inspect_running_never_merges_nodes_across_a_same_named_path_collision(tmp_path):
+    """A same-``lab_name`` collision reported at an unowned path must never
+    contribute even ONE node to the accepted result, regardless of which
+    record ``containerlab inspect --all`` happened to report last.
+
+    Regression test for a bug where per-node data was accumulated into flat
+    ``nodes``/``mgmt``/``kinds`` dicts for EVERY record matching ``lab_name``,
+    while only a single, separately-tracked ``discovered_path`` variable was
+    checked against the expected path at the end — so an untrusted record's
+    node could survive in the accepted result even though the final path
+    check "passed" because a later, legitimately-pathed record was also
+    present. The fix groups discovered node data by the path it was reported
+    under and only ever reads from the one group whose path matches exactly.
+    """
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    expected_path = eng._topo_path("i")
+    good_record = (
+        '{"lab_name":"i","name":"clab-i-r1","absLabPath":"' + expected_path + '",'
+        '"ipv4_address":"172.20.20.5/24","kind":"linux"}'
+    )
+    bad_record = (
+        '{"lab_name":"i","name":"clab-i-r2",'
+        '"absLabPath":"/some/other/operators/i.clab.yml",'
+        '"ipv4_address":"172.20.20.9/24","kind":"linux"}'
+    )
+
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout=f"[{good_record},{bad_record}]")
+        handle = eng.inspect_running("i")
+    assert handle is not None
+    assert handle.nodes == {"r1": "clab-i-r1"}
+    assert "r2" not in handle.nodes
+    assert "r2" not in handle.mgmt
+    assert "r2" not in handle.kinds
+
+    # Reversed order — the original bug's exact manifestation depended on
+    # which record was walked LAST, since only a single mutable
+    # ``discovered_path`` variable was checked at the end.
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout=f"[{bad_record},{good_record}]")
+        handle = eng.inspect_running("i")
+    assert handle is not None
+    assert handle.nodes == {"r1": "clab-i-r1"}
+    assert "r2" not in handle.nodes
+    assert "r2" not in handle.mgmt
+    assert "r2" not in handle.kinds
+
+
 def test_inventory_maps_lab_names_to_inspected_topology_paths(tmp_path):
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
     one_path = str(tmp_path / "dal-one" / "topo.clab.yml")

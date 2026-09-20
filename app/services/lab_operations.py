@@ -810,6 +810,24 @@ def run_claimed(
             # state here, even for a conditional "deploy" whose capacity
             # reservation may have already committed a "resetting"/
             # "provisioning"/"unknown" placeholder in an earlier transaction.
+            #
+            # This restoration is equally safe on the OTHER conditional-
+            # deploy path that can raise HostLockUnavailable here — the
+            # preliminary-present branch's call into
+            # lab_lifecycle.resync_present_preliminary() /
+            # _rebuild_consoles_from_live_inspection(), which itself calls
+            # engine.inspect_running() (also a single, atomic host_lock
+            # acquisition). This is only true because
+            # _rebuild_consoles_from_live_inspection() now calls
+            # inspect_running() BEFORE stop_consoles() — previously it called
+            # stop_consoles() first, so a HostLockUnavailable raised from
+            # inspect_running()'s own lock acquisition could follow a
+            # real, already-executed console teardown, making a blanket
+            # "NOTHING has been mutated yet" claim overclaim in that case.
+            # With that ordering fixed, no console has been touched either
+            # by the time any HostLockUnavailable reaches this handler, so
+            # restoring instance state verbatim is correct for both
+            # call sites this branch covers.
             unchanged_instance.status = initial_instance_status
             unchanged_instance.error = initial_instance_error
             unchanged_instance.runtime_presence = initial_instance_presence

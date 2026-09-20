@@ -672,6 +672,19 @@ class ContainerlabEngine(LabEngine):
         handles a ``None`` result by setting ``runtime_presence="unknown"``
         and leaving ``status``/``error`` alone.
 
+        Node data is grouped by the path it was reported under DURING the
+        walk (never accumulated into flat dicts as records are visited), so
+        a same-named collision reported at a different, unowned path can
+        never contribute even a single node to the accepted result: only
+        the one group whose path exactly matches ``self._topo_path(
+        instance_name)`` is ever read from, after the walk completes. A
+        single flat accumulator keyed only by logical node name — with a
+        separate "last path seen" variable checked once at the end — would
+        let an untrusted record's nodes survive being overwritten by a
+        later, legitimately-pathed record's path check while still keeping
+        entries an earlier, unverified record contributed; grouping by path
+        closes that gap by construction.
+
         Assumes ``inspect --all --format json`` reports the same per-node
         ``name``/``ipv4_address``/``kind`` fields :meth:`_deploy_unlocked`
         already relies on from ``deploy``'s own JSON output — both are the
@@ -685,33 +698,32 @@ class ContainerlabEngine(LabEngine):
         """
         raw = self._inspect_all()
         prefix = f"clab-{instance_name}-"
-        nodes: dict = {}
-        mgmt: dict = {}
-        kinds: dict = {}
-        discovered_path: str | None = None
-        found_any = False
+        # path -> {logical_name: (cname, ip, kind)}. A record with no
+        # discoverable path groups under the ``None`` key, which can never
+        # equal ``self._topo_path(instance_name)`` (that method always
+        # returns a non-empty string), so such records are structurally
+        # excluded from ever being accepted.
+        groups: dict[str | None, dict[str, tuple[str, str, str]]] = {}
 
         def _walk(value: object, hinted_name: str | None = None) -> None:
-            nonlocal found_any, discovered_path
             if isinstance(value, dict):
                 lab_name = value.get("lab_name")
                 if not isinstance(lab_name, str) or not lab_name:
                     lab_name = hinted_name
                 if lab_name == instance_name:
                     path = value.get("absLabPath") or value.get("labPath")
-                    if isinstance(path, str) and path:
-                        discovered_path = path
+                    group_key = path if isinstance(path, str) and path else None
                     cname = value.get("name")
                     if isinstance(cname, str) and cname:
-                        found_any = True
                         logical = (
                             cname[len(prefix):]
                             if cname.startswith(prefix)
                             else cname.split("-")[-1]
                         )
-                        nodes[logical] = cname
-                        mgmt[logical] = (value.get("ipv4_address") or "").split("/")[0]
-                        kinds[logical] = value.get("kind", "linux")
+                        ip = (value.get("ipv4_address") or "").split("/")[0]
+                        kind = value.get("kind", "linux")
+                        group = groups.setdefault(group_key, {})
+                        group[logical] = (cname, ip, kind)
                 for key, child in value.items():
                     child_hint = key if isinstance(child, list) else lab_name
                     _walk(child, child_hint)
@@ -720,8 +732,13 @@ class ContainerlabEngine(LabEngine):
                     _walk(child, hinted_name)
 
         _walk(raw)
-        if not found_any or discovered_path != self._topo_path(instance_name):
+        expected_path = self._topo_path(instance_name)
+        group = groups.get(expected_path)
+        if not group:
             return None
+        nodes = {logical: cname for logical, (cname, _ip, _kind) in group.items()}
+        mgmt = {logical: ip for logical, (_cname, ip, _kind) in group.items()}
+        kinds = {logical: kind for logical, (_cname, _ip, kind) in group.items()}
         return LabHandle(instance_name=instance_name, nodes=nodes, mgmt=mgmt, kinds=kinds)
 
     def inspect_running(self, instance_name: str) -> LabHandle | None:

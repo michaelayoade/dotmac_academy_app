@@ -422,36 +422,61 @@ def _rebuild_consoles_from_live_inspection(
     operation (see ``app/services/lab_operations.py``'s conditional-deploy
     branch for the full sequence).
 
-    ``stop_consoles`` runs FIRST, unconditionally — safe and correct even if
-    what is recorded is already stale/dead, or if nothing is actually
-    running under those recorded ports: it matches live LOCAL ttyd processes
-    by instance id via ``pgrep``, so it cleans up whatever is actually
-    running regardless of what the DB row currently claims; calling it on an
-    already-clean instance is a harmless no-op. This does not violate the
-    "console teardown only after mutation proven" ordering invariant — that
-    invariant guards against tearing consoles down on a mere STALE
-    ASSUMPTION before confirming anything; here the runtime's current
-    presence has already been authoritatively confirmed by a real
-    observation (the caller's ``engine.status()``/``engine.deploy_if_absent()``
-    check), so cleaning up and resyncing local console bookkeeping is a
-    safe, correct action, not a premature one.
+    A REAL, fresh, locked inspection (``engine.inspect_running`` — never a
+    redeploy) runs FIRST, BEFORE any console is touched. ``stop_consoles``
+    only runs once that call has already returned — successfully, whether
+    with a real handle or a clean ``None`` — never before it and never if
+    it raises.
 
-    Then performs a REAL, fresh, locked inspection (``engine.inspect_running``
-    — never a redeploy) and converges to exactly the same end state a
-    normal successful deploy would reach — for every case: stale-non-empty,
-    empty, and the rare already-fully-correct case, which is just harmlessly
-    reconfirmed (at the minor cost of a brief console restart). If the fresh
-    inspection unexpectedly disagrees (does not find the instance running
-    after all — e.g. a genuine, separate destroy raced in in the meantime,
-    or ``ContainerlabEngine.inspect_running``'s own topology-path ownership
+    This ordering is load-bearing, not cosmetic: ``inspect_running`` ->
+    ``ContainerlabEngine._inspect_running_handle_unlocked`` -> its own
+    ``_inspect_all()`` is fallible for real, ordinary reasons — a non-zero
+    ``containerlab inspect`` return code (subprocess failure, host
+    contention, timeout) or invalid JSON output both raise ``RuntimeError``
+    (see ``_inspect_all``'s own deliberate error handling). An earlier
+    version of this function called ``stop_consoles`` unconditionally
+    FIRST, reasoning that it was "safe and correct even if what is recorded
+    is already stale/dead" — but that reasoning only accounted for
+    ``inspect_running`` returning cleanly (a handle or ``None``), never for
+    it raising. If it raised AFTER ``stop_consoles`` had already killed the
+    real local ttyd console process(es) for this instance, that teardown
+    could not be undone by any DB rollback: the operation would error out
+    with consoles already destroyed and no way to rebuild them, and — since
+    the runtime is genuinely PRESENT in this exact code path (that is why a
+    resync was attempted rather than a deploy) — the instance would not be
+    "missing_runtime" either, so neither reconciler repair branch
+    (``db_only_repairs``/``missing_runtime`` in ``lab_jobs.py``) would ever
+    pick it back up automatically. There was no self-healing path back to
+    working consoles.
+
+    Reordering so ``inspect_running`` runs first closes that gap while
+    preserving every existing invariant this function relies on: teardown
+    still happens before any rebuild, and the "unknown" no-op path still
+    tears down stale consoles once we have DEFINITIVELY confirmed via a
+    real observation that we could not verify presence. The only change is
+    that a RAISE from the inspection itself now propagates before any
+    console is touched, so nothing destructive happens and the existing
+    operation-level error handling (retry/ceiling machinery in
+    ``lab_operations.py``, unchanged by this fix) can safely retry later
+    with consoles still intact.
+
+    Then converges to exactly the same end state a normal successful
+    deploy would reach — for every case: stale-non-empty, empty, and the
+    rare already-fully-correct case, which is just harmlessly reconfirmed
+    (at the minor cost of a brief console restart). If the fresh inspection
+    unexpectedly disagrees (does not find the instance running after all —
+    e.g. a genuine, separate destroy raced in in the meantime, or
+    ``ContainerlabEngine.inspect_running``'s own topology-path ownership
     check refused an untrusted same-name match), presence is conservatively
     set to "unknown" rather than asserting a lifecycle state with no real
     console data behind it; ``status``/``error`` are left untouched in that
     case, since this function never had grounds to change them to anything
-    more specific than the ambiguous state it started from.
+    more specific than the ambiguous state it started from — and stale
+    consoles (if any) are still torn down now that this observation has
+    authoritatively settled the ambiguity.
     """
-    stop_consoles(instance)
     handle = engine.inspect_running(instance.instance_name)
+    stop_consoles(instance)
     if handle is None:
         instance.runtime_presence = "unknown"
         db.flush()

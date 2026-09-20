@@ -1023,6 +1023,46 @@ def test_provision_if_absent_resync_sets_unknown_when_the_fresh_inspection_disag
     admin_session.rollback()
 
 
+def test_provision_if_absent_resync_never_tears_down_consoles_when_inspection_raises(
+    admin_session, tenant_a, monkeypatch
+):
+    """``_rebuild_consoles_from_live_inspection`` must call
+    ``engine.inspect_running`` BEFORE ``stop_consoles`` — never the reverse.
+
+    ``inspect_running`` (-> ``_inspect_running_handle_unlocked`` ->
+    ``_inspect_all``) is fallible for real, ordinary reasons: a non-zero
+    ``containerlab inspect`` return code or invalid JSON both raise
+    ``RuntimeError``. If ``stop_consoles`` ran first, such a raise would
+    leave real, already-destroyed console processes behind with no way to
+    rebuild them and no self-healing reconciler path back (the runtime is
+    genuinely present in this exact code path, so it is not
+    "missing_runtime" either). This proves the fix: the exception
+    propagates, and ``stop_consoles`` is never called at all."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-inspect-fails", seed={"o": 5},
+                       status="provisioning", consoles={"stale": {"kind": "linux"}})
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = None  # precondition mismatch: genuinely present
+    engine.inspect_running.side_effect = RuntimeError("inspect failed")
+
+    with pytest.raises(RuntimeError, match="inspect failed"):
+        lab_lifecycle.provision_if_absent(
+            admin_session, inst, engine, lt,
+            preserved_status="active", preserved_error=None,
+        )
+    assert stopped == []  # no destructive teardown occurred before the failure
+    engine.inspect_running.assert_called_once_with("dal-cond-deploy-inspect-fails")
+    admin_session.rollback()
+
+
 def test_destroy_if_present_destroys_and_stops_consoles_only_after_real_destroy(
     admin_session, tenant_a, monkeypatch
 ):
