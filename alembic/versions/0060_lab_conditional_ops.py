@@ -97,7 +97,7 @@ already-running old worker process by itself.
 Downgrade must NEVER silently discard live conditional intent for an old
 worker to misinterpret as unconditional: dropping `runtime_precondition` out
 from under a still-`queued` or still-`claimed` conditional row would leave an
-old (pre-0060) worker product a plain, unconditional deploy/destroy against
+old (pre-0060) worker to produce a plain, unconditional deploy/destroy against
 it — exactly the ordering bug this whole design exists to close, just moved
 to the schema boundary instead of the code boundary. So `downgrade()` first
 sets a bounded `lock_timeout` (so a concurrent, ordinary claim transaction
