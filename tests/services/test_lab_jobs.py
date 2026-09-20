@@ -245,9 +245,16 @@ def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
     engine.inventory.return_value = {instance.instance_name: "/labs/leak.clab.yml"}
 
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
-    assert instance.status == "active"
+    # The reconciler no longer projects repaired lifecycle state itself —
+    # only the worker's own locked, authoritative recheck
+    # (lab_lifecycle.destroy_if_present) may settle status/runtime_presence.
+    # status/error stay exactly as they were at snapshot time.
+    assert instance.status == "reaped"
+    assert instance.error is None
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "destroy"
+    assert operation.origin == "runtime_cleanup"
+    assert operation.runtime_precondition == "present"
     engine.destroy.assert_not_called()
     admin_session.rollback()
 
@@ -589,11 +596,15 @@ def test_sweep_protects_present_and_unknown_including_escalated_error(
     admin_session.rollback()
 
 
-def test_runtime_reconcile_db_only_repair_sets_present_on_positive_observation(
+def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_projecting_state(
     admin_session, tenant_a
 ):
-    """A reaped row whose runtime is confirmed live by fresh inventory must
-    be marked "present", not just made capacity-counted via status."""
+    """A reaped row whose runtime is confirmed live by fresh inventory gets a
+    conditional destroy enqueued (origin="runtime_cleanup",
+    runtime_precondition="present") — the reconciler itself no longer
+    projects status/runtime_presence; only the worker's own locked,
+    authoritative recheck (lab_lifecycle.destroy_if_present) may settle
+    that outcome."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -611,16 +622,24 @@ def test_runtime_reconcile_db_only_repair_sets_present_on_positive_observation(
 
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
-    assert instance.status == "active"
-    assert instance.runtime_presence == "present"
+    assert instance.status == "reaped"
+    assert instance.runtime_presence == "absent"  # untouched — worker default
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "destroy"
+    assert operation.origin == "runtime_cleanup"
+    assert operation.runtime_precondition == "present"
     admin_session.rollback()
 
 
-def test_runtime_reconcile_missing_runtime_with_prior_error_sets_absent(
+def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_conditionally(
     admin_session, tenant_a
 ):
-    """Escalating uncertain ("unknown") presence to definite absence, now
-    that inventory has confirmed the runtime is gone."""
+    """A prior error no longer bypasses the worker's own conditional recheck
+    by settling status="error" directly from this pass's snapshot — it must
+    ALSO go through the same conditional enqueue() as any other
+    missing-runtime instance, exactly like the fresh-redeploy case below.
+    Only the worker's own locked, authoritative observation may decide the
+    outcome; the reconciler itself must not touch status/runtime_presence."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -638,19 +657,27 @@ def test_runtime_reconcile_missing_runtime_with_prior_error_sets_absent(
     engine = MagicMock()
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 0)
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
-    assert instance.status == "error"
-    assert instance.runtime_presence == "absent"
+    # Untouched by the reconciler itself — the prior error/status/presence
+    # survive exactly as they were until the worker's own recheck settles them.
+    assert instance.status == "active"
+    assert instance.error == "worker lease expired after 3 attempts"
+    assert instance.runtime_presence == "unknown"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "deploy"
+    assert operation.origin == "runtime_repair"
+    assert operation.runtime_precondition == "absent"
     admin_session.rollback()
 
 
-def test_runtime_reconcile_missing_runtime_fresh_redeploy_sets_absent(
+def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally(
     admin_session, tenant_a
 ):
-    """No prior error: a fresh redeploy is enqueued, and presence is set to
-    "absent" immediately (confirmed by this same inventory check) — it will
-    correctly transition back to "unknown" once a worker claims the deploy."""
+    """No prior error: a conditional deploy (origin="runtime_repair",
+    runtime_precondition="absent") is enqueued — the reconciler itself no
+    longer projects runtime_presence; it will correctly transition once a
+    worker actually claims and runs the resulting conditional deploy."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -669,9 +696,11 @@ def test_runtime_reconcile_missing_runtime_fresh_redeploy_sets_absent(
 
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
-    assert instance.runtime_presence == "absent"
+    assert instance.runtime_presence == "present"  # untouched by the reconciler itself
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
+    assert operation.origin == "runtime_repair"
+    assert operation.runtime_precondition == "absent"
     admin_session.rollback()
 
 
@@ -744,4 +773,107 @@ def test_runtime_reconcile_still_raises_on_duplicate_instance_names(
         lab_jobs.reconcile_runtime(admin_session, engine)
 
     engine.destroy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_runtime_reconcile_enqueue_race_is_detected_by_the_full_tuple_not_kind_alone(
+    admin_session, tenant_a, monkeypatch
+):
+    """A genuinely concurrent operation of the SAME ``kind`` ("destroy") but a
+    DIFFERENT ``(origin, runtime_precondition)`` — an ordinary, unconditional,
+    user-initiated destroy, not this pass's own conditional intent — must
+    still be detected as a race loss. Comparing ``op.kind`` alone would wrongly
+    treat this as "this pass's own operation won", attributing (and
+    potentially misinterpreting) someone else's unconditional destroy as this
+    pass's conditional one.
+    """
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-race-full-tuple",
+        seed={},
+        status="reaped",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    engine = MagicMock()
+    engine.inventory.return_value = {instance.instance_name: "/labs/race-full-tuple.clab.yml"}
+
+    real_enqueue = lab_operations.enqueue
+    calls = {"n": 0}
+
+    def _enqueue_with_unconditional_concurrent_winner(
+        db, *, instance, kind, requested_by, origin=None, runtime_precondition=None
+    ):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A real, concurrent, user-initiated destroy (ordinary —
+            # origin/runtime_precondition both None) landing just before this
+            # pass's own conditional destroy enqueue call below.
+            real_enqueue(db, instance=instance, kind="destroy", requested_by=p.id)
+        return real_enqueue(
+            db,
+            instance=instance,
+            kind=kind,
+            requested_by=requested_by,
+            origin=origin,
+            runtime_precondition=runtime_precondition,
+        )
+
+    monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_unconditional_concurrent_winner)
+
+    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+
+    assert destroyed == 0
+    assert queued == 0  # this pass's own tuple did not come back — not claimed
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "destroy"
+    assert operation.origin is None
+    assert operation.runtime_precondition is None
+    admin_session.rollback()
+
+
+def test_reap_idle_never_sets_origin_or_runtime_precondition(admin_session, tenant_a):
+    """`request_idle_reaps` is explicitly out of scope for conditional
+    operations — it must remain an unconditional, originating enqueue with
+    both new fields left NULL."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+        instance_name="dal-idle-regression", seed={}, status="active",
+        last_active_at=datetime.now(UTC) - timedelta(days=1), consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    assert lab_jobs.request_idle_reaps(admin_session) == 1
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "destroy"
+    assert operation.origin is None
+    assert operation.runtime_precondition is None
+    admin_session.rollback()
+
+
+def test_reconcile_stuck_requeue_never_sets_origin_or_runtime_precondition(
+    admin_session, tenant_a
+):
+    """`reconcile_stuck` is explicitly out of scope — its phase-1-to-worker
+    cutover repair enqueue must remain unconditional, both new fields NULL."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+        instance_name="dal-stuck-regression", seed={}, status="queued", consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+
+    assert lab_operations.reconcile_stuck(admin_session) == 1
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "deploy"
+    assert operation.origin is None
+    assert operation.runtime_precondition is None
     admin_session.rollback()

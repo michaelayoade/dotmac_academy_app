@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -190,6 +191,95 @@ def test_destroy_uses_the_inspected_path_when_it_matches_the_expected_topology(t
         "--cleanup",
     ]
     assert not (tmp_path / "missing").exists()
+
+
+def _counting_host_lock(monkeypatch):
+    """Wrap the real ``host_lock`` context manager with a call counter,
+    delegating to the genuine implementation (a real, tmp_path-scoped flock)
+    so the underlying mutual-exclusion behavior is unaffected — only the
+    number of times a caller *enters* the context manager is observed.
+    """
+    calls: list[None] = []
+    real_host_lock = containerlab.host_lock
+
+    @contextmanager
+    def _wrapped(label, *, directory=None):
+        calls.append(None)
+        with real_host_lock(label, directory=directory):
+            yield
+
+    monkeypatch.setattr(containerlab, "host_lock", _wrapped)
+    return calls
+
+
+def test_deploy_if_absent_acquires_host_lock_exactly_once_when_deploying(tmp_path, monkeypatch):
+    """Observation + mutation happen inside exactly ONE host_lock acquisition
+    — not two separate ones the way composing the public inventory()+deploy()
+    would (each of those independently acquires and releases its own lock)."""
+    calls = _counting_host_lock(monkeypatch)
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.side_effect = [
+            _fake_popen(stdout="{}"),  # inspect --all: nothing running (absent)
+            _fake_popen(
+                stdout='[{"name":"clab-i-r1","ipv4_address":"172.20.20.3/24","kind":"linux"}]',
+            ),  # the actual deploy
+        ]
+        handle = eng.deploy_if_absent("name: x", "i")
+    assert handle is not None
+    assert handle.nodes["r1"].endswith("-r1")
+    assert popen.call_count == 2  # inspect, then deploy — both inside the one lock
+    assert len(calls) == 1
+
+
+def test_deploy_if_absent_acquires_host_lock_exactly_once_and_noops_when_present(
+    tmp_path, monkeypatch
+):
+    calls = _counting_host_lock(monkeypatch)
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(
+            stdout=f'[{{"lab_name":"i","absLabPath":"{eng._topo_path("i")}"}}]',
+        )
+        handle = eng.deploy_if_absent("name: x", "i")
+    assert handle is None  # precondition mismatch: genuinely present already
+    popen.assert_called_once()  # only the inspect — no deploy call at all
+    assert len(calls) == 1
+    assert not (tmp_path / "i").exists()  # no topology file written on the no-op path
+
+
+def test_destroy_if_present_acquires_host_lock_exactly_once_when_destroying(
+    tmp_path, monkeypatch
+):
+    calls = _counting_host_lock(monkeypatch)
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    topo = tmp_path / "i" / "topo.clab.yml"
+    topo.parent.mkdir()
+    topo.write_text("name: i")
+    with patch("subprocess.Popen") as popen:
+        popen.side_effect = [
+            _fake_popen(
+                stdout=f'[{{"lab_name":"i","absLabPath":"{eng._topo_path("i")}"}}]',
+            ),  # inspect --all: present
+            _fake_popen(stdout=""),  # the actual destroy
+        ]
+        destroyed = eng.destroy_if_present("i")
+    assert destroyed is True
+    assert popen.call_count == 2  # inspect, then destroy — both inside the one lock
+    assert len(calls) == 1
+
+
+def test_destroy_if_present_acquires_host_lock_exactly_once_and_noops_when_absent(
+    tmp_path, monkeypatch
+):
+    calls = _counting_host_lock(monkeypatch)
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout="{}")
+        destroyed = eng.destroy_if_present("i")
+    assert destroyed is False  # precondition mismatch: already absent
+    popen.assert_called_once()  # only the inspect — no destroy call at all
+    assert len(calls) == 1
 
 
 def test_inventory_maps_lab_names_to_inspected_topology_paths(tmp_path):

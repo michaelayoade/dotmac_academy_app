@@ -179,6 +179,24 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
                     lab_worker_session, role, "lab_operations", column, privilege
                 ), f"{role} must not have {privilege} on lab_operations.{column}"
 
+    # --- origin/runtime_precondition column-level ACL (migration 0060) -----
+    # academy_lab_worker's grant is table-wide (see 0055, restated by
+    # 0059/0060), so it must cover these two conditional-operation columns
+    # exactly like every other worker-owned one; app_user's INSERT grant is
+    # column-scoped and must NOT include either, and platform_api must never
+    # get write access to either one.
+    for privilege in ("SELECT", "UPDATE"):
+        for column in ("origin", "runtime_precondition"):
+            assert _has_column_privilege(
+                lab_worker_session, "academy_lab_worker", "lab_operations", column, privilege
+            ), f"expected academy_lab_worker to have {privilege} on lab_operations.{column}"
+    for role in ("app_user", "platform_api"):
+        for privilege in ("INSERT", "UPDATE"):
+            for column in ("origin", "runtime_precondition"):
+                assert not _has_column_privilege(
+                    lab_worker_session, role, "lab_operations", column, privilege
+                ), f"{role} must not have {privilege} on lab_operations.{column}"
+
     # --- deploy, then a passing check, through the real worker session --
     engine = _stub_engine(instance.instance_name)
     assert lab_jobs.drain_once(lab_worker_session, engine) == 1

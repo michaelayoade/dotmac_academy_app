@@ -18,7 +18,7 @@ from app.models.assessment import Activity, Submission
 from app.models.course import Course
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
-from app.services import host_lock, lab_jobs, lab_operations
+from app.services import host_lock, lab_jobs, lab_lifecycle, lab_operations
 from app.services.exceptions import ConflictError
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import LabHandle
@@ -2189,3 +2189,268 @@ def test_reclaim_previous_epoch_lock_wait_is_bounded_by_lock_timeout(
         admin_session.rollback()
         holder.rollback()
         holder.close()
+
+
+# --- Conditional operations (migration 0060_lab_conditional_ops) -----------
+
+
+def _claim(db, operation, *, claimed_by="worker"):
+    """Claim ``operation`` by hand, mirroring ``claim_next``'s attempt charge
+    (``op.attempts += 1``) so a HostLockUnavailable-triggered refund is
+    actually observable (from a nonzero starting value), not trivially
+    "0 minus 1, floored back to 0" either way."""
+    operation.state = "claimed"
+    operation.claimed_by = claimed_by
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts += 1
+    db.commit()
+
+
+def test_conditional_deploy_precondition_holds_deploys_and_succeeds(admin_session, tenant_a):
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-ok", status="active", presence="unknown"
+    )
+    instance.error = "worker lease expired; operation requeued"
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"  # preliminary check: genuinely absent
+    engine.deploy_if_absent.return_value = LabHandle(
+        instance_name=instance.instance_name, nodes={}, mgmt={}, kinds={},
+    )
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.runtime_presence == "present"
+    assert operation.state == "succeeded"
+    engine.deploy_if_absent.assert_called_once()
+    engine.deploy.assert_not_called()
+
+
+def test_conditional_deploy_precondition_mismatch_at_preliminary_check_settles_noop(
+    admin_session, tenant_a, monkeypatch
+):
+    """The preliminary check alone (before any capacity admission) finds the
+    runtime already present: settle as a successful no-op WITHOUT ever
+    calling deploy_if_absent, stop_consoles, or touching status/error."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-prelim-noop",
+        status="active", presence="unknown",
+    )
+    instance.error = None
+    instance.consoles = {"client": {"kind": "linux"}}
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "running"  # preliminary check: genuinely present
+
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert instance.consoles == {"client": {"kind": "linux"}}
+    assert instance.runtime_presence == "present"
+    assert stop_calls == []
+    engine.deploy_if_absent.assert_not_called()
+    engine.deploy.assert_not_called()
+
+
+def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_check_missed(
+    admin_session, tenant_a, monkeypatch
+):
+    """The preliminary check says absent, but a race makes the runtime
+    genuinely present by the time deploy_if_absent's own lock-protected check
+    runs — proves the SECOND (authoritative) check is the one that actually
+    matters, not the first."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-race",
+        status="active", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"  # preliminary check misses the race
+    engine.deploy_if_absent.return_value = None  # authoritative check: genuinely present
+
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    engine.deploy_if_absent.assert_called_once()  # the authoritative check DID run
+    assert instance.status == "active"  # restored, not left at "resetting"
+    assert instance.error is None
+    assert instance.runtime_presence == "present"
+    assert stop_calls == []
+    engine.deploy.assert_not_called()
+
+
+def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(
+    admin_session, tenant_a, monkeypatch
+):
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-destroy-ok", status="reaped", presence="present",
+    )
+    instance.consoles = {"client": {"kind": "linux"}}
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="destroy",
+        requested_by=None,
+        origin="runtime_cleanup",
+        runtime_precondition="present",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    order = []
+    engine.destroy_if_present.side_effect = lambda name: order.append("destroy_if_present") or True
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: order.append("stop_consoles"))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    assert instance.status == "reaped"
+    assert instance.runtime_presence == "absent"
+    assert order == ["destroy_if_present", "stop_consoles"]
+    engine.destroy.assert_not_called()
+
+
+def test_conditional_destroy_precondition_mismatch_settles_noop(
+    admin_session, tenant_a, monkeypatch
+):
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-destroy-noop", status="reaped", presence="unknown",
+    )
+    instance.error = "prior error text"
+    instance.consoles = {"client": {"kind": "linux"}}
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="destroy",
+        requested_by=None,
+        origin="runtime_cleanup",
+        runtime_precondition="present",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.destroy_if_present.return_value = False  # precondition mismatch: already absent
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    assert instance.status == "reaped"
+    assert instance.error == "prior error text"
+    assert instance.consoles == {"client": {"kind": "linux"}}
+    assert instance.runtime_presence == "absent"
+    assert stop_calls == []
+    engine.destroy.assert_not_called()
+
+
+def test_conditional_deploy_host_lock_unavailable_restores_initial_state_without_charging_attempt(
+    admin_session, tenant_a
+):
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-lock", status="active", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    attempts_at_claim = operation.attempts
+    engine = _engine(instance.instance_name)
+    engine.status.side_effect = host_lock.HostLockUnavailable("host lock held")
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert instance.runtime_presence == "unknown"
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    # Refunded, not charged an extra attempt for lock contention.
+    assert operation.attempts == max(attempts_at_claim - 1, 0)
+
+
+def test_conditional_destroy_host_lock_unavailable_restores_initial_state_without_charging_attempt(
+    admin_session, tenant_a
+):
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-destroy-lock", status="reaped", presence="present",
+    )
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="destroy",
+        requested_by=None,
+        origin="runtime_cleanup",
+        runtime_precondition="present",
+    )
+    _claim(admin_session, operation)
+    attempts_at_claim = operation.attempts
+    engine = _engine(instance.instance_name)
+    engine.destroy_if_present.side_effect = host_lock.HostLockUnavailable("host lock held")
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "reaped"
+    assert instance.runtime_presence == "present"
+    assert operation.state == "queued"
+    assert operation.attempts == max(attempts_at_claim - 1, 0)

@@ -65,6 +65,7 @@ def test_columns_match_contract(admin_engine):
     expected_nullable = {
         "requested_by", "claimed_by", "claimed_host", "claimed_epoch",
         "claimed_at", "heartbeat_at", "finished_at", "last_error",
+        "origin", "runtime_precondition",
     }
     for name in expected_not_null:
         assert name in columns, f"missing column {name}"
@@ -88,17 +89,32 @@ def test_columns_match_contract(admin_engine):
     # per worker process lifetime, not per poll.
     assert columns["claimed_host"]["default"] is None
     assert columns["claimed_epoch"]["default"] is None
+    # Migration 0060: reconciler conditional operations, also with no DDL
+    # default (no backfill — every existing row already satisfies the
+    # "both NULL" CHECK branch trivially).
+    assert columns["origin"]["type"].length == 32
+    assert columns["runtime_precondition"]["type"].length == 16
+    assert columns["origin"]["default"] is None
+    assert columns["runtime_precondition"]["default"] is None
 
     checks = {
         row["name"]: str(row["sqltext"])
         for row in inspector.get_check_constraints("lab_operations")
     }
-    assert set(checks) == {"ck_lab_operations_kind", "ck_lab_operations_state"}
+    assert set(checks) == {
+        "ck_lab_operations_kind", "ck_lab_operations_state",
+        "ck_lab_operations_conditional_runtime",
+    }
     assert all(kind in checks["ck_lab_operations_kind"] for kind in ("deploy", "destroy", "check"))
     assert all(
         state in checks["ck_lab_operations_state"]
         for state in ("queued", "claimed", "succeeded", "failed", "cancelled")
     )
+    conditional_check = checks["ck_lab_operations_conditional_runtime"]
+    assert "runtime_repair" in conditional_check
+    assert "runtime_cleanup" in conditional_check
+    assert "absent" in conditional_check
+    assert "present" in conditional_check
 
 
 def test_foreign_keys_cascade(admin_engine):
@@ -188,6 +204,74 @@ def test_app_user_cannot_insert_or_update_structural_claim_ownership_columns(adm
                 ":column, 'UPDATE')"
             ).bindparams(column=column)
         ), f"academy_lab_worker should be able to UPDATE {column}"
+
+
+def test_app_user_cannot_insert_or_update_conditional_operation_columns(admin_session):
+    """``origin``/``runtime_precondition`` (migration 0060) get the exact
+    same ACL treatment as every other worker-owned column: ``app_user`` may
+    never write either one, and ``academy_lab_worker`` may write both."""
+    for column in ("origin", "runtime_precondition"):
+        assert not admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('app_user', 'lab_operations', :column, 'INSERT')"
+            ).bindparams(column=column)
+        )
+        assert not admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('app_user', 'lab_operations', :column, 'UPDATE')"
+            ).bindparams(column=column)
+        )
+        assert admin_session.scalar(
+            text(
+                "SELECT has_column_privilege('academy_lab_worker', 'lab_operations', "
+                ":column, 'UPDATE')"
+            ).bindparams(column=column)
+        ), f"academy_lab_worker should be able to UPDATE {column}"
+
+
+def test_conditional_runtime_check_accepts_ordinary_and_valid_conditional_rows(
+    admin_session, tenant_a
+):
+    instance = _make_instance(admin_session, tenant_a)
+    ordinary = _make_operation(tenant_a, instance, kind="deploy", state="failed")
+    admin_session.add(ordinary)
+    admin_session.flush()  # both origin/runtime_precondition NULL — must be accepted
+
+    conditional_deploy = _make_operation(tenant_a, instance, kind="deploy", state="failed")
+    conditional_deploy.origin = "runtime_repair"
+    conditional_deploy.runtime_precondition = "absent"
+    admin_session.add(conditional_deploy)
+    admin_session.flush()
+
+    conditional_destroy = _make_operation(tenant_a, instance, kind="destroy", state="failed")
+    conditional_destroy.origin = "runtime_cleanup"
+    conditional_destroy.runtime_precondition = "present"
+    admin_session.add(conditional_destroy)
+    admin_session.flush()
+    admin_session.rollback()
+
+
+@pytest.mark.parametrize(
+    "kind,origin,runtime_precondition",
+    [
+        ("deploy", "runtime_repair", None),  # half-null
+        ("deploy", None, "absent"),  # half-null
+        ("deploy", "runtime_cleanup", "present"),  # wrong origin/precondition for deploy
+        ("destroy", "runtime_repair", "absent"),  # wrong origin/precondition for destroy
+        ("deploy", "bogus_origin", "absent"),  # invalid origin
+    ],
+)
+def test_conditional_runtime_check_rejects_half_null_and_mismatched_rows(
+    admin_session, tenant_a, kind, origin, runtime_precondition
+):
+    instance = _make_instance(admin_session, tenant_a)
+    op = _make_operation(tenant_a, instance, kind=kind, state="failed")
+    op.origin = origin
+    op.runtime_precondition = runtime_precondition
+    admin_session.add(op)
+    with pytest.raises(IntegrityError, match="ck_lab_operations_conditional_runtime"):
+        admin_session.flush()
+    admin_session.rollback()
 
 
 def test_lab_instance_grants_make_runtime_state_worker_owned(admin_session):

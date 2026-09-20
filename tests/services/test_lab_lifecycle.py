@@ -884,6 +884,124 @@ def test_destroy_success_sets_absent(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_provision_if_absent_deploys_when_precondition_holds(admin_session, tenant_a):
+    """Precondition (absent) confirmed by ``deploy_if_absent`` returning a
+    real handle: proceeds exactly like an ordinary successful deploy."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-ok", seed={"o": 5},
+                       status="provisioning", consoles={})
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = LabHandle(
+        instance_name="dal-cond-deploy-ok", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+    out = lab_lifecycle.provision_if_absent(
+        admin_session, inst, engine, lt,
+        preserved_status="active", preserved_error=None,
+    )
+    admin_session.flush()
+    assert out.status == "active"
+    assert out.runtime_presence == "present"
+    assert out.consoles["client"]["mgmt"] == "172.20.20.3"
+    assert out.started_at is not None
+    engine.deploy_if_absent.assert_called_once()
+    admin_session.rollback()
+
+
+def test_provision_if_absent_settles_noop_without_any_mutation_when_precondition_mismatched(
+    admin_session, tenant_a, monkeypatch
+):
+    """``deploy_if_absent`` returning ``None`` means the runtime was found
+    genuinely present — this is the no-op path. Nothing may be mutated:
+    status/error are restored to their pre-admission values, consoles stay
+    untouched, and only runtime_presence is refreshed."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-noop", seed={"o": 5},
+                       status="provisioning", consoles={"stale": {"kind": "linux"}})
+    inst.runtime_presence = "unknown"
+    inst.error = "stale error text"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+    started = []
+    monkeypatch.setattr(lab_lifecycle, "start_console", lambda c, b: started.append(c) or 1)
+
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = None  # precondition mismatch: genuinely present
+
+    out = lab_lifecycle.provision_if_absent(
+        admin_session, inst, engine, lt,
+        preserved_status="active", preserved_error="stale error text",
+    )
+    admin_session.flush()
+    assert out.status == "active"  # restored to preserved_status, not "provisioning"
+    assert out.error == "stale error text"  # restored to preserved_error
+    assert out.consoles == {"stale": {"kind": "linux"}}  # completely untouched
+    assert out.runtime_presence == "present"  # refreshed from the fresh observation
+    assert stopped == []  # no console teardown on the no-op path
+    assert started == []  # no console recreation on the no-op path
+    engine.deploy.assert_not_called()
+    admin_session.rollback()
+
+
+def test_destroy_if_present_destroys_and_stops_consoles_only_after_real_destroy(
+    admin_session, tenant_a, monkeypatch
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-destroy-ok", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux"}})
+    inst.runtime_presence = "present"
+    admin_session.add(inst)
+    admin_session.flush()
+    order = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: order.append("stop_consoles"))
+    engine = MagicMock()
+    engine.destroy_if_present.side_effect = lambda name: order.append("destroy_if_present") or True
+
+    out = lab_lifecycle.destroy_if_present(admin_session, inst, engine)
+    admin_session.flush()
+    assert out.status == "reaped"
+    assert out.runtime_presence == "absent"
+    assert order == ["destroy_if_present", "stop_consoles"]  # destroy before teardown
+    admin_session.rollback()
+
+
+def test_destroy_if_present_settles_noop_without_any_mutation_when_precondition_mismatched(
+    admin_session, tenant_a, monkeypatch
+):
+    """``destroy_if_present`` returning ``False`` means the runtime was
+    already absent — this is the no-op path. status/error/consoles stay
+    exactly as they were; only runtime_presence is refreshed to "absent"."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-destroy-noop", seed={"o": 5}, status="reaped",
+                       consoles={"client": {"kind": "linux"}})
+    inst.error = "pre-existing error"
+    inst.runtime_presence = "unknown"
+    admin_session.add(inst)
+    admin_session.flush()
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+    engine = MagicMock()
+    engine.destroy_if_present.return_value = False
+
+    out = lab_lifecycle.destroy_if_present(admin_session, inst, engine)
+    admin_session.flush()
+    assert out.status == "reaped"  # untouched
+    assert out.error == "pre-existing error"  # untouched
+    assert out.consoles == {"client": {"kind": "linux"}}  # untouched
+    assert out.runtime_presence == "absent"  # refreshed from the fresh observation
+    assert stopped == []  # no console teardown on the no-op path
+    admin_session.rollback()
+
+
 def test_the_no_real_spawn_guard_still_bites():
     """The guard is about the NEXT forgotten patch, not the last one.
 

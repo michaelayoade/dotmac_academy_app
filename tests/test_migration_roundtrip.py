@@ -48,13 +48,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
-from sqlalchemy import text
-
-from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy import text
+
+from alembic import command
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -63,17 +63,19 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0059 (see HEAD_REVISION), and the 0055/0056, 0056/0057, and
-# 0057/0058 tests are updated to assert against that instead of assuming an
-# earlier revision is still head.
+# repo head is now 0060 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
+# 0057/0058, and 0058/0059 tests are updated to assert against that instead of
+# assuming an earlier revision is still head.
 DOWN_REVISION = "0055_lab_operations"
 TARGET_REVISION = "0056_lab_instance_worker"
 
 # The actual current repo head. Kept as its own constant (rather than reusing
-# TARGET_REVISION/TARGET_REVISION_0057/TARGET_REVISION_0058) specifically so
-# the 0055/0056, 0056/0057, and 0057/0058 tests below stop silently assuming
-# an earlier revision is head once a later one exists.
-HEAD_REVISION = "0059_lab_claim_owner"
+# TARGET_REVISION/TARGET_REVISION_0057/TARGET_REVISION_0058/TARGET_REVISION_0059)
+# specifically so the 0055/0056, 0056/0057, 0057/0058, and 0058/0059 tests
+# below stop silently assuming an earlier revision is head once a later one
+# exists — mirroring how the 0058->0059 transition itself updated this same
+# constant last time, rather than the fixed boundary constants below it.
+HEAD_REVISION = "0060_lab_conditional_ops"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -83,9 +85,13 @@ TARGET_REVISION_0057 = "0057_lab_instance_name_unique"
 DOWN_REVISION_0058 = TARGET_REVISION_0057  # "0057_lab_instance_name_unique"
 TARGET_REVISION_0058 = "0058_lab_runtime_presence"
 
-# 0058 <-> 0059 boundary, for the new tests further down this file.
+# 0058 <-> 0059 boundary, for the 0059-specific tests further down this file.
 DOWN_REVISION_0059 = TARGET_REVISION_0058  # "0058_lab_runtime_presence"
-TARGET_REVISION_0059 = HEAD_REVISION  # "0059_lab_claim_owner"
+TARGET_REVISION_0059 = "0059_lab_claim_owner"
+
+# 0059 <-> 0060 boundary, for the new tests further down this file.
+DOWN_REVISION_0060 = TARGET_REVISION_0059  # "0059_lab_claim_owner"
+TARGET_REVISION_0060 = HEAD_REVISION  # "0060_lab_conditional_ops"
 
 INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
 RUNTIME_PRESENCE_CHECK = "ck_lab_instances_runtime_presence"
@@ -306,7 +312,7 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
 
     with _migration_env(url):
         try:
-            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0059)
+            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0060)
             # downgrades through every later revision first, landing at 0055 —
             # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
             # only cover grants/check-constraints that later revisions never
@@ -525,7 +531,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     cfg = _make_config()
     url = _migration_url()
 
-    # Checks the actual repo head (now 0059, not 0057 — see HEAD_REVISION):
+    # Checks the actual repo head (now 0060, not 0057 — see HEAD_REVISION):
     # this test's own upgrade/downgrade calls stay pinned to the 0056/0057
     # boundary specifically via DOWN_REVISION_0057/TARGET_REVISION_0057, but
     # the sanity check that the CI database starts at head must track
@@ -571,7 +577,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         "the unique index's shape after a downgrade/upgrade round trip does "
         "not match the pre-cycle baseline — 0057 leaks or loses state across cycles"
     )
-    # The `finally` block above always ends at real head (now 0059), not at
+    # The `finally` block above always ends at real head (now 0060), not at
     # the 0057 boundary this test's own round trip exercises.
     assert final_version == HEAD_REVISION
 
@@ -1106,3 +1112,341 @@ def test_0059_grant_posture_matches_ownership_boundary(admin_engine):
             ), f"{role} must not UPDATE {column}"
         assert grants[(column, "academy_lab_worker", "SELECT")] is True
         assert grants[(column, "academy_lab_worker", "UPDATE")] is True
+
+
+# --- 0060: reconciler conditional operations (origin/runtime_precondition) --
+
+CONDITIONAL_COLUMNS = ("origin", "runtime_precondition")
+CONDITIONAL_LENGTHS = {"origin": 32, "runtime_precondition": 16}
+CONDITIONAL_ROLES = ("app_user", "platform_api", "academy_lab_worker")
+CONDITIONAL_PRIVILEGES = ("SELECT", "INSERT", "UPDATE")
+CONDITIONAL_CHECK = "ck_lab_operations_conditional_runtime"
+
+
+def _conditional_column_snapshot(conn) -> dict[str, dict[str, object] | None]:
+    """``None`` for a column when it doesn't exist (0059 state); otherwise its
+    nullability, column default expression, and declared VARCHAR length."""
+    result: dict[str, dict[str, object] | None] = {}
+    for column in CONDITIONAL_COLUMNS:
+        row = conn.execute(
+            text(
+                """SELECT is_nullable, column_default, character_maximum_length
+                   FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'lab_operations'
+                     AND column_name = :column"""
+            ),
+            {"column": column},
+        ).first()
+        result[column] = (
+            None
+            if row is None
+            else {"nullable": row[0], "default": row[1], "length": row[2]}
+        )
+    return result
+
+
+def _conditional_constraint_snapshot(conn) -> dict[str, object] | None:
+    row = conn.execute(
+        text(
+            """SELECT pg_get_constraintdef(oid), convalidated
+               FROM pg_constraint
+               WHERE conname = :name AND conrelid = 'lab_operations'::regclass"""
+        ),
+        {"name": CONDITIONAL_CHECK},
+    ).first()
+    if row is None:
+        return None
+    return {"definition": row[0], "validated": row[1]}
+
+
+def _conditional_grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
+    """``has_column_privilege`` for every (column, role, privilege) this
+    migration governs — table-wide grants already extend to these columns
+    automatically, so this is what actually proves the column-level ACL
+    posture, matching 0058/0059's own grant-snapshot pattern."""
+    result: dict[tuple[str, str, str], bool] = {}
+    for column in CONDITIONAL_COLUMNS:
+        for role in CONDITIONAL_ROLES:
+            for privilege in CONDITIONAL_PRIVILEGES:
+                result[(column, role, privilege)] = bool(
+                    conn.execute(
+                        text(
+                            "SELECT has_column_privilege(:role, 'lab_operations', "
+                            ":column, :priv)"
+                        ),
+                        {"role": role, "column": column, "priv": privilege},
+                    ).scalar()
+                )
+    return result
+
+
+def _conditional_full_snapshot(conn) -> dict[str, object]:
+    return {
+        "columns": _conditional_column_snapshot(conn),
+        "constraint": _conditional_constraint_snapshot(conn),
+        "grants": _conditional_grant_snapshot(conn),
+    }
+
+
+def _insert_lab_operation(
+    conn,
+    *,
+    operation_id: str,
+    tenant_id: str,
+    instance_id: str,
+    kind: str,
+    state: str = "queued",
+    origin: str | None = None,
+    runtime_precondition: str | None = None,
+) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO lab_operations "
+            "(id, tenant_id, instance_id, kind, state, origin, runtime_precondition) "
+            "VALUES (:id, :tenant_id, :instance_id, :kind, :state, :origin, :precond)"
+        ),
+        {
+            "id": operation_id,
+            "tenant_id": tenant_id,
+            "instance_id": instance_id,
+            "kind": kind,
+            "state": state,
+            "origin": origin,
+            "precond": runtime_precondition,
+        },
+    )
+    conn.commit()
+
+
+def test_0060_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+    """0059 <-> 0060 round trip: both columns, the CHECK constraint, and the
+    explicit grant posture are added and removed cleanly across repeated
+    cycles, mirroring the 0058/0059 round-trip test's shape."""
+    cfg = _make_config()
+    url = _migration_url()
+
+    head = _head_revision(cfg)
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added without updating this test's fixed anchor "
+        "revisions"
+    )
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        baseline = _conditional_full_snapshot(conn)
+        for column in CONDITIONAL_COLUMNS:
+            assert baseline["columns"][column] is not None
+            assert baseline["columns"][column]["nullable"] == "YES", (
+                f"{column} must be nullable — no backfill, no NOT NULL"
+            )
+            assert baseline["columns"][column]["default"] is None, (
+                f"{column} must have no DDL default"
+            )
+            assert baseline["columns"][column]["length"] == CONDITIONAL_LENGTHS[column]
+        assert baseline["constraint"] is not None
+        assert baseline["constraint"]["validated"] is True
+        for column in CONDITIONAL_COLUMNS:
+            assert baseline["grants"][(column, "app_user", "SELECT")] is True
+            assert baseline["grants"][(column, "app_user", "INSERT")] is False
+            assert baseline["grants"][(column, "app_user", "UPDATE")] is False
+            assert baseline["grants"][(column, "platform_api", "SELECT")] is True
+            assert baseline["grants"][(column, "platform_api", "INSERT")] is False
+            assert baseline["grants"][(column, "platform_api", "UPDATE")] is False
+            assert baseline["grants"][(column, "academy_lab_worker", "SELECT")] is True
+            assert baseline["grants"][(column, "academy_lab_worker", "INSERT")] is True
+            assert baseline["grants"][(column, "academy_lab_worker", "UPDATE")] is True
+
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0060)
+            with admin_engine.connect() as conn:
+                dropped = _conditional_column_snapshot(conn)
+                assert dropped["origin"] is None, "downgrade must drop origin, not just rename it"
+                assert dropped["runtime_precondition"] is None
+                assert _conditional_constraint_snapshot(conn) is None
+            command.upgrade(cfg, TARGET_REVISION_0060)
+            command.downgrade(cfg, DOWN_REVISION_0060)
+            with admin_engine.connect() as conn:
+                dropped_again = _conditional_column_snapshot(conn)
+                assert dropped_again["origin"] is None
+                assert dropped_again["runtime_precondition"] is None
+            command.upgrade(cfg, TARGET_REVISION_0060)
+        finally:
+            command.upgrade(cfg, "head")
+
+    with admin_engine.connect() as conn:
+        final = _conditional_full_snapshot(conn)
+        final_version = _current_version(conn)
+
+    assert final == baseline, (
+        "column/constraint/grant state after a downgrade/upgrade round trip "
+        "does not match the pre-cycle baseline — 0060 leaks or loses state "
+        "across cycles"
+    )
+    assert final_version == HEAD_REVISION
+
+
+def test_0060_grant_posture_matches_ownership_boundary(admin_engine):
+    """`app_user`/`platform_api` may read but never write `origin`/
+    `runtime_precondition`; `academy_lab_worker` may read and write both —
+    and `app_user`'s pre-existing five-column INSERT grant on
+    `lab_operations` (established by 0055, restated unchanged by 0059/0060)
+    must NOT include either new column."""
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        grants = _conditional_grant_snapshot(conn)
+        insert_columns = _column_insert_grant(conn, "lab_operations")
+
+    assert insert_columns == LAB_OPERATIONS_APP_USER_INSERT_COLUMNS, (
+        "app_user's column-scoped INSERT grant on lab_operations must remain "
+        "exactly 0055's five-column list — origin/runtime_precondition must "
+        "never be added to it"
+    )
+    for column in CONDITIONAL_COLUMNS:
+        for role in ("app_user", "platform_api"):
+            assert grants[(column, role, "SELECT")] is True, f"{role} should be able to SELECT {column}"
+            assert grants[(column, role, "INSERT")] is False, f"{role} must not INSERT {column}"
+            assert grants[(column, role, "UPDATE")] is False, f"{role} must not UPDATE {column}"
+        assert grants[(column, "academy_lab_worker", "SELECT")] is True
+        assert grants[(column, "academy_lab_worker", "UPDATE")] is True
+
+
+def test_0060_check_constraint_accepts_ordinary_and_both_valid_conditional_tuples(admin_engine):
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, "roundtrip-0060-accept")
+
+    try:
+        with admin_engine.connect() as conn:
+            instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            _insert_lab_instance(
+                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-accept"
+            )
+            # Ordinary (both NULL).
+            _insert_lab_operation(
+                conn,
+                operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
+                tenant_id=tenant_id, instance_id=instance_id, kind="deploy",
+            )
+            # Valid conditional deploy tuple.
+            _insert_lab_operation(
+                conn,
+                operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
+                tenant_id=tenant_id, instance_id=instance_id, kind="deploy",
+                state="failed", origin="runtime_repair", runtime_precondition="absent",
+            )
+            # Valid conditional destroy tuple.
+            _insert_lab_operation(
+                conn,
+                operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
+                tenant_id=tenant_id, instance_id=instance_id, kind="destroy",
+                state="failed", origin="runtime_cleanup", runtime_precondition="present",
+            )
+    finally:
+        with admin_engine.connect() as conn:
+            conn.execute(text("DELETE FROM lab_operations WHERE tenant_id = :id"), {"id": tenant_id})
+            conn.commit()
+            conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
+            conn.commit()
+            _delete_tenant(conn, tenant_id)
+
+
+@pytest.mark.parametrize(
+    "kind,origin,runtime_precondition",
+    [
+        # Half-null combinations — the exact case explicit IS NOT NULL guards
+        # exist to reject (a bare `=` comparison against one NULL column
+        # evaluates to NULL, not FALSE, and would otherwise silently pass).
+        ("deploy", "runtime_repair", None),
+        ("deploy", None, "absent"),
+        ("destroy", "runtime_cleanup", None),
+        ("destroy", None, "present"),
+        # Mismatched kind/origin/precondition combinations.
+        ("deploy", "runtime_cleanup", "present"),  # wrong origin/precondition for deploy
+        ("destroy", "runtime_repair", "absent"),  # wrong origin/precondition for destroy
+        ("deploy", "runtime_repair", "present"),  # right origin, wrong precondition
+        ("destroy", "runtime_cleanup", "absent"),  # right origin, wrong precondition
+        ("check", "runtime_repair", "absent"),  # valid origin/precondition, invalid kind
+        ("deploy", "bogus_origin", "absent"),  # invalid origin altogether
+    ],
+)
+def test_0060_check_constraint_rejects_half_null_and_mismatched_tuples(
+    admin_engine, kind, origin, runtime_precondition
+):
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, "roundtrip-0060-reject")
+
+    try:
+        with admin_engine.connect() as conn:
+            instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            _insert_lab_instance(
+                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-reject"
+            )
+            with pytest.raises(Exception) as excinfo:
+                _insert_lab_operation(
+                    conn,
+                    operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
+                    tenant_id=tenant_id, instance_id=instance_id, kind=kind,
+                    origin=origin, runtime_precondition=runtime_precondition,
+                )
+            assert CONDITIONAL_CHECK in str(excinfo.value)
+            conn.rollback()
+    finally:
+        with admin_engine.connect() as conn:
+            _delete_tenant(conn, tenant_id)
+
+
+@pytest.mark.parametrize("state", ["queued", "claimed"])
+def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine, state):
+    """A `queued` or `claimed` row with a non-null `runtime_precondition`
+    must block the downgrade entirely — dropping the column out from under
+    it would leave an old (pre-0060) worker to misinterpret a live
+    conditional intent as an unconditional deploy/destroy. The schema,
+    constraint, and columns must be left completely intact after refusing."""
+    cfg = _make_config()
+    url = _migration_url()
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        tenant_id = _insert_tenant(conn, f"roundtrip-0060-refuse-{state}")
+        instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+        _insert_lab_instance(
+            conn, instance_id=instance_id, tenant_id=tenant_id,
+            instance_name=f"dal-0060-refuse-{state}",
+        )
+        operation_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+
+    try:
+        with admin_engine.connect() as conn:
+            _insert_lab_operation(
+                conn,
+                operation_id=operation_id, tenant_id=tenant_id, instance_id=instance_id,
+                kind="deploy", state=state, origin="runtime_repair",
+                runtime_precondition="absent",
+            )
+            baseline = _conditional_full_snapshot(conn)
+
+        with _migration_env(url):
+            with pytest.raises(Exception, match="refusing to downgrade"):
+                command.downgrade(cfg, DOWN_REVISION_0060)
+
+        with admin_engine.connect() as conn:
+            assert _current_version(conn) == HEAD_REVISION, (
+                "a refused downgrade must leave alembic_version untouched"
+            )
+            after_refusal = _conditional_full_snapshot(conn)
+        assert after_refusal == baseline, (
+            "a refused downgrade must leave the schema/constraint/columns "
+            "completely intact"
+        )
+    finally:
+        with admin_engine.connect() as conn:
+            conn.execute(
+                text("DELETE FROM lab_operations WHERE tenant_id = :id"), {"id": tenant_id}
+            )
+            conn.commit()
+            conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
+            conn.commit()
+            _delete_tenant(conn, tenant_id)
