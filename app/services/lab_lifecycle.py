@@ -87,6 +87,23 @@ def start_console(cname: str, base_path: str) -> int | None:
     Tolerant by design: if ttyd is missing, the bind address is not local, or the
     launch fails we log and return ``None`` so a console problem never blocks
     provisioning.
+
+    Known, pre-existing limitation (not introduced or changed by the worker
+    process-containment/singleton-lock work — confirmed by checking this
+    unit's own history: no explicit ``KillMode`` was ever set before that
+    work, so systemd's own default, which is already ``control-group``, was
+    already in effect): ttyd is spawned as an ordinary child of the worker
+    process, in the worker's own cgroup. Any worker stop/restart (a crash
+    triggering ``Restart=always``, a manual ``systemctl restart``, or a
+    deploy) therefore kills every running console too, while
+    ``LabInstance.consoles`` in the database keeps advertising the now-dead
+    port. `lab_jobs.sweep_orphan_consoles` only ever *deletes* stale console
+    entries for instances that are no longer live-counted for capacity — it
+    has no path that *detects* a still-active instance's console has died
+    and recreates it. A learner's browser console for any active Linux lab
+    is silently broken until that instance is reset or redeployed. Tracked
+    as an explicit follow-up (see Knowledge slug
+    ``academy-lab-worker-console-restart-fragility``), not fixed here.
     """
     if shutil.which("ttyd") is None:
         logger.warning("ttyd not installed; skipping console for %s", cname)
