@@ -2503,6 +2503,64 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     engine.inspect_running.assert_called_once()
 
 
+def test_conditional_deploy_fully_ambiguous_outcome_escalates_a_transient_prior_status(
+    admin_session, tenant_a, monkeypatch
+):
+    """End-to-end ``run_claimed``-level proof that Finding A's escalation
+    composes correctly through the real commit/rebind sequence: the
+    preliminary check says absent, capacity is admitted (committing the
+    transient "provisioning"/"resetting" placeholder), ``deploy_if_absent``
+    then returns ``None`` (a race — genuinely present after all), AND the
+    follow-up ``inspect_running`` ALSO returns ``None`` (fully ambiguous —
+    no positive proof either way).
+
+    The instance's TRUE pre-admission status (``initial_instance_status``,
+    captured at the very start of ``run_claimed`` before any branching) is
+    itself "provisioning" here — a legitimate starting shape for a
+    ``missing_runtime`` repair target, not only "active". Restoring it
+    verbatim on this ambiguous outcome would return the row to exactly
+    ``reconcile_stuck``'s own stuck-row sweep trigger shape once this
+    operation closes with no open operation left to protect it. The fix
+    escalates to ``status="error"`` instead."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-fully-ambiguous",
+        status="provisioning", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"  # preliminary check misses the race
+    engine.deploy_if_absent.return_value = None  # authoritative check: genuinely present
+    engine.inspect_running.return_value = None  # follow-up inspection also can't confirm
+
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    engine.deploy_if_absent.assert_called_once()
+    assert operation.state == "succeeded"
+    # Escalated, NOT restored verbatim to the transient "provisioning" value
+    # that would otherwise match reconcile_stuck's stuck-row sweep shape.
+    assert instance.status == "error"
+    assert instance.error
+    assert instance.runtime_presence == "unknown"
+    assert stop_calls == []  # never confirmed present; nothing torn down
+    engine.deploy.assert_not_called()
+
+
 def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(
     admin_session, tenant_a, monkeypatch
 ):

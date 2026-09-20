@@ -403,14 +403,24 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             # creating ours. Nothing was enqueued on this pass's behalf, and
             # nothing about this instance may be claimed as having happened.
             continue
-        # This branch no longer projects repaired lifecycle state itself —
+        # This branch no longer projects repaired LIFECYCLE state itself —
         # only the worker's own locked, authoritative recheck
         # (lab_lifecycle.destroy_if_present, via the conditional operation
-        # just enqueued) may settle status/error/runtime_presence, since only
-        # it observes the runtime under the host lock at execution time. See
-        # migration 0060_lab_conditional_ops.py's module docstring for why:
-        # projecting here would assert an outcome this pass never verified
+        # just enqueued) may settle status/error, since only it observes the
+        # runtime under the host lock at execution time. See migration
+        # 0060_lab_conditional_ops.py's module docstring for why: projecting
+        # status/error here would assert an outcome this pass never verified
         # under lock, which is exactly the ordering bug this design closes.
+        #
+        # `fresh_runtime` (checked immediately above) is itself a fresh,
+        # lock-verified OBSERVATION from this exact pass that the runtime
+        # is genuinely present right now — recording it is not the kind of
+        # unverified outcome-projection this design forbids; it is exactly
+        # the "collectors/importers write facts" half of this codebase's
+        # own source-of-truth standard. `status`/`error` remain the
+        # worker's own conditional recheck's exclusive decision — those are
+        # never touched here.
+        instance.runtime_presence = "present"
         queued += 1
 
     for instance in missing_runtime:
@@ -457,6 +467,12 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             continue
         # This branch no longer projects repaired lifecycle state itself —
         # see the db_only_repairs branch's identical comment above for why.
+        #
+        # Same reasoning as db_only_repairs above: `fresh_runtime`'s
+        # membership check immediately above is itself a lock-verified
+        # observation that this instance's runtime is genuinely absent
+        # right now.
+        instance.runtime_presence = "absent"
         queued += 1
 
     db.flush()

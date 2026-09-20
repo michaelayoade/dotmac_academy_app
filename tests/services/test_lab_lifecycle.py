@@ -884,6 +884,53 @@ def test_destroy_success_sets_absent(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_resync_present_preliminary_escalates_a_transient_status_when_ambiguous(
+    admin_session, tenant_a, monkeypatch
+):
+    """Unit-level proof of Finding A's escalation for
+    ``resync_present_preliminary`` itself — not ``provision_if_absent``'s
+    identical branch (covered end-to-end in
+    ``test_lab_operations_worker.py``'s
+    ``test_conditional_deploy_fully_ambiguous_outcome_escalates_a_transient_prior_status``,
+    which only exercises ``provision_if_absent``'s copy of this logic).
+
+    The preliminary ``engine.status()`` check already found the runtime
+    present, so ``resync_present_preliminary`` runs
+    ``_rebuild_consoles_from_live_inspection`` directly. The instance starts
+    at ``status="provisioning"`` — a legitimate transient value, not
+    "active" — and the follow-up ``engine.inspect_running`` returns
+    ``None`` (the ``handle is None`` path), leaving
+    ``runtime_presence="unknown"`` with no positive proof either way.
+    Restoring/leaving "provisioning" in place would match
+    ``reconcile_stuck``'s own stuck-row sweep trigger shape once this
+    operation closes with no open operation left to protect it, so it must
+    be escalated to ``"error"`` with a non-empty message instead."""
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-resync-prelim-ambiguous", seed={"o": 5},
+                       status="provisioning", consoles={"stale": {"kind": "linux"}})
+    inst.runtime_presence = "unknown"
+    inst.error = None
+    admin_session.add(inst)
+    admin_session.flush()
+
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+
+    engine = MagicMock()
+    engine.inspect_running.return_value = None  # handle-is-None path: fully ambiguous
+
+    out = lab_lifecycle.resync_present_preliminary(admin_session, inst, engine)
+    admin_session.flush()
+
+    assert stopped == []  # never confirmed present; nothing torn down
+    assert out.runtime_presence == "unknown"
+    assert out.status == "error"
+    assert out.status != "provisioning"
+    assert out.error
+    admin_session.rollback()
+
+
 def test_provision_if_absent_deploys_when_precondition_holds(admin_session, tenant_a):
     """Precondition (absent) confirmed by ``deploy_if_absent`` returning a
     real handle: proceeds exactly like an ordinary successful deploy."""

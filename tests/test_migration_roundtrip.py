@@ -1450,3 +1450,40 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
             conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
             conn.commit()
             _delete_tenant(conn, tenant_id)
+
+
+def test_0060_downgrade_refuses_offline_sql_generation_outright(admin_engine):
+    """``0060``'s ``downgrade()`` must read live row state (whether any
+    queued/claimed conditional operation exists) under a real database
+    connection to decide whether to proceed — that decision cannot be made
+    from static SQL generation alone. ``alembic downgrade --sql`` (Alembic's
+    ``command.downgrade(..., sql=True)``) never opens a real connection; it
+    runs entirely through ``run_migrations_offline()`` (see
+    ``alembic/env.py``), which only ever calls ``context.configure(url=...)``
+    — no ``engine_from_config``/``connectable.connect()`` at all. The guard
+    at the very top of ``downgrade()`` (``if context.is_offline_mode():
+    raise RuntimeError(...)``) must therefore fire immediately, before any
+    of the live-row-state logic below it ever runs, so an operator can never
+    silently generate a downgrade script that — if ever applied — would drop
+    ``origin``/``runtime_precondition`` out from under a live conditional
+    operation with no live check having run at all."""
+    cfg = _make_config()
+    url = _migration_url()
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+
+    with _migration_env(url):
+        # ``--sql`` mode requires an explicit ``<fromrev>:<torev>`` range —
+        # unlike the online-mode calls elsewhere in this file, there is no
+        # live ``alembic_version`` for Alembic to read a starting point
+        # from, since offline mode never opens a connection at all.
+        with pytest.raises(RuntimeError, match="refusing to generate offline SQL"):
+            command.downgrade(
+                cfg, f"{HEAD_REVISION}:{DOWN_REVISION_0060}", sql=True
+            )
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION, (
+            "a refused offline-SQL generation must never touch alembic_version"
+        )

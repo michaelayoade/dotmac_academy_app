@@ -601,10 +601,13 @@ def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_p
 ):
     """A reaped row whose runtime is confirmed live by fresh inventory gets a
     conditional destroy enqueued (origin="runtime_cleanup",
-    runtime_precondition="present") — the reconciler itself no longer
-    projects status/runtime_presence; only the worker's own locked,
-    authoritative recheck (lab_lifecycle.destroy_if_present) may settle
-    that outcome."""
+    runtime_precondition="present") — the reconciler itself still never
+    projects status/error (only the worker's own locked, authoritative
+    recheck, lab_lifecycle.destroy_if_present, may settle that outcome), but
+    it DOES now record runtime_presence="present": Phase 4's own fresh_runtime
+    membership check, immediately before this enqueue, is itself a
+    lock-verified OBSERVATION (not a projected decision) that the runtime is
+    genuinely live right now."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -623,7 +626,7 @@ def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_p
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
     assert instance.status == "reaped"
-    assert instance.runtime_presence == "absent"  # untouched — worker default
+    assert instance.runtime_presence == "present"  # lock-verified observed fact
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "destroy"
     assert operation.origin == "runtime_cleanup"
@@ -638,8 +641,11 @@ def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_condi
     by settling status="error" directly from this pass's snapshot — it must
     ALSO go through the same conditional enqueue() as any other
     missing-runtime instance, exactly like the fresh-redeploy case below.
-    Only the worker's own locked, authoritative observation may decide the
-    outcome; the reconciler itself must not touch status/runtime_presence."""
+    Only the worker's own locked, authoritative observation may decide
+    status/error; the reconciler itself must not touch either. It DOES
+    record runtime_presence="absent" — fresh_runtime's own membership check
+    just confirmed absence under lock, so that is a lock-verified observed
+    fact, not a projected decision."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -659,11 +665,13 @@ def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_condi
 
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
-    # Untouched by the reconciler itself — the prior error/status/presence
-    # survive exactly as they were until the worker's own recheck settles them.
+    # status/error untouched by the reconciler itself — the prior
+    # error/status survive exactly as they were until the worker's own
+    # recheck settles them. runtime_presence IS updated: fresh_runtime's own
+    # membership check just confirmed absence under lock.
     assert instance.status == "active"
     assert instance.error == "worker lease expired after 3 attempts"
-    assert instance.runtime_presence == "unknown"
+    assert instance.runtime_presence == "absent"
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
     assert operation.origin == "runtime_repair"
@@ -675,9 +683,12 @@ def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally
     admin_session, tenant_a
 ):
     """No prior error: a conditional deploy (origin="runtime_repair",
-    runtime_precondition="absent") is enqueued — the reconciler itself no
-    longer projects runtime_presence; it will correctly transition once a
-    worker actually claims and runs the resulting conditional deploy."""
+    runtime_precondition="absent") is enqueued. The row's runtime_presence
+    was left at a stale, contradictory "present" from before the runtime
+    actually disappeared; fresh_runtime's own membership check, immediately
+    before this enqueue, just re-confirmed absence under lock — that fresh
+    OBSERVATION now corrects the stale prior value (still leaving status/
+    error strictly to the worker's own conditional recheck)."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -696,7 +707,7 @@ def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally
 
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     admin_session.refresh(instance)
-    assert instance.runtime_presence == "present"  # untouched by the reconciler itself
+    assert instance.runtime_presence == "absent"  # corrected from stale "present"
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
     assert operation.origin == "runtime_repair"

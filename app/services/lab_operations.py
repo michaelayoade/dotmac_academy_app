@@ -627,13 +627,19 @@ def run_claimed(
                 if preliminary_present:
                     # This fully settles the outcome — deploy_if_absent() is
                     # NEVER called on this path — but through the same
-                    # rigorous, unconditional resync as any other confirmed-
-                    # present outcome: stop whatever consoles are currently
-                    # recorded (routinely stale for this operation kind's
-                    # own target instance — see
-                    # lab_lifecycle.resync_present_preliminary's own
-                    # docstring) and rebuild from a fresh, authoritative
-                    # inspection. Never a bare trust-and-skip.
+                    # rigorous resync as any other confirmed-present outcome:
+                    # a fresh, authoritative inspection runs FIRST, and only
+                    # once it confirms a live handle are any stale consoles
+                    # (routinely present for this operation kind's own target
+                    # instance — see lab_lifecycle.resync_present_
+                    # preliminary's own docstring) stopped and rebuilt. Never
+                    # a bare trust-and-skip. No durable reservation is
+                    # committed before this call: unlike an ordinary
+                    # containerlab deploy, stop_consoles/start_console are
+                    # idempotent/self-healing by construction, so the narrow
+                    # claim-loss window this branch doesn't guard against
+                    # (see lab_lifecycle.resync_present_preliminary's
+                    # docstring) is an accepted residual property, not a gap.
                     lab_lifecycle.resync_present_preliminary(db, instance, engine)
                 else:
                     if not _capacity_available(db, instance):

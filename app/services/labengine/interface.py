@@ -84,12 +84,15 @@ class LabEngine(ABC):
         ``instance_name`` from a fresh, locked inspection — never a
         redeploy. Returns ``None`` if the instance is not currently running.
 
-        Used exclusively to resync ``consoles``/``status`` for a conditional
-        deploy whose runtime is observed present but whose own DB row has
-        empty ``consoles`` — the gap a worker crash between a successful
-        ``deploy_if_absent()`` and that same attempt ever recording consoles
-        can leave behind (see ``app/services/lab_lifecycle.py``'s
-        ``_rebuild_consoles_from_live_inspection`` for the full scenario).
+        Used to resync ``consoles``/``status`` for a conditional deploy
+        whose runtime is observed present — UNCONDITIONALLY, regardless of
+        whether ``consoles`` was already populated on the DB row (any
+        pre-existing value is untrustworthy for this operation kind
+        regardless; see ``app/services/lab_lifecycle.py``'s
+        ``_rebuild_consoles_from_live_inspection`` for the full rationale,
+        including the crash-then-retry gap this also covers: a worker crash
+        between a successful ``deploy_if_absent()`` and that same attempt
+        ever recording consoles).
         """
         ...
 
