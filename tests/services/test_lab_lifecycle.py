@@ -911,13 +911,17 @@ def test_provision_if_absent_deploys_when_precondition_holds(admin_session, tena
     admin_session.rollback()
 
 
-def test_provision_if_absent_settles_noop_without_any_mutation_when_precondition_mismatched(
+def test_provision_if_absent_resyncs_stale_consoles_when_precondition_mismatched(
     admin_session, tenant_a, monkeypatch
 ):
     """``deploy_if_absent`` returning ``None`` means the runtime was found
-    genuinely present — this is the no-op path. Nothing may be mutated:
-    status/error are restored to their pre-admission values, consoles stay
-    untouched, and only runtime_presence is refreshed."""
+    genuinely present. ``engine.deploy``/topology mutation are never called
+    on this path, but ANY pre-existing ``consoles`` are torn down and
+    resynced from a fresh, authoritative inspection — never preserved as-is
+    — because a conditional deploy's own target instance routinely already
+    carries stale console data from before the runtime it is repairing ever
+    disappeared (see ``_rebuild_consoles_from_live_inspection``'s own
+    docstring)."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-cond-deploy-noop", seed={"o": 5},
@@ -929,25 +933,26 @@ def test_provision_if_absent_settles_noop_without_any_mutation_when_precondition
 
     stopped = []
     monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
-    started = []
-    monkeypatch.setattr(lab_lifecycle, "start_console", lambda c, b: started.append(c) or 1)
 
     engine = MagicMock()
     engine.deploy_if_absent.return_value = None  # precondition mismatch: genuinely present
+    engine.inspect_running.return_value = LabHandle(
+        instance_name="dal-cond-deploy-noop", nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.8"}, kinds={"client": "linux"})
 
     out = lab_lifecycle.provision_if_absent(
         admin_session, inst, engine, lt,
         preserved_status="active", preserved_error="stale error text",
     )
     admin_session.flush()
-    assert out.status == "active"  # restored to preserved_status, not "provisioning"
-    assert out.error == "stale error text"  # restored to preserved_error
-    assert out.consoles == {"stale": {"kind": "linux"}}  # completely untouched
-    assert out.runtime_presence == "present"  # refreshed from the fresh observation
-    assert stopped == []  # no console teardown on the no-op path
-    assert started == []  # no console recreation on the no-op path
+    assert out.status == "active"
+    assert out.error is None
+    # Resynced to fresh, live console data — NOT the stale "stale" placeholder.
+    assert out.consoles == {"client": {"kind": "linux", "mgmt": "172.20.20.8", "port": None}}
+    assert out.runtime_presence == "present"
+    assert stopped == [inst.id]  # the stale consoles were actually torn down
     engine.deploy.assert_not_called()
-    engine.inspect_running.assert_not_called()  # non-empty consoles: no resync needed
+    engine.inspect_running.assert_called_once_with("dal-cond-deploy-noop")
     admin_session.rollback()
 
 

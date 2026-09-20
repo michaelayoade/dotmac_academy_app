@@ -601,12 +601,17 @@ def run_claimed(
     try:
         if operation_kind == "deploy":
             if is_conditional_deploy:
-                # LOAD-BEARING ORDERING: locked precondition check -> conditional
+                # LOAD-BEARING ORDERING for the precondition-HOLDS (genuinely
+                # absent) path: locked precondition check -> conditional
                 # containerlab mutation (only if the precondition allows it) ->
                 # console teardown (only if a mutation actually occurred) ->
                 # console recreation / final projection. A precondition mismatch
-                # must settle BEFORE stop_consoles/engine.deploy/any topology
-                # mutation ever runs — see migration 0060's module docstring.
+                # must settle BEFORE engine.deploy/any topology mutation ever
+                # runs — see migration 0060's module docstring. The mismatch
+                # (runtime observed present) path is different: it always
+                # tears down and resyncs consoles unconditionally — see
+                # lab_lifecycle._rebuild_consoles_from_live_inspection's own
+                # docstring for why.
                 _refresh_claim(db, operation_id=operation_id, claimed_by=claimed_by)
                 # Optimization only, NOT the correctness guarantee: an
                 # already-known-present runtime may settle immediately as a
@@ -620,15 +625,15 @@ def run_claimed(
                 except HostLockUnavailable:
                     raise
                 if preliminary_present:
-                    # "Present" is ambiguous — see
+                    # This fully settles the outcome — deploy_if_absent() is
+                    # NEVER called on this path — but through the same
+                    # rigorous, unconditional resync as any other confirmed-
+                    # present outcome: stop whatever consoles are currently
+                    # recorded (routinely stale for this operation kind's
+                    # own target instance — see
                     # lab_lifecycle.resync_present_preliminary's own
-                    # docstring: it could be someone else's genuinely
-                    # pre-existing, working deploy (consoles already
-                    # recorded), or THIS SAME conditional deploy's own
-                    # prior, crashed attempt already succeeded and was
-                    # reclaimed before ever recording consoles/status. A
-                    # bare presence refresh here would settle a live,
-                    # console-less lab as if nothing had happened.
+                    # docstring) and rebuild from a fresh, authoritative
+                    # inspection. Never a bare trust-and-skip.
                     lab_lifecycle.resync_present_preliminary(db, instance, engine)
                 else:
                     if not _capacity_available(db, instance):

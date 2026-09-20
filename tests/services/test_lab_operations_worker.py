@@ -2334,18 +2334,27 @@ def test_conditional_deploy_precondition_holds_deploys_and_succeeds(admin_sessio
     engine.deploy.assert_not_called()
 
 
-def test_conditional_deploy_precondition_mismatch_at_preliminary_check_settles_noop(
+def test_conditional_deploy_precondition_mismatch_at_preliminary_check_resyncs_stale_consoles(
     admin_session, tenant_a, monkeypatch
 ):
     """The preliminary check alone (before any capacity admission) finds the
-    runtime already present: settle as a successful no-op WITHOUT ever
-    calling deploy_if_absent, stop_consoles, or touching status/error."""
+    runtime already present: settle as a successful no-op with respect to
+    ``deploy_if_absent``/``engine.deploy`` (never called), but ALWAYS resync
+    ``consoles``/``status`` from a fresh, authoritative inspection — never a
+    bare trust-and-skip of whatever is currently recorded.
+
+    ``instance.consoles`` starts NON-EMPTY here on purpose: this is the
+    realistic ``missing_runtime``-repair starting condition (an instance
+    whose runtime disappeared while it was genuinely active still carries
+    its old, now-stale console data) — proving the fix for the case Codex's
+    round-3 review found the empty/non-empty heuristic got wrong.
+    """
     instance, _person = _seed(
-        admin_session, tenant_a.id, name="cond-deploy-prelim-noop",
+        admin_session, tenant_a.id, name="cond-deploy-prelim-stale-resync",
         status="active", presence="unknown",
     )
-    instance.error = None
-    instance.consoles = {"client": {"kind": "linux"}}
+    instance.error = "containerlab runtime is absent"
+    instance.consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.5", "port": 1111}}
     admin_session.flush()
     operation = lab_operations.enqueue(
         admin_session,
@@ -2358,6 +2367,12 @@ def test_conditional_deploy_precondition_mismatch_at_preliminary_check_settles_n
     _claim(admin_session, operation)
     engine = _engine(instance.instance_name)
     engine.status.return_value = "running"  # preliminary check: genuinely present
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={"client": f"clab-{instance.instance_name}-client"},
+        mgmt={"client": "172.20.20.11"},
+        kinds={"client": "linux"},
+    )
 
     stop_calls = []
     monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
@@ -2369,9 +2384,59 @@ def test_conditional_deploy_precondition_mismatch_at_preliminary_check_settles_n
     admin_session.refresh(operation)
     assert instance.status == "active"
     assert instance.error is None
-    assert instance.consoles == {"client": {"kind": "linux"}}
+    # Resynced to the fresh, live console data — NOT the stale placeholder.
+    assert instance.consoles["client"]["mgmt"] == "172.20.20.11"
     assert instance.runtime_presence == "present"
-    assert stop_calls == []
+    assert stop_calls == [instance.id]  # stale consoles were actually torn down
+    engine.inspect_running.assert_called_once()
+    engine.deploy_if_absent.assert_not_called()
+    engine.deploy.assert_not_called()
+
+
+def test_conditional_deploy_precondition_mismatch_at_preliminary_check_resyncs_from_empty_consoles(
+    admin_session, tenant_a, monkeypatch
+):
+    """Same preliminary-present no-op path, starting from EMPTY consoles —
+    still a valid case now that the code no longer branches on emptiness;
+    it should still resync correctly."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-prelim-empty-resync",
+        status="active", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "running"  # preliminary check: genuinely present
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={"client": f"clab-{instance.instance_name}-client"},
+        mgmt={"client": "172.20.20.12"},
+        kinds={"client": "linux"},
+    )
+
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert instance.consoles["client"]["mgmt"] == "172.20.20.12"
+    assert instance.runtime_presence == "present"
+    assert stop_calls == [instance.id]  # unconditional — harmless no-op on already-empty consoles
+    engine.inspect_running.assert_called_once()
     engine.deploy_if_absent.assert_not_called()
     engine.deploy.assert_not_called()
 
@@ -2384,13 +2449,14 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     runs — proves the SECOND (authoritative) check is the one that actually
     matters, not the first.
 
-    ``consoles`` is pre-populated here, representing the OTHER, genuinely
-    concurrent operation's own already-completed deploy (a real race,
-    distinct from the crash-then-retry scenario covered by
-    ``test_conditional_deploy_crash_then_reclaim_then_retry_resyncs_consoles_and_status``,
-    where empty consoles are the signal that this instance's OWN prior
-    attempt never got to record them) — so this stays the "preserve as-is"
-    path, not the resync path.
+    ``consoles`` is pre-populated here with STALE data — a conditional
+    deploy's own target instance is, by construction, one whose runtime was
+    flagged missing while its lifecycle status still said active, so any
+    pre-existing ``consoles`` on it are untrustworthy regardless of why the
+    mismatch was caught (crash-then-retry or a genuine, narrower race) — see
+    ``lab_lifecycle._rebuild_consoles_from_live_inspection``'s own docstring.
+    The mismatch path always resyncs from a fresh inspection; there is no
+    "preserve as-is" branch.
     """
     instance, _person = _seed(
         admin_session, tenant_a.id, name="cond-deploy-race",
@@ -2411,6 +2477,12 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     engine = _engine(instance.instance_name)
     engine.status.return_value = "absent"  # preliminary check misses the race
     engine.deploy_if_absent.return_value = None  # authoritative check: genuinely present
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={"client": f"clab-{instance.instance_name}-client"},
+        mgmt={"client": "172.20.20.13"},
+        kinds={"client": "linux"},
+    )
 
     stop_calls = []
     monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
@@ -2421,13 +2493,14 @@ def test_conditional_deploy_authoritative_check_catches_a_race_the_preliminary_c
     admin_session.refresh(instance)
     admin_session.refresh(operation)
     engine.deploy_if_absent.assert_called_once()  # the authoritative check DID run
-    assert instance.status == "active"  # restored, not left at "resetting"
+    assert instance.status == "active"
     assert instance.error is None
     assert instance.runtime_presence == "present"
-    assert instance.consoles == {"client": {"kind": "linux", "mgmt": "10.0.0.5"}}  # untouched
-    assert stop_calls == []
+    # Resynced to fresh, live console data — NOT the stale placeholder.
+    assert instance.consoles["client"]["mgmt"] == "172.20.20.13"
+    assert stop_calls == [instance.id]  # stale consoles were actually torn down
     engine.deploy.assert_not_called()
-    engine.inspect_running.assert_not_called()  # non-empty consoles: no resync needed
+    engine.inspect_running.assert_called_once()
 
 
 def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(

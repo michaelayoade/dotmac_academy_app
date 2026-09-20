@@ -286,10 +286,11 @@ def test_destroy_if_present_acquires_host_lock_exactly_once_and_noops_when_absen
 
 def test_inspect_running_reconstructs_a_handle_for_an_already_running_instance(tmp_path):
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    expected_path = eng._topo_path("i")
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
             stdout=(
-                '[{"lab_name":"i","name":"clab-i-r1",'
+                f'[{{"lab_name":"i","name":"clab-i-r1","absLabPath":"{expected_path}",'
                 '"ipv4_address":"172.20.20.5/24","kind":"linux"}]'
             ),
         )
@@ -305,6 +306,27 @@ def test_inspect_running_returns_none_when_not_actually_running(tmp_path):
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="{}")
+        handle = eng.inspect_running("i")
+    assert handle is None
+
+
+def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(tmp_path):
+    """Mirrors ``_destroy_unlocked``'s own ownership-verification test
+    (``test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_topology``):
+    an exact-name collision from outside Academy's own workdir must not
+    contribute untrusted node/mgmt data to a resync — this is a read-only
+    helper, so it returns ``None`` (behaves as "not found") rather than
+    raising, unlike the destructive ``_destroy_unlocked`` path.
+    """
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(
+            stdout=(
+                '[{"lab_name":"i","name":"clab-i-r1",'
+                '"absLabPath":"/some/other/operators/i.clab.yml",'
+                '"ipv4_address":"172.20.20.5/24","kind":"linux"}]'
+            ),
+        )
         handle = eng.inspect_running("i")
     assert handle is None
 

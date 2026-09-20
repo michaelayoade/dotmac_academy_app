@@ -394,34 +394,63 @@ def _build_consoles_from_handle(instance: LabInstance, handle: LabHandle) -> dic
 def _rebuild_consoles_from_live_inspection(
     db: Session, instance: LabInstance, engine: LabEngine
 ) -> None:
-    """Resync ``consoles``/``status``/``error`` for an instance whose runtime
-    is known to be present but whose own ``consoles`` are empty.
+    """Resync ``consoles``/``status``/``error`` for a conditional deploy
+    whose runtime is observed present, UNCONDITIONALLY — never gated on
+    whether ``consoles`` already looks populated.
 
-    This is the crash-then-retry gap a conditional deploy's own prior
-    attempt can leave behind: a worker crash between ``engine.
-    deploy_if_absent()`` genuinely succeeding and this same attempt ever
-    recording ``consoles``/``status`` leaves a real, running lab whose row
-    still shows no consoles and a stale lifecycle status once
-    ``reclaim_previous_epoch`` requeues the interrupted operation (see
-    ``app/services/lab_operations.py``'s conditional-deploy branch for the
-    full sequence this closes). "Runtime present but consoles empty" is
-    treated as this scenario — never as proof that everything is already
-    fine — because a genuinely fresh, healthy deploy always writes
-    ``consoles`` in the very same transaction that sets ``status="active"``;
-    empty ``consoles`` alongside a present runtime is never the ordinary,
-    "someone else's legitimate deploy is already fine" case, so it always
-    needs a real resync rather than a bare presence refresh.
+    A conditional ("runtime_repair") deploy's own TARGET instance is, by
+    construction, one ``reconcile_runtime``'s ``missing_runtime`` branch
+    flagged specifically because its lifecycle ``status`` said active/
+    provisioning/resetting while its RUNTIME WAS MISSING — such an instance
+    routinely already has NON-EMPTY ``consoles`` on it, recorded from
+    whenever it genuinely WAS running before the runtime disappeared. That
+    recorded data is stale (referring to a now-dead deployment) BEFORE this
+    conditional-deploy operation even begins, so "consoles already
+    populated" can never be trusted as proof of a still-valid, live console
+    session for a conditional deploy specifically — unlike an ordinary,
+    unconditional deploy, there is no realistic concurrent-different-deploy
+    case to protect here (the partial unique open-operation index already
+    guarantees at most one open operation per instance, so an independent,
+    genuinely concurrent redeploy of this SAME instance while this
+    conditional op is claimed is not a real path).
 
-    Performs a REAL, fresh, locked inspection (``engine.inspect_running`` —
-    never a redeploy) and converges to exactly the same end state a normal
-    successful deploy would reach. If the fresh inspection unexpectedly
-    disagrees (does not find the instance running after all — e.g. a
-    genuine, separate destroy raced in in the meantime), presence is
-    conservatively set to "unknown" rather than asserting a lifecycle state
-    with no real console data behind it; ``status``/``error`` are left
-    untouched in that case, since this function never had grounds to change
-    them to anything more specific than the ambiguous state it started from.
+    This also covers the narrower crash-then-retry gap: a worker crash
+    between ``engine.deploy_if_absent()`` genuinely succeeding and this same
+    attempt ever recording ``consoles``/``status`` leaves a real, running lab
+    whose row shows a stale lifecycle status (and possibly stale, pre-repair
+    consoles) once ``reclaim_previous_epoch`` requeues the interrupted
+    operation (see ``app/services/lab_operations.py``'s conditional-deploy
+    branch for the full sequence).
+
+    ``stop_consoles`` runs FIRST, unconditionally — safe and correct even if
+    what is recorded is already stale/dead, or if nothing is actually
+    running under those recorded ports: it matches live LOCAL ttyd processes
+    by instance id via ``pgrep``, so it cleans up whatever is actually
+    running regardless of what the DB row currently claims; calling it on an
+    already-clean instance is a harmless no-op. This does not violate the
+    "console teardown only after mutation proven" ordering invariant — that
+    invariant guards against tearing consoles down on a mere STALE
+    ASSUMPTION before confirming anything; here the runtime's current
+    presence has already been authoritatively confirmed by a real
+    observation (the caller's ``engine.status()``/``engine.deploy_if_absent()``
+    check), so cleaning up and resyncing local console bookkeeping is a
+    safe, correct action, not a premature one.
+
+    Then performs a REAL, fresh, locked inspection (``engine.inspect_running``
+    — never a redeploy) and converges to exactly the same end state a
+    normal successful deploy would reach — for every case: stale-non-empty,
+    empty, and the rare already-fully-correct case, which is just harmlessly
+    reconfirmed (at the minor cost of a brief console restart). If the fresh
+    inspection unexpectedly disagrees (does not find the instance running
+    after all — e.g. a genuine, separate destroy raced in in the meantime,
+    or ``ContainerlabEngine.inspect_running``'s own topology-path ownership
+    check refused an untrusted same-name match), presence is conservatively
+    set to "unknown" rather than asserting a lifecycle state with no real
+    console data behind it; ``status``/``error`` are left untouched in that
+    case, since this function never had grounds to change them to anything
+    more specific than the ambiguous state it started from.
     """
+    stop_consoles(instance)
     handle = engine.inspect_running(instance.instance_name)
     if handle is None:
         instance.runtime_presence = "unknown"
@@ -440,22 +469,14 @@ def _rebuild_consoles_from_live_inspection(
 def resync_present_preliminary(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstance:
     """Conditional deploy's cheap preliminary check (``engine.status()``)
     found the runtime already present, before any capacity admission ever
-    ran — this attempt has touched nothing else about the instance yet.
-
-    Non-empty ``consoles``: the ordinary case — someone else's deploy is
-    genuinely live and already has working consoles recorded; leave
-    everything but ``runtime_presence`` untouched (never tear down or
-    rebuild a console session that may already be open for a learner).
-
-    Empty ``consoles``: see :func:`_rebuild_consoles_from_live_inspection` —
-    most plausibly THIS SAME conditional deploy's own prior, crashed
-    attempt already deployed successfully and was reclaimed before ever
-    recording consoles/status.
+    ran. "Present" fully settles the outcome here — ``deploy_if_absent`` is
+    never called on this path — but it settles through the SAME rigorous
+    resync as any other confirmed-present outcome (see
+    :func:`_rebuild_consoles_from_live_inspection`): stop whatever stale
+    consoles are currently recorded, take a fresh, authoritative inspection,
+    and rebuild from that live truth. Never a bare trust-and-skip of
+    whatever ``consoles``/``status`` this row happened to already have.
     """
-    if instance.consoles:
-        instance.runtime_presence = "present"
-        db.flush()
-        return instance
     _rebuild_consoles_from_live_inspection(db, instance, engine)
     return instance
 
@@ -473,7 +494,9 @@ def provision_if_absent(
 
     LOAD-BEARING ORDERING (see migration ``0060_lab_conditional_ops.py``'s
     module docstring for the full design rationale — an earlier, unauthorized
-    attempt at this exact slice got this ordering wrong):
+    attempt at this exact slice got this ordering wrong) FOR THE PRECONDITION-
+    HOLDS (genuinely absent) PATH — the actual mutation this operation may
+    perform:
 
         locked precondition check
         -> conditional containerlab mutation, IF the precondition allows it
@@ -486,27 +509,26 @@ def provision_if_absent(
     ``stop_consoles``/``start_console``/any topology mutation before that
     call has already returned a real handle proving the mutation occurred.
 
+    The PRECONDITION-MISMATCH (runtime observed present) path is different
+    and does NOT follow "teardown only if a mutation occurred": see below —
+    it always tears down and resyncs, because the observation itself (not a
+    mutation this operation performed) is what authoritatively confirms the
+    runtime's current state, and any previously-recorded consoles on this
+    specific operation kind's target instance are untrustworthy regardless.
+
     A precondition MISMATCH (``deploy_if_absent`` returns ``None`` — the
     runtime was found genuinely present, whether by this call's own
     authoritative check or a caller's own earlier preliminary check racing
-    against it) is the no-op path, split by whether ``consoles`` are already
-    populated:
-
-    * Non-empty ``consoles``: a genuine race — something else already has
-      this instance running with working consoles. ``status``/``error`` are
-      restored to ``preserved_status``/``preserved_error`` (the instance's
-      values from immediately before the caller's capacity-admission
-      reservation overwrote them with a "resetting"/"provisioning"
-      placeholder — see ``app/services/lab_operations.py``'s
-      conditional-deploy branch), and only ``runtime_presence`` is
-      refreshed. ``consoles`` is left alone — never torn down/rebuilt for a
-      session that may already be open for a learner.
-    * Empty ``consoles``: see :func:`_rebuild_consoles_from_live_inspection`
-      — this attempt's own prior, crashed attempt most plausibly already
-      deployed successfully and was reclaimed before ever recording
-      consoles/status; a real, fresh inspection resyncs to the exact same
-      end state a normal successful deploy would reach, rather than leaving
-      a live, console-less lab looking like nothing happened.
+    against it) settles unconditionally through
+    :func:`_rebuild_consoles_from_live_inspection` — see its own docstring
+    for why any pre-existing ``consoles`` on THIS conditional deploy's own
+    target instance are untrustworthy by construction (routinely stale data
+    from before the runtime this operation is repairing ever disappeared),
+    so there is no "preserve as-is" branch here: whatever is currently
+    recorded is stopped, and the row is rebuilt from a fresh, authoritative
+    inspection. ``preserved_status``/``preserved_error`` are therefore no
+    longer read on this path (kept as parameters for the caller's own
+    pre-admission bookkeeping needs elsewhere).
     """
     topology_text = _set_topology_name(
         interpolate(template.topology, instance.seed), instance.instance_name
@@ -517,15 +539,6 @@ def provision_if_absent(
     instance.runtime_presence = "unknown"
     handle = engine.deploy_if_absent(topology_text, instance.instance_name)
     if handle is None:
-        if instance.consoles:
-            # Genuine race, not a crash-recovery gap: NOTHING was mutated by
-            # THIS attempt — restore status/error to their pre-admission
-            # values and leave the already-working console session alone.
-            instance.status = preserved_status
-            instance.error = preserved_error
-            instance.runtime_presence = "present"
-            db.flush()
-            return instance
         _rebuild_consoles_from_live_inspection(db, instance, engine)
         return instance
     # Precondition held (genuinely absent) and deploy_if_absent has already

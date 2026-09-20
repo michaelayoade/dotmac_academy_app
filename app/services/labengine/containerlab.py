@@ -656,6 +656,22 @@ class ContainerlabEngine(LabEngine):
         ``containerlab inspect --all``'s own per-node fields, never a
         redeploy. Returns ``None`` if not currently running.
 
+        Mirrors :meth:`_destroy_unlocked`'s own ownership-verification
+        pattern exactly: a ``lab_name`` match alone is not proof of
+        ownership — an exact-name collision from OUTSIDE Academy's own
+        workdir is still (however unlikely, given the name embeds tenant/
+        person/activity UUID fragments) not ruled out by name alone, so the
+        discovered path must match ``self._topo_path(instance_name)`` (the
+        path this engine would itself have written) before any of its node
+        data is trusted. Unlike ``_destroy_unlocked`` (which raises on a
+        mismatch, since destroying at an unverified location would be
+        actively destructive), a mismatch or missing path here just returns
+        ``None`` — this is a read-only resync helper, so "we couldn't safely
+        confirm ownership" is treated exactly like "not found/not running":
+        the caller (``_rebuild_consoles_from_live_inspection``) already
+        handles a ``None`` result by setting ``runtime_presence="unknown"``
+        and leaving ``status``/``error`` alone.
+
         Assumes ``inspect --all --format json`` reports the same per-node
         ``name``/``ipv4_address``/``kind`` fields :meth:`_deploy_unlocked`
         already relies on from ``deploy``'s own JSON output — both are the
@@ -672,23 +688,30 @@ class ContainerlabEngine(LabEngine):
         nodes: dict = {}
         mgmt: dict = {}
         kinds: dict = {}
+        discovered_path: str | None = None
         found_any = False
 
         def _walk(value: object, hinted_name: str | None = None) -> None:
-            nonlocal found_any
+            nonlocal found_any, discovered_path
             if isinstance(value, dict):
                 lab_name = value.get("lab_name")
                 if not isinstance(lab_name, str) or not lab_name:
                     lab_name = hinted_name
-                cname = value.get("name")
-                if lab_name == instance_name and isinstance(cname, str) and cname:
-                    found_any = True
-                    logical = (
-                        cname[len(prefix):] if cname.startswith(prefix) else cname.split("-")[-1]
-                    )
-                    nodes[logical] = cname
-                    mgmt[logical] = (value.get("ipv4_address") or "").split("/")[0]
-                    kinds[logical] = value.get("kind", "linux")
+                if lab_name == instance_name:
+                    path = value.get("absLabPath") or value.get("labPath")
+                    if isinstance(path, str) and path:
+                        discovered_path = path
+                    cname = value.get("name")
+                    if isinstance(cname, str) and cname:
+                        found_any = True
+                        logical = (
+                            cname[len(prefix):]
+                            if cname.startswith(prefix)
+                            else cname.split("-")[-1]
+                        )
+                        nodes[logical] = cname
+                        mgmt[logical] = (value.get("ipv4_address") or "").split("/")[0]
+                        kinds[logical] = value.get("kind", "linux")
                 for key, child in value.items():
                     child_hint = key if isinstance(child, list) else lab_name
                     _walk(child, child_hint)
@@ -697,7 +720,7 @@ class ContainerlabEngine(LabEngine):
                     _walk(child, hinted_name)
 
         _walk(raw)
-        if not found_any:
+        if not found_any or discovered_path != self._topo_path(instance_name):
             return None
         return LabHandle(instance_name=instance_name, nodes=nodes, mgmt=mgmt, kinds=kinds)
 
