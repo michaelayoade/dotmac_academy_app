@@ -88,57 +88,79 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     pgid stays valid as long as any member is alive. Sending it to an
     already-fully-empty group just raises ``ProcessLookupError``, handled
     the same as the SIGTERM step above.
+
+    The whole body runs with this thread's own SIGTERM delivery blocked (via
+    ``signal.pthread_sigmask``), unblocked again in a ``finally`` on every
+    exit path. Without this, a second SIGTERM arriving while this function is
+    already running — a realistic operator behaviour, since sending SIGTERM
+    twice is exactly what someone does when the first one doesn't appear to
+    have worked yet — would raise ``_WorkerShutdownRequested`` again
+    mid-escalation (the handler installed by
+    ``app.cli._sigterm_raises_shutdown_requested`` stays installed for the
+    whole worker lifetime, including while this function runs), aborting the
+    SIGTERM -> grace-period -> SIGKILL -> reap sequence before it has
+    confirmed the group is actually dead. That would defeat the entire point
+    of this cleanup path: the caller's outer exception handling would return
+    normally, releasing locks, while the subprocess tree may still be alive.
+    Blocking defers delivery until the mask is lifted, at which point any
+    signal that arrived while blocked is delivered immediately and the raise
+    still happens once this function has finished — it is not lost, only
+    postponed past the critical section.
     """
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    else:
-        deadline = time.monotonic() + _GROUP_KILL_GRACE_SECONDS
-        group_gone = False
-        while True:
-            try:
-                os.killpg(proc.pid, 0)
-            except ProcessLookupError:
-                group_gone = True
-                break
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            poll_budget = min(_GROUP_LIVENESS_POLL_INTERVAL_SECONDS, remaining)
-            wait_started = time.monotonic()
-            try:
-                proc.wait(timeout=poll_budget)
-            except subprocess.TimeoutExpired:
-                pass
-            # `Popen.wait()` caches the direct child's return code once it has
-            # been reaped once, so every call after that returns instantly
-            # instead of actually blocking for `poll_budget` — regardless of
-            # whether it raises `TimeoutExpired`. The direct child (the
-            # process-group leader) routinely dies from SIGTERM almost
-            # immediately, so without this the loop degenerates into a
-            # busy-spin hammering the killpg(pid, 0) probe for the rest of
-            # the grace period. Sleep out whatever portion of the intended
-            # poll interval `proc.wait()` didn't actually spend blocking,
-            # bounded by whatever grace-period time remains, so each
-            # iteration still takes roughly `poll_budget` of real wall-clock
-            # time either way.
-            elapsed = time.monotonic() - wait_started
-            shortfall = poll_budget - elapsed
-            if shortfall > 0:
-                remaining_after_wait = deadline - time.monotonic()
-                sleep_for = min(shortfall, remaining_after_wait)
-                if sleep_for > 0:
-                    time.sleep(sleep_for)
-        if not group_gone:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-    try:
-        proc.wait()
-    except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
-        pass
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        else:
+            deadline = time.monotonic() + _GROUP_KILL_GRACE_SECONDS
+            group_gone = False
+            while True:
+                try:
+                    os.killpg(proc.pid, 0)
+                except ProcessLookupError:
+                    group_gone = True
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                poll_budget = min(_GROUP_LIVENESS_POLL_INTERVAL_SECONDS, remaining)
+                wait_started = time.monotonic()
+                try:
+                    proc.wait(timeout=poll_budget)
+                except subprocess.TimeoutExpired:
+                    pass
+                # `Popen.wait()` caches the direct child's return code once it has
+                # been reaped once, so every call after that returns instantly
+                # instead of actually blocking for `poll_budget` — regardless of
+                # whether it raises `TimeoutExpired`. The direct child (the
+                # process-group leader) routinely dies from SIGTERM almost
+                # immediately, so without this the loop degenerates into a
+                # busy-spin hammering the killpg(pid, 0) probe for the rest of
+                # the grace period. Sleep out whatever portion of the intended
+                # poll interval `proc.wait()` didn't actually spend blocking,
+                # bounded by whatever grace-period time remains, so each
+                # iteration still takes roughly `poll_budget` of real wall-clock
+                # time either way.
+                elapsed = time.monotonic() - wait_started
+                shortfall = poll_budget - elapsed
+                if shortfall > 0:
+                    remaining_after_wait = deadline - time.monotonic()
+                    sleep_for = min(shortfall, remaining_after_wait)
+                    if sleep_for > 0:
+                        time.sleep(sleep_for)
+            if not group_gone:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        try:
+            proc.wait()
+        except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
+            pass
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 
 def _run_contained(
@@ -159,14 +181,33 @@ def _run_contained(
     re-raised unchanged — a ``subprocess.TimeoutExpired`` stays a
     ``TimeoutExpired``, so existing callers' exception-handling contracts do
     not change.
+
+    SIGTERM delivery to this thread is blocked (via
+    ``signal.pthread_sigmask``) around ``subprocess.Popen(...)`` itself,
+    unblocked again immediately once ``proc`` is bound. ``Popen.__init__``
+    forks+execs the child and then does further Python-level bookkeeping
+    before returning; a SIGTERM landing anywhere in that window — including
+    after the fork but before this function's own ``proc`` local is bound —
+    would otherwise raise straight out of this call with no reference to the
+    now-live, forked child anywhere. The ``except BaseException:`` cleanup
+    below can only ever act on ``proc``, which would not exist yet in that
+    window, so the child would leak permanently and untrackably. Blocking
+    defers any SIGTERM that arrives during construction until right after
+    ``proc`` is bound, at which point it is delivered and the existing
+    ``try``/``except BaseException:`` below runs exactly as it already does
+    for a SIGTERM arriving during ``communicate()``.
     """
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except BaseException:

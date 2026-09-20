@@ -641,6 +641,142 @@ def test_real_sigterm_mid_communicate_triggers_group_cleanup(tmp_path, monkeypat
         proc.wait(timeout=5)
 
 
+def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
+    tmp_path, monkeypatch
+):
+    """A SIGTERM landing after the real fork+exec but before ``_run_contained``'s
+    own ``proc`` local is bound must not leak the freshly-spawned process.
+
+    ``subprocess.Popen`` is wrapped so that, as a side effect of being
+    *called* (simulating the exact race: the real fork has already happened
+    by the time our wrapper's call to the real ``Popen`` returns), it sends a
+    real SIGTERM at this process before handing the constructed ``Popen``
+    object back to ``_run_contained`` — with
+    ``_sigterm_raises_shutdown_requested`` active for the test's duration,
+    exactly like the real-signal test above. Pre-fix, this exact setup leaks
+    the process: the exception fires before ``proc`` is ever bound, so
+    ``_run_contained``'s ``except BaseException:`` cleanup has no handle to
+    call ``_terminate_process_group`` on. Post-fix, the SIGTERM is deferred
+    (blocked) until immediately after ``proc`` is bound, so it is delivered
+    only once ``communicate()`` has already started — following the existing,
+    already-tested cleanup path.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    cmd = _spawn_grandchild_tree(str(marker))
+
+    real_popen = subprocess.Popen
+    created: list[subprocess.Popen] = []
+
+    def _popen_that_signals_before_returning(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        created.append(proc)
+        # Simulate the fork having already happened (it has — `proc` is a
+        # real, live child by this point) while a SIGTERM lands before the
+        # caller's own local variable is bound to the return value.
+        os.kill(os.getpid(), signal.SIGTERM)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", _popen_that_signals_before_returning)
+
+    previous_handler = signal.getsignal(signal.SIGTERM)
+    with _sigterm_raises_shutdown_requested():
+        with pytest.raises(_WorkerShutdownRequested):
+            containerlab._run_contained(cmd, timeout=30)
+    assert signal.getsignal(signal.SIGTERM) == previous_handler
+
+    assert created, "Popen was never actually called"
+    proc = created[0]
+    assert (marker / "grandchild.pid").exists(), "grandchild never started"
+    grandchild_pid = int((marker / "grandchild.pid").read_text())
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (
+            _pid_alive(proc.pid) or _pid_alive(grandchild_pid)
+        ):
+            time.sleep(0.05)
+        assert not _pid_alive(proc.pid), (
+            "child process leaked — SIGTERM during Popen construction was not "
+            "deferred past proc being bound"
+        )
+        assert not _pid_alive(grandchild_pid), (
+            "grandchild leaked — SIGTERM during Popen construction was not "
+            "deferred past proc being bound"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
+def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monkeypatch):
+    """A second SIGTERM arriving while ``_terminate_process_group`` is
+    already running (the exact scenario of an operator sending SIGTERM twice
+    because the first one doesn't seem to have worked yet) must not abort the
+    SIGTERM -> grace-period -> SIGKILL -> reap sequence partway through.
+
+    Reuses the SIGTERM-ignoring-grandchild fixture so the full escalation
+    path actually runs (SIGTERM does not kill the grandchild, forcing the
+    grace-period poll and eventual SIGKILL). ``os.killpg`` is spied so that on
+    its first call (the initial SIGTERM step, genuinely mid-cleanup — after
+    ``_terminate_process_group`` has started but well before it has finished)
+    it also fires a second real SIGTERM at this process before returning.
+    Pre-fix, that second signal raises ``_WorkerShutdownRequested`` out of
+    the escalation loop before the grace period or SIGKILL step ever runs,
+    leaving the SIGTERM-ignoring grandchild alive. Post-fix, the second
+    signal is deferred until the function returns, so escalation completes
+    and the grandchild ends up SIGKILLed and dead.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+
+    real_killpg = os.killpg
+    killpg_calls: list[int] = []
+
+    def _killpg_that_signals_on_first_call(pgid: int, sig: int) -> None:
+        killpg_calls.append(sig)
+        if len(killpg_calls) == 1:
+            os.kill(os.getpid(), signal.SIGTERM)
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(containerlab.os, "killpg", _killpg_that_signals_on_first_call)
+
+    cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
+
+    previous_handler = signal.getsignal(signal.SIGTERM)
+    with _sigterm_raises_shutdown_requested():
+        with pytest.raises(_WorkerShutdownRequested):
+            containerlab._run_contained(cmd, timeout=1.0)
+    assert signal.getsignal(signal.SIGTERM) == previous_handler
+
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(grandchild_pid):
+            time.sleep(0.05)
+        assert not _pid_alive(grandchild_pid), (
+            "SIGTERM-ignoring grandchild survived — a second SIGTERM "
+            "mid-escalation aborted teardown before SIGKILL could run"
+        )
+        assert signal.SIGKILL in killpg_calls, (
+            "escalation never reached SIGKILL — aborted early by the second "
+            "SIGTERM instead of deferring it"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                real_killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
 def test_run_contained_returns_a_completed_process_shaped_result():
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(returncode=0, stdout="ok", stderr="")
