@@ -1751,7 +1751,9 @@ def test_reclaim_previous_epoch_reclaims_same_host_different_epoch_claim(
     assert operation.claimed_epoch is None
     assert operation.claimed_at is None
     assert operation.heartbeat_at is None
-    assert operation.attempts == 0
+    # No refund: attempts stays exactly what claim_next set it to, identical
+    # to reconcile_stuck's own under-ceiling requeue.
+    assert operation.attempts == 1
     assert "restart reclaim" in operation.last_error
     assert "111:oldboot" in operation.last_error
     assert "222:newboot" in operation.last_error
@@ -1851,9 +1853,14 @@ def test_reclaim_previous_epoch_leaves_legacy_null_ownership_claim_untouched(
     admin_session.rollback()
 
 
-def test_reclaim_previous_epoch_refunds_exactly_one_attempt_with_zero_floor(
-    admin_session, tenant_a
-):
+def test_reclaim_previous_epoch_does_not_refund_an_attempt(admin_session, tenant_a):
+    """An under-ceiling restart reclaim must leave ``attempts`` exactly as
+    ``claim_next`` last set it — no refund — identical to
+    ``reconcile_stuck``'s own under-ceiling requeue. A refund here would let a
+    worker that repeatedly crashes before ever settling the same row cycle
+    claim (+1) then reclaim (-1) forever without ``attempts`` ever
+    net-advancing, silently defeating ``MAX_ATTEMPTS_BY_KIND`` for exactly the
+    failure mode restart-reclaim exists to handle."""
     instance, person = _seed(admin_session, tenant_a.id, name="reclaim-zero-floor")
     operation = lab_operations.enqueue(
         admin_session, instance=instance, kind="deploy", requested_by=person.id
@@ -1869,7 +1876,7 @@ def test_reclaim_previous_epoch_refunds_exactly_one_attempt_with_zero_floor(
         == 1
     )
     admin_session.refresh(operation)
-    assert operation.attempts == 0  # never goes negative
+    assert operation.attempts == 0  # unchanged, not decremented below zero
 
     other_instance, other_person = _seed(admin_session, tenant_a.id, name="reclaim-nonzero")
     other_operation = lab_operations.enqueue(
@@ -1889,7 +1896,51 @@ def test_reclaim_previous_epoch_refunds_exactly_one_attempt_with_zero_floor(
         == 1
     )
     admin_session.refresh(other_operation)
-    assert other_operation.attempts == 1
+    assert other_operation.attempts == 2  # unchanged, not decremented
+
+
+def test_repeated_crash_before_settling_accumulates_to_ceiling_not_forgiven(
+    admin_session, tenant_a
+):
+    """A worker that repeatedly crashes before ever settling the SAME
+    operation must have its attempts accumulate toward the kind's ceiling
+    across restarts, exactly like an ordinary repeated lease-timeout would —
+    not be unconditionally forgiven by a refund on every restart-reclaim.
+    Cycles claim_next -> commit -> reclaim_previous_epoch -> commit through
+    the full attempt ceiling and asserts the operation lands "failed" with
+    attempts at the ceiling, instead of oscillating between 0 and 1 forever."""
+    instance, person = _seed(admin_session, tenant_a.id, name="reclaim-crash-loop")
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="deploy", requested_by=person.id
+    )
+    admin_session.commit()
+
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    for cycle in range(threshold):
+        old_epoch = f"{cycle}:oldboot"
+        new_epoch = f"{cycle + 1}:newboot"
+        claimed = lab_operations.claim_next(
+            admin_session,
+            claimed_by=f"host-a:{old_epoch}",
+            claimed_host="host-a",
+            claimed_epoch=old_epoch,
+        )
+        assert claimed is not None and claimed.id == operation.id
+        admin_session.commit()
+
+        reclaimed = lab_operations.reclaim_previous_epoch(
+            admin_session, host="host-a", epoch=new_epoch
+        )
+        admin_session.commit()
+        assert reclaimed == 1
+
+    admin_session.refresh(operation)
+    assert operation.state == "failed"
+    assert operation.attempts == threshold
+    assert "attempt ceiling" in operation.last_error
+
+    # The row is settled terminal — no further claim is possible.
+    assert lab_operations.claim_next(admin_session, claimed_by="host-a:should-not-claim") is None
 
 
 def test_reclaim_previous_epoch_rollback_leaves_original_claim_intact(admin_session, tenant_a):

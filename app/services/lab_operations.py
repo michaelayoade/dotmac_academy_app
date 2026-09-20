@@ -922,12 +922,19 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
     A matched row already at its kind's attempt ceiling
     (``MAX_ATTEMPTS_BY_KIND``) is marked "failed" instead of requeued —
     exactly like ``reconcile_stuck``'s own ceiling check — via the same
-    shared ``_fail_operation_at_ceiling`` helper: this worker's own repeated
-    crashes before ever settling the row must eventually stop retrying just
-    as a repeatedly-hanging worker's lease-expiry retries do, or the ceiling
-    and automatic-destroy escalation this codebase treats as load-bearing
-    would be silently defeated by unconditionally refunding the attempt this
-    same row's claim charged on every restart.
+    shared ``_fail_operation_at_ceiling`` helper. Below the ceiling, this
+    requeue does NOT refund the attempt that ``claim_next`` charged — it
+    leaves ``op.attempts`` exactly as-is, identically to ``reconcile_stuck``'s
+    own under-ceiling requeue. A refund here would let a worker that
+    repeatedly crashes before ever settling the same row cycle claim (+1)
+    then reclaim (-1) forever without ``attempts`` ever net-advancing, so the
+    ceiling and automatic-destroy escalation this codebase treats as
+    load-bearing would never be reached for exactly the failure mode
+    restart-reclaim exists to handle. Treating a restart-reclaimed,
+    under-ceiling row exactly like an ordinary lease-timeout requeue for
+    attempt-accounting purposes is what lets repeated crashes on the same
+    operation correctly accumulate toward the ceiling instead of being
+    unconditionally forgiven on every restart.
 
     Never touches a different host's claims, or a row with a null/legacy
     ``claimed_host``/``claimed_epoch`` (pre-0059 rows, or rows claimed by a
@@ -965,7 +972,6 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
         op.state = "queued"
         _clear_claim_fields(op)
         op.not_before = now
-        op.attempts = max(op.attempts - 1, 0)
         op.last_error = (
             f"restart reclaim: previous worker epoch {old_epoch} superseded "
             f"by {epoch} on {host}"
