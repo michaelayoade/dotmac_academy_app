@@ -2561,6 +2561,189 @@ def test_conditional_deploy_fully_ambiguous_outcome_escalates_a_transient_prior_
     engine.deploy.assert_not_called()
 
 
+def test_single_conditional_deploy_failure_does_not_escalate(admin_session, tenant_a):
+    """A lone automatic repair-deploy failure (no prior history) must revert
+    the instance to ``deploy_failure_status`` (here "active", since capacity
+    admission commits "resetting" before the engine call fails) exactly as
+    before this fix — proving Finding A's escalation only changes the
+    CUMULATIVE case, not every failure."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-single-failure", status="active",
+    )
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1  # matches what claim_next() would have set
+    admin_session.commit()
+
+    engine = MagicMock()
+    engine.status.return_value = "absent"
+    engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged")
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert operation.state == "failed"
+    assert instance.status == "active"  # reverted, not escalated
+    assert instance.error == "containerlab wedged"
+
+
+def test_repeated_automatic_repair_deploy_failures_escalate_to_manual_intervention(
+    admin_session, tenant_a
+):
+    """Mirrors ``test_five_consecutive_automatic_destroy_failures_escalate_
+    instance_to_error`` for the deploy side of the same problem: a
+    persistently wedged instance's automatic (reconciler-triggered) repair
+    deploys must stop retrying forever once cumulative attempts reach
+    ``MAX_ATTEMPTS_BY_KIND["deploy"]`` — see this file's round-9 fix adding
+    ``_automatic_repair_deploy_escalation_message``."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-escalate", status="active",
+    )
+    engine = MagicMock()
+    engine.status.return_value = "absent"
+    engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged")
+
+    for attempt in range(1, lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"] + 1):
+        operation = lab_operations.enqueue(
+            admin_session,
+            instance=instance,
+            kind="deploy",
+            requested_by=None,
+            origin="runtime_repair",
+            runtime_precondition="absent",
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
+        admin_session.commit()
+
+        outcome = lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+        assert outcome == "failed"
+        admin_session.refresh(instance)
+        admin_session.refresh(operation)
+        assert operation.state == "failed"
+        if attempt < lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]:
+            assert instance.status == "active"  # reverted, not escalated yet
+        else:
+            assert instance.status == "error"
+            assert instance.error == (
+                "automatic repair deploy failed 3 times; manual intervention required"
+            )
+
+
+def test_conditional_deploy_escalated_settlement_does_not_reset_destroy_failure_window(
+    admin_session, tenant_a
+):
+    """A "succeeded" conditional-deploy settlement that only escalated a
+    fully-ambiguous outcome to manual verification (round 6) must not
+    silently reset the DESTROY-side automatic-escalation window (Finding B):
+    the earlier destroy failures must still count toward the destroy
+    ceiling afterward, unlike a GENUINELY successful redeploy (contrast with
+    ``test_user_initiated_deploy_survives_escalation_and_resets_failure_
+    window``, which proves a real successful redeploy DOES reset it)."""
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-no-reset",
+        status="provisioning", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    destroy_engine = MagicMock()
+    destroy_engine.destroy.side_effect = RuntimeError("destroy refused")
+    prior_destroy_failures = lab_operations.MAX_ATTEMPTS_BY_KIND["destroy"] - 1
+    for _ in range(prior_destroy_failures):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="destroy", requested_by=None
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        operation.attempts = 1  # matches what claim_next() would have set
+        admin_session.commit()
+        outcome = lab_operations.run_claimed(
+            admin_session,
+            operation_id=operation.id,
+            claimed_by="worker",
+            engine=destroy_engine,
+        )
+        assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "provisioning"  # under the destroy ceiling, not escalated
+
+    # A conditional deploy on the SAME instance settles via the fully-
+    # ambiguous escalation path: preliminary check misses a race, the
+    # authoritative check also can't confirm, and the follow-up inspection
+    # can't confirm either.
+    deploy_op = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, deploy_op)
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"
+    engine.deploy_if_absent.return_value = None
+    engine.inspect_running.return_value = None
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=deploy_op.id, claimed_by="worker", engine=engine,
+    ) == "succeeded"
+    admin_session.refresh(instance)
+    admin_session.refresh(deploy_op)
+    assert instance.status == "error"  # escalated, per round-6 fix
+    assert deploy_op.state == "succeeded"
+    assert deploy_op.last_error  # marked so it can't be mistaken for a healthy redeploy
+
+    # A subsequent destroy failure's cumulative count must still include the
+    # earlier destroy failures: the window was NOT reset by the escalated
+    # "succeeded" deploy settlement.
+    next_destroy = lab_operations.enqueue(
+        admin_session, instance=instance, kind="destroy", requested_by=None
+    )
+    next_destroy.state = "claimed"
+    next_destroy.claimed_by = "worker"
+    next_destroy.claimed_at = datetime.now(UTC)
+    next_destroy.heartbeat_at = datetime.now(UTC)
+    next_destroy.attempts = 1
+    admin_session.commit()
+    final_destroy_engine = MagicMock()
+    final_destroy_engine.destroy.side_effect = RuntimeError("destroy refused again")
+
+    outcome = lab_operations.run_claimed(
+        admin_session,
+        operation_id=next_destroy.id,
+        claimed_by="worker",
+        engine=final_destroy_engine,
+    )
+    assert outcome == "failed"
+    admin_session.refresh(instance)
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic destroy failed {lab_operations.MAX_ATTEMPTS_BY_KIND['destroy']} "
+        "times; manual intervention required"
+    )
+
+
 def test_conditional_destroy_precondition_holds_destroys_and_stops_consoles_after(
     admin_session, tenant_a, monkeypatch
 ):

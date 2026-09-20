@@ -558,8 +558,11 @@ def resync_present_preliminary(db: Session, instance: LabInstance, engine: LabEn
         # its own call site. Escalate to a state that sweep does not match,
         # rather than leaving ambiguity looking like an ordinary in-flight
         # reservation.
-        instance.error = instance.error or (
-            "conditional deploy could not confirm runtime presence; "
+        instance.error = (
+            f"{instance.error}; conditional deploy could not confirm "
+            "runtime presence; manual verification required"
+            if instance.error
+            else "conditional deploy could not confirm runtime presence; "
             "manual verification required"
         )
         instance.status = "error"
@@ -672,8 +675,11 @@ def provision_if_absent(
                 # exists to prevent. Escalate instead of restoring a value
                 # that was already unsafe before this operation began.
                 restored_status = "error"
-                restored_error = restored_error or (
-                    "conditional deploy could not confirm runtime presence; "
+                restored_error = (
+                    f"{restored_error}; conditional deploy could not confirm "
+                    "runtime presence; manual verification required"
+                    if restored_error
+                    else "conditional deploy could not confirm runtime presence; "
                     "manual verification required"
                 )
             instance.status = restored_status

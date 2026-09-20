@@ -406,7 +406,14 @@ def _automatic_destroy_escalation_message(
     gap between this fix landing and an earlier release of the worker leaves
     no unmarked wrong-host refusal able to count toward the threshold. Only
     failures after the instance's most recent *successful* ``deploy``
-    operation count, so a successful manual redeploy starts a fresh window.
+    operation count, so a successful manual redeploy starts a fresh window —
+    but a ``deploy`` settled ``state="succeeded"`` with a non-``NULL``
+    ``last_error`` is excluded from counting as that successful redeploy: the
+    round-6 status-escalation fix settles a fully-ambiguous conditional
+    deploy outcome as ``"succeeded"`` (the operation itself did not fail) while
+    still marking the instance ``status="error"`` and the operation's own
+    ``last_error``, so this is not a genuinely healthy redeploy and must not
+    silently reset this window.
     The scan is bounded at the threshold rather than unbounded history: no
     single row can carry more attempts than the ceiling itself, so the most
     recent ``threshold`` failed rows are always enough to reach it if it can
@@ -418,6 +425,7 @@ def _automatic_destroy_escalation_message(
         .where(LabOperation.instance_id == instance_id)
         .where(LabOperation.kind == "deploy")
         .where(LabOperation.state == "succeeded")
+        .where(LabOperation.last_error.is_(None))
     )
     prior_failure_query = (
         select(LabOperation.attempts)
@@ -460,6 +468,86 @@ def _automatic_destroy_escalation_message(
         return None
     return (
         f"automatic destroy failed {cumulative_attempts} times; "
+        "manual intervention required"
+    )
+
+
+def _automatic_repair_deploy_escalation_message(
+    db: Session,
+    *,
+    instance_id: UUID,
+    current_operation_id: UUID,
+    current_operation_attempts: int,
+) -> str | None:
+    """Return an escalation message once cumulative automatic repair-deploy
+    ATTEMPTS for ``instance_id`` reach the deploy attempt ceiling, else
+    ``None``.
+
+    Mirrors :func:`_automatic_destroy_escalation_message` exactly, for the
+    deploy side of the same problem: ``reconcile_runtime``'s
+    ``missing_runtime`` branch manufactures a fresh ``LabOperation`` row
+    (with a fresh attempt budget) every reconciler pass for as long as the
+    instance's status stays in ``("provisioning", "active", "resetting")``
+    and its runtime remains absent — nothing bounds this across passes,
+    only within one row's own ``attempts``. Before this design, the
+    reconciler itself capped this by escalating directly from its own
+    snapshot the first time it saw a prior ``instance.error``; that
+    projection was correctly removed (only the worker's own locked recheck
+    may decide an outcome), but nothing replaced the bound it also
+    provided. This closes that gap the same way the destroy side is
+    already closed, from the worker's own settle-time observation, not a
+    reconciler projection.
+
+    Sums ``attempts`` across ``failed``, ``kind="deploy"``,
+    ``origin="runtime_repair"``, ``requested_by IS NULL`` operations for
+    this instance, plus the current failure's own ``attempts``. No
+    operator-refusal/wrong-host exclusion is needed here (unlike the
+    destroy-side function): ``origin`` is a brand-new column with no
+    pre-existing rows to defensively exclude, and a ``WrongLabHostError``
+    from this exact code path is already fully handled by ``run_claimed``'s
+    own earlier ``except WrongLabHostError`` clause (which restores state
+    and refunds the attempt) before this generic failure handler ever
+    runs — so a wrong-host refusal can never reach this function's count in
+    the first place. Only failures after the instance's most recent
+    GENUINELY successful deploy count (``state="succeeded"`` AND
+    ``last_error IS NULL`` — a "succeeded" settlement that only escalated
+    an ambiguous conditional outcome to manual verification, see this
+    file's round-9 fix to ``run_claimed``'s ``is_conditional_deploy``
+    branch, does not count as a healthy redeploy and must not reset this
+    window either).
+    """
+    threshold = MAX_ATTEMPTS_BY_KIND["deploy"]
+    last_deploy_success_at = db.scalar(
+        select(func.max(LabOperation.finished_at))
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "deploy")
+        .where(LabOperation.state == "succeeded")
+        .where(LabOperation.last_error.is_(None))
+    )
+    prior_failure_query = (
+        select(LabOperation.attempts)
+        .where(LabOperation.instance_id == instance_id)
+        .where(LabOperation.kind == "deploy")
+        .where(LabOperation.origin == "runtime_repair")
+        .where(LabOperation.state == "failed")
+        .where(LabOperation.requested_by.is_(None))
+        .where(LabOperation.id != current_operation_id)
+    )
+    if last_deploy_success_at is not None:
+        prior_failure_query = prior_failure_query.where(
+            LabOperation.finished_at > last_deploy_success_at
+        )
+    bounded = (
+        prior_failure_query.order_by(LabOperation.finished_at.desc())
+        .limit(threshold)
+        .subquery()
+    )
+    prior_attempts = int(db.scalar(select(func.sum(bounded.c.attempts))) or 0)
+    cumulative_attempts = min(prior_attempts + current_operation_attempts, threshold)
+    if cumulative_attempts < threshold:
+        return None
+    return (
+        f"automatic repair deploy failed {cumulative_attempts} times; "
         "manual intervention required"
     )
 
@@ -597,6 +685,7 @@ def run_claimed(
         and operation_origin == "runtime_cleanup"
         and operation_runtime_precondition == "present"
     )
+    settle_error: str | None = None
 
     try:
         if operation_kind == "deploy":
@@ -682,6 +771,24 @@ def run_claimed(
                         template,
                         preserved_status=initial_instance_status,
                         preserved_error=initial_instance_error,
+                    )
+                if instance.status == "error":
+                    # Both lab_lifecycle.resync_present_preliminary and
+                    # provision_if_absent's own ambiguous-outcome branches
+                    # escalate to status="error" rather than raising — this
+                    # settles "succeeded" at the shared tail below like any
+                    # other non-exceptional outcome, but it must not be
+                    # mistaken for a genuinely healthy redeploy by
+                    # _automatic_destroy_escalation_message's own
+                    # window-reset query: mark the OPERATION's own
+                    # last_error too, the only signal that query has to
+                    # distinguish the two. An instance can only reach
+                    # status="error" here as a direct result of this
+                    # escalation — reconcile_runtime's missing_runtime
+                    # eligibility never selects an instance already at
+                    # status="error" in the first place.
+                    settle_error = instance.error or (
+                        "conditional deploy escalated to manual verification"
                     )
             elif not _capacity_available(db, instance):
                 _requeue_for_capacity(db, op, instance)
@@ -897,6 +1004,23 @@ def run_claimed(
                 failed_instance.runtime_presence = (
                     "absent" if observed_presence == "absent" else "unknown"
                 )
+                if operation_origin == "runtime_repair" and operation_requested_by is None:
+                    # Automatic (reconciler-triggered) repair deploys retry
+                    # forever otherwise — see this function's own escalation
+                    # helper docstring for the full mechanism. Mirrors the
+                    # destroy branch's own escalation exactly.
+                    escalation_message = _automatic_repair_deploy_escalation_message(
+                        db,
+                        instance_id=operation_instance_id,
+                        current_operation_id=operation_id,
+                        current_operation_attempts=operation_attempts,
+                    )
+                    if escalation_message is not None:
+                        failed_instance.status = "error"
+                        failed_instance.error = escalation_message
+                        # Never force "absent" here — escalation must not
+                        # falsely claim the runtime is gone; presence stays
+                        # whatever was just set above.
         elif operation_kind == "destroy":
             # A failed destroy (manual or automatic) cannot prove the runtime
             # is absent either — set this unconditionally, before the
@@ -941,6 +1065,7 @@ def run_claimed(
         operation_id=operation_id,
         claimed_by=claimed_by,
         state="succeeded",
+        error=settle_error,
     ):
         db.rollback()
         return "stale"
