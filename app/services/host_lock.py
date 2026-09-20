@@ -36,7 +36,7 @@ from __future__ import annotations
 import errno
 import fcntl
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from app.config import settings
@@ -54,7 +54,9 @@ class HostLockUnavailable(RuntimeError):
     """Raised when the host containerlab lock is already held by another process."""
 
 
-def _acquire_exclusive_nonblocking(path: str, label: str, *, unavailable_message: str) -> int:
+def _acquire_exclusive_nonblocking(
+    path: str, label: str, *, describe_unavailable: Callable[[str], str]
+) -> int:
     """Open ``path``, take a non-blocking exclusive ``flock`` on it, and record the holder.
 
     Shared primitive behind both :func:`host_lock` (per-operation, released at
@@ -64,6 +66,15 @@ def _acquire_exclusive_nonblocking(path: str, label: str, *, unavailable_message
     resulting fd differs. Raises :class:`HostLockUnavailable` (closing the fd
     first) if another process already holds the lock; otherwise returns the
     open, locked fd for the caller to hold and eventually unlock/close.
+
+    ``describe_unavailable`` builds the caller-specific contention message
+    from a holder description — it is invoked only if and when the flock
+    attempt actually fails, INSIDE this function's own exception handling,
+    never before the attempt. Evaluating ``_holder_description(path)`` any
+    earlier (e.g. as part of building a message string before this call) can
+    report a holder that has already changed by the time the flock attempt
+    genuinely contends, which would contradict this module's documented
+    guarantee that "the refusal names the [current] holder".
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
@@ -73,10 +84,21 @@ def _acquire_exclusive_nonblocking(path: str, label: str, *, unavailable_message
         os.close(fd)
         if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
             raise
-        raise HostLockUnavailable(unavailable_message) from exc
-    os.ftruncate(fd, 0)
-    os.write(fd, f"{os.getpid()} {label}\n".encode())
-    os.fsync(fd)
+        raise HostLockUnavailable(describe_unavailable(_holder_description(path))) from exc
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()} {label}\n".encode())
+        os.fsync(fd)
+    except OSError:
+        # The flock already succeeded by this point — a failure writing the
+        # holder metadata (e.g. ENOSPC/EIO/quota) must not leak the fd (and,
+        # with it, the flock it holds) for the rest of this process's
+        # lifetime. Release both before propagating the original exception
+        # unchanged, mirroring the close-on-failure discipline in the
+        # flock-acquisition branch just above.
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        raise
     return fd
 
 
@@ -135,9 +157,9 @@ def host_lock(
     fd = _acquire_exclusive_nonblocking(
         path,
         label,
-        unavailable_message=(
+        describe_unavailable=lambda holder: (
             f"containerlab host lock {path} is already held — "
-            f"{_holder_description(path)}; refusing to run {label!r} "
+            f"{holder}; refusing to run {label!r} "
             "concurrently with another containerlab operation on this host"
         ),
     )
@@ -198,9 +220,9 @@ def worker_singleton_lock(
     fd = _acquire_exclusive_nonblocking(
         path,
         label,
-        unavailable_message=(
+        describe_unavailable=lambda holder: (
             f"worker singleton lock {path} is already held — "
-            f"{_holder_description(path)}; another {label!r} process appears "
+            f"{holder}; another {label!r} process appears "
             "to already be running on this host"
         ),
     )

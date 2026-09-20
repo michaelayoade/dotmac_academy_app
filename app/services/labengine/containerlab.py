@@ -54,6 +54,21 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     real host's ``sudo -n containerlab`` invocation from a test running here.
     That must be manually verified on the actual lab host as part of this
     rollout.
+
+    The SIGKILL escalation below must never be conditional on whether
+    ``proc.wait(timeout=...)`` itself returned successfully.
+    ``proc.wait()`` only waits for the direct child — the process-group
+    leader — not the whole group. If the direct child dies from SIGTERM
+    within the grace period (the common case, since it is never the one
+    installing a SIGTERM handler here), ``proc.wait()`` returns
+    successfully even though a grandchild the direct child forked may still
+    be alive and ignoring or blocking SIGTERM. An early ``return`` in that
+    case would skip SIGKILL entirely and leak that grandchild forever, since
+    nothing else ever escalates for it. Sending ``SIGKILL`` to a process
+    group whose leader has already exited, but that still has surviving
+    members, remains safe and correct — the pgid stays valid as long as any
+    member is alive. Sending it to an already-fully-empty group just raises
+    ``ProcessLookupError``, handled the same as the SIGTERM step above.
     """
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -62,7 +77,6 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     else:
         try:
             proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
-            return
         except subprocess.TimeoutExpired:
             pass
         try:

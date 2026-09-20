@@ -169,6 +169,79 @@ def test_contended_deploy_raises_without_starting_a_subprocess(tmp_path):
     assert not (tmp_path / "i").exists()
 
 
+@pytest.mark.parametrize("faulting_call", ["ftruncate", "write", "fsync"])
+def test_metadata_write_failure_releases_the_flock_and_closes_the_fd(
+    tmp_path, monkeypatch, faulting_call
+):
+    """A failure writing the holder metadata (ENOSPC/EIO/quota-shaped) after
+    the flock already succeeded must not leak the fd or its flock. The
+    original exception must still propagate, and a fresh acquisition attempt
+    on the same path must succeed afterwards — which is only possible if the
+    flock was actually released and the fd actually closed.
+    """
+    real_fn = getattr(os, faulting_call)
+    call_count = 0
+
+    def _faulting(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise OSError("simulated fault")
+
+    monkeypatch.setattr(os, faulting_call, _faulting)
+
+    with pytest.raises(OSError, match="simulated fault"):
+        with host_lock_module.host_lock("academy-lab-worker", directory=str(tmp_path)):
+            pass
+    assert call_count == 1
+
+    # Restore the real syscall so the probing acquisition below actually
+    # writes its metadata instead of faulting again.
+    monkeypatch.setattr(os, faulting_call, real_fn)
+
+    # If the flock/fd had leaked, this would raise HostLockUnavailable.
+    with host_lock_module.host_lock("probe-after-fault", directory=str(tmp_path)):
+        pass
+
+
+def test_contention_message_names_the_holder_at_the_moment_of_contention(tmp_path):
+    """The reported holder must reflect who ACTUALLY holds the lock at the
+    moment the flock attempt fails, not whoever the recorded holder was
+    slightly earlier. The recorded holder is mutated as a side effect of the
+    real (failing) ``fcntl.flock`` call itself, so an implementation that
+    reads ``_holder_description`` any earlier than its own ``OSError``
+    handling — e.g. eagerly, while building the message before even
+    attempting the flock — would still report the stale value; only reading
+    it lazily, inside the failure handling, sees the mutated one.
+    """
+    path = host_lock_module.lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    os.write(holder_fd, f"{os.getpid()} stale-holder\n".encode())
+    real_flock = fcntl.flock
+
+    def _flock_then_mutate_recorded_holder(fd, operation):
+        try:
+            return real_flock(fd, operation)
+        except OSError:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(f"{os.getpid()} current-holder\n")
+            raise
+
+    try:
+        with patch("fcntl.flock", side_effect=_flock_then_mutate_recorded_holder):
+            with pytest.raises(HostLockUnavailable) as exc_info:
+                with host_lock_module.host_lock(
+                    "academy-lab-reconcile", directory=str(tmp_path)
+                ):
+                    pass
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+    message = str(exc_info.value)
+    assert "current-holder" in message
+    assert "stale-holder" not in message
+
+
 def test_worker_lock_path_and_operation_lock_path_are_different_files(tmp_path):
     """The lifetime worker lock and the per-operation containerlab lock must
     never collide on the same file — one is held for a whole process's

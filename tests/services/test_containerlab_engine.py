@@ -411,6 +411,64 @@ def test_timeout_terminates_an_orphaned_grandchild_too(tmp_path, monkeypatch):
         proc.wait(timeout=5)
 
 
+def _spawn_grandchild_that_ignores_sigterm(marker_dir: str) -> list[str]:
+    """A command whose direct child dies promptly on SIGTERM (default
+    handling) but whose forked grandchild explicitly ignores SIGTERM before
+    sleeping — the one scenario ``test_timeout_terminates_an_orphaned_grandchild_too``
+    cannot exercise, since there both processes die together from the same
+    signal. This proves the SIGKILL escalation is not skipped just because
+    the direct child's own ``proc.wait()`` already succeeded.
+    """
+    script = f"""
+import os, signal, sys, time
+open({os.path.join(marker_dir, "child.pid")!r}, "w").write(str(os.getpid()))
+pid = os.fork()
+if pid == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    open({os.path.join(marker_dir, "grandchild.pid")!r}, "w").write(str(os.getpid()))
+    time.sleep(60)
+    sys.exit(0)
+time.sleep(60)
+"""
+    return [sys.executable, "-c", script]
+
+
+def test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigterm(
+    tmp_path, monkeypatch
+):
+    """The direct child dies promptly from SIGTERM (so its own ``proc.wait()``
+    inside ``_terminate_process_group`` succeeds within the grace period),
+    but its grandchild ignores SIGTERM outright. The grandchild must still be
+    reaped via SIGKILL — proving the escalation step is an unconditional
+    backstop, not gated on whether the direct child's own wait succeeded.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+    cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
+    with pytest.raises(subprocess.TimeoutExpired):
+        containerlab._run_contained(cmd, timeout=1.0)
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(grandchild_pid):
+            time.sleep(0.05)
+        assert not _pid_alive(grandchild_pid), (
+            "SIGTERM-ignoring grandchild survived teardown — SIGKILL "
+            "escalation was skipped because the direct child's own "
+            "proc.wait() already succeeded"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
 def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkeypatch):
     """A non-timeout exception raised mid-communicate (e.g. KeyboardInterrupt
     reaching this call) must still tear down the process group before
