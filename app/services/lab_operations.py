@@ -1086,14 +1086,15 @@ def _fail_operation_at_ceiling(
 
     Shared by ``reconcile_stuck``'s ordinary lease-expiry path and
     ``reclaim_previous_epoch``'s restart-reclaim path so the ceiling check and
-    its instance projection — including automatic-destroy escalation — cannot
-    drift apart between the two recovery paths: a worker process that
-    repeatedly crashes before settling an operation must eventually stop
-    retrying exactly like a repeatedly-hanging one does. Each caller supplies
-    its own ``last_error`` message text; the projection/escalation logic
-    itself is identical for both callers. Deliberately does NOT call
-    ``_clear_claim_fields`` — like every other terminal settlement, the claim
-    fields stay behind as audit provenance.
+    its instance projection — including automatic-destroy escalation and
+    automatic repair-deploy escalation — cannot drift apart between the two
+    recovery paths: a worker process that repeatedly crashes before settling
+    an operation must eventually stop retrying exactly like a
+    repeatedly-hanging one does. Each caller supplies its own ``last_error``
+    message text; the projection/escalation logic itself is identical for
+    both callers. Deliberately does NOT call ``_clear_claim_fields`` — like
+    every other terminal settlement, the claim fields stay behind as audit
+    provenance.
     """
     op.state = "failed"
     op.finished_at = now
@@ -1110,6 +1111,31 @@ def _fail_operation_at_ceiling(
         # repeatedly-crashing engine lets the idle reaper re-enqueue destroys
         # for this instance forever.
         escalation_message = _automatic_destroy_escalation_message(
+            db,
+            instance_id=op.instance_id,
+            current_operation_id=op.id,
+            current_operation_attempts=op.attempts,
+        )
+        if escalation_message is not None:
+            instance.status = "error"
+            instance.error = escalation_message
+            # Presence stays "unknown" (set above) — never forced to
+            # "absent" by escalation.
+    if (
+        instance is not None
+        and op.kind == "deploy"
+        and op.origin == "runtime_repair"
+        and op.requested_by is None
+    ):
+        # Same reasoning as the destroy branch above, for automatic
+        # repair-deploy retries: a stuck/lease-expired/crash-reclaimed
+        # conditional deploy is the same persistent-failure signal as a
+        # synchronous one (see run_claimed's own escalation wiring, round
+        # 7) and must count toward the same cumulative threshold, or a
+        # hanging or repeatedly-crashing engine lets reconcile_runtime's
+        # missing_runtime branch re-enqueue repair deploys for this
+        # instance forever.
+        escalation_message = _automatic_repair_deploy_escalation_message(
             db,
             instance_id=op.instance_id,
             current_operation_id=op.id,

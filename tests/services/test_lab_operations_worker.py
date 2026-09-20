@@ -1143,6 +1143,70 @@ def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
     )
 
 
+def test_stuck_repair_deploy_claim_escalates_instance_via_reconcile_stuck(
+    admin_session, tenant_a
+):
+    """Mirrors ``test_stuck_destroy_claim_escalates_instance_via_reconcile_
+    stuck`` for the deploy side of the same problem: a conditional
+    (``origin="runtime_repair"``, ``requested_by=None``) repair deploy that
+    exhausts its attempts via lease expiry (worker crash/hang), not a
+    synchronous exception, must escalate the same way a synchronously-failing
+    repair deploy does — otherwise a hanging engine lets ``reconcile_
+    runtime``'s ``missing_runtime`` branch re-enqueue repair deploys for this
+    instance forever."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="stuck-repair-deploy-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    engine = MagicMock()
+    engine.status.return_value = "absent"
+    engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged")
+
+    for _ in range(threshold - 1):
+        operation = lab_operations.enqueue(
+            admin_session,
+            instance=instance,
+            kind="deploy",
+            requested_by=None,
+            origin="runtime_repair",
+            runtime_precondition="absent",
+        )
+        operation.state = "claimed"
+        operation.claimed_by = "worker"
+        operation.claimed_at = datetime.now(UTC)
+        operation.heartbeat_at = datetime.now(UTC)
+        admin_session.commit()
+        lab_operations.run_claimed(
+            admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+        )
+    admin_session.refresh(instance)
+    assert instance.status == "active"
+
+    stuck_operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    stuck_operation.state = "claimed"
+    stuck_operation.claimed_by = "stale-worker"
+    stuck_operation.claimed_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.heartbeat_at = datetime.now(UTC) - timedelta(hours=1)
+    stuck_operation.attempts = threshold
+    admin_session.commit()
+
+    assert lab_operations.reconcile_stuck(admin_session, lease_seconds=60) == 1
+    admin_session.refresh(instance)
+    admin_session.refresh(stuck_operation)
+    assert stuck_operation.state == "failed"
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic repair deploy failed {threshold} times; manual intervention required"
+    )
+
+
 def test_single_stuck_destroy_row_escalates_via_reconcile_stuck_alone(
     admin_session, tenant_a
 ):
@@ -2140,6 +2204,54 @@ def test_reclaim_previous_epoch_escalates_automatic_destroy_at_ceiling(
     assert instance.status == "error"
     assert instance.error == (
         f"automatic destroy failed {threshold} times; manual intervention required"
+    )
+    assert instance.runtime_presence == "unknown"
+
+
+def test_reclaim_previous_epoch_escalates_automatic_repair_deploy_at_ceiling(
+    admin_session, tenant_a
+):
+    """A conditional (``origin="runtime_repair"``, ``requested_by=None``)
+    repair deploy already at the deploy attempt ceiling, when matched by a
+    restart-reclaim scan, must trigger the same escalation-to-"error" path
+    `reconcile_stuck`'s own ceiling branch already applies — a crashing
+    worker must not be able to dodge escalation just because it never lived
+    long enough to hit `reconcile_stuck`'s lease-expiry check first. Mirrors
+    `test_reclaim_previous_epoch_escalates_automatic_destroy_at_ceiling`."""
+    instance, _ = _seed(
+        admin_session, tenant_a.id, name="reclaim-repair-deploy-escalate", status="active"
+    )
+    threshold = lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim_row(
+        operation,
+        claimed_by="host-a:111:oldboot",
+        claimed_host="host-a",
+        claimed_epoch="111:oldboot",
+    )
+    operation.attempts = threshold
+    admin_session.commit()
+
+    assert (
+        lab_operations.reclaim_previous_epoch(admin_session, host="host-a", epoch="222:newboot")
+        == 1
+    )
+    admin_session.commit()
+    admin_session.refresh(operation)
+    admin_session.refresh(instance)
+
+    assert operation.state == "failed"
+    assert operation.attempts == threshold  # not refunded
+    assert instance.status == "error"
+    assert instance.error == (
+        f"automatic repair deploy failed {threshold} times; manual intervention required"
     )
     assert instance.runtime_presence == "unknown"
 
