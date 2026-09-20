@@ -500,15 +500,20 @@ def _automatic_repair_deploy_escalation_message(
 
     Sums ``attempts`` across ``failed``, ``kind="deploy"``,
     ``origin="runtime_repair"``, ``requested_by IS NULL`` operations for
-    this instance, plus the current failure's own ``attempts``. No
-    operator-refusal/wrong-host exclusion is needed here (unlike the
-    destroy-side function): ``origin`` is a brand-new column with no
-    pre-existing rows to defensively exclude, and a ``WrongLabHostError``
-    from this exact code path is already fully handled by ``run_claimed``'s
-    own earlier ``except WrongLabHostError`` clause (which restores state
-    and refunds the attempt) before this generic failure handler ever
-    runs — so a wrong-host refusal can never reach this function's count in
-    the first place. Only failures after the instance's most recent
+    this instance, plus the current failure's own ``attempts``. Excludes
+    the same two operator-refusal/wrong-host cases
+    ``_automatic_destroy_escalation_message`` excludes, for full symmetry
+    with the destroy-side function: a ``WrongLabHostError`` from this exact
+    code path is already fully handled by ``run_claimed``'s own earlier
+    ``except WrongLabHostError`` clause (which restores state and refunds
+    the attempt) before this generic failure handler ever runs, so no row
+    settled through that clause can carry this branch's own state — but a
+    wrong-host refusal that instead lease-expires or restart-reclaims
+    before ever reaching that clause (and is later marked ``"failed"``
+    directly by ``reconcile_stuck``/reclaim's own ceiling check) could
+    otherwise still contribute here; a misconfigured host role is not a
+    genuine repair-deploy execution failure either way. Only failures after
+    the instance's most recent
     GENUINELY successful deploy count (``state="succeeded"`` AND
     ``last_error IS NULL`` — a "succeeded" settlement that only escalated
     an ambiguous conditional outcome to manual verification, see this
@@ -532,6 +537,22 @@ def _automatic_repair_deploy_escalation_message(
         .where(LabOperation.state == "failed")
         .where(LabOperation.requested_by.is_(None))
         .where(LabOperation.id != current_operation_id)
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.startswith(
+                    _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
+                ),
+            )
+        )
+        .where(
+            or_(
+                LabOperation.last_error.is_(None),
+                ~LabOperation.last_error.contains(
+                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True
+                ),
+            )
+        )
     )
     if last_deploy_success_at is not None:
         prior_failure_query = prior_failure_query.where(
@@ -794,8 +815,11 @@ def run_claimed(
                     # self-healing path via reconcile_runtime's next pass)
                     # but is JUST AS UNCONFIRMED as the escalated case for
                     # the purpose of resetting either escalation window.
-                    settle_error = instance.error or (
-                        "conditional deploy could not confirm runtime presence"
+                    settle_error = (
+                        f"{instance.error}; conditional deploy could not "
+                        "confirm runtime presence"
+                        if instance.error
+                        else "conditional deploy could not confirm runtime presence"
                     )
             elif not _capacity_available(db, instance):
                 _requeue_for_capacity(db, op, instance)
