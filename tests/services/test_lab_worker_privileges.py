@@ -12,6 +12,7 @@ Uses a stub (``MagicMock``) containerlab engine only — never a real one.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from sqlalchemy import select, text
@@ -160,16 +161,77 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
                 lab_worker_session, role, "lab_instances", "runtime_presence", privilege
             ), f"{role} must not have {privilege} on lab_instances.runtime_presence"
 
+    # --- claimed_host/claimed_epoch column-level ACL (migration 0059) ------
+    # academy_lab_worker's grant is table-wide (see 0055, restated by 0059),
+    # so it must cover these two structural claim-ownership columns exactly
+    # like every other worker-owned one; app_user's INSERT grant is
+    # column-scoped and must NOT include either, and platform_api must never
+    # get write access to either one.
+    for privilege in ("SELECT", "UPDATE"):
+        for column in ("claimed_host", "claimed_epoch"):
+            assert _has_column_privilege(
+                lab_worker_session, "academy_lab_worker", "lab_operations", column, privilege
+            ), f"expected academy_lab_worker to have {privilege} on lab_operations.{column}"
+    for role in ("app_user", "platform_api"):
+        for privilege in ("INSERT", "UPDATE"):
+            for column in ("claimed_host", "claimed_epoch"):
+                assert not _has_column_privilege(
+                    lab_worker_session, role, "lab_operations", column, privilege
+                ), f"{role} must not have {privilege} on lab_operations.{column}"
+
     # --- deploy, then a passing check, through the real worker session --
     engine = _stub_engine(instance.instance_name)
     assert lab_jobs.drain_once(lab_worker_session, engine) == 1
     lab_worker_session.commit()
+
+    # The real academy_lab_worker role CAN claim using claimed_host/
+    # claimed_epoch: drain_once's default identity path set both on the
+    # claim above, through this exact worker-session connection, and a
+    # terminal settlement retains them as audit provenance.
+    admin_session.rollback()
+    deployed_operation = admin_session.scalars(
+        select(LabOperation)
+        .where(LabOperation.instance_id == instance.id)
+        .where(LabOperation.kind == "deploy")
+        .where(LabOperation.state == "succeeded")
+    ).one()
+    worker_identity = lab_operations.worker_identity_parts()
+    assert deployed_operation.claimed_by == worker_identity.claimed_by
+    assert deployed_operation.claimed_host == worker_identity.host
+    assert deployed_operation.claimed_epoch == worker_identity.epoch
 
     lab_operations.enqueue(admin_session, instance=instance, kind="check", requested_by=person.id)
     admin_session.commit()
 
     assert lab_jobs.drain_once(lab_worker_session, engine) == 1
     lab_worker_session.commit()
+
+    # --- the real academy_lab_worker role CAN reclaim a previous-epoch claim
+    reclaim_instance, reclaim_person = _seed(
+        admin_session, tenant_a.id, name="privileges-reclaim"
+    )
+    reclaim_operation = lab_operations.enqueue(
+        admin_session, instance=reclaim_instance, kind="deploy", requested_by=reclaim_person.id
+    )
+    reclaim_operation.state = "claimed"
+    reclaim_operation.claimed_by = "some-host:111:oldboot"
+    reclaim_operation.claimed_host = "some-host"
+    reclaim_operation.claimed_epoch = "111:oldboot"
+    reclaim_operation.claimed_at = datetime.now(UTC)
+    reclaim_operation.heartbeat_at = datetime.now(UTC)
+    admin_session.commit()
+
+    reclaimed = lab_operations.reclaim_previous_epoch(
+        lab_worker_session, host="some-host", epoch="222:newboot"
+    )
+    lab_worker_session.commit()
+    assert reclaimed == 1
+    admin_session.rollback()
+    admin_session.refresh(reclaim_operation)
+    assert reclaim_operation.state == "queued"
+    assert reclaim_operation.claimed_by is None
+    assert reclaim_operation.claimed_host is None
+    assert reclaim_operation.claimed_epoch is None
 
     # --- reconcile_runtime: inventory reports nothing running ---------------
     queued, destroyed = lab_jobs.reconcile_runtime(lab_worker_session, engine)

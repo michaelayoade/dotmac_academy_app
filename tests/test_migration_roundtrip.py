@@ -63,25 +63,29 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0058 (see HEAD_REVISION), and the 0055/0056 and 0056/0057
-# tests are updated to assert against that instead of assuming an earlier
-# revision is still head.
+# repo head is now 0059 (see HEAD_REVISION), and the 0055/0056, 0056/0057, and
+# 0057/0058 tests are updated to assert against that instead of assuming an
+# earlier revision is still head.
 DOWN_REVISION = "0055_lab_operations"
 TARGET_REVISION = "0056_lab_instance_worker"
 
 # The actual current repo head. Kept as its own constant (rather than reusing
-# TARGET_REVISION/TARGET_REVISION_0057) specifically so the 0055/0056 and
-# 0056/0057 tests below stop silently assuming an earlier revision is head
-# once a later one exists.
-HEAD_REVISION = "0058_lab_runtime_presence"
+# TARGET_REVISION/TARGET_REVISION_0057/TARGET_REVISION_0058) specifically so
+# the 0055/0056, 0056/0057, and 0057/0058 tests below stop silently assuming
+# an earlier revision is head once a later one exists.
+HEAD_REVISION = "0059_lab_claim_owner"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
 TARGET_REVISION_0057 = "0057_lab_instance_name_unique"
 
-# 0057 <-> 0058 boundary, for the new tests further down this file.
+# 0057 <-> 0058 boundary, for the 0058-specific tests further down this file.
 DOWN_REVISION_0058 = TARGET_REVISION_0057  # "0057_lab_instance_name_unique"
-TARGET_REVISION_0058 = HEAD_REVISION  # "0058_lab_runtime_presence"
+TARGET_REVISION_0058 = "0058_lab_runtime_presence"
+
+# 0058 <-> 0059 boundary, for the new tests further down this file.
+DOWN_REVISION_0059 = TARGET_REVISION_0058  # "0058_lab_runtime_presence"
+TARGET_REVISION_0059 = HEAD_REVISION  # "0059_lab_claim_owner"
 
 INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
 RUNTIME_PRESENCE_CHECK = "ck_lab_instances_runtime_presence"
@@ -302,11 +306,12 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
 
     with _migration_env(url):
         try:
-            # command.downgrade(cfg, DOWN_REVISION) from real head (0057)
-            # downgrades through 0057 first and then 0056, landing at 0055 —
+            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0059)
+            # downgrades through every later revision first, landing at 0055 —
             # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
-            # only cover grants/check-constraints that 0057 never touches, so
-            # passing through it en route doesn't affect what's asserted here.
+            # only cover grants/check-constraints that later revisions never
+            # touch, so passing through them en route doesn't affect what's
+            # asserted here.
             command.downgrade(cfg, DOWN_REVISION)
             with admin_engine.connect() as conn:
                 _assert_at_0055_grants(conn)
@@ -520,7 +525,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     cfg = _make_config()
     url = _migration_url()
 
-    # Checks the actual repo head (now 0058, not 0057 — see HEAD_REVISION):
+    # Checks the actual repo head (now 0059, not 0057 — see HEAD_REVISION):
     # this test's own upgrade/downgrade calls stay pinned to the 0056/0057
     # boundary specifically via DOWN_REVISION_0057/TARGET_REVISION_0057, but
     # the sanity check that the CI database starts at head must track
@@ -566,7 +571,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         "the unique index's shape after a downgrade/upgrade round trip does "
         "not match the pre-cycle baseline — 0057 leaks or loses state across cycles"
     )
-    # The `finally` block above always ends at real head (now 0058), not at
+    # The `finally` block above always ends at real head (now 0059), not at
     # the 0057 boundary this test's own round trip exercises.
     assert final_version == HEAD_REVISION
 
@@ -940,3 +945,164 @@ def test_0058_grant_posture_matches_academy_lab_worker_ownership(admin_engine):
         assert grants[(role, "UPDATE")] is False, f"{role} must not UPDATE runtime_presence"
     assert grants[("academy_lab_worker", "SELECT")] is True
     assert grants[("academy_lab_worker", "UPDATE")] is True
+
+
+# --- 0059: structural claim ownership (claimed_host/claimed_epoch) ---------
+
+CLAIM_OWNERSHIP_COLUMNS = ("claimed_host", "claimed_epoch")
+CLAIM_OWNERSHIP_LENGTHS = {"claimed_host": 255, "claimed_epoch": 64}
+CLAIM_OWNERSHIP_ROLES = ("app_user", "platform_api", "academy_lab_worker")
+CLAIM_OWNERSHIP_PRIVILEGES = ("SELECT", "INSERT", "UPDATE")
+
+
+def _claim_ownership_column_snapshot(conn) -> dict[str, dict[str, object] | None]:
+    """``None`` for a column when it doesn't exist (0058 state); otherwise its
+    nullability, column default expression, and declared VARCHAR length."""
+    result: dict[str, dict[str, object] | None] = {}
+    for column in CLAIM_OWNERSHIP_COLUMNS:
+        row = conn.execute(
+            text(
+                """SELECT is_nullable, column_default, character_maximum_length
+                   FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'lab_operations'
+                     AND column_name = :column"""
+            ),
+            {"column": column},
+        ).first()
+        result[column] = (
+            None
+            if row is None
+            else {"nullable": row[0], "default": row[1], "length": row[2]}
+        )
+    return result
+
+
+def _claim_ownership_grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
+    """``has_column_privilege`` for every (column, role, privilege) this
+    migration governs — table-wide grants already extend to these columns
+    automatically (PostgreSQL grants are not scoped to the column set that
+    existed at grant time), so this is what actually proves the column-level
+    ACL posture, matching 0058's own ``_runtime_presence_grant_snapshot``
+    pattern for `runtime_presence`."""
+    result: dict[tuple[str, str, str], bool] = {}
+    for column in CLAIM_OWNERSHIP_COLUMNS:
+        for role in CLAIM_OWNERSHIP_ROLES:
+            for privilege in CLAIM_OWNERSHIP_PRIVILEGES:
+                result[(column, role, privilege)] = bool(
+                    conn.execute(
+                        text(
+                            "SELECT has_column_privilege(:role, 'lab_operations', "
+                            ":column, :priv)"
+                        ),
+                        {"role": role, "column": column, "priv": privilege},
+                    ).scalar()
+                )
+    return result
+
+
+def _claim_ownership_full_snapshot(conn) -> dict[str, object]:
+    return {
+        "columns": _claim_ownership_column_snapshot(conn),
+        "grants": _claim_ownership_grant_snapshot(conn),
+    }
+
+
+def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+    """0058 <-> 0059 round trip: both structural claim-ownership columns and
+    the explicit grant posture are added and removed cleanly across repeated
+    cycles, mirroring the 0057/0058 round-trip test's shape."""
+    cfg = _make_config()
+    url = _migration_url()
+
+    head = _head_revision(cfg)
+    assert head == HEAD_REVISION, (
+        f"expected repo head to be {HEAD_REVISION!r}, got {head!r} — a "
+        "migration was added without updating this test's fixed anchor "
+        "revisions"
+    )
+
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        baseline = _claim_ownership_full_snapshot(conn)
+        for column in CLAIM_OWNERSHIP_COLUMNS:
+            assert baseline["columns"][column] is not None
+            assert baseline["columns"][column]["nullable"] == "YES", (
+                f"{column} must be nullable — no backfill, no NOT NULL"
+            )
+            assert baseline["columns"][column]["default"] is None, (
+                f"{column} must have no DDL default"
+            )
+            assert baseline["columns"][column]["length"] == CLAIM_OWNERSHIP_LENGTHS[column]
+        for column in CLAIM_OWNERSHIP_COLUMNS:
+            assert baseline["grants"][(column, "app_user", "SELECT")] is True
+            assert baseline["grants"][(column, "app_user", "INSERT")] is False
+            assert baseline["grants"][(column, "app_user", "UPDATE")] is False
+            assert baseline["grants"][(column, "platform_api", "SELECT")] is True
+            assert baseline["grants"][(column, "platform_api", "INSERT")] is False
+            assert baseline["grants"][(column, "platform_api", "UPDATE")] is False
+            assert baseline["grants"][(column, "academy_lab_worker", "SELECT")] is True
+            assert baseline["grants"][(column, "academy_lab_worker", "INSERT")] is True
+            assert baseline["grants"][(column, "academy_lab_worker", "UPDATE")] is True
+
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0059)
+            with admin_engine.connect() as conn:
+                dropped = _claim_ownership_column_snapshot(conn)
+                assert dropped["claimed_host"] is None, (
+                    "downgrade must drop claimed_host, not just rename it"
+                )
+                assert dropped["claimed_epoch"] is None, (
+                    "downgrade must drop claimed_epoch, not just rename it"
+                )
+            command.upgrade(cfg, TARGET_REVISION_0059)
+            command.downgrade(cfg, DOWN_REVISION_0059)
+            with admin_engine.connect() as conn:
+                dropped_again = _claim_ownership_column_snapshot(conn)
+                assert dropped_again["claimed_host"] is None
+                assert dropped_again["claimed_epoch"] is None
+            command.upgrade(cfg, TARGET_REVISION_0059)
+        finally:
+            command.upgrade(cfg, "head")
+
+    with admin_engine.connect() as conn:
+        final = _claim_ownership_full_snapshot(conn)
+        final_version = _current_version(conn)
+
+    assert final == baseline, (
+        "column/grant state after a downgrade/upgrade round trip does not "
+        "match the pre-cycle baseline — 0059 leaks or loses state across cycles"
+    )
+    assert final_version == HEAD_REVISION
+
+
+def test_0059_grant_posture_matches_ownership_boundary(admin_engine):
+    """`app_user`/`platform_api` may read but never write `claimed_host`/
+    `claimed_epoch`; `academy_lab_worker` may read and write both — the same
+    posture 0055 established for every other worker-owned column on this
+    table, and `app_user`'s pre-existing five-column INSERT grant on
+    `lab_operations` (established by 0055, restated unchanged by 0059) must
+    NOT include either new column."""
+    with admin_engine.connect() as conn:
+        assert _current_version(conn) == HEAD_REVISION
+        grants = _claim_ownership_grant_snapshot(conn)
+        insert_columns = _column_insert_grant(conn, "lab_operations")
+
+    assert insert_columns == LAB_OPERATIONS_APP_USER_INSERT_COLUMNS, (
+        "app_user's column-scoped INSERT grant on lab_operations must remain "
+        "exactly 0055's five-column list — claimed_host/claimed_epoch must "
+        "never be added to it"
+    )
+    for column in CLAIM_OWNERSHIP_COLUMNS:
+        for role in ("app_user", "platform_api"):
+            assert (
+                grants[(column, role, "SELECT")] is True
+            ), f"{role} should be able to SELECT {column}"
+            assert (
+                grants[(column, role, "INSERT")] is False
+            ), f"{role} must not INSERT {column}"
+            assert (
+                grants[(column, role, "UPDATE")] is False
+            ), f"{role} must not UPDATE {column}"
+        assert grants[(column, "academy_lab_worker", "SELECT")] is True
+        assert grants[(column, "academy_lab_worker", "UPDATE")] is True
