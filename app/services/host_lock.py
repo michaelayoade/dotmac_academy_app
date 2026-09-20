@@ -41,11 +41,43 @@ from contextlib import contextmanager
 
 from app.config import settings
 
-__all__ = ["HostLockUnavailable", "host_lock", "lock_path"]
+__all__ = [
+    "HostLockUnavailable",
+    "host_lock",
+    "lock_path",
+    "worker_lock_path",
+    "worker_singleton_lock",
+]
 
 
 class HostLockUnavailable(RuntimeError):
     """Raised when the host containerlab lock is already held by another process."""
+
+
+def _acquire_exclusive_nonblocking(path: str, label: str, *, unavailable_message: str) -> int:
+    """Open ``path``, take a non-blocking exclusive ``flock`` on it, and record the holder.
+
+    Shared primitive behind both :func:`host_lock` (per-operation, released at
+    the end of each containerlab call) and :func:`worker_singleton_lock`
+    (held for a whole worker process's lifetime) — the acquire/record/failure
+    behavior is identical between the two; only how long the caller holds the
+    resulting fd differs. Raises :class:`HostLockUnavailable` (closing the fd
+    first) if another process already holds the lock; otherwise returns the
+    open, locked fd for the caller to hold and eventually unlock/close.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(fd)
+        if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+            raise
+        raise HostLockUnavailable(unavailable_message) from exc
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()} {label}\n".encode())
+    os.fsync(fd)
+    return fd
 
 
 def lock_path(directory: str | os.PathLike[str] | None = None) -> str:
@@ -100,28 +132,80 @@ def host_lock(
     ``settings.lab_workdir``.
     """
     path = lock_path(directory)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    fd = _acquire_exclusive_nonblocking(
+        path,
+        label,
+        unavailable_message=(
+            f"containerlab host lock {path} is already held — "
+            f"{_holder_description(path)}; refusing to run {label!r} "
+            "concurrently with another containerlab operation on this host"
+        ),
+    )
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
-                raise
-            raise HostLockUnavailable(
-                f"containerlab host lock {path} is already held — "
-                f"{_holder_description(path)}; refusing to run {label!r} "
-                "concurrently with another containerlab operation on this host"
-            ) from exc
-        os.ftruncate(fd, 0)
-        os.write(fd, f"{os.getpid()} {label}\n".encode())
-        os.fsync(fd)
-        try:
-            yield
-        finally:
-            # Released on normal exit AND on the holder crashing — a killed
-            # process has this fd closed by the kernel, which drops the
-            # fcntl lock automatically. No special crash handling needed.
-            fcntl.flock(fd, fcntl.LOCK_UN)
+        yield
     finally:
+        # Released on normal exit AND on the holder crashing — a killed
+        # process has this fd closed by the kernel, which drops the
+        # fcntl lock automatically. No special crash handling needed.
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def worker_lock_path(directory: str | os.PathLike[str] | None = None) -> str:
+    """Where the worker's whole-process-lifetime singleton lock file lives.
+
+    Deliberately a DIFFERENT file from :func:`lock_path`'s per-operation
+    containerlab lock: that lock is acquired and released once per
+    containerlab call by both the continuous worker and the 1-minute
+    reconciler, and must keep contending on a shared file between the two.
+    This lock is acquired exactly once, at worker startup, and held for the
+    whole process's lifetime — merging it onto the same file would make the
+    reconciler (and every single containerlab call the worker itself makes)
+    contend against the worker's own long-lived hold of it. Defaults to
+    ``settings.lab_workdir`` for the same reason :func:`lock_path` does.
+    """
+    base = directory if directory is not None else settings.lab_workdir
+    return os.path.join(base, ".academy-lab-worker.lock")
+
+
+@contextmanager
+def worker_singleton_lock(
+    label: str = "academy-lab-worker",
+    *,
+    directory: str | os.PathLike[str] | None = None,
+) -> Iterator[None]:
+    """Hold an exclusive, whole-process-lifetime lock for the lab worker.
+
+    Unlike :func:`host_lock` (acquired and released per containerlab call),
+    this is acquired ONCE at worker startup — before the worker opens any
+    database session or does any reclaim/drain work — and held for the
+    worker's entire polling loop. Its purpose is to make it impossible for
+    two worker processes (a manual invocation racing the systemd-managed
+    worker, or two systemd instances somehow both starting) to run
+    concurrently against the same lab host at all, which the per-operation
+    ``host_lock`` alone does not guarantee between polling iterations.
+
+    The reconciler (``_lab_reconcile``) must NOT acquire this lock — it
+    continues to contend only on the shorter-lived, per-operation
+    :func:`host_lock`, unchanged.
+
+    Non-blocking, like :func:`host_lock`: raises :class:`HostLockUnavailable`
+    immediately if another process already holds it, rather than blocking
+    worker startup. Never unlinks the lock file (see :func:`host_lock`'s
+    docstring for why: unlinking would open a stale-inode race).
+    """
+    path = worker_lock_path(directory)
+    fd = _acquire_exclusive_nonblocking(
+        path,
+        label,
+        unavailable_message=(
+            f"worker singleton lock {path} is already held — "
+            f"{_holder_description(path)}; another {label!r} process appears "
+            "to already be running on this host"
+        ),
+    )
+    try:
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)

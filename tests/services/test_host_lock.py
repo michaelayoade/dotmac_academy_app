@@ -24,8 +24,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services import host_lock as host_lock_module
-from app.services.host_lock import HostLockUnavailable
+from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
 from app.services.labengine.containerlab import ContainerlabEngine
+
+
+def _fake_popen(returncode: int = 0, stdout: str = "", stderr: str = ""):
+    proc = MagicMock()
+    proc.pid = 4321
+    proc.communicate.return_value = (stdout, stderr)
+    proc.returncode = returncode
+    return proc
 
 
 def _hold_manually(path: str) -> int:
@@ -127,12 +135,12 @@ def test_worker_and_reconciler_engines_contend_on_the_same_lock_file(tmp_path):
     path = host_lock_module.lock_path(directory=str(tmp_path))
     holder_fd = _hold_manually(path)
     try:
-        with patch("subprocess.run") as run:
+        with patch("subprocess.Popen") as popen:
             with pytest.raises(HostLockUnavailable):
                 worker_engine.status("i")
             with pytest.raises(HostLockUnavailable):
                 reconciler_engine.status("i")
-            run.assert_not_called()
+            popen.assert_not_called()
     finally:
         fcntl.flock(holder_fd, fcntl.LOCK_UN)
         os.close(holder_fd)
@@ -140,8 +148,8 @@ def test_worker_and_reconciler_engines_contend_on_the_same_lock_file(tmp_path):
     # Once released, both engines succeed against the same file — proving the
     # contention above was one shared lock, not one lock each that happened
     # to both be unheld.
-    with patch("subprocess.run") as run:
-        run.return_value = MagicMock(stdout="{}", stderr="", returncode=0)
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout="{}")
         assert worker_engine.status("i") == "absent"
         assert reconciler_engine.status("i") == "absent"
 
@@ -151,14 +159,82 @@ def test_contended_deploy_raises_without_starting_a_subprocess(tmp_path):
     path = host_lock_module.lock_path(directory=str(tmp_path))
     holder_fd = _hold_manually(path)
     try:
-        with patch("subprocess.run") as run:
+        with patch("subprocess.Popen") as popen:
             with pytest.raises(HostLockUnavailable):
                 eng.deploy("name: x", "i")
-            run.assert_not_called()
+            popen.assert_not_called()
     finally:
         fcntl.flock(holder_fd, fcntl.LOCK_UN)
         os.close(holder_fd)
     assert not (tmp_path / "i").exists()
+
+
+def test_worker_lock_path_and_operation_lock_path_are_different_files(tmp_path):
+    """The lifetime worker lock and the per-operation containerlab lock must
+    never collide on the same file — one is held for a whole process's
+    lifetime, the other per containerlab call.
+    """
+    op_path = host_lock_module.lock_path(directory=str(tmp_path))
+    worker_path = host_lock_module.worker_lock_path(directory=str(tmp_path))
+    assert op_path != worker_path
+
+
+def test_second_worker_singleton_lock_acquisition_raises(tmp_path):
+    path = host_lock_module.worker_lock_path(directory=str(tmp_path))
+    holder_fd = _hold_manually(path)
+    os.write(holder_fd, f"{os.getpid()} academy-lab-worker\n".encode())
+    try:
+        with pytest.raises(HostLockUnavailable):
+            with worker_singleton_lock(directory=str(tmp_path)):
+                pass
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+
+def test_worker_singleton_lock_is_released_when_the_holding_process_is_killed(tmp_path):
+    """Same crash-release property as the per-operation lock — proven
+    separately here since this is a distinct lock file/context manager.
+    """
+    path = host_lock_module.worker_lock_path(directory=str(tmp_path))
+    script = (
+        "import fcntl, os, time\n"
+        f"fd = os.open({str(path)!r}, os.O_RDWR | os.O_CREAT, 0o644)\n"
+        "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "os.write(fd, b'held by crash-test child\\n')\n"
+        "time.sleep(60)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script])  # noqa: S603
+    try:
+        deadline = time.monotonic() + 10
+        contended = False
+        while time.monotonic() < deadline:
+            try:
+                with worker_singleton_lock(directory=str(tmp_path)):
+                    pass
+            except HostLockUnavailable:
+                contended = True
+                break
+            time.sleep(0.05)
+        assert contended, "child process never actually took the worker lock"
+
+        proc.kill()
+        proc.wait(timeout=10)
+
+        deadline = time.monotonic() + 10
+        acquired = False
+        while time.monotonic() < deadline:
+            try:
+                with worker_singleton_lock(directory=str(tmp_path)):
+                    acquired = True
+                break
+            except HostLockUnavailable:
+                time.sleep(0.05)
+        assert acquired, "worker lock was not released after its holder was killed"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
 
 
 def test_reconcile_runtime_propagates_contention_before_touching_the_database():

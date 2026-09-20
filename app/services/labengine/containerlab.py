@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 
 import yaml
@@ -16,6 +17,96 @@ _INSPECT_TIMEOUT_SECONDS = 60
 _DEPLOY_TIMEOUT_SECONDS = 900
 _DESTROY_TIMEOUT_SECONDS = 420
 _CHECK_COMMAND_TIMEOUT_SECONDS = 480
+
+# How long to wait, after SIGTERM-ing an abandoned command's process group,
+# before escalating to SIGKILL. Short on purpose: this only runs once a
+# command has already blown its own (much longer) timeout or the call was
+# otherwise cancelled, so there is no remaining budget to wait politely.
+_GROUP_KILL_GRACE_SECONDS = 5
+
+
+def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
+    """Best-effort teardown of ``proc`` and every process it spawned.
+
+    Every external command this module runs is started with
+    ``start_new_session=True`` (see :func:`_run_contained`), which makes
+    ``proc.pid`` the process-group leader's pid too — so signalling the
+    *group* via :func:`os.killpg` reaches children the direct child itself
+    spawned (e.g. containerlab's own worker subprocesses), not just the
+    directly-spawned process. A plain ``proc.kill()`` would only ever reach
+    the direct child and would leak any grandchildren that outlive it.
+
+    SIGTERM first, then a bounded grace period, then SIGKILL if the group is
+    still alive — the same escalation shape used everywhere else in this
+    codebase for "ask nicely, then don't". ``ProcessLookupError`` at either
+    signalling step means the group is already gone; that is success, not a
+    failure to swallow silently into the caller's real exception.
+
+    Caveat that cannot be verified from this repository: every command here
+    is actually invoked as ``sudo -n containerlab ...`` (see ``_CLAB``, and
+    ``docker exec``/``ssh`` for the non-containerlab call sites). Whether a
+    signal delivered to the ``sudo``-spawned process group actually reaches
+    containerlab's own descendants depends on the real lab host's sudoers
+    and PAM/session configuration (e.g. whether sudo retains or drops the
+    session, and whether it forwards signals to the command it execs). This
+    module tests the process-group mechanics themselves against real,
+    non-sudo subprocesses; it cannot prove signal propagation through the
+    real host's ``sudo -n containerlab`` invocation from a test running here.
+    That must be manually verified on the actual lab host as part of this
+    rollout.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    else:
+        try:
+            proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        proc.wait()
+    except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
+        pass
+
+
+def _run_contained(
+    cmd: list[str] | tuple[str, ...], *, timeout: float
+) -> "subprocess.CompletedProcess[str]":
+    """Run ``cmd`` in its own process group, guaranteeing group teardown.
+
+    Replaces a bare ``subprocess.run(...)`` at every containerlab/docker/ssh
+    call site in this module. The returned value is shaped exactly like
+    ``subprocess.run``'s ``CompletedProcess`` — every call site's existing
+    ``.returncode``/``.stdout``/``.stderr`` handling, JSON parsing, and
+    ``RuntimeError`` messages continue to work unchanged.
+
+    On a timeout, or on any other exception (including cancellation such as
+    ``KeyboardInterrupt``) reaching this function while the process is still
+    running, the whole process group is torn down (see
+    :func:`_terminate_process_group`) before the original exception is
+    re-raised unchanged — a ``subprocess.TimeoutExpired`` stays a
+    ``TimeoutExpired``, so existing callers' exception-handling contracts do
+    not change.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except BaseException:
+        _terminate_process_group(proc)
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def _requires_kvm(topology_text: str) -> bool:
@@ -67,10 +158,8 @@ class ContainerlabEngine(LabEngine):
         return os.path.join(self.workdir, instance_name, "topo.clab.yml")
 
     def _inspect_all(self) -> object:
-        result = subprocess.run(
+        result = _run_contained(
             [*_CLAB, "inspect", "--all", "--format", "json"],
-            capture_output=True,
-            text=True,
             timeout=_INSPECT_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
@@ -170,10 +259,8 @@ class ContainerlabEngine(LabEngine):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(topology_text)
-        r = subprocess.run(
+        r = _run_contained(
             [*_CLAB, "deploy", "-t", path, "--format", "json"],
-            capture_output=True,
-            text=True,
             timeout=_DEPLOY_TIMEOUT_SECONDS,
         )
         if r.returncode != 0:
@@ -225,12 +312,7 @@ class ContainerlabEngine(LabEngine):
             f"{user}@{ip}",
             command,
         ]
-        r = subprocess.run(
-            ssh,
-            capture_output=True,
-            text=True,
-            timeout=_CHECK_COMMAND_TIMEOUT_SECONDS,
-        )
+        r = _run_contained(ssh, timeout=_CHECK_COMMAND_TIMEOUT_SECONDS)
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)
 
     def ssh_exec(
@@ -270,10 +352,8 @@ class ContainerlabEngine(LabEngine):
                     f"destroy refused: deployed lab {instance_name!r} was inspected at "
                     f"{discovered_path!r}, not the expected {path!r}"
                 )
-        r = subprocess.run(
+        r = _run_contained(
             [*_CLAB, "destroy", "-t", path, "--cleanup"],
-            capture_output=True,
-            text=True,
             timeout=_DESTROY_TIMEOUT_SECONDS,
         )
         if r.returncode != 0:
@@ -297,10 +377,8 @@ class ContainerlabEngine(LabEngine):
     def _exec_unlocked(self, handle: LabHandle, node: str, command: list) -> ExecResult:
         """Unlocked — see :meth:`_inspect_lab_paths_unlocked`."""
         cname = handle.nodes[node]
-        r = subprocess.run(
+        r = _run_contained(
             ["docker", "exec", cname, *command],
-            capture_output=True,
-            text=True,
             timeout=_CHECK_COMMAND_TIMEOUT_SECONDS,
         )
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)

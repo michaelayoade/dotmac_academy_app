@@ -125,3 +125,32 @@ def test_lab_reconcile_has_a_periodic_timer():
     assert "OnUnitActiveSec=1min" in timer
     assert "Unit=academy-lab-reconcile.service" in timer
     assert "WantedBy=timers.target" in timer
+
+
+def test_only_the_worker_acquires_the_lifetime_singleton_lock():
+    """worker_singleton_lock is a whole-process-lifetime lock; the reconciler
+    must keep contending only on the shorter-lived per-operation host_lock,
+    never on this one — merging the two would make every 1-minute reconcile
+    pass contend against the worker's own permanent hold of it.
+    """
+    source = (ROOT / "app/cli.py").read_text()
+    tree = ast.parse(source)
+    functions = {}
+    bodies = {}
+    for name in ("_lab_worker", "_lab_reconcile"):
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        functions[name] = function
+        bodies[name] = ast.get_source_segment(source, function) or ""
+    assert "worker_singleton_lock" in bodies["_lab_worker"]
+    assert "worker_singleton_lock" not in bodies["_lab_reconcile"]
+
+
+def test_lab_worker_systemd_unit_contains_process_containment_directives():
+    unit = (ROOT / "deploy/academy-lab-worker.service").read_text()
+    assert "KillMode=control-group" in unit
+    assert "TimeoutStopSec=30s" in unit
+    assert "SendSIGKILL=yes" in unit

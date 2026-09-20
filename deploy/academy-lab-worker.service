@@ -14,6 +14,13 @@ Environment=LAB_HOST_ROLE=lab
 ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli lab-worker
 Restart=always
 RestartSec=5
+# Contain the whole cgroup on stop/restart (including any containerlab
+# descendants sudo spawned), give it a bounded grace period to exit cleanly,
+# and guarantee a hard kill if it doesn't — the systemd-level backstop to the
+# in-process process-group teardown in app/services/labengine/containerlab.py.
+KillMode=control-group
+TimeoutStopSec=30s
+SendSIGKILL=yes
 
 [Install]
 WantedBy=multi-user.target

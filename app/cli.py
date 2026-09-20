@@ -861,6 +861,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
 
     from app.config import settings, validate_settings
     from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
     from app.services.labengine.containerlab import ContainerlabEngine
 
     if settings.lab_host_role.lower() != "lab":
@@ -871,17 +872,26 @@ def _lab_worker(args: argparse.Namespace) -> None:
     if errors:
         raise SystemExit("; ".join(errors))
     engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
-    print("lab-worker started; draining durable operations every 5s")
-    while True:
-        with lab_jobs.lab_worker_session() as db:
-            repaired = lab_operations.reconcile_stuck(db)
-            db.commit()
-            n = lab_jobs.drain_once(db, engine)
-        if repaired:
-            print(f"reconciled {repaired} lab operation(s)")
-        if n:
-            print(f"provisioned {n} lab(s)")
-        time.sleep(5)
+    # Held for this whole process's lifetime (acquired before any database
+    # session or reclaim/drain work), not per-iteration like host_lock —
+    # see worker_singleton_lock's docstring. A second worker process racing
+    # this one (manual invocation, or two systemd instances) fails fast here
+    # instead of both later contending on every containerlab call.
+    try:
+        with worker_singleton_lock():
+            print("lab-worker started; draining durable operations every 5s")
+            while True:
+                with lab_jobs.lab_worker_session() as db:
+                    repaired = lab_operations.reconcile_stuck(db)
+                    db.commit()
+                    n = lab_jobs.drain_once(db, engine)
+                if repaired:
+                    print(f"reconciled {repaired} lab operation(s)")
+                if n:
+                    print(f"provisioned {n} lab(s)")
+                time.sleep(5)
+    except HostLockUnavailable as exc:
+        raise SystemExit(f"lab-worker: {exc}") from exc
 
 
 def _reap_labs(args: argparse.Namespace) -> None:
