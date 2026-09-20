@@ -395,13 +395,18 @@ class ContainerlabEngine(LabEngine):
         except json.JSONDecodeError as exc:
             raise RuntimeError("inspect returned invalid JSON") from exc
 
-    def _inspect_lab_paths_unlocked(self) -> dict[str, str]:
-        """Every containerlab-reported lab name -> its real topology path.
+    def _inspect_lab_paths_unlocked(self) -> dict[str, set[str]]:
+        """Every containerlab-reported lab name -> the set of ALL distinct
+        real topology paths reported for it (never just the last one seen —
+        see the module's Finding-3-fix note in ``_inventory_unlocked``/
+        ``_destroy_unlocked`` for why a single mutable "last path" variable
+        let an unowned same-named collision silently defeat an ownership
+        check that only compared the final value).
 
         Unfiltered by design: a caller that already knows (by row identity)
         which specific instance it means to act on — e.g. ``_destroy_unlocked``
         below, recovering the real path for a lab whose expected topology
-        file went missing — needs whatever path containerlab actually
+        file went missing — needs whatever path(s) containerlab actually
         reports, not an ownership judgement about it. :meth:`inventory` is
         the ownership-filtered view built on top of this for callers (like
         ``reconcile_runtime``) that must decide *which* names are Academy's
@@ -416,18 +421,18 @@ class ContainerlabEngine(LabEngine):
         """
         self._require_lab_host()
         raw = self._inspect_all()
-        found: dict[str, str] = {}
+        found: dict[str, set[str]] = {}
 
         def _walk(value: object, hinted_name: str | None = None) -> None:
             if isinstance(value, dict):
                 lab_name = value.get("lab_name")
                 if not isinstance(lab_name, str) or not lab_name:
                     lab_name = hinted_name
-                path = value.get("absLabPath") or value.get("labPath")
                 if isinstance(lab_name, str) and lab_name:
-                    found.setdefault(lab_name, path if isinstance(path, str) else "")
+                    group = found.setdefault(lab_name, set())
+                    path = value.get("absLabPath") or value.get("labPath")
                     if isinstance(path, str) and path:
-                        found[lab_name] = path
+                        group.add(path)
                 for key, child in value.items():
                     child_hint = key if isinstance(child, list) else lab_name
                     _walk(child, child_hint)
@@ -451,12 +456,21 @@ class ContainerlabEngine(LabEngine):
         carry partial path info for labs this engine has no reason to trust
         anyway. This is the entrypoint used to decide *which* runtime names
         are eligible for orphan cleanup (``reconcile_runtime``); it is
-        deliberately narrower than :meth:`_inspect_lab_paths_unlocked`.
+        deliberately narrower than :meth:`_inspect_lab_paths_unlocked`. A name
+        is retained only if this engine's own expected path is ONE OF the
+        paths reported for it — never based on comparing against a single
+        arbitrary "last seen" path, which a same-named unowned collision
+        could otherwise control by sheer walk order.
 
         Unlocked — see :meth:`_inspect_lab_paths_unlocked`.
         """
         found = self._inspect_lab_paths_unlocked()
-        return {name: path for name, path in found.items() if path == self._topo_path(name)}
+        result: dict[str, str] = {}
+        for name, paths in found.items():
+            expected = self._topo_path(name)
+            if expected in paths:
+                result[name] = expected
+        return result
 
     def inventory(self) -> dict[str, str]:
         self._require_lab_host()
@@ -570,13 +584,13 @@ class ContainerlabEngine(LabEngine):
             # discovered path must match the one this engine would itself
             # have written before it's trusted — anything else is refused
             # rather than silently destroyed at an unverified location.
-            discovered_path = self._inspect_lab_paths_unlocked().get(instance_name)
-            if discovered_path is None:
+            discovered_paths = self._inspect_lab_paths_unlocked().get(instance_name)
+            if discovered_paths is None:
                 return
-            if discovered_path != path:
+            if path not in discovered_paths:
                 raise RuntimeError(
-                    f"destroy refused: deployed lab {instance_name!r} was inspected at "
-                    f"{discovered_path!r}, not the expected {path!r}"
+                    f"destroy refused: deployed lab {instance_name!r} was inspected "
+                    f"at {sorted(discovered_paths)!r}, not the expected {path!r}"
                 )
         r = _run_contained(
             [*_CLAB, "destroy", "-t", path, "--cleanup"],

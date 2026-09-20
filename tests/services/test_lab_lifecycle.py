@@ -999,7 +999,15 @@ def test_provision_if_absent_resync_sets_unknown_when_the_fresh_inspection_disag
     """A genuinely unexpected disagreement (the fresh inspection no longer
     finds the instance running) must not assert a lifecycle state with no
     real console data behind it — presence is conservatively set to
-    "unknown" and status/error are left untouched."""
+    "unknown". ``status``/``error`` are restored to the caller's
+    ``preserved_status``/``preserved_error`` (the TRUE pre-admission
+    values) rather than left at the earlier, already-committed capacity-
+    admission transaction's transient "provisioning"/"resetting"
+    reservation placeholder: no ordinary settle path ever produces that
+    placeholder on its own, and leaving it in place would let
+    ``reconcile_stuck``'s stuck-row sweep later force this row through an
+    unconditional, potentially destructive destroy+redeploy cycle against a
+    runtime this conditional operation had correctly declined to touch."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
                        instance_name="dal-cond-deploy-resync-miss", seed={"o": 5},
@@ -1017,8 +1025,48 @@ def test_provision_if_absent_resync_sets_unknown_when_the_fresh_inspection_disag
         preserved_status="active", preserved_error=None,
     )
     admin_session.flush()
-    assert out.status == "provisioning"  # untouched — no grounds to change it
+    assert out.status == "active"  # restored to the true pre-admission status
+    assert out.error is None
     assert out.consoles == {}
+    assert out.runtime_presence == "unknown"
+    admin_session.rollback()
+
+
+def test_provision_if_absent_resync_never_tears_down_consoles_when_handle_is_none(
+    admin_session, tenant_a, monkeypatch
+):
+    """``_rebuild_consoles_from_live_inspection`` must not call
+    ``stop_consoles`` on the ``handle is None`` outcome either — not just
+    the raise case. The runtime is genuinely present on this code path (that
+    is why a resync was attempted), so if a fresh inspection cannot confirm
+    a handle, we have no positive proof either way and must not destroy an
+    existing, possibly still-working console with nothing to rebuild it.
+    Pre-existing ``consoles``/``status``/``error`` are left completely
+    unchanged; only ``runtime_presence`` moves to "unknown"."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    stale_consoles = {"stale": {"kind": "linux"}}
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-cond-deploy-handle-none", seed={"o": 5},
+                       status="provisioning", consoles=dict(stale_consoles))
+    inst.runtime_presence = "unknown"
+    inst.error = "stale error text"
+    admin_session.add(inst)
+    admin_session.flush()
+
+    stopped = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stopped.append(i.id))
+
+    engine = MagicMock()
+    engine.deploy_if_absent.return_value = None  # precondition mismatch: genuinely present
+    engine.inspect_running.return_value = None  # follow-up inspection also can't confirm
+
+    out = lab_lifecycle.provision_if_absent(
+        admin_session, inst, engine, lt,
+        preserved_status="active", preserved_error=None,
+    )
+    admin_session.flush()
+    assert stopped == []  # stop_consoles never called
+    assert out.consoles == stale_consoles  # completely unchanged
     assert out.runtime_presence == "unknown"
     admin_session.rollback()
 

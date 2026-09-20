@@ -415,6 +415,72 @@ def test_inventory_excludes_a_lab_whose_path_is_outside_this_engines_workdir(tmp
         assert eng.inventory() == {}
 
 
+def test_inventory_includes_the_owned_path_despite_a_same_named_collision_at_an_unowned_path(
+    tmp_path,
+):
+    """Regression test for the Finding-3 last-write-wins bug: ``inventory()``
+    grouped discovered paths by a single mutable "last path" variable, so an
+    unowned same-named record walked AFTER the legitimately-owned one would
+    silently overwrite it, excluding a genuinely deployed, owned lab from the
+    result entirely. The fix groups ALL distinct paths per ``lab_name`` into
+    a set and checks membership, so walk order can no longer matter.
+    """
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    owned_path = eng._topo_path("i")
+    owned_record = f'{{"lab_name":"i","absLabPath":"{owned_path}"}}'
+    unowned_record = '{"lab_name":"i","absLabPath":"/some/other/operators/i.clab.yml"}'
+
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout=f"[{owned_record},{unowned_record}]")
+        assert eng.inventory() == {"i": owned_path}
+
+    # Reversed order — the original bug's exact manifestation depended on
+    # which record was walked LAST.
+    with patch("subprocess.Popen") as popen:
+        popen.return_value = _fake_popen(stdout=f"[{unowned_record},{owned_record}]")
+        assert eng.inventory() == {"i": owned_path}
+
+
+def test_destroy_uses_the_owned_path_despite_a_same_named_collision_at_an_unowned_path(
+    tmp_path,
+):
+    """Mirrors the inventory regression test above for ``destroy()``: a
+    same-named unowned collision walked LAST must not make destroy wrongly
+    refuse a genuinely owned, destroyable lab.
+    """
+    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    owned_path = eng._topo_path("i")
+    # No topology file on disk (mirrors ``test_destroy_uses_the_inspected_
+    # path_when_it_matches_the_expected_topology``'s own setup): this forces
+    # ``_destroy_unlocked`` down the "confirm via inspection" branch rather
+    # than trusting a locally-present file.
+    owned_record = f'{{"lab_name":"i","absLabPath":"{owned_path}"}}'
+    unowned_record = '{"lab_name":"i","absLabPath":"/some/other/operators/i.clab.yml"}'
+
+    with patch("subprocess.Popen") as popen:
+        popen.side_effect = [
+            _fake_popen(stdout=f"[{owned_record},{unowned_record}]"),
+            _fake_popen(stdout=""),
+        ]
+        eng.destroy("i")
+    assert popen.call_count == 2
+    assert popen.call_args_list[1].args[0] == [
+        "sudo", "-n", "containerlab", "destroy", "-t", owned_path, "--cleanup",
+    ]
+
+    # Reversed order.
+    with patch("subprocess.Popen") as popen:
+        popen.side_effect = [
+            _fake_popen(stdout=f"[{unowned_record},{owned_record}]"),
+            _fake_popen(stdout=""),
+        ]
+        eng.destroy("i")
+    assert popen.call_count == 2
+    assert popen.call_args_list[1].args[0] == [
+        "sudo", "-n", "containerlab", "destroy", "-t", owned_path, "--cleanup",
+    ]
+
+
 def test_destroy_does_not_hide_an_inspection_failure(tmp_path):
     eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
     with patch("subprocess.Popen") as popen:

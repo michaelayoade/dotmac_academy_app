@@ -108,7 +108,15 @@ any such row exists, the downgrade raises and leaves the schema/constraint/
 columns untouched — an operator must first let those rows settle (or fail
 them out) before downgrading is safe. Only when none exist does the downgrade
 proceed to drop the CHECK constraint and both columns, then restate the
-grant posture.
+grant posture. `downgrade()` resets its `lock_timeout` back to `DEFAULT`
+before returning (this repo's `alembic/env.py` runs an entire multi-revision
+upgrade/downgrade inside one shared transaction, so a `SET LOCAL` left in
+place would otherwise silently leak into every later migration step in the
+same invocation); it also refuses up front under `alembic downgrade --sql`
+(offline mode), since its refusal check must read live row state under a
+real connection. `upgrade()` takes the same bounded, reset `lock_timeout`
+for consistency and to avoid an unbounded wait against a busy table during
+rollout.
 
 Revision ID: 0060_lab_conditional_ops
 Revises: 0059_lab_claim_owner
@@ -118,7 +126,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from alembic import op
+from alembic import context, op
 
 revision = "0060_lab_conditional_ops"
 down_revision = "0059_lab_claim_owner"
@@ -156,13 +164,26 @@ def _restate_grants() -> None:
 
 
 def upgrade() -> None:
+    # Bounded so a concurrent, ordinary claim/settle transaction cannot
+    # hang this upgrade indefinitely — mirrors downgrade()'s own
+    # reasoning; reset afterward so it does not leak into whatever
+    # migration runs next in the same alembic invocation.
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(f"ALTER TABLE {TABLE} ADD COLUMN origin VARCHAR(32);")
     op.execute(f"ALTER TABLE {TABLE} ADD COLUMN runtime_precondition VARCHAR(16);")
     op.execute(_CHECK_SQL)
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
     _restate_grants()
 
 
 def downgrade() -> None:
+    if context.is_offline_mode():
+        raise RuntimeError(
+            f"refusing to generate offline SQL for {revision}'s downgrade: it "
+            "must read live row state under a real database connection to "
+            "decide whether any queued/claimed conditional operation exists; "
+            "run this downgrade online instead."
+        )
     # Bounded so a concurrent, ordinary claim/settle transaction contending
     # for this same row-set cannot hang this downgrade indefinitely — mirrors
     # reclaim_previous_epoch's own `SET LOCAL lock_timeout` reasoning in
@@ -199,4 +220,5 @@ def downgrade() -> None:
     op.drop_constraint(CHECK_CONSTRAINT, TABLE, type_="check")
     op.execute(f"ALTER TABLE {TABLE} DROP COLUMN runtime_precondition;")
     op.execute(f"ALTER TABLE {TABLE} DROP COLUMN origin;")
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
     _restate_grants()
