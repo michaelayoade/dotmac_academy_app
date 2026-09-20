@@ -751,10 +751,19 @@ def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
     (blocked) until immediately after ``proc`` is bound, so it is delivered
     only once ``communicate()`` has already started — following the existing,
     already-tested cleanup path.
+
+    Deliberately a single non-forking process, not a grandchild tree: the
+    injected signal fires essentially instantly after ``Popen()`` returns,
+    racing against the freshly-exec'd child's own Python startup — on a
+    loaded CI runner there is no guarantee it survives long enough to reach
+    its own ``os.fork()`` and write a grandchild marker before being killed.
+    That race is orthogonal to what this test proves (construction-window
+    signal deferral); whole-group teardown of an already-existing
+    grandchild is already covered, without this timing sensitivity, by
+    ``test_timeout_terminates_an_orphaned_grandchild_too`` and the
+    SIGTERM-ignoring-grandchild tests elsewhere in this file.
     """
-    marker = tmp_path / "markers"
-    marker.mkdir()
-    cmd = _spawn_grandchild_tree(str(marker))
+    cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
 
     real_popen = subprocess.Popen
     created: list[subprocess.Popen] = []
@@ -778,20 +787,12 @@ def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
 
     assert created, "Popen was never actually called"
     proc = created[0]
-    assert (marker / "grandchild.pid").exists(), "grandchild never started"
-    grandchild_pid = int((marker / "grandchild.pid").read_text())
     try:
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and (
-            _pid_alive(proc.pid) or _pid_alive(grandchild_pid)
-        ):
+        while time.monotonic() < deadline and _pid_alive(proc.pid):
             time.sleep(0.05)
         assert not _pid_alive(proc.pid), (
             "child process leaked — SIGTERM during Popen construction was not "
-            "deferred past proc being bound"
-        )
-        assert not _pid_alive(grandchild_pid), (
-            "grandchild leaked — SIGTERM during Popen construction was not "
             "deferred past proc being bound"
         )
     finally:
@@ -883,10 +884,13 @@ def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
     No ``_sigterm_raises_shutdown_requested``-style machinery is needed here:
     Python's own default SIGINT handler already converts a delivered SIGINT
     into ``KeyboardInterrupt`` at the point of delivery.
+
+    Deliberately a single non-forking process, not a grandchild tree — see
+    ``test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child``'s
+    docstring for why a grandchild-tree command races the injected signal
+    against the freshly-exec'd child's own startup time.
     """
-    marker = tmp_path / "markers"
-    marker.mkdir()
-    cmd = _spawn_grandchild_tree(str(marker))
+    cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
 
     real_popen = subprocess.Popen
     created: list[subprocess.Popen] = []
@@ -909,20 +913,12 @@ def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
 
     assert created, "Popen was never actually called"
     proc = created[0]
-    assert (marker / "grandchild.pid").exists(), "grandchild never started"
-    grandchild_pid = int((marker / "grandchild.pid").read_text())
     try:
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and (
-            _pid_alive(proc.pid) or _pid_alive(grandchild_pid)
-        ):
+        while time.monotonic() < deadline and _pid_alive(proc.pid):
             time.sleep(0.05)
         assert not _pid_alive(proc.pid), (
             "child process leaked — SIGINT during Popen construction was not "
-            "deferred past proc being bound"
-        )
-        assert not _pid_alive(grandchild_pid), (
-            "grandchild leaked — SIGINT during Popen construction was not "
             "deferred past proc being bound"
         )
     finally:

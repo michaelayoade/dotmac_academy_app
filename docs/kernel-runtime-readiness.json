@@ -13,7 +13,7 @@
       "id": "no-module-scope-kernel-db-import-in-cli",
       "statement": "app/cli.py imports dotmac_kernel.db only inside a function body, never at module scope, so loading it does not eagerly claim the reference assembly's runtime.",
       "satisfied": false,
-      "source_reference": "app/cli.py:27"
+      "source_reference": "app/cli.py:28"
     },
     {
       "id": "no-module-scope-kernel-db-import-in-web-context",
