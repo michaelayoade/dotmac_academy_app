@@ -469,6 +469,92 @@ def test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigte
         proc.wait(timeout=5)
 
 
+def _spawn_grandchild_that_finishes_cleanup_before_exiting(marker_dir: str) -> list[str]:
+    """A command whose direct child dies promptly on SIGTERM (default
+    handling) but whose forked grandchild installs its own SIGTERM handler
+    that does a brief bit of "cleanup" work — well within the grace period —
+    before voluntarily exiting itself. Neither process is ever actually
+    killed by the parent's signals: this is the scenario
+    ``test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigterm``
+    (which uses ``SIG_IGN``, i.e. a grandchild that never voluntarily exits)
+    cannot catch — that test only proves eventual escalation happens, not
+    that premature escalation doesn't cut a graceful shutdown short.
+    """
+    started_marker = os.path.join(marker_dir, "cleanup_started")
+    finished_marker = os.path.join(marker_dir, "cleanup_finished")
+    script = f"""
+import os, signal, sys, time
+
+def _on_sigterm(signum, frame):
+    open({started_marker!r}, "w").write("1")
+    time.sleep(0.5)
+    open({finished_marker!r}, "w").write("1")
+    sys.exit(0)
+
+open({os.path.join(marker_dir, "child.pid")!r}, "w").write(str(os.getpid()))
+pid = os.fork()
+if pid == 0:
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    open({os.path.join(marker_dir, "grandchild.pid")!r}, "w").write(str(os.getpid()))
+    time.sleep(60)
+    sys.exit(0)
+time.sleep(60)
+"""
+    return [sys.executable, "-c", script]
+
+
+def test_a_grandchild_gracefully_finishing_within_the_grace_period_is_not_sigkilled(
+    tmp_path, monkeypatch
+):
+    """The whole-group grace period must be honoured even though the direct
+    child (the process-group leader) exits near-instantly on SIGTERM by
+    default. A grandchild that installs its own SIGTERM handler, does brief
+    cleanup work well within the grace period, and then exits voluntarily
+    must be allowed to finish — it must never be SIGKILLed mid-cleanup just
+    because the direct child's own ``proc.wait()`` already returned.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+
+    killpg_signals: list[int] = []
+    real_killpg = os.killpg
+
+    def _spying_killpg(pgid: int, sig: int) -> None:
+        killpg_signals.append(sig)
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(containerlab.os, "killpg", _spying_killpg)
+
+    cmd = _spawn_grandchild_that_finishes_cleanup_before_exiting(str(marker))
+    with pytest.raises(subprocess.TimeoutExpired):
+        containerlab._run_contained(cmd, timeout=1.0)
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(grandchild_pid):
+            time.sleep(0.05)
+        assert (marker / "cleanup_finished").exists(), (
+            "grandchild's voluntary cleanup was interrupted before it could finish — "
+            "the grace period was not honoured for the whole process group"
+        )
+        assert not _pid_alive(grandchild_pid), "grandchild should have exited voluntarily"
+        assert signal.SIGKILL not in killpg_signals, (
+            "SIGKILL was sent even though the grandchild exited voluntarily "
+            "within the grace period"
+        )
+        assert signal.SIGTERM in killpg_signals
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                real_killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
 def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkeypatch):
     """A non-timeout exception raised mid-communicate (e.g. KeyboardInterrupt
     reaching this call) must still tear down the process group before

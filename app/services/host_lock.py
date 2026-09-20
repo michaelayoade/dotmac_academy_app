@@ -75,6 +75,21 @@ def _acquire_exclusive_nonblocking(
     report a holder that has already changed by the time the flock attempt
     genuinely contends, which would contradict this module's documented
     guarantee that "the refusal names the [current] holder".
+
+    Residual, accepted race (diagnostic-only, not a correctness gap): the
+    winner's holder-metadata write (``ftruncate``/``write``/``fsync`` below)
+    is not atomic with its ``flock()`` acquisition. A contender whose own
+    ``flock()`` attempt fails in the narrow window between the winner's
+    successful ``flock()`` and that metadata write completing will read
+    whatever was previously in the file via :func:`_holder_description` —
+    stale, from an earlier holder, or empty for a fresh file — instead of the
+    current winner's identity. This affects only the precision of the
+    human-facing contention message; actual mutual exclusion is governed
+    entirely by the kernel's atomic ``flock()`` call and is unaffected.
+    Deliberately left undocumented-but-unfixed further than this: closing it
+    (e.g. write-then-atomic-rename, or a second lock guarding the metadata
+    write) would be disproportionate machinery for a rare, low-severity,
+    diagnostic-only edge case.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
@@ -126,7 +141,14 @@ def lock_path(directory: str | os.PathLike[str] | None = None) -> str:
 
 
 def _holder_description(path: str) -> str:
-    """Whatever the lock file says about who holds it, without guessing."""
+    """Whatever the lock file says about who holds it, without guessing.
+
+    Best-effort only: see the residual-race note in
+    :func:`_acquire_exclusive_nonblocking` — a contender reading this file in
+    the narrow window between a winner's ``flock()`` and that winner's
+    metadata write completing can see stale or empty content here rather
+    than the current holder.
+    """
     try:
         with open(path, encoding="utf-8") as fh:
             recorded = fh.read().strip()

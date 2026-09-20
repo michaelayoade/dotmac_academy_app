@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 
 import yaml
 
@@ -23,6 +24,11 @@ _CHECK_COMMAND_TIMEOUT_SECONDS = 480
 # command has already blown its own (much longer) timeout or the call was
 # otherwise cancelled, so there is no remaining budget to wait politely.
 _GROUP_KILL_GRACE_SECONDS = 5
+
+# How often to re-check whether the whole process group has exited while
+# waiting out the grace period above. Short enough that the grace period
+# isn't meaningfully overshot, long enough not to busy-loop.
+_GROUP_LIVENESS_POLL_INTERVAL_SECONDS = 0.1
 
 
 def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
@@ -55,34 +61,59 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     That must be manually verified on the actual lab host as part of this
     rollout.
 
-    The SIGKILL escalation below must never be conditional on whether
-    ``proc.wait(timeout=...)`` itself returned successfully.
-    ``proc.wait()`` only waits for the direct child — the process-group
-    leader — not the whole group. If the direct child dies from SIGTERM
-    within the grace period (the common case, since it is never the one
-    installing a SIGTERM handler here), ``proc.wait()`` returns
-    successfully even though a grandchild the direct child forked may still
-    be alive and ignoring or blocking SIGTERM. An early ``return`` in that
-    case would skip SIGKILL entirely and leak that grandchild forever, since
-    nothing else ever escalates for it. Sending ``SIGKILL`` to a process
-    group whose leader has already exited, but that still has surviving
-    members, remains safe and correct — the pgid stays valid as long as any
-    member is alive. Sending it to an already-fully-empty group just raises
-    ``ProcessLookupError``, handled the same as the SIGTERM step above.
+    The grace period is judged by whole-*group* liveness, never by
+    ``proc.wait(timeout=...)`` alone. ``proc.wait()`` only waits for the
+    direct child — the process-group leader — not the whole group. The
+    direct child is never the one installing a SIGTERM handler here, so it
+    routinely dies from SIGTERM almost immediately; if that alone ended the
+    grace period, a grandchild doing its own graceful shutdown (e.g.
+    containerlab's own cleanup subprocess tearing down network namespaces or
+    bridges) would be cut off after a fraction of a second instead of the
+    full grace period this function promises, risking host state left
+    half-mutated. Group liveness is instead probed directly with
+    ``os.killpg(pid, 0)`` — signal ``0`` delivers nothing but raises
+    ``ProcessLookupError`` only once *every* process sharing that pgid has
+    exited, so it stays true as long as any single member (direct child or
+    any grandchild) is still alive. The loop below polls that probe on a
+    bounded ``time.monotonic()`` deadline set ``_GROUP_KILL_GRACE_SECONDS``
+    in the future, sleeping between polls via a short, bounded
+    ``proc.wait(timeout=...)`` so the direct child's own zombie is reaped
+    along the way without letting its exit end the grace period early —
+    only the group-liveness probe reporting everything gone does that.
+    SIGKILL fires only if the deadline is reached with the probe still
+    showing something alive.
+
+    Sending ``SIGKILL`` to a process group whose leader has already exited,
+    but that still has surviving members, remains safe and correct — the
+    pgid stays valid as long as any member is alive. Sending it to an
+    already-fully-empty group just raises ``ProcessLookupError``, handled
+    the same as the SIGTERM step above.
     """
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     else:
-        try:
-            proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        deadline = time.monotonic() + _GROUP_KILL_GRACE_SECONDS
+        group_gone = False
+        while True:
+            try:
+                os.killpg(proc.pid, 0)
+            except ProcessLookupError:
+                group_gone = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                proc.wait(timeout=min(_GROUP_LIVENESS_POLL_INTERVAL_SECONDS, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+        if not group_gone:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
     try:
         proc.wait()
     except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
