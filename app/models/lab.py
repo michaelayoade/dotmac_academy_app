@@ -142,10 +142,10 @@ class LabOperation(Base, TimestampMixin):
         # (origin, runtime_precondition) tuple could otherwise silently pass.
         CheckConstraint(
             "(origin IS NULL AND runtime_precondition IS NULL) "
-            "OR (kind = 'deploy' AND origin = 'runtime_repair' "
-            "AND runtime_precondition = 'absent') "
-            "OR (kind = 'destroy' AND origin = 'runtime_cleanup' "
-            "AND runtime_precondition = 'present')",
+            "OR (kind = 'deploy' AND origin IS NOT NULL AND origin = 'runtime_repair' "
+            "AND runtime_precondition IS NOT NULL AND runtime_precondition = 'absent') "
+            "OR (kind = 'destroy' AND origin IS NOT NULL AND origin = 'runtime_cleanup' "
+            "AND runtime_precondition IS NOT NULL AND runtime_precondition = 'present')",
             name="ck_lab_operations_conditional_runtime",
         ),
     )

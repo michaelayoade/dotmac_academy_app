@@ -115,10 +115,10 @@ APP_USER_INSERT_COLUMNS = "id, tenant_id, instance_id, kind, requested_by"
 _CHECK_SQL = (
     f"ALTER TABLE {TABLE} ADD CONSTRAINT {CHECK_CONSTRAINT} CHECK ("
     "(origin IS NULL AND runtime_precondition IS NULL) "
-    "OR (kind = 'deploy' AND origin = 'runtime_repair' "
-    "AND runtime_precondition = 'absent') "
-    "OR (kind = 'destroy' AND origin = 'runtime_cleanup' "
-    "AND runtime_precondition = 'present')"
+    "OR (kind = 'deploy' AND origin IS NOT NULL AND origin = 'runtime_repair' "
+    "AND runtime_precondition IS NOT NULL AND runtime_precondition = 'absent') "
+    "OR (kind = 'destroy' AND origin IS NOT NULL AND origin = 'runtime_cleanup' "
+    "AND runtime_precondition IS NOT NULL AND runtime_precondition = 'present')"
     ");"
 )
 
@@ -149,11 +149,21 @@ def downgrade() -> None:
     # app/services/lab_operations.py.
     op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(f"LOCK TABLE {TABLE} IN ACCESS EXCLUSIVE MODE;")
+    # `runtime_precondition IS NOT NULL` alone is sufficient once the CHECK
+    # constraint (fixed to guard both columns with explicit `IS NOT NULL` on
+    # every conditional branch — see the module docstring) is in place: the
+    # CHECK is the sole enforcement point and is not privilege-scoped, so it
+    # applies to every writer including `app_admin`, making a half-null
+    # (origin set, runtime_precondition NULL) row impossible to persist in
+    # the first place. `OR origin IS NOT NULL` is added anyway, defensively,
+    # so this refusal check does not silently depend on the CHECK constraint
+    # never regressing — checking both columns costs nothing here and keeps
+    # the invariant self-evident from this query alone.
     live_conditional = op.get_bind().execute(
         text(
             f"SELECT COUNT(*) FROM {TABLE} "  # noqa: S608
             "WHERE state IN ('queued', 'claimed') "
-            "AND runtime_precondition IS NOT NULL"
+            "AND (runtime_precondition IS NOT NULL OR origin IS NOT NULL)"
         )
     ).scalar()
     if live_conditional:

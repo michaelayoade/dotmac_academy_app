@@ -254,8 +254,10 @@ def test_conditional_runtime_check_accepts_ordinary_and_valid_conditional_rows(
 @pytest.mark.parametrize(
     "kind,origin,runtime_precondition",
     [
-        ("deploy", "runtime_repair", None),  # half-null
-        ("deploy", None, "absent"),  # half-null
+        ("deploy", "runtime_repair", None),  # half-null: origin set, precondition NULL
+        ("deploy", None, "absent"),  # half-null: precondition set, origin NULL
+        ("destroy", "runtime_cleanup", None),  # half-null: origin set, precondition NULL
+        ("destroy", None, "present"),  # half-null: precondition set, origin NULL
         ("deploy", "runtime_cleanup", "present"),  # wrong origin/precondition for deploy
         ("destroy", "runtime_repair", "absent"),  # wrong origin/precondition for destroy
         ("deploy", "bogus_origin", "absent"),  # invalid origin
