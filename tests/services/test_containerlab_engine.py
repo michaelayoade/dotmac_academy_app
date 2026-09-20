@@ -2,11 +2,13 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.cli import _sigterm_raises_shutdown_requested, _WorkerShutdownRequested
 from app.services import lab_operations
 from app.services.labengine import containerlab
 from app.services.labengine.containerlab import ContainerlabEngine
@@ -580,6 +582,63 @@ def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkey
         if _pid_alive(real_proc.pid):
             os.killpg(real_proc.pid, signal.SIGKILL)
         real_proc.wait(timeout=5)
+
+
+def test_real_sigterm_mid_communicate_triggers_group_cleanup(tmp_path, monkeypatch):
+    """A REAL SIGTERM delivered to this process while it is genuinely
+    blocked inside ``_run_contained``'s ``communicate()`` on a real spawned
+    process must interrupt that blocking call via the lab worker's own
+    SIGTERM handler and tear down the whole process group.
+
+    Unlike ``test_cancellation_mid_communicate_follows_the_same_group_cleanup_path``,
+    which simulates the interrupting exception via monkeypatch, this proves
+    real OS signal delivery: a background thread sends a genuine
+    ``os.kill(os.getpid(), signal.SIGTERM)`` at the current process while the
+    main thread is blocked in a real ``communicate()`` call, with
+    ``_sigterm_raises_shutdown_requested`` (the exact context manager
+    ``_lab_worker`` installs for its own process lifetime) active for the
+    duration of the test.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+    cmd = _spawn_grandchild_tree(str(marker))
+
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def _send_sigterm_shortly() -> None:
+        time.sleep(0.3)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    with _sigterm_raises_shutdown_requested():
+        sender = threading.Thread(target=_send_sigterm_shortly, daemon=True)
+        sender.start()
+        try:
+            with pytest.raises(_WorkerShutdownRequested):
+                containerlab._run_contained(cmd, timeout=30)
+        finally:
+            sender.join(timeout=5)
+
+    assert signal.getsignal(signal.SIGTERM) == previous_handler, (
+        "SIGTERM disposition leaked past _sigterm_raises_shutdown_requested"
+    )
+
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (_pid_alive(proc.pid) or _pid_alive(grandchild_pid)):
+            time.sleep(0.05)
+        assert not _pid_alive(proc.pid), "direct child survived a real SIGTERM's teardown"
+        assert not _pid_alive(grandchild_pid), "grandchild survived a real SIGTERM's teardown"
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
 
 
 def test_run_contained_returns_a_completed_process_shaped_result():

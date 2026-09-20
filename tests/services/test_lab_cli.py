@@ -126,3 +126,40 @@ def test_lab_worker_lock_contention_prevents_any_db_session_or_drain_work(
     session_spy.assert_not_called()
     reconcile_spy.assert_not_called()
     drain_spy.assert_not_called()
+
+
+def test_lab_worker_exits_cleanly_and_releases_the_lock_on_shutdown_request(
+    monkeypatch, tmp_path
+):
+    """Simulates "a SIGTERM arrived mid-operation" by having ``drain_once``
+    raise ``_WorkerShutdownRequested`` directly — exactly what the real
+    SIGTERM handler installed by ``_sigterm_raises_shutdown_requested``
+    would raise — without needing a real OS signal for this narrower
+    unit-level test.
+
+    ``_lab_worker`` must exit cleanly: no unhandled exception propagates out
+    of the function, and the singleton lock is actually released afterward,
+    proven by a subsequent acquisition on the same directory succeeding.
+    """
+    _prepare_worker_environment(monkeypatch, tmp_path)
+
+    fake_db = MagicMock()
+
+    @contextmanager
+    def fake_session():
+        yield fake_db
+
+    monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+
+    def fake_drain(db, engine):
+        raise cli._WorkerShutdownRequested()
+
+    monkeypatch.setattr(lab_jobs, "drain_once", fake_drain)
+
+    cli._lab_worker(argparse.Namespace())  # must return normally, not raise
+
+    # The lock was released on shutdown: a fresh acquisition on the same
+    # directory (settings.lab_workdir, patched to tmp_path above) succeeds.
+    with host_lock_module.worker_singleton_lock():
+        pass

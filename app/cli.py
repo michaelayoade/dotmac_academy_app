@@ -19,6 +19,7 @@ such as the migration/superuser URL, e.g.::
 from __future__ import annotations
 
 import argparse
+import signal
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -856,6 +857,53 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
         print(f"re-banded {changed} applicant(s) by percentile (bottom 25% / middle / top 25%).")
 
 
+class _WorkerShutdownRequested(BaseException):
+    """Raised by the lab worker's own SIGTERM handler (see
+    :func:`_sigterm_raises_shutdown_requested`).
+
+    Subclasses ``BaseException``, not ``Exception`` — mirroring
+    ``KeyboardInterrupt``/``SystemExit``'s own convention — for two reasons:
+    it must never be accidentally swallowed by a bare ``except Exception:``
+    anywhere in the call stack (e.g. a containerlab call site's
+    ``RuntimeError`` handling), and it must be caught and re-raised by
+    ``_run_contained``'s existing ``except BaseException:`` cleanup path
+    exactly like it already handles ``KeyboardInterrupt`` today.
+    """
+
+
+@contextmanager
+def _sigterm_raises_shutdown_requested() -> Iterator[None]:
+    """Convert a received SIGTERM into a Python-level exception.
+
+    Python's default SIGTERM disposition terminates the process immediately
+    with no exception raised anywhere — unlike SIGINT, which Python's own
+    default handling turns into ``KeyboardInterrupt``. Without this, a bare
+    ``kill <pid>`` against a manually-launched worker bypasses every cleanup
+    path in this process (the singleton lock's own ``with``-block teardown,
+    ``_run_contained``'s process-group cleanup) because the process simply
+    dies mid-instruction, leaking a detached ``start_new_session=True``
+    subprocess tree that the systemd-managed worker's cgroup-wide
+    ``KillMode=control-group`` backstop never covers for a manual invocation.
+
+    Restores whatever SIGTERM handler was previously installed on exit, for
+    any reason — including when :class:`_WorkerShutdownRequested` itself is
+    the reason for exiting. This matters both for real-world correctness
+    (repeat calls to ``_lab_worker`` in the same process must not stack
+    handlers) and because tests call ``_lab_worker`` in-process: leaving a
+    real SIGTERM handler installed in the pytest process itself would be a
+    hazard for the rest of that run.
+    """
+
+    def _handler(signum: int, frame: object) -> None:
+        raise _WorkerShutdownRequested()
+
+    previous = signal.signal(signal.SIGTERM, _handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
     import shutil
 
@@ -872,13 +920,17 @@ def _lab_worker(args: argparse.Namespace) -> None:
     if errors:
         raise SystemExit("; ".join(errors))
     engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
-    # Held for this whole process's lifetime (acquired before any database
-    # session or reclaim/drain work), not per-iteration like host_lock —
-    # see worker_singleton_lock's docstring. A second worker process racing
-    # this one (manual invocation, or two systemd instances) fails fast here
-    # instead of both later contending on every containerlab call.
+    # The singleton lock is held for this whole process's lifetime (acquired
+    # before any database session or reclaim/drain work), not per-iteration
+    # like host_lock — see worker_singleton_lock's docstring. A second worker
+    # process racing this one (manual invocation, or two systemd instances)
+    # fails fast here instead of both later contending on every containerlab
+    # call. The SIGTERM handler is installed around it (early, before the
+    # lock is even attempted) so that a bare `kill` against a manually
+    # launched worker unwinds through the lock's own `with`-block teardown
+    # instead of killing the process with no cleanup running at all.
     try:
-        with worker_singleton_lock():
+        with _sigterm_raises_shutdown_requested(), worker_singleton_lock():
             print("lab-worker started; draining durable operations every 5s")
             while True:
                 with lab_jobs.lab_worker_session() as db:
@@ -892,6 +944,8 @@ def _lab_worker(args: argparse.Namespace) -> None:
                 time.sleep(5)
     except HostLockUnavailable as exc:
         raise SystemExit(f"lab-worker: {exc}") from exc
+    except _WorkerShutdownRequested:
+        print("lab-worker: SIGTERM received; shutting down")
 
 
 def _reap_labs(args: argparse.Namespace) -> None:
