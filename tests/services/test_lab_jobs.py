@@ -276,6 +276,12 @@ def test_runtime_reconcile_destroys_only_rowless_academy_labs(
 def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
     admin_session, tenant_a
 ):
+    """The reconciler enqueues conditional repair INTENT only (origin=
+    "runtime_repair", runtime_precondition="absent") — it no longer projects
+    status/error directly onto the instance; only the worker's own locked,
+    authoritative recheck may decide the outcome. runtime_presence IS
+    updated: this pass's own fresh, locked inventory scan just confirmed
+    absence, which is an observed fact, not a projected decision."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -294,13 +300,24 @@ def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
     assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
-    assert "no containerlab runtime" in instance.error
+    assert operation.origin == "runtime_repair"
+    assert operation.runtime_precondition == "absent"
+    assert instance.error is None
+    assert instance.status == "active"
+    assert instance.runtime_presence == "absent"
     admin_session.rollback()
 
 
 def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
     admin_session, tenant_a
 ):
+    """A prior error no longer bypasses the worker's own conditional recheck
+    by settling status="error" directly from this pass's snapshot — it must
+    ALSO go through the same conditional enqueue() as any other
+    missing-runtime instance. Only the worker's own locked, authoritative
+    observation may decide status/error; the reconciler itself must not
+    touch either. runtime_presence IS updated from this pass's own fresh,
+    locked observation of absence."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
         tenant_id=tenant_a.id,
@@ -317,15 +334,14 @@ def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
     engine = MagicMock()
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 0)
-    assert instance.status == "error"
-    assert "runtime is absent" in instance.error
-    assert (
-        admin_session.query(LabOperation)
-        .filter_by(instance_id=instance.id)
-        .count()
-        == 0
-    )
+    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert instance.status == "active"
+    assert instance.error == "worker lease expired after 3 attempts"
+    assert instance.runtime_presence == "absent"
+    operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
+    assert operation.kind == "deploy"
+    assert operation.origin == "runtime_repair"
+    assert operation.runtime_precondition == "absent"
     admin_session.rollback()
 
 
@@ -434,7 +450,9 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
     real_enqueue = lab_operations.enqueue
     calls = {"n": 0}
 
-    def _enqueue_with_late_concurrent_winner(db, *, instance, kind, requested_by):
+    def _enqueue_with_late_concurrent_winner(
+        db, *, instance, kind, requested_by, origin=None, runtime_precondition=None
+    ):
         calls["n"] += 1
         if calls["n"] == 1:
             # A real, concurrent user-initiated reset's enqueue landing
@@ -442,7 +460,20 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
             # already ran (and found nothing) for this instance, but
             # before reconcile_runtime's own enqueue() call for it below.
             real_enqueue(db, instance=instance, kind="deploy", requested_by=p.id)
-        return real_enqueue(db, instance=instance, kind=kind, requested_by=requested_by)
+        # Forward origin/runtime_precondition unchanged: this pass's own
+        # intended destroy enqueue call now passes them (item 4's
+        # conditional-operations design), and the whole point of this test
+        # is to reproduce the race through the REAL enqueue()/on_conflict
+        # machinery, not a mock — silently dropping them here would test a
+        # call shape reconcile_runtime no longer makes.
+        return real_enqueue(
+            db,
+            instance=instance,
+            kind=kind,
+            requested_by=requested_by,
+            origin=origin,
+            runtime_precondition=runtime_precondition,
+        )
 
     monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_late_concurrent_winner)
 
