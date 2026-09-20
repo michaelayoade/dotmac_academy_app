@@ -1422,6 +1422,51 @@ def test_capacity_deferral_preserves_presence(admin_session, tenant_a, monkeypat
     assert retry.runtime_presence == "absent"  # untouched — never became capacity-counted
 
 
+def test_conditional_deploy_capacity_deferral_preserves_conditional_shape(
+    admin_session, tenant_a, monkeypatch
+):
+    """The `is_conditional_deploy` branch's own capacity check
+    (`if not _capacity_available(db, instance): _requeue_for_capacity(...)`)
+    reuses the same shared helper already covered for the ORDINARY deploy
+    path, but had no dedicated test for a conditional repair deploy. A
+    capacity deferral must never touch the conditional shape (`origin`/
+    `runtime_precondition`) on the requeued row."""
+    blocker, _ = _seed(admin_session, tenant_a.id, name="cond-deferral-blocker", status="active")
+    admin_session.commit()
+    monkeypatch.setattr(settings, "max_concurrent_labs", 1)
+
+    retry, person = _seed(
+        admin_session, tenant_a.id, name="cond-deferral-retry", status="active", presence="absent",
+    )
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=retry,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    admin_session.commit()
+    claimed = lab_operations.claim_next(admin_session, claimed_by="worker")
+    assert claimed is not None and claimed.id == operation.id
+    admin_session.commit()
+    admin_session.refresh(operation)
+    attempts_at_claim = operation.attempts
+
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=_engine(retry.instance_name),
+    )
+    assert outcome == "deferred"
+    admin_session.refresh(retry)
+    admin_session.refresh(operation)
+    assert retry.status == "queued"
+    assert operation.state == "queued"
+    assert operation.attempts == max(attempts_at_claim - 1, 0)
+    # A capacity deferral never touches the conditional shape.
+    assert operation.origin == "runtime_repair"
+    assert operation.runtime_precondition == "absent"
+
+
 def test_already_consuming_presence_is_admitted_even_when_cap_is_full(
     admin_session, tenant_a, monkeypatch
 ):
@@ -3119,6 +3164,103 @@ def test_conditional_deploy_host_lock_unavailable_restores_initial_state_without
     attempts_at_claim = operation.attempts
     engine = _engine(instance.instance_name)
     engine.status.side_effect = host_lock.HostLockUnavailable("host lock held")
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert instance.runtime_presence == "unknown"
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    # Refunded, not charged an extra attempt for lock contention.
+    assert operation.attempts == max(attempts_at_claim - 1, 0)
+
+
+def test_conditional_deploy_host_lock_unavailable_during_present_resync_restores_initial_state_without_charging_attempt(
+    admin_session, tenant_a, monkeypatch
+):
+    """The preliminary check finds the runtime present (no lock error there),
+    but the follow-up ``resync_present_preliminary`` ->
+    ``_rebuild_consoles_from_live_inspection`` -> ``engine.inspect_running()``
+    call raises ``HostLockUnavailable`` instead. This is the second of three
+    ``HostLockUnavailable`` raise points in the conditional-deploy branch, and
+    exercises the composed correctness claim in ``run_claimed``'s own
+    ``HostLockUnavailable`` handler: because ``_rebuild_consoles_from_live_
+    inspection`` now calls ``inspect_running()`` before ``stop_consoles()``,
+    nothing has been mutated yet, so restoring the instance's exact
+    pre-operation state here is safe. ``stop_consoles`` must never be called.
+    """
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-lock-present", status="active", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    attempts_at_claim = operation.attempts
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "running"
+    engine.inspect_running.side_effect = host_lock.HostLockUnavailable("host lock held")
+    stop_calls = []
+    monkeypatch.setattr(lab_lifecycle, "stop_consoles", lambda i: stop_calls.append(i.id))
+
+    assert lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
+    ) == "deferred"
+    admin_session.refresh(instance)
+    admin_session.refresh(operation)
+    assert instance.status == "active"
+    assert instance.error is None
+    assert instance.runtime_presence == "unknown"
+    assert operation.state == "queued"
+    assert operation.claimed_by is None
+    # Refunded, not charged an extra attempt for lock contention.
+    assert operation.attempts == max(attempts_at_claim - 1, 0)
+    # Proves the ordering-fix composition claim: no console teardown occurred.
+    assert stop_calls == []
+
+
+def test_conditional_deploy_host_lock_unavailable_during_deploy_if_absent_restores_initial_state_without_charging_attempt(
+    admin_session, tenant_a
+):
+    """The preliminary check finds the runtime absent, capacity is admitted,
+    but ``provision_if_absent``'s own ``engine.deploy_if_absent()`` call
+    raises ``HostLockUnavailable``. This is the third of three
+    ``HostLockUnavailable`` raise points in the conditional-deploy branch:
+    ``deploy_if_absent`` performs the precondition check and the mutation
+    atomically inside one host-lock acquisition, so a raise from that single
+    acquisition proves nothing was mutated, and restoring the instance's
+    exact pre-operation state (including the capacity-admission placeholder
+    status/presence) is safe.
+    """
+    instance, _person = _seed(
+        admin_session, tenant_a.id, name="cond-deploy-lock-absent", status="active", presence="unknown",
+    )
+    instance.error = None
+    admin_session.flush()
+    operation = lab_operations.enqueue(
+        admin_session,
+        instance=instance,
+        kind="deploy",
+        requested_by=None,
+        origin="runtime_repair",
+        runtime_precondition="absent",
+    )
+    _claim(admin_session, operation)
+    attempts_at_claim = operation.attempts
+    engine = _engine(instance.instance_name)
+    engine.status.return_value = "absent"
+    engine.deploy_if_absent.side_effect = host_lock.HostLockUnavailable("host lock held")
 
     assert lab_operations.run_claimed(
         admin_session, operation_id=operation.id, claimed_by="worker", engine=engine,
