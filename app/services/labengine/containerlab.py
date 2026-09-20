@@ -30,6 +30,46 @@ _GROUP_KILL_GRACE_SECONDS = 5
 # isn't meaningfully overshot, long enough not to busy-loop.
 _GROUP_LIVENESS_POLL_INTERVAL_SECONDS = 0.1
 
+# Signals this module defers (via `signal.pthread_sigmask`) around its own
+# short, risky critical sections — see `_run_contained` and
+# `_terminate_process_group`. SIGTERM is the worker's own graceful-shutdown
+# signal (see `app.cli._sigterm_raises_shutdown_requested`); SIGINT is
+# included because a real terminal Ctrl+C (-> KeyboardInterrupt) can land in
+# exactly the same windows, and `_run_contained`'s own docstring already
+# promises cleanup for cancellation generally, not only for SIGTERM.
+_DEFERRED_SIGNALS = {signal.SIGTERM, signal.SIGINT}
+
+
+def _unblock_worker_signals_in_child() -> None:
+    """Run in the child, after fork but before exec (see ``preexec_fn`` on
+    the ``subprocess.Popen`` call in :func:`_run_contained`).
+
+    A forked child inherits its parent's signal mask as an independent copy
+    fixed at the moment of ``fork()`` — and ``exec()`` does not clear a
+    blocked signal (only a custom handler's disposition resets to default on
+    exec; the block/mask state itself persists specifically to support cases
+    where that is intentional). So a child spawned while this module's own
+    ``_DEFERRED_SIGNALS``-blocking critical sections happen to have
+    SIGTERM/SIGINT blocked would otherwise inherit that block permanently —
+    nothing in the child ever unblocks it, since the parent's own
+    ``finally: unblock`` only ever affects the parent's mask going forward,
+    not the child's already-forked, independent copy. That would silently
+    defeat this whole module's "ask nicely (SIGTERM) first, then SIGKILL"
+    escalation design for the child's entire lifetime: no SIGTERM sent to it
+    by :func:`_terminate_process_group` could ever be delivered/acted on, so
+    every cleanup would unconditionally fall through the full grace period to
+    SIGKILL.
+
+    Async-signal-safe: this does nothing but adjust the calling process's own
+    signal mask, so it carries none of ``preexec_fn``'s usual multi-threaded
+    deadlock risk (that risk comes from arbitrary other work happening in the
+    child before exec — e.g. taking a lock also held by another thread of the
+    forking parent — not from adjusting the signal mask itself). This is safe
+    here specifically because this module's own production call path
+    (``app.cli._lab_worker``) is single-threaded.
+    """
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
+
 
 def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     """Best-effort teardown of ``proc`` and every process it spawned.
@@ -89,7 +129,8 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     already-fully-empty group just raises ``ProcessLookupError``, handled
     the same as the SIGTERM step above.
 
-    The whole body runs with this thread's own SIGTERM delivery blocked (via
+    The whole body runs with this thread's own delivery of
+    ``_DEFERRED_SIGNALS`` (SIGTERM and SIGINT) blocked (via
     ``signal.pthread_sigmask``), unblocked again in a ``finally`` on every
     exit path. Without this, a second SIGTERM arriving while this function is
     already running — a realistic operator behaviour, since sending SIGTERM
@@ -102,12 +143,16 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     confirmed the group is actually dead. That would defeat the entire point
     of this cleanup path: the caller's outer exception handling would return
     normally, releasing locks, while the subprocess tree may still be alive.
-    Blocking defers delivery until the mask is lifted, at which point any
-    signal that arrived while blocked is delivered immediately and the raise
-    still happens once this function has finished — it is not lost, only
-    postponed past the critical section.
+    SIGINT is blocked alongside SIGTERM for the identical reason applied to a
+    real terminal Ctrl+C (-> KeyboardInterrupt) landing mid-escalation instead
+    of a second SIGTERM — this function's own docstring already promises
+    cleanup for cancellation generally, not only for SIGTERM. Blocking defers
+    delivery until the mask is lifted, at which point any signal that arrived
+    while blocked is delivered immediately and the raise still happens once
+    this function has finished — it is not lost, only postponed past the
+    critical section.
     """
-    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    signal.pthread_sigmask(signal.SIG_BLOCK, _DEFERRED_SIGNALS)
     try:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -160,7 +205,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
         except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
             pass
     finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
 
 
 def _run_contained(
@@ -182,22 +227,39 @@ def _run_contained(
     ``TimeoutExpired``, so existing callers' exception-handling contracts do
     not change.
 
-    SIGTERM delivery to this thread is blocked (via
-    ``signal.pthread_sigmask``) around ``subprocess.Popen(...)`` itself,
-    unblocked again immediately once ``proc`` is bound. ``Popen.__init__``
-    forks+execs the child and then does further Python-level bookkeeping
-    before returning; a SIGTERM landing anywhere in that window — including
-    after the fork but before this function's own ``proc`` local is bound —
-    would otherwise raise straight out of this call with no reference to the
-    now-live, forked child anywhere. The ``except BaseException:`` cleanup
-    below can only ever act on ``proc``, which would not exist yet in that
-    window, so the child would leak permanently and untrackably. Blocking
-    defers any SIGTERM that arrives during construction until right after
-    ``proc`` is bound, at which point it is delivered and the existing
-    ``try``/``except BaseException:`` below runs exactly as it already does
-    for a SIGTERM arriving during ``communicate()``.
+    Delivery of ``_DEFERRED_SIGNALS`` (SIGTERM and SIGINT) to this thread is
+    blocked (via ``signal.pthread_sigmask``) around ``subprocess.Popen(...)``
+    itself, unblocked again immediately once ``proc`` is bound.
+    ``Popen.__init__`` forks+execs the child and then does further
+    Python-level bookkeeping before returning; a SIGTERM or a real terminal
+    Ctrl+C (-> KeyboardInterrupt, via SIGINT) landing anywhere in that window
+    — including after the fork but before this function's own ``proc`` local
+    is bound — would otherwise raise straight out of this call with no
+    reference to the now-live, forked child anywhere. The ``except
+    BaseException:`` cleanup below can only ever act on ``proc``, which would
+    not exist yet in that window, so the child would leak permanently and
+    untrackably. Blocking defers any such signal that arrives during
+    construction until right after ``proc`` is bound, at which point it is
+    delivered and the existing ``try``/``except BaseException:`` below runs
+    exactly as it already does for a signal arriving during
+    ``communicate()``.
+
+    The forked child itself must not inherit this blocked mask: a forked
+    child's own copy of its signal mask is fixed at the moment of fork,
+    independent of the parent's, and this function's own ``finally: unblock``
+    only ever affects the parent's mask going forward — never the child's.
+    ``exec()`` does not clear a blocked signal either. Left unhandled, every
+    process this module spawns (containerlab, docker, ssh — and anything they
+    themselves fork) would have SIGTERM (and SIGINT) permanently blocked from
+    the moment of fork, so a SIGTERM sent to it by
+    :func:`_terminate_process_group`'s escalation could never be
+    delivered/acted on, defeating the entire "ask nicely first" design.
+    ``preexec_fn=_unblock_worker_signals_in_child`` runs in the child, after
+    fork but before exec, to unblock both signals there before the real
+    command execs — see that function's own docstring for why this is safe
+    despite ``preexec_fn``'s usual multi-threaded caveats.
     """
-    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    signal.pthread_sigmask(signal.SIG_BLOCK, _DEFERRED_SIGNALS)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -205,9 +267,10 @@ def _run_contained(
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
+            preexec_fn=_unblock_worker_signals_in_child,
         )
     finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except BaseException:

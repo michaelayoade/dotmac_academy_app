@@ -138,6 +138,7 @@ def test_destroy_treats_an_absent_topology_as_already_destroyed(tmp_path):
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        preexec_fn=containerlab._unblock_worker_signals_in_child,
     )
     assert not (tmp_path / "missing").exists()
 
@@ -557,6 +558,96 @@ def test_a_grandchild_gracefully_finishing_within_the_grace_period_is_not_sigkil
         proc.wait(timeout=5)
 
 
+def _spawn_direct_child_that_finishes_cleanup_before_exiting(marker_dir: str) -> list[str]:
+    """A command with no grandchild at all: the *direct* child spawned by
+    ``_run_contained`` itself installs its own SIGTERM handler, does a brief
+    bit of "cleanup" work well within the grace period, and then exits
+    voluntarily — proving SIGTERM is actually deliverable to the process
+    ``subprocess.Popen`` itself forks, not merely to something it later
+    forks. This is the regression surface for the "child inherits SIGTERM
+    blocked" bug: ``preexec_fn`` unblocking the mask happens in exactly this
+    process, right after its own fork and before its own exec — a grandchild
+    fixture cannot isolate that from the transitive "does an unblocked mask
+    survive across a subsequent fork" question.
+    """
+    started_marker = os.path.join(marker_dir, "cleanup_started")
+    finished_marker = os.path.join(marker_dir, "cleanup_finished")
+    script = f"""
+import os, signal, sys, time
+
+def _on_sigterm(signum, frame):
+    open({started_marker!r}, "w").write("1")
+    time.sleep(0.5)
+    open({finished_marker!r}, "w").write("1")
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _on_sigterm)
+open({os.path.join(marker_dir, "child.pid")!r}, "w").write(str(os.getpid()))
+time.sleep(60)
+"""
+    return [sys.executable, "-c", script]
+
+
+def test_a_direct_child_actually_receives_sigterm_despite_the_parents_own_mask(
+    tmp_path, monkeypatch
+):
+    """The direct child spawned by ``_run_contained`` must NOT inherit this
+    process's own SIGTERM-blocked mask (blocked around ``Popen(...)`` itself
+    to close the construction-window reentrancy hole). Without
+    ``preexec_fn=_unblock_worker_signals_in_child`` unblocking the signal in
+    the child after fork but before exec, the child would inherit the block
+    permanently (fork() copies the mask; exec() does not clear a blocked
+    signal) and could never act on the SIGTERM
+    ``_terminate_process_group``'s escalation sends it — forcing every
+    cleanup to fall through to SIGKILL regardless of how gracefully the
+    child would otherwise have shut down.
+
+    Pre-fix: the child's SIGTERM handler never fires (signal permanently
+    blocked in the child), so ``cleanup_finished`` never appears and SIGKILL
+    is required. Post-fix: the handler fires, cleanup finishes within the
+    grace period, and SIGKILL is never sent.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+
+    killpg_signals: list[int] = []
+    real_killpg = os.killpg
+
+    def _spying_killpg(pgid: int, sig: int) -> None:
+        killpg_signals.append(sig)
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(containerlab.os, "killpg", _spying_killpg)
+
+    cmd = _spawn_direct_child_that_finishes_cleanup_before_exiting(str(marker))
+    with pytest.raises(subprocess.TimeoutExpired):
+        containerlab._run_contained(cmd, timeout=1.0)
+    proc = created[0]
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(proc.pid):
+            time.sleep(0.05)
+        assert (marker / "cleanup_finished").exists(), (
+            "the direct child's own SIGTERM handler never fired — it never "
+            "actually received the signal (still blocked in the child?)"
+        )
+        assert not _pid_alive(proc.pid), "direct child should have exited voluntarily"
+        assert signal.SIGKILL not in killpg_signals, (
+            "SIGKILL was sent even though the direct child exited voluntarily "
+            "within the grace period — its SIGTERM handler must have been "
+            "unreachable"
+        )
+        assert signal.SIGTERM in killpg_signals
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                real_killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
 def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkeypatch):
     """A non-timeout exception raised mid-communicate (e.g. KeyboardInterrupt
     reaching this call) must still tear down the process group before
@@ -767,6 +858,134 @@ def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monke
         assert signal.SIGKILL in killpg_calls, (
             "escalation never reached SIGKILL — aborted early by the second "
             "SIGTERM instead of deferring it"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                real_killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
+def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
+    tmp_path, monkeypatch
+):
+    """The same construction-window leak
+    ``test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child``
+    closes for SIGTERM must also be closed for a real terminal Ctrl+C
+    (SIGINT -> ``KeyboardInterrupt``, Python's own default disposition).
+    ``_run_contained``'s own docstring promises cleanup for cancellation
+    generally, not only for SIGTERM — the previous round's fix only extended
+    ``pthread_sigmask`` to block ``{SIGTERM}``, leaving this identical window
+    open for SIGINT.
+
+    No ``_sigterm_raises_shutdown_requested``-style machinery is needed here:
+    Python's own default SIGINT handler already converts a delivered SIGINT
+    into ``KeyboardInterrupt`` at the point of delivery.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    cmd = _spawn_grandchild_tree(str(marker))
+
+    real_popen = subprocess.Popen
+    created: list[subprocess.Popen] = []
+
+    def _popen_that_signals_before_returning(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        created.append(proc)
+        # Simulate the fork having already happened (it has) while a SIGINT
+        # (a real Ctrl+C) lands before the caller's own local variable is
+        # bound to the return value.
+        os.kill(os.getpid(), signal.SIGINT)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", _popen_that_signals_before_returning)
+
+    previous_handler = signal.getsignal(signal.SIGINT)
+    with pytest.raises(KeyboardInterrupt):
+        containerlab._run_contained(cmd, timeout=30)
+    assert signal.getsignal(signal.SIGINT) == previous_handler
+
+    assert created, "Popen was never actually called"
+    proc = created[0]
+    assert (marker / "grandchild.pid").exists(), "grandchild never started"
+    grandchild_pid = int((marker / "grandchild.pid").read_text())
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (
+            _pid_alive(proc.pid) or _pid_alive(grandchild_pid)
+        ):
+            time.sleep(0.05)
+        assert not _pid_alive(proc.pid), (
+            "child process leaked — SIGINT during Popen construction was not "
+            "deferred past proc being bound"
+        )
+        assert not _pid_alive(grandchild_pid), (
+            "grandchild leaked — SIGINT during Popen construction was not "
+            "deferred past proc being bound"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
+def test_a_second_sigint_mid_escalation_does_not_abort_teardown(tmp_path, monkeypatch):
+    """The SIGINT counterpart of
+    ``test_a_second_sigterm_mid_escalation_does_not_abort_teardown``: a real
+    Ctrl+C landing while ``_terminate_process_group`` is already running
+    (mid-escalation) must not abort the SIGTERM -> grace-period -> SIGKILL ->
+    reap sequence partway through via an unhandled ``KeyboardInterrupt``.
+
+    Reuses the SIGTERM-ignoring-grandchild fixture so the full escalation
+    path actually runs. ``os.killpg`` is spied so that on its first call (the
+    initial SIGTERM step) it also fires a real SIGINT at this process before
+    returning. Pre-fix, that SIGINT raises ``KeyboardInterrupt`` out of the
+    escalation loop before the grace period or SIGKILL step ever runs,
+    leaving the SIGTERM-ignoring grandchild alive. Post-fix, the SIGINT is
+    deferred until the function returns, so escalation completes and the
+    grandchild ends up SIGKILLed and dead.
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+
+    real_killpg = os.killpg
+    killpg_calls: list[int] = []
+
+    def _killpg_that_signals_on_first_call(pgid: int, sig: int) -> None:
+        killpg_calls.append(sig)
+        if len(killpg_calls) == 1:
+            os.kill(os.getpid(), signal.SIGINT)
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(containerlab.os, "killpg", _killpg_that_signals_on_first_call)
+
+    cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
+
+    previous_handler = signal.getsignal(signal.SIGINT)
+    with pytest.raises(KeyboardInterrupt):
+        containerlab._run_contained(cmd, timeout=1.0)
+    assert signal.getsignal(signal.SIGINT) == previous_handler
+
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(grandchild_pid):
+            time.sleep(0.05)
+        assert not _pid_alive(grandchild_pid), (
+            "SIGTERM-ignoring grandchild survived — a second interrupt "
+            "(SIGINT) mid-escalation aborted teardown before SIGKILL could run"
+        )
+        assert signal.SIGKILL in killpg_calls, (
+            "escalation never reached SIGKILL — aborted early by the SIGINT "
+            "instead of deferring it"
         )
     finally:
         if _pid_alive(proc.pid):
