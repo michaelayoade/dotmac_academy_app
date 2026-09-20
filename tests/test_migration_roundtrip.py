@@ -48,13 +48,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
+from sqlalchemy import text
+
+from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import text
-
-from alembic import command
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
