@@ -600,6 +600,73 @@ def test_run_contained_nonzero_exit_still_returns_normally():
     assert result.stderr == "boom"
 
 
+def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reaped(
+    tmp_path, monkeypatch
+):
+    """The poll loop must not degenerate into a busy-spin once the direct
+    child (process-group leader) has already been reaped by ``proc.wait()``.
+
+    Reuses the same shape as
+    ``test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigterm``:
+    the direct child dies from SIGTERM almost immediately (default handling)
+    while its SIGTERM-ignoring grandchild keeps the whole process group
+    alive for the entire grace period, forcing every iteration after the
+    first to go through a ``proc.wait()`` call on an already-reaped child.
+
+    ``Popen.wait()`` caches the child's return code after that first reap,
+    so every later call returns instantly regardless of the requested
+    ``timeout``. If the loop relied on that call alone to pace itself, it
+    would hammer the ``os.killpg(pid, 0)`` liveness probe as fast as the CPU
+    allows for the rest of the grace period instead of sleeping between
+    polls. This pins the probe-call count to roughly ``grace /
+    poll_interval`` (with slack for scheduling jitter), which the pre-fix
+    busy-spinning code blew through by orders of magnitude (thousands of
+    calls within milliseconds).
+    """
+    marker = tmp_path / "markers"
+    marker.mkdir()
+    created = _spy_on_real_popen(monkeypatch)
+
+    monkeypatch.setattr(containerlab, "_GROUP_KILL_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(containerlab, "_GROUP_LIVENESS_POLL_INTERVAL_SECONDS", 0.1)
+
+    probe_calls: list[int] = []
+    real_killpg = os.killpg
+
+    def _spying_killpg(pgid: int, sig: int) -> None:
+        if sig == 0:
+            probe_calls.append(sig)
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(containerlab.os, "killpg", _spying_killpg)
+
+    cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
+    with pytest.raises(subprocess.TimeoutExpired):
+        containerlab._run_contained(cmd, timeout=0.2)
+    proc = created[0]
+    try:
+        assert (marker / "grandchild.pid").exists(), "grandchild never started"
+        grandchild_pid = int((marker / "grandchild.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _pid_alive(grandchild_pid):
+            time.sleep(0.05)
+        assert not _pid_alive(grandchild_pid), "grandchild outlived the grace period"
+        # grace / poll_interval == 10 iterations at most, generously padded
+        # for scheduling jitter. The pre-fix busy-spin produced thousands of
+        # probe calls in a fraction of that window.
+        assert len(probe_calls) <= 40, (
+            f"expected roughly bounded polling, got {len(probe_calls)} probe "
+            "calls — the loop is busy-spinning"
+        )
+    finally:
+        if _pid_alive(proc.pid):
+            try:
+                real_killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=5)
+
+
 def test_terminate_process_group_swallows_already_terminated_process():
     """ProcessLookupError at either signalling step must not mask the caller's
     real exception — it means the group is already gone, not a new failure.

@@ -105,10 +105,31 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
+            poll_budget = min(_GROUP_LIVENESS_POLL_INTERVAL_SECONDS, remaining)
+            wait_started = time.monotonic()
             try:
-                proc.wait(timeout=min(_GROUP_LIVENESS_POLL_INTERVAL_SECONDS, remaining))
+                proc.wait(timeout=poll_budget)
             except subprocess.TimeoutExpired:
                 pass
+            # `Popen.wait()` caches the direct child's return code once it has
+            # been reaped once, so every call after that returns instantly
+            # instead of actually blocking for `poll_budget` — regardless of
+            # whether it raises `TimeoutExpired`. The direct child (the
+            # process-group leader) routinely dies from SIGTERM almost
+            # immediately, so without this the loop degenerates into a
+            # busy-spin hammering the killpg(pid, 0) probe for the rest of
+            # the grace period. Sleep out whatever portion of the intended
+            # poll interval `proc.wait()` didn't actually spend blocking,
+            # bounded by whatever grace-period time remains, so each
+            # iteration still takes roughly `poll_budget` of real wall-clock
+            # time either way.
+            elapsed = time.monotonic() - wait_started
+            shortfall = poll_budget - elapsed
+            if shortfall > 0:
+                remaining_after_wait = deadline - time.monotonic()
+                sleep_for = min(shortfall, remaining_after_wait)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
         if not group_gone:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)

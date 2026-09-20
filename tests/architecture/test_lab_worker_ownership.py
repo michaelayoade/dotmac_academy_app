@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -149,8 +151,47 @@ def test_only_the_worker_acquires_the_lifetime_singleton_lock():
     assert "worker_singleton_lock" not in bodies["_lab_reconcile"]
 
 
+def _active_directive_lines(unit_text: str) -> set[str]:
+    """Every non-comment, non-blank line of a plain INI-style unit file.
+
+    Systemd unit files use ``#`` (and ``;``) for whole-line comments. A
+    directive that has been commented out — e.g. ``# KillMode=control-group``
+    — must not be treated as present just because the substring still
+    appears somewhere in the raw file text.
+    """
+    lines: set[str] = set()
+    for raw_line in unit_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        lines.add(stripped)
+    return lines
+
+
 def test_lab_worker_systemd_unit_contains_process_containment_directives():
     unit = (ROOT / "deploy/academy-lab-worker.service").read_text()
-    assert "KillMode=control-group" in unit
-    assert "TimeoutStopSec=30s" in unit
-    assert "SendSIGKILL=yes" in unit
+    active = _active_directive_lines(unit)
+    assert "KillMode=control-group" in active
+    assert "TimeoutStopSec=30s" in active
+    assert "SendSIGKILL=yes" in active
+
+
+@pytest.mark.parametrize(
+    "commented_directive",
+    ["KillMode=control-group", "TimeoutStopSec=30s", "SendSIGKILL=yes"],
+)
+def test_active_directive_lines_rejects_a_commented_out_directive(commented_directive):
+    """A directive that has been commented out must not read as active.
+
+    This is the regression the old, unanchored substring check
+    (``assert "KillMode=control-group" in unit``) could not catch: the
+    substring stays present in the raw file text even when the line is
+    ``# KillMode=control-group``, so that check would pass against a unit
+    file where the directive had been silently disabled.
+    """
+    unit_text = (
+        "[Service]\n"
+        f"# {commented_directive}\n"
+        "OtherDirective=value\n"
+    )
+    assert commented_directive not in _active_directive_lines(unit_text)
