@@ -36,6 +36,94 @@ Also verify the accepted checkout revision, Poetry 2.4.1, `containerlab`,
 `ttyd`, `/dev/kvm` when required, the local console bind address, database
 backup, worker role posture, and current migration head. Do not print the DSN.
 
+## Install the lab-host IPv6 ingress guard
+
+Install and verify the host guard before stopping the old worker or changing
+the application checkout. It is a separate root-operated boundary; do not add
+it to `deploy/install.sh`, activate UFW, or let a root unit execute files from
+the `dotmac`-writable checkout.
+
+1. Verify the named host is exactly `academy-labs`, and record the exact
+   `systemctl is-enabled` and `systemctl is-active` results for `ufw.service`,
+   `nftables.service`, and `firewalld.service`. The accepted live baseline is
+   UFW `enabled` but inactive, nftables disabled/inactive, and firewalld absent;
+   any active controller or different unit-file state is a stop condition.
+   Also require `ufw status` to report inactive, and require TCP listeners on
+   ports 22 and 5437 to be the expected SSH and observed runtime processes. A
+   changed listener owner is a stop condition.
+2. After recording that baseline, run `sudo systemctl disable ufw.service` and
+   require UFW to remain inactive and become disabled. Reconfirm IPv4 SSH
+   before installing the guard. This makes the guard the sole boot-time host
+   firewall-policy service; Docker remains an independent runtime rule writer.
+3. Set `ACCEPTED_SHA` to the immutable revision approved for this rollout.
+   Require `git rev-parse HEAD` to equal it, and require both
+   `git diff --quiet` and `git diff --cached --quiet` for all three guard assets.
+   Install the bytes from that Git object—not from the mutable worktree—as
+   root-owned copies. Run the staging block in Bash with fail-fast pipeline
+   handling so a missing blob can create at most an empty temporary file and
+   can never replace an installed guard:
+
+   ```text
+   export ACCEPTED_SHA=<full-approved-commit-sha>
+   bash -euo pipefail -c '
+     test "$(git rev-parse HEAD)" = "${ACCEPTED_SHA}"
+     git diff --quiet "${ACCEPTED_SHA}" -- deploy/academy-lab-ipv6-guard.nft deploy/academy-lab-ipv6-guard.service deploy/academy-lab-ipv6-guard-docker.conf
+     git diff --cached --quiet "${ACCEPTED_SHA}" -- deploy/academy-lab-ipv6-guard.nft deploy/academy-lab-ipv6-guard.service deploy/academy-lab-ipv6-guard-docker.conf
+     git cat-file -e "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.nft"
+     git cat-file -e "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.service"
+     git cat-file -e "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard-docker.conf"
+     staging_dir="$(mktemp -d)"
+     trap '\''rm -rf -- "${staging_dir}"'\'' EXIT
+     git show "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.nft" >"${staging_dir}/academy-lab-ipv6-guard.nft"
+     git show "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.service" >"${staging_dir}/academy-lab-ipv6-guard.service"
+     git show "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard-docker.conf" >"${staging_dir}/academy-lab-ipv6-guard-docker.conf"
+     sudo install -d -o root -g root -m 0755 /etc/nftables.d
+     sudo install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
+     sudo install -o root -g root -m 0644 "${staging_dir}/academy-lab-ipv6-guard.nft" /etc/nftables.d/academy-lab-ipv6-guard.nft
+     sudo install -o root -g root -m 0644 "${staging_dir}/academy-lab-ipv6-guard.service" /etc/systemd/system/academy-lab-ipv6-guard.service
+     sudo install -o root -g root -m 0644 "${staging_dir}/academy-lab-ipv6-guard-docker.conf" /etc/systemd/system/docker.service.d/academy-lab-ipv6-guard.conf
+     read -r expected_nft_sha _ < <(sha256sum "${staging_dir}/academy-lab-ipv6-guard.nft")
+     read -r installed_nft_sha _ < <(sudo sha256sum /etc/nftables.d/academy-lab-ipv6-guard.nft)
+     read -r expected_unit_sha _ < <(sha256sum "${staging_dir}/academy-lab-ipv6-guard.service")
+     read -r installed_unit_sha _ < <(sudo sha256sum /etc/systemd/system/academy-lab-ipv6-guard.service)
+     read -r expected_dropin_sha _ < <(sha256sum "${staging_dir}/academy-lab-ipv6-guard-docker.conf")
+     read -r installed_dropin_sha _ < <(sudo sha256sum /etc/systemd/system/docker.service.d/academy-lab-ipv6-guard.conf)
+     test "${expected_nft_sha}" = "${installed_nft_sha}"
+     test "${expected_unit_sha}" = "${installed_unit_sha}"
+     test "${expected_dropin_sha}" = "${installed_dropin_sha}"
+   '
+   ```
+
+4. Compare the SHA-256 of each installed artifact with `git show` of the same
+   path at `ACCEPTED_SHA`; refuse on either mismatch. Then run
+   `sudo nft --check --file /etc/nftables.d/academy-lab-ipv6-guard.nft`, then
+   run `sudo systemctl daemon-reload`,
+   `sudo systemctl enable academy-lab-ipv6-guard.service`, and then
+   `sudo systemctl restart academy-lab-ipv6-guard.service`. The explicit
+   restart reapplies an updated artifact even when the oneshot unit was already
+   active. The unit first ensures its otherwise empty owned table exists (and
+   ignores only that idempotent create command's status), so the same atomic
+   destroy/recreate batch works on first boot and later restarts. Its lack of
+   `ExecStop` keeps the old table present until nft's atomic owned-table
+   replacement succeeds. The Docker drop-in is a start-only gate:
+   it refuses a future Docker start unless the guard and both chains exist, but
+   it does not make a later intentional guard stop propagate to running learner
+   containers.
+5. Require `systemctl is-active academy-lab-ipv6-guard.service` to report
+   `active`; a host/path assertion failure is a refusal. Inspect only the owned
+   table with `sudo nft list table inet academy_lab_ipv6_guard` and confirm
+   both the prerouting and input rules are present.
+6. Reconfirm IPv4 SSH and outbound IPv6. From an explicitly named,
+   off-network IPv6-capable host, attempt new TCP connections to ports 22 and
+   5437; neither may connect, and the corresponding guard counter must
+   increase. A local `no route` result is inconclusive. ICMPv6 and established
+   return traffic remain permitted.
+
+The guard deliberately matches any local IPv6 destination instead of the
+current SLAAC `/128`, so a VM address change cannot silently bypass the host
+boundary. Garki-core's separate `/128` defense-in-depth rule must still be
+reconciled when the VM address changes.
+
 ## Synchronized update
 
 1. Stop and disable the reconcile timer for the maintenance window; stop any
@@ -73,6 +161,29 @@ backup, worker role posture, and current migration head. Do not print the DSN.
   error projection changes. Capture only redacted counts/statuses.
 
 ## Rollback
+
+To remove only the host ingress guard, leave the rules active while detaching
+it from boot, then delete its uniquely owned table explicitly:
+
+```text
+sudo systemctl disable academy-lab-ipv6-guard.service
+sudo rm /etc/systemd/system/docker.service.d/academy-lab-ipv6-guard.conf
+sudo systemctl daemon-reload
+sudo systemctl stop academy-lab-ipv6-guard.service
+sudo nft delete table inet academy_lab_ipv6_guard
+sudo rm /etc/systemd/system/academy-lab-ipv6-guard.service
+sudo rm /etc/nftables.d/academy-lab-ipv6-guard.nft
+sudo systemctl daemon-reload
+sudo systemctl enable ufw.service
+```
+
+Verify the service is inactive, the named table is absent, and IPv4 management
+remains available. The final `enable` restores the specifically recorded
+enabled-but-inactive UFW baseline; verify it remains inactive and do not start
+it. If the recorded unit-file state differed, stop rather than guessing how to
+restore it. Do not delete, flush, or replace any other nftables, iptables,
+Docker, or UFW state. Garki-core's edge rule remains in place during this
+rollback.
 
 Before stopping the compatible worker, quiesce new lab-operation submissions
 using the change record's named traffic-control procedure and let every open

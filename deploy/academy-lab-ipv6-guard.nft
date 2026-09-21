@@ -1,0 +1,16 @@
+destroy table inet academy_lab_ipv6_guard
+
+table inet academy_lab_ipv6_guard {
+    chain prerouting {
+        type filter hook prerouting priority dstnat - 1; policy accept;
+
+        meta nfproto ipv6 fib daddr type local tcp dport 5437 ct state new counter drop comment "academy-lab: deny new IPv6 to host port 5437"
+    }
+
+    chain input {
+        type filter hook input priority filter - 1; policy accept;
+
+        meta nfproto ipv6 iifname "lo" accept
+        meta nfproto ipv6 tcp dport { 22, 5437 } ct state new counter drop comment "academy-lab: deny new IPv6 SSH/Postgres"
+    }
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=Academy Labs IPv6 host ingress guard
+Documentation=https://github.com/michaelayoade/dotmac_academy_app/blob/main/deploy/LAB_CONSOLE_RECOVERY_ROLLOUT.md
+DefaultDependencies=no
+Before=network-pre.target docker.service ufw.service nftables.service firewalld.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target ufw.service nftables.service firewalld.service
+AssertHost=academy-labs
+AssertPathExists=/etc/nftables.d/academy-lab-ipv6-guard.nft
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/sbin/nft add table inet academy_lab_ipv6_guard
+ExecStartPre=/usr/sbin/nft --check --file /etc/nftables.d/academy-lab-ipv6-guard.nft
+ExecStart=/usr/sbin/nft --file /etc/nftables.d/academy-lab-ipv6-guard.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
