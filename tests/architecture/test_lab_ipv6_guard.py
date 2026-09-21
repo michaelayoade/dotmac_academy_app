@@ -96,9 +96,18 @@ def test_ipv6_guard_runbook_has_exact_install_and_rollback_boundaries() -> None:
     )
     assert "bash -euo pipefail" in runbook
     assert 'test "$(git rev-parse HEAD)" = "${ACCEPTED_SHA}"' in runbook
-    assert 'git diff --quiet "${ACCEPTED_SHA}"' in runbook
-    assert 'git diff --cached --quiet "${ACCEPTED_SHA}"' in runbook
-    assert runbook.count("deploy/academy-lab-ipv6-guard-docker.conf") >= 5
+    assert (
+        'git diff --quiet "${ACCEPTED_SHA}" -- '
+        "deploy/academy-lab-ipv6-guard.nft "
+        "deploy/academy-lab-ipv6-guard.service "
+        "deploy/academy-lab-ipv6-guard-docker.conf" in runbook
+    )
+    assert (
+        'git diff --cached --quiet "${ACCEPTED_SHA}" -- '
+        "deploy/academy-lab-ipv6-guard.nft "
+        "deploy/academy-lab-ipv6-guard.service "
+        "deploy/academy-lab-ipv6-guard-docker.conf" in runbook
+    )
     assert 'git cat-file -e "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.nft"' in runbook
     assert (
         'git cat-file -e "${ACCEPTED_SHA}:deploy/academy-lab-ipv6-guard.service"'

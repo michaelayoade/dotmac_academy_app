@@ -192,7 +192,10 @@ def _validate_record(record: dict[str, Any]) -> None:
         _resolve_source_reference(entry["source_reference"])
 
     # Composition-specific checks: the systemd application shape.
-    service_files = sorted((ROOT / "deploy").glob("*.service"))
+    all_service_files = set((ROOT / "deploy").glob("*.service"))
+    host_firewall_service = ROOT / "deploy" / "academy-lab-ipv6-guard.service"
+    assert host_firewall_service in all_service_files
+    service_files = sorted(all_service_files - {host_firewall_service})
     timer_files = sorted((ROOT / "deploy").glob("*.timer"))
     assert len(service_files) == 10, f"expected 10 systemd .service units, found {len(service_files)}"
     assert len(timer_files) == 9, f"expected 9 systemd .timer units, found {len(timer_files)}"
