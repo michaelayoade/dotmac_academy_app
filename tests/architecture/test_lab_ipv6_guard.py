@@ -144,3 +144,50 @@ def test_ipv6_guard_runbook_has_exact_install_and_rollback_boundaries() -> None:
     assert "nft delete table inet academy_lab_ipv6_guard" in runbook
     assert "ufw status" in runbook
     assert "flush ruleset" not in runbook
+
+
+def _ipv6_verification_contract(runbook: str) -> str:
+    start = "6. Reconfirm IPv4 SSH and outbound IPv6"
+    end = "\n\nThe guard deliberately"
+    return " ".join((start + runbook.split(start, 1)[1].split(end, 1)[0]).split())
+
+
+IPV6_VERIFICATION_CONTRACT = " ".join(
+    """6. Reconfirm IPv4 SSH and outbound IPv6, then prove both IPv6 ingress
+    layers independently. Record read-only counter values before and after each
+    test; do not reset counters or mutate either firewall. From an explicitly
+    named, off-network IPv6-capable host, attempt new TCP connections to ports 22
+    and 5437. Neither may connect, and both attempts must increase the exact,
+    uniquely labeled Garki-core edge rule counter `SEC-IPv6-20260921 deny
+    unsolicited new to Dotmac-Labs`. Because that upstream `/128` forward-drop
+    consumes the packets, these attempts are not expected to increase either
+    counter in the Dotmac Labs host guard. A local `no route` result is
+    inconclusive and does not prove the edge layer. 7. Without disabling,
+    deleting, flushing, replacing, or otherwise changing the Garki-core edge
+    rule, exercise the Dotmac Labs host guard through an explicitly named safe
+    directly connected or router-originated IPv6 path. The path must reach the
+    lab host while leaving the edge rule enabled. New TCP attempts to port 22
+    must fail and increase the host `input` counter; new TCP attempts to port
+    5437 must fail and increase the host `prerouting` counter. For this recorded
+    Dotmac Labs topology, absence of either expected layer is a stop condition;
+    refuse any ambiguous result and never treat one layer's counter as proof of
+    the other. A separately documented single-layer topology must name and prove
+    its applicable direct counter. ICMPv6 and established return traffic remain
+    permitted, and retain the existing IPv4 and outbound-IPv6 checks.""".split()
+)
+
+
+def test_ipv6_guard_runbook_requires_exact_independent_proof_contract() -> None:
+    assert (
+        _ipv6_verification_contract(RUNBOOK_PATH.read_text())
+        == IPV6_VERIFICATION_CONTRACT
+    )
+
+
+def test_ipv6_guard_runbook_contract_detects_a_planted_semantic_weakening() -> None:
+    planted = RUNBOOK_PATH.read_text().replace(
+        "TCP attempts to port 22 must fail",
+        "TCP attempts to port 22 may connect",
+        1,
+    )
+    assert _ipv6_verification_contract(planted) != IPV6_VERIFICATION_CONTRACT
