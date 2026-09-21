@@ -4,7 +4,7 @@ Documentation=https://github.com/michaelayoade/dotmac_academy_app/blob/main/depl
 DefaultDependencies=no
 Before=network-pre.target docker.service ufw.service nftables.service firewalld.service shutdown.target
 Wants=network-pre.target
-Conflicts=shutdown.target ufw.service nftables.service firewalld.service
+Conflicts=shutdown.target
 AssertHost=academy-labs
 AssertPathExists=/etc/nftables.d/academy-lab-ipv6-guard.nft
 

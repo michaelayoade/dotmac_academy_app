@@ -24,6 +24,7 @@ Before changing services, capture the exit status—not unrestricted output—of
 
 ```text
 sudo -n containerlab inspect --all --format json
+docker ps --quiet | wc -l
 ```
 
 Using a known Academy lab, verify the real output has the shapes consumed by
@@ -44,17 +45,25 @@ it to `deploy/install.sh`, activate UFW, or let a root unit execute files from
 the `dotmac`-writable checkout.
 
 1. Verify the named host is exactly `academy-labs`, and record the exact
-   `systemctl is-enabled` and `systemctl is-active` results for `ufw.service`,
-   `nftables.service`, and `firewalld.service`. The accepted live baseline is
-   UFW `enabled` but inactive, nftables disabled/inactive, and firewalld absent;
-   any active controller or different unit-file state is a stop condition.
-   Also require `ufw status` to report inactive, and require TCP listeners on
+   `systemctl is-enabled`, `systemctl is-active`, and `systemctl show -p
+   SubState` results for `ufw.service`, `nftables.service`, and
+   `firewalld.service`. The accepted live baseline is UFW enabled and
+   `active (exited)` while `ufw status` reports inactive, nftables
+   disabled/inactive, and firewalld absent. The UFW service state only records
+   that its oneshot boot loader ran; `ufw status` is the policy-state check.
+   Any different state is a stop condition. Also require TCP listeners on
    ports 22 and 5437 to be the expected SSH and observed runtime processes. A
    changed listener owner is a stop condition.
-2. After recording that baseline, run `sudo systemctl disable ufw.service` and
-   require UFW to remain inactive and become disabled. Reconfirm IPv4 SSH
-   before installing the guard. This makes the guard the sole boot-time host
-   firewall-policy service; Docker remains an independent runtime rule writer.
+2. After recording that baseline, run
+   `sudo systemctl disable --now ufw.service`, require the unit to become
+   disabled/inactive, and require `ufw status` to remain inactive. Then run
+   `sudo systemctl mask ufw.service nftables.service firewalld.service` and
+   require all three to report masked. Reconfirm IPv4 SSH before installing
+   the guard. Repeat the bounded `containerlab inspect` command and running
+   Docker-container count from preflight; require the command to succeed and
+   the count to be unchanged. The masks prevent a later controller start from
+   replacing the owned rules while the guard is authoritative; Docker remains
+   an independent runtime rule writer.
 3. Set `ACCEPTED_SHA` to the immutable revision approved for this rollout.
    Require `git rev-parse HEAD` to equal it, and require both
    `git diff --quiet` and `git diff --cached --quiet` for all three guard assets.
@@ -112,7 +121,9 @@ the `dotmac`-writable checkout.
 5. Require `systemctl is-active academy-lab-ipv6-guard.service` to report
    `active`; a host/path assertion failure is a refusal. Inspect only the owned
    table with `sudo nft list table inet academy_lab_ipv6_guard` and confirm
-   both the prerouting and input rules are present.
+   both the prerouting and input rules are present. Repeat the bounded
+   `containerlab inspect` command and Docker-container count once more; require
+   success and the original count before treating the guard as applied.
 6. Reconfirm IPv4 SSH and outbound IPv6. From an explicitly named,
    off-network IPv6-capable host, attempt new TCP connections to ports 22 and
    5437; neither may connect, and the corresponding guard counter must
@@ -174,16 +185,18 @@ sudo nft delete table inet academy_lab_ipv6_guard
 sudo rm /etc/systemd/system/academy-lab-ipv6-guard.service
 sudo rm /etc/nftables.d/academy-lab-ipv6-guard.nft
 sudo systemctl daemon-reload
-sudo systemctl enable ufw.service
+sudo systemctl unmask ufw.service nftables.service firewalld.service
+sudo systemctl enable --now ufw.service
 ```
 
-Verify the service is inactive, the named table is absent, and IPv4 management
-remains available. The final `enable` restores the specifically recorded
-enabled-but-inactive UFW baseline; verify it remains inactive and do not start
-it. If the recorded unit-file state differed, stop rather than guessing how to
-restore it. Do not delete, flush, or replace any other nftables, iptables,
-Docker, or UFW state. Garki-core's edge rule remains in place during this
-rollback.
+Verify the guard service is inactive, the named table is absent, and IPv4
+management remains available. The final `enable --now` restores the
+specifically recorded UFW unit state: enabled and `active (exited)`, while
+`ufw status` must remain inactive. Also require nftables to be
+disabled/inactive and firewalld to be absent after unmasking. If any recorded
+state differed, stop rather than guessing how to restore it. Do not delete,
+flush, or replace any other nftables, iptables, Docker, or UFW state.
+Garki-core's edge rule remains in place during this rollback.
 
 Before stopping the compatible worker, quiesce new lab-operation submissions
 using the change record's named traffic-control procedure and let every open

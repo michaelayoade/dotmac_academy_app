@@ -49,8 +49,7 @@ def test_ipv6_guard_unit_loads_only_the_root_owned_installed_copy() -> None:
         "Before=network-pre.target docker.service ufw.service nftables.service "
         "firewalld.service shutdown.target",
         "Wants=network-pre.target",
-        "Conflicts=shutdown.target ufw.service nftables.service "
-        "firewalld.service",
+        "Conflicts=shutdown.target",
         "AssertHost=academy-labs",
         "AssertPathExists=/etc/nftables.d/academy-lab-ipv6-guard.nft",
         "[Service]",
@@ -131,12 +130,17 @@ def test_ipv6_guard_runbook_has_exact_install_and_rollback_boundaries() -> None:
     assert "systemctl restart academy-lab-ipv6-guard.service" in runbook
     assert "systemctl is-enabled" in runbook
     assert "systemctl is-active" in runbook
-    assert "systemctl disable ufw.service" in runbook
+    assert "systemctl disable --now ufw.service" in runbook
+    assert "systemctl mask ufw.service nftables.service firewalld.service" in runbook
     assert "nft list table inet academy_lab_ipv6_guard" in runbook
     assert "systemctl disable academy-lab-ipv6-guard.service" in runbook
     assert "systemctl stop academy-lab-ipv6-guard.service" in runbook
     assert "/etc/systemd/system/docker.service.d/academy-lab-ipv6-guard.conf" in runbook
-    assert "systemctl enable ufw.service" in runbook
+    assert "systemctl unmask ufw.service nftables.service firewalld.service" in runbook
+    assert "systemctl enable --now ufw.service" in runbook
+    assert "containerlab inspect" in runbook
+    assert "docker ps --quiet | wc -l" in runbook
+    assert runbook.count("Docker-container count") == 2
     assert "nft delete table inet academy_lab_ipv6_guard" in runbook
     assert "ufw status" in runbook
     assert "flush ruleset" not in runbook
