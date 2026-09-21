@@ -34,8 +34,21 @@ Academy lab work directory. A missing/mismatched path is a refusal, not an
 invitation to weaken ownership checks. Stop if the host's JSON shape differs.
 
 Also verify the accepted checkout revision, Poetry 2.4.1, `containerlab`,
-`ttyd`, `/dev/kvm` when required, the local console bind address, database
-backup, worker role posture, and current migration head. Do not print the DSN.
+`ttyd`, `/dev/kvm` when required, and the local console bind address.
+
+Before taking a backup, bootstrapping the worker role, or running a migration,
+resolve the active application and migration DSNs without printing their
+credentials. Connect through each configured path and record the expected
+host/container or tunnel, port, database name, connected role, current
+migration head, and application-table identity. A database container merely
+present on either host is not evidence that it is the production database.
+Stop on any coordinate or identity mismatch.
+
+Take the named recovery backup from that exact verified target, restore it in
+isolation, and compare the controlled schema/data/security evidence required
+by the change record before treating it as a rollback point. Then verify the
+worker role posture against that same database. Do not continue with a valid
+backup or role created in a different cluster.
 
 ## Install the lab-host IPv6 ingress guard
 
