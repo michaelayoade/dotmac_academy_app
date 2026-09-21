@@ -965,6 +965,8 @@ def _lab_worker(args: argparse.Namespace) -> None:
                 with lab_jobs.lab_worker_session() as db:
                     repaired = lab_operations.reconcile_stuck(db)
                     db.commit()
+                    recovered = lab_jobs.recover_missing_consoles(db, engine)
+                    db.commit()
                     n = lab_jobs.drain_once(
                         db,
                         engine,
@@ -974,6 +976,8 @@ def _lab_worker(args: argparse.Namespace) -> None:
                     )
                 if repaired:
                     print(f"reconciled {repaired} lab operation(s)")
+                if recovered:
+                    print(f"recovered {recovered} missing lab console(s)")
                 if n:
                     print(f"provisioned {n} lab(s)")
                 time.sleep(5)

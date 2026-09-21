@@ -722,9 +722,48 @@ def test_console_pids_parses_the_instance_id_out_of_the_base_path(monkeypatch):
         "222 ttyd -p 40001 -i 127.0.0.1 -b /labs/instances/aaaa-1/console/r1 -W docker exec -it c sh\n"
         "333 ttyd -p 40002 -i 127.0.0.1 -b /labs/instances/bbbb-2/console/client -W docker exec -it c sh\n"
     )
-    monkeypatch.setattr(lab_lifecycle.subprocess, "run",
-                        lambda *a, **k: MagicMock(stdout=out))
+    monkeypatch.setattr(
+        lab_lifecycle.subprocess,
+        "run",
+        lambda *a, **k: MagicMock(stdout=out, returncode=0),
+    )
     assert lab_lifecycle.console_pids() == {"aaaa-1": [111, 222], "bbbb-2": [333]}
+
+
+def test_console_processes_preserves_node_port_and_unparseable_process(monkeypatch):
+    out = (
+        "111 ttyd -p 40000 -i 127.0.0.1 -b /labs/instances/aaaa-1/console/client -W docker exec -it c sh\n"
+        "222 ttyd -i 127.0.0.1 -b /labs/instances/aaaa-1/console/server -W docker exec -it c sh\n"
+    )
+    monkeypatch.setattr(
+        lab_lifecycle.subprocess,
+        "run",
+        lambda *a, **k: MagicMock(stdout=out, returncode=0),
+    )
+
+    assert lab_lifecycle.console_processes() == {
+        "aaaa-1": {"client": [(111, 40000)], "server": [(222, None)]}
+    }
+    # A malformed/legacy command still has to remain visible to orphan cleanup.
+    assert lab_lifecycle.console_pids() == {"aaaa-1": [111, 222]}
+
+
+def test_console_process_scan_failure_is_distinct_from_no_matches(monkeypatch):
+    monkeypatch.setattr(
+        lab_lifecycle.subprocess,
+        "run",
+        lambda *a, **k: MagicMock(stdout="", returncode=2),
+    )
+
+    assert lab_lifecycle.console_processes() is None
+    assert lab_lifecycle.console_pids() == {}
+
+    def _raise(*args, **kwargs):
+        raise OSError("process table unavailable")
+
+    monkeypatch.setattr(lab_lifecycle.subprocess, "run", _raise)
+    assert lab_lifecycle.console_processes() is None
+    assert lab_lifecycle.console_pids() == {}
 
 
 def test_kill_consoles_counts_only_what_it_signalled(monkeypatch):

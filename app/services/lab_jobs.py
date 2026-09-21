@@ -15,6 +15,8 @@ prevents the web host from needing the lab worker DSN.
 * :func:`drain_once` — claim and execute durable ``lab_operations`` rows.
 * :func:`request_idle_reaps` — enqueue destroy intents without touching the
   engine (the web-host timer calls this).
+* :func:`recover_missing_consoles` — repair worker-restart ttyd loss before
+  draining more operations, without redeploying a live lab.
 """
 
 from __future__ import annotations
@@ -31,7 +33,13 @@ import app.models  # noqa: F401  # ensure all FK target tables are registered fo
 from app.config import settings
 from app.models.lab import LabInstance, LabOperation
 from app.services import lab_operations
-from app.services.lab_lifecycle import console_pids, kill_consoles
+from app.services.host_lock import HostLockUnavailable
+from app.services.lab_lifecycle import (
+    console_pids,
+    console_processes,
+    kill_consoles,
+    start_console,
+)
 from app.services.labengine.interface import LabEngine
 
 
@@ -234,6 +242,89 @@ def sweep_orphan_consoles(db: Session) -> int:
         if instance_id not in live
         for pid in pids
     )
+
+
+def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
+    """Recreate missing Linux-node consoles for live instances.
+
+    The worker is the sole executor of this path.  A fresh, ownership-checked
+    inspection must succeed before any ttyd process or projection is changed;
+    an open operation, unknown/absent runtime, or inspection failure is skipped.
+    """
+    open_operation = (
+        select(LabOperation.id)
+        .where(LabOperation.instance_id == LabInstance.id)
+        .where(LabOperation.state.in_(lab_operations.OPEN_STATES))
+        .exists()
+    )
+    instances = db.scalars(
+        select(LabInstance)
+        .where(LabInstance.status == "active")
+        .where(LabInstance.runtime_presence == "present")
+        .where(~open_operation)
+    ).all()
+    running = console_processes()
+    if running is None:
+        return 0
+    recovered = 0
+    for instance in instances:
+        recorded = instance.consoles or {}
+        existing = running.get(str(instance.id), {})
+        recorded_linux = {
+            node: spec
+            for node, spec in recorded.items()
+            if not str(spec.get("kind") or "").startswith("vr")
+        }
+        # A normal successful provision records every node.  Empty projection
+        # is therefore suspicious; otherwise inspect only when a Linux node is
+        # missing or the recorded port disagrees with the live process table.
+        # Healthy and RouterOS-only labs take the cheap no-inspection path.
+        needs_recovery = not recorded or any(
+            node not in existing
+            or not existing[node]
+            or (
+                existing[node][0][1] is not None
+                and existing[node][0][1] != spec.get("port")
+            )
+            for node, spec in recorded_linux.items()
+        )
+        if not needs_recovery:
+            continue
+        try:
+            handle = engine.inspect_running(instance.instance_name)
+        except (HostLockUnavailable, RuntimeError):
+            continue
+        if handle is None:
+            continue
+        consoles: dict = {}
+        for node, cname in handle.nodes.items():
+            kind = handle.kinds.get(node)
+            spec = {"kind": kind, "mgmt": handle.mgmt.get(node)}
+            if str(kind or "").startswith("vr"):
+                consoles[node] = spec
+                continue
+            node_processes = existing.get(node, [])
+            if node_processes:
+                live_port = node_processes[0][1]
+                # A matching process with an unparseable port must not cause a
+                # duplicate ttyd launch. Preserve the old projection until the
+                # next unambiguous observation instead.
+                spec["port"] = (
+                    live_port
+                    if live_port is not None
+                    else (recorded.get(node) or {}).get("port")
+                )
+            else:
+                port = start_console(
+                    cname, f"/labs/instances/{instance.id}/console/{node}"
+                )
+                spec["port"] = port
+                if port is not None:
+                    recovered += 1
+            consoles[node] = spec
+        instance.consoles = consoles
+        db.flush()
+    return recovered
 
 
 def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:

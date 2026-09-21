@@ -88,22 +88,14 @@ def start_console(cname: str, base_path: str) -> int | None:
     launch fails we log and return ``None`` so a console problem never blocks
     provisioning.
 
-    Known, pre-existing limitation (not introduced or changed by the worker
-    process-containment/singleton-lock work — confirmed by checking this
-    unit's own history: no explicit ``KillMode`` was ever set before that
-    work, so systemd's own default, which is already ``control-group``, was
-    already in effect): ttyd is spawned as an ordinary child of the worker
-    process, in the worker's own cgroup. Any worker stop/restart (a crash
-    triggering ``Restart=always``, a manual ``systemctl restart``, or a
-    deploy) therefore kills every running console too, while
-    ``LabInstance.consoles`` in the database keeps advertising the now-dead
-    port. `lab_jobs.sweep_orphan_consoles` only ever *deletes* stale console
-    entries for instances that are no longer live-counted for capacity — it
-    has no path that *detects* a still-active instance's console has died
-    and recreates it. A learner's browser console for any active Linux lab
-    is silently broken until that instance is reset or redeployed. Tracked
-    as an explicit follow-up (see Knowledge slug
-    ``academy-lab-worker-console-restart-fragility``), not fixed here.
+    ttyd is deliberately an ordinary child of the worker process, in the
+    worker's own cgroup. A worker stop/restart therefore kills its consoles
+    too. The continuous worker repairs that expected consequence before
+    draining more operations: ``lab_jobs.recover_missing_consoles`` compares
+    the process table with active/present instances, obtains a fresh
+    ownership-checked runtime handle, preserves healthy node consoles, and
+    starts only missing Linux-node consoles. A missing or failed inspection
+    never changes the database projection or starts a process.
     """
     if shutil.which("ttyd") is None:
         logger.warning("ttyd not installed; skipping console for %s", cname)
@@ -144,12 +136,17 @@ def start_console(cname: str, base_path: str) -> int | None:
     return port
 
 
-def console_pids(instance_id=None) -> dict[str, list[int]]:
-    """Map instance id -> PIDs of the ttyd consoles currently serving it.
+def console_processes(
+    instance_id=None,
+) -> dict[str, dict[str, list[tuple[int, int | None]]]] | None:
+    """Map instance id -> node -> ``(pid, port)`` for running ttyd consoles.
 
-    Reads the process table via ``pgrep -af`` and parses the ``-b`` base path,
-    which carries the instance id. Passing ``instance_id`` narrows the scan to
-    one instance. Returns ``{}`` when nothing matches or ``pgrep`` is absent.
+    ``port`` is ``None`` only for a matching process whose command line cannot
+    be parsed completely.  The PID is still retained so orphan cleanup and
+    duplicate-prevention never lose sight of a real ttyd process merely
+    because its arguments are malformed or from an older launcher. The whole
+    result is ``None`` when the process table cannot be scanned reliably;
+    callers that might create processes must distinguish that from no matches.
     """
     scope = str(instance_id) if instance_id is not None else r"[0-9a-f-]+"
     pattern = rf"ttyd .* -b {_CONSOLE_BASE}{scope}/console/"
@@ -158,16 +155,41 @@ def console_pids(instance_id=None) -> dict[str, list[int]]:
             ["pgrep", "-af", pattern], check=False, capture_output=True, text=True
         )
     except Exception as exc:
-        logger.warning("console_pids scan failed: %s", exc)
-        return {}
-    found: dict[str, list[int]] = {}
+        logger.warning("console process scan failed: %s", exc)
+        return None
+    if proc.returncode not in (0, 1):
+        logger.warning("console process scan failed with exit code %s", proc.returncode)
+        return None
+    found: dict[str, dict[str, list[tuple[int, int | None]]]] = {}
     for line in proc.stdout.splitlines():
         pid_text, _, cmdline = line.partition(" ")
-        match = re.search(rf"-b {_CONSOLE_BASE}([0-9a-f-]+)/console/", cmdline)
+        match = re.search(
+            rf"-b {_CONSOLE_BASE}([0-9a-f-]+)/console/([^\s]+)", cmdline
+        )
+        port_match = re.search(r"(?:^|\s)-p\s+(\d+)(?:\s|$)", cmdline)
         if match is None or not pid_text.isdigit():
             continue
-        found.setdefault(match.group(1), []).append(int(pid_text))
+        found.setdefault(match.group(1), {}).setdefault(match.group(2), []).append(
+            (int(pid_text), int(port_match.group(1)) if port_match is not None else None)
+        )
     return found
+
+
+def console_pids(instance_id=None) -> dict[str, list[int]]:
+    """Map instance id -> PIDs of the ttyd consoles currently serving it.
+
+    Reads the process table via ``pgrep -af`` and parses the ``-b`` base path,
+    which carries the instance id. Passing ``instance_id`` narrows the scan to
+    one instance. Returns ``{}`` when nothing matches or the scan fails, which
+    keeps teardown and orphan cleanup fail-closed.
+    """
+    processes = console_processes(instance_id)
+    if processes is None:
+        return {}
+    return {
+        instance: [pid for processes in nodes.values() for pid, _port in processes]
+        for instance, nodes in processes.items()
+    }
 
 
 def stop_consoles(instance: LabInstance) -> int:

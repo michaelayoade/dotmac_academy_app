@@ -226,6 +226,194 @@ def test_sweep_is_a_no_op_when_no_consoles_are_running(admin_session, monkeypatc
     assert lab_jobs.sweep_orphan_consoles(admin_session) == 0
 
 
+def test_recover_missing_consoles_starts_only_missing_linux_nodes_and_is_idempotent(
+    admin_session, tenant_a, monkeypatch
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name=f"dal-{uuid4()}",
+        seed={},
+        status="active",
+        runtime_presence="present",
+        consoles={
+            "client": {"kind": "linux", "mgmt": "10.0.0.1", "port": 40000},
+            "server": {"kind": "linux", "mgmt": "10.0.0.2", "port": 40001},
+            "r1": {"kind": "vr-vmx", "mgmt": "10.0.0.3"},
+        },
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={
+            "client": "clab-x-client",
+            "server": "clab-x-server",
+            "r1": "clab-x-r1",
+        },
+        mgmt={"client": "172.20.0.1", "server": "172.20.0.2", "r1": "172.20.0.3"},
+        kinds={"client": "linux", "server": "linux", "r1": "vr-vmx"},
+    )
+    processes = {
+        str(instance.id): {"server": [(222, 41001)]},
+    }
+    monkeypatch.setattr(lab_jobs, "console_processes", lambda: processes)
+    starts = []
+    monkeypatch.setattr(
+        lab_jobs,
+        "start_console",
+        lambda cname, path: starts.append((cname, path)) or 41000,
+    )
+
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 1
+    assert starts == [
+        ("clab-x-client", f"/labs/instances/{instance.id}/console/client")
+    ]
+    assert instance.consoles == {
+        "client": {"kind": "linux", "mgmt": "172.20.0.1", "port": 41000},
+        "server": {"kind": "linux", "mgmt": "172.20.0.2", "port": 41001},
+        "r1": {"kind": "vr-vmx", "mgmt": "172.20.0.3"},
+    }
+
+    processes[str(instance.id)]["client"] = [(111, 41000)]
+    engine.reset_mock()
+    starts.clear()
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    engine.inspect_running.assert_not_called()
+    assert starts == []
+
+
+def test_recover_missing_consoles_excludes_non_live_and_open_instances(
+    admin_session, tenant_a, monkeypatch
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+
+    def _instance(*, status="active", presence="present"):
+        row = LabInstance(
+            tenant_id=tenant_a.id,
+            activity_id=act.id,
+            person_id=p.id,
+            instance_name=f"dal-{uuid4()}",
+            seed={},
+            status=status,
+            runtime_presence=presence,
+            consoles={"client": {"kind": "linux", "port": 40000}},
+        )
+        admin_session.add(row)
+        admin_session.flush()
+        return row
+
+    _instance(presence="absent")
+    _instance(presence="unknown")
+    _instance(status="error")
+    open_instance = _instance()
+    lab_operations.enqueue(
+        admin_session, instance=open_instance, kind="check", requested_by=p.id
+    )
+    monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
+    engine = MagicMock()
+
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    engine.inspect_running.assert_not_called()
+
+
+def test_recover_missing_consoles_scan_failure_never_spawns_duplicates(
+    admin_session, tenant_a, monkeypatch
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.1", "port": 40000}}
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name=f"dal-{uuid4()}",
+        seed={},
+        status="active",
+        runtime_presence="present",
+        consoles=dict(consoles),
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    monkeypatch.setattr(lab_jobs, "console_processes", lambda: None)
+    engine = MagicMock()
+    starts = MagicMock()
+    monkeypatch.setattr(lab_jobs, "start_console", starts)
+
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    engine.inspect_running.assert_not_called()
+    starts.assert_not_called()
+    assert instance.consoles == consoles
+
+
+@pytest.mark.parametrize("inspection", [None, RuntimeError("inspect failed")])
+def test_recover_missing_consoles_never_mutates_without_positive_inspection(
+    admin_session, tenant_a, monkeypatch, inspection
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.1", "port": 40000}}
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name=f"dal-{uuid4()}",
+        seed={},
+        status="active",
+        runtime_presence="present",
+        consoles=dict(consoles),
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
+    starts = MagicMock()
+    monkeypatch.setattr(lab_jobs, "start_console", starts)
+    engine = MagicMock()
+    if isinstance(inspection, Exception):
+        engine.inspect_running.side_effect = inspection
+    else:
+        engine.inspect_running.return_value = inspection
+
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert instance.consoles == consoles
+    starts.assert_not_called()
+
+
+def test_recover_missing_consoles_retries_a_failed_ttyd_launch(
+    admin_session, tenant_a, monkeypatch
+):
+    _c, act, _lt, p = _seed(admin_session, tenant_a.id)
+    instance = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name=f"dal-{uuid4()}",
+        seed={},
+        status="active",
+        runtime_presence="present",
+        consoles={},
+    )
+    admin_session.add(instance)
+    admin_session.flush()
+    monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
+    engine = MagicMock()
+    engine.inspect_running.return_value = LabHandle(
+        instance_name=instance.instance_name,
+        nodes={"client": "clab-x-client", "r1": "clab-x-r1"},
+        mgmt={"client": "172.20.0.1", "r1": "172.20.0.2"},
+        kinds={"client": "linux", "r1": "vr-vmx"},
+    )
+    ports = iter([None, 42000])
+    monkeypatch.setattr(lab_jobs, "start_console", lambda *a: next(ports))
+
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert instance.consoles["client"]["port"] is None
+    assert "port" not in instance.consoles["r1"]
+    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 1
+    assert instance.consoles["client"]["port"] == 42000
+
+
 def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
     admin_session, tenant_a
 ):

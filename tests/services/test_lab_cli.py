@@ -49,6 +49,7 @@ def _prepare_worker_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/containerlab")
     monkeypatch.setattr("app.config.validate_settings", lambda s: [])
     monkeypatch.setattr(containerlab_module, "ContainerlabEngine", _FakeEngine)
+    monkeypatch.setattr(lab_jobs, "recover_missing_consoles", lambda db, engine: 0)
 
 
 def test_lab_worker_holds_the_singleton_lock_once_across_iterations(monkeypatch, tmp_path):
@@ -218,7 +219,9 @@ def test_lab_worker_sigterm_during_reclaim_rolls_back_cleanly_and_skips_drain(
         pass
 
 
-def test_lab_worker_calls_reclaim_then_reconcile_then_drain_in_order(monkeypatch, tmp_path):
+def test_lab_worker_calls_reclaim_then_reconcile_recover_then_drain_in_order(
+    monkeypatch, tmp_path
+):
     """Startup reclaim runs exactly once, before any poll iteration; every
     poll iteration still calls (and commits) ``reconcile_stuck`` before
     ``drain_once`` — a regression guard in case the reclaim insertion
@@ -244,6 +247,10 @@ def test_lab_worker_calls_reclaim_then_reconcile_then_drain_in_order(monkeypatch
         calls.append("reconcile_stuck")
         return 0
 
+    def fake_recover(db, engine):
+        calls.append("recover_missing_consoles")
+        return 0
+
     class _StopLoop(Exception):
         pass
 
@@ -253,13 +260,19 @@ def test_lab_worker_calls_reclaim_then_reconcile_then_drain_in_order(monkeypatch
 
     monkeypatch.setattr(lab_operations, "reclaim_previous_epoch", fake_reclaim)
     monkeypatch.setattr(lab_operations, "reconcile_stuck", fake_reconcile)
+    monkeypatch.setattr(lab_jobs, "recover_missing_consoles", fake_recover)
     monkeypatch.setattr(lab_jobs, "drain_once", fake_drain)
 
     with pytest.raises(_StopLoop):
         cli._lab_worker(argparse.Namespace())
 
-    assert calls == ["reclaim", "reconcile_stuck", "drain_once"]
+    assert calls == [
+        "reclaim",
+        "reconcile_stuck",
+        "recover_missing_consoles",
+        "drain_once",
+    ]
     # reclaim's own transaction was committed (via db.commit()) before the
     # loop's own reconcile_stuck commit — proven by two separate commits on
     # the same MagicMock session across both fake_session() invocations.
-    assert fake_db.commit.call_count == 2
+    assert fake_db.commit.call_count == 3
