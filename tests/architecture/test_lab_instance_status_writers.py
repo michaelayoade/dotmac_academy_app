@@ -20,11 +20,14 @@ new file writing ANY `.status` attribute, on any model, fails the build and
 forces a human to look at it and confirm it is not a new LabInstance writer
 in disguise.
 
-The SQLAlchemy Core bulk-update forms (`update(LabInstance).values(...)`,
-`.update({...})`) are the one place this scan CAN name the target model
-explicitly, because the model is a literal argument in the code
-(`update(LabInstance)`, `query(LabInstance)`) — so those three shapes stay
-LabInstance-specific, on top of the file-wide plain-attribute count.
+The SQLAlchemy Core bulk-write forms (`update(LabInstance).values(...)`,
+`insert(LabInstance).values(...)`, `.update({...})`, `LabInstance(status=...)`
+constructor calls, `bulk_update_mappings(LabInstance, ...)`,
+`execute(update(LabInstance), [...])`, and a narrow raw-SQL shape) are the
+one place this scan CAN name the target model explicitly, because the model
+is a literal argument in the code (`update(LabInstance)`, `LabInstance(...)`)
+— so those shapes stay LabInstance-specific, on top of the file-wide
+plain-attribute count.
 
 This is a two-directional RATCHET over
 `lab_instance_status_writer_baseline.txt`, same shape as
@@ -38,14 +41,30 @@ baseline.
   — a bare annotation with no value assigns nothing) — ANYWHERE under
   `app/`, for any target, not just `LabInstance`.
 * `setattr(<any-expr>, "status", ...)` — same, file-wide.
-* `update(LabInstance).values(status=...)` — keyword form.
-* `update(LabInstance).values({"status": ...})` — dict-literal form.
+* `update(LabInstance).values(status=...)` / `insert(LabInstance).values(status=...)`
+  — keyword form, either statement.
+* `update(LabInstance).values({"status": ...})` / `insert(LabInstance).values({"status": ...})`
+  — dict-literal form, either statement.
 * `query(LabInstance)....update({"status": ...})` — dict-literal form.
-  The last three require the `LabInstance` reference to appear as an
-  argument to the `update(...)`/`query(...)` call somewhere in the chain the
+  These require the `LabInstance` reference to appear as an argument to the
+  `update(...)`/`insert(...)`/`query(...)` call somewhere in the chain the
   `.values(...)`/`.update(...)` call is made on — resolved as either a bare
   `Name` (`LabInstance`) or an `Attribute` (`lab_models.LabInstance`), so a
   module-qualified import alias is still recognised.
+* `LabInstance(status=...)` — a `status=` keyword argument passed directly to
+  the constructor, including through a module alias (`lab_models.LabInstance(status=...)`).
+* `bulk_update_mappings(LabInstance, ...)` — counted unconditionally once the
+  first positional argument resolves to `LabInstance`; unlike the other
+  bulk forms this one is not gated on finding the literal string `"status"`
+  anywhere, since the mapping list is usually a runtime value.
+* `execute(update(LabInstance), [{...}, ...])` — a bulk-parameter `execute`
+  call whose first argument is an `update(LabInstance)` (or
+  `insert(LabInstance)`/`query(LabInstance)`) chain and whose second argument
+  is a literal list containing at least one dict literal with a `"status"` key.
+* `text("...UPDATE lab_instances... status ...")` — a raw-SQL string literal
+  passed to `text(...)`, counted only when the literal contains BOTH the
+  substrings `"UPDATE lab_instances"` and `"status"`. Any other raw-SQL shape
+  is a documented blind spot below, not something this scan attempts.
 
 ## Documented blind spots (deliberately not fixed)
 
@@ -53,11 +72,20 @@ baseline.
   with a non-literal key (`setattr(instance, key, value)` where `key` is a
   variable, or `instance.__dict__.update(payload)`) is invisible. Only the
   literal string `"status"` is recognised.
-* **False negative** — the three bulk-update shapes above require the model
-  to appear as a literal `LabInstance`/`<alias>.LabInstance` token in the
-  same statement's call chain; a bulk update built through an intermediate
+* **False negative** — the bulk-write shapes above require the model to
+  appear as a literal `LabInstance`/`<alias>.LabInstance` token in the same
+  statement's call chain; a bulk update built through an intermediate
   variable (`stmt = update(LabInstance); ...; stmt.values(status=...)`
   across two statements) is not connected by this scan.
+* **False negative** — raw SQL is recognised in exactly one shape: a
+  string-literal argument to `text(...)` containing both `"UPDATE
+  lab_instances"` and `"status"` verbatim. A dynamically built string
+  (f-string, `.format()`, concatenation), a different table alias/casing, a
+  multi-statement script, or SQL passed some other way than `text(...)`'s
+  first positional argument is invisible to this scan. Raw SQL against
+  `lab_instances` is inherently the hardest case for a static AST scan to
+  cover honestly, and this narrow, literal-substring match is the entire
+  extent of the attempt — it is not a general SQL parser.
 * Every non-bulk `.status` write on any OTHER model still counts toward that
   file's total (that is the point — see above), so the baseline is honestly
   a list of "all `.status` writers today", not "all LabInstance writers
@@ -89,18 +117,27 @@ def _call_names_lab_instance(call: ast.Call) -> bool:
     return any(_is_lab_instance_reference(arg) for arg in call.args)
 
 
+_LAB_INSTANCE_TARGETING_CALL_NAMES = ("update", "insert", "query")
+
+
+def _callee_name(call: ast.Call) -> str | None:
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 def _chain_targets_lab_instance(node: ast.AST) -> bool:
-    """True if an `update(LabInstance)`/`query(LabInstance)` call is anywhere in this chain."""
+    """True if an `update(LabInstance)`/`insert(LabInstance)`/`query(LabInstance)` call is anywhere in this chain."""
     for sub in ast.walk(node):
-        if isinstance(sub, ast.Call):
-            func = sub.func
-            name: str | None = None
-            if isinstance(func, ast.Name):
-                name = func.id
-            elif isinstance(func, ast.Attribute):
-                name = func.attr
-            if name in ("update", "query") and _call_names_lab_instance(sub):
-                return True
+        if (
+            isinstance(sub, ast.Call)
+            and _callee_name(sub) in _LAB_INSTANCE_TARGETING_CALL_NAMES
+            and _call_names_lab_instance(sub)
+        ):
+            return True
     return False
 
 
@@ -134,7 +171,7 @@ def _count_attribute_status_writes(tree: ast.AST) -> int:
 
 
 def _count_lab_instance_bulk_status_writes(tree: ast.AST) -> int:
-    """`update(LabInstance).values(status=...)` and its two dict-literal siblings."""
+    """`update(LabInstance).values(status=...)`/`insert(...)` and their dict-literal siblings."""
     count = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -149,10 +186,77 @@ def _count_lab_instance_bulk_status_writes(tree: ast.AST) -> int:
     return count
 
 
+def _count_lab_instance_constructor_status_writes(tree: ast.AST) -> int:
+    """`LabInstance(status=...)`, including `lab_models.LabInstance(status=...)`."""
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _is_lab_instance_reference(node.func):
+            if any(kw.arg == "status" for kw in node.keywords):
+                count += 1
+    return count
+
+
+def _count_lab_instance_bulk_update_mappings(tree: ast.AST) -> int:
+    """`bulk_update_mappings(LabInstance, ...)` — counted unconditionally, see docstring."""
+    count = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _callee_name(node) == "bulk_update_mappings"
+            and node.args
+            and _is_lab_instance_reference(node.args[0])
+        ):
+            count += 1
+    return count
+
+
+def _list_literal_has_a_status_dict(node: ast.AST) -> bool:
+    return isinstance(node, ast.List) and any(_dict_has_status_key(elt) for elt in node.elts)
+
+
+def _count_lab_instance_execute_update_list_writes(tree: ast.AST) -> int:
+    """`execute(update(LabInstance), [{..., "status": ...}])`."""
+    count = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _callee_name(node) == "execute"
+            and len(node.args) >= 2
+            and _chain_targets_lab_instance(node.args[0])
+            and _list_literal_has_a_status_dict(node.args[1])
+        ):
+            count += 1
+    return count
+
+
+def _count_raw_sql_lab_instance_status_writes(tree: ast.AST) -> int:
+    """`text("...UPDATE lab_instances... status ...")` — see the narrow blind-spot note above."""
+    count = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _callee_name(node) == "text"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            sql = node.args[0].value
+            if "UPDATE lab_instances" in sql and "status" in sql:
+                count += 1
+    return count
+
+
 def _count_file(path: Path) -> int:
     """Raises on a syntax error — a file that fails to parse is not "zero writes"."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return _count_attribute_status_writes(tree) + _count_lab_instance_bulk_status_writes(tree)
+    return (
+        _count_attribute_status_writes(tree)
+        + _count_lab_instance_bulk_status_writes(tree)
+        + _count_lab_instance_constructor_status_writes(tree)
+        + _count_lab_instance_bulk_update_mappings(tree)
+        + _count_lab_instance_execute_update_list_writes(tree)
+        + _count_raw_sql_lab_instance_status_writes(tree)
+    )
 
 
 def scan_status_writers(root: Path) -> dict[str, int]:
@@ -261,28 +365,57 @@ def test_sensitivity_exact_set_over_a_planted_tree(tmp_path: Path) -> None:
         "    setattr(x, 'status', 'active')\n"
     )
 
-    # One positive for each of the three LabInstance-specific bulk forms.
+    # One positive for each LabInstance-specific bulk/constructor/raw-SQL form:
+    # update().values() kw + dict, query().update() dict, insert().values()
+    # kw + dict, the constructor kwarg (through a module alias),
+    # bulk_update_mappings, execute(update(...), [...]), and the narrow raw
+    # text() SQL shape. That is 9 positives in this one file.
     (app_dir / "lab_bulk.py").write_text(
         "from app.models import lab as lab_models\n"
-        "from sqlalchemy import update\n"
+        "from sqlalchemy import bulk_update_mappings, execute, insert, text, update\n"
         "\n"
         "\n"
-        "def kw_form():\n"
+        "def update_kw_form():\n"
         "    return update(lab_models.LabInstance).values(status='active')\n"
         "\n"
         "\n"
-        "def values_dict_form():\n"
+        "def update_dict_form():\n"
         "    return update(lab_models.LabInstance).values({'status': 'active'})\n"
         "\n"
         "\n"
         "def query_update_dict_form(session):\n"
         "    return session.query(lab_models.LabInstance).filter_by(id=1).update({'status': 'active'})\n"
+        "\n"
+        "\n"
+        "def insert_kw_form():\n"
+        "    return insert(lab_models.LabInstance).values(status='active')\n"
+        "\n"
+        "\n"
+        "def insert_dict_form():\n"
+        "    return insert(lab_models.LabInstance).values({'status': 'active'})\n"
+        "\n"
+        "\n"
+        "def constructor_form():\n"
+        "    return lab_models.LabInstance(status='queued')\n"
+        "\n"
+        "\n"
+        "def bulk_update_mappings_form(session):\n"
+        "    return bulk_update_mappings(lab_models.LabInstance, [{'id': 1}])\n"
+        "\n"
+        "\n"
+        "def execute_update_list_form(conn):\n"
+        "    return conn.execute(update(lab_models.LabInstance), [{'id': 1, 'status': 'active'}])\n"
+        "\n"
+        "\n"
+        "def raw_sql_form(conn):\n"
+        "    return conn.execute(text('UPDATE lab_instances SET status = :status'))\n"
     )
 
     # Every documented near-miss: a read, a comparison, a same-named-but-
-    # different attribute, and a bulk update targeting a DIFFERENT model.
+    # different attribute, a bulk update targeting a DIFFERENT model, and a
+    # raw-SQL text() literal that mentions the table but never "status".
     (app_dir / "near_misses.py").write_text(
-        "from sqlalchemy import update\n"
+        "from sqlalchemy import text, update\n"
         "from app.models.enrollment import Enrollment\n"
         "\n"
         "\n"
@@ -296,9 +429,13 @@ def test_sensitivity_exact_set_over_a_planted_tree(tmp_path: Path) -> None:
         "\n"
         "def other_model_bulk_update():\n"
         "    return update(Enrollment).values(status='active')\n"
+        "\n"
+        "\n"
+        "def raw_sql_without_status(conn):\n"
+        "    return conn.execute(text('UPDATE lab_instances SET runtime_presence = :p'))\n"
     )
 
     assert scan_status_writers(tmp_path) == {
         "app/positives.py": 4,
-        "app/lab_bulk.py": 3,
+        "app/lab_bulk.py": 9,
     }
