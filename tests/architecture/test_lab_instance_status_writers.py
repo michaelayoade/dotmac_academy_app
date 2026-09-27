@@ -100,6 +100,7 @@ baseline.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -147,8 +148,32 @@ def _dict_has_status_key(node: ast.AST) -> bool:
     return any(isinstance(key, ast.Constant) and key.value == "status" for key in node.keys)
 
 
+def _iter_status_attribute_targets(target: ast.expr) -> Iterator[ast.Attribute]:
+    """Yield every `.status` attribute nested inside an assignment target.
+
+    An assignment target is not always a bare `Attribute` — it can be a
+    `Tuple`/`List` unpacking pattern (`lab.status, other = ...`,
+    `(a.status, b) = ...`) or wrap a `Starred` element
+    (`x, *lab.status = ...`). Recurse through both so a `.status` write
+    hidden inside an unpacking target is not missed.
+    """
+    if isinstance(target, ast.Attribute) and target.attr == "status":
+        yield target
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            yield from _iter_status_attribute_targets(elt)
+    elif isinstance(target, ast.Starred):
+        yield from _iter_status_attribute_targets(target.value)
+
+
 def _count_attribute_status_writes(tree: ast.AST) -> int:
-    """Every `.status` attribute write anywhere in the file, for any target."""
+    """Every `.status` attribute write anywhere in the file, for any target.
+
+    Every element of a chained assignment (`a = lab.status = ...`) is its
+    own entry in `Assign.targets` and is checked independently. `for
+    lab.status in ...:` and `with ... as lab.status:` targets are ordinary
+    assignment targets in the AST sense and are included on the same basis.
+    """
     count = 0
     for node in ast.walk(tree):
         targets: list[ast.expr] = []
@@ -158,9 +183,12 @@ def _count_attribute_status_writes(tree: ast.AST) -> int:
             targets = [node.target]
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             targets = [node.target]
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            targets = [node.target]
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            targets = [node.optional_vars]
         for target in targets:
-            if isinstance(target, ast.Attribute) and target.attr == "status":
-                count += 1
+            count += sum(1 for _ in _iter_status_attribute_targets(target))
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id == "setattr" and len(node.args) >= 2:
@@ -411,6 +439,37 @@ def test_sensitivity_exact_set_over_a_planted_tree(tmp_path: Path) -> None:
         "    return conn.execute(text('UPDATE lab_instances SET status = :status'))\n"
     )
 
+    # One positive for each unpacking-target/chained/for/with shape: a bare
+    # tuple target, a parenthesized tuple target, a starred target, a
+    # chained assignment (only the attribute half of which should count),
+    # a `for` loop target, and a `with ... as` target.
+    (app_dir / "unpacking_targets.py").write_text(
+        "def tuple_target(lab, other):\n"
+        "    lab.status, other = 1, 2\n"
+        "\n"
+        "\n"
+        "def parenthesized_tuple_target(a, b):\n"
+        "    (a.status, b) = (1, 2)\n"
+        "\n"
+        "\n"
+        "def starred_target(lab):\n"
+        "    x, *lab.status = [1, 2, 3]\n"
+        "\n"
+        "\n"
+        "def chained_assignment(a, lab):\n"
+        "    a = lab.status = 1\n"
+        "\n"
+        "\n"
+        "def for_loop_target(lab, seq):\n"
+        "    for lab.status in seq:\n"
+        "        pass\n"
+        "\n"
+        "\n"
+        "def with_as_target(lab, ctx):\n"
+        "    with ctx() as lab.status:\n"
+        "        pass\n"
+    )
+
     # Every documented near-miss: a read, a comparison, a same-named-but-
     # different attribute, a bulk update targeting a DIFFERENT model, and a
     # raw-SQL text() literal that mentions the table but never "status".
@@ -438,4 +497,5 @@ def test_sensitivity_exact_set_over_a_planted_tree(tmp_path: Path) -> None:
     assert scan_status_writers(tmp_path) == {
         "app/positives.py": 4,
         "app/lab_bulk.py": 9,
+        "app/unpacking_targets.py": 6,
     }

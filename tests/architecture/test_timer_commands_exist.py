@@ -4,9 +4,15 @@
 `ExecStart` contains the literal substring ``.venv/bin/python -m app.cli`` —
 it never looks at what comes AFTER that, so a service whose subcommand was
 misspelled, or whose subcommand was since deleted from `app/cli.py`, would
-still pass that check. This module closes that gap: it parses the actual
-subcommand out of each service file and checks it against the CLI's real,
-registered subcommand names.
+still pass that check. A first version of this module had the same shape
+of hole one level down: it matched a bare regex for the substring
+``-m app.cli`` followed by a word against the raw line, so
+`ExecStart=/bin/echo -m app.cli reap-labs` — which
+never runs Python at all — still "extracted" `reap-labs` and passed. This
+module now actually parses the command: strip systemd's `ExecStart=` prefix
+characters, `shlex.split` it, unwrap one `sh -c '...'` layer if present, and
+require the real shape `<venv-python> -m app.cli <subcommand>` before
+trusting the subcommand.
 
 ## How the CLI's registered names are resolved
 
@@ -32,7 +38,7 @@ today.
 from __future__ import annotations
 
 import ast
-import re
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,7 +54,16 @@ HOST_FIREWALL_SERVICE = "academy-lab-ipv6-guard.service"
 #: `Restart=` instead. Not every `.service` is expected to have a `.timer`.
 NO_TIMER_EXPECTED = {HOST_FIREWALL_SERVICE, "academy-lab-worker.service"}
 
-_EXEC_START_CLI_RE = re.compile(r"-m app\.cli\s+([A-Za-z0-9][A-Za-z0-9-]*)")
+#: Characters systemd allows as `ExecStart=` line prefixes (`-` ignore exit
+#: code, `@` argv0 override, `+`/`!`/`!!` privilege directives, `:` disable
+#: environment substitution) — stripped before shlex-splitting the command.
+_SYSTEMD_EXEC_PREFIX_CHARS = "-@+!:"
+
+#: The suffix every real ExecStart in this fleet's services uses for its
+#: interpreter — the same path shape `test_kernel_runtime_readiness.py`
+#: already asserts as a substring. A different interpreter (`/bin/echo`,
+#: system Python, a stray shell) is refused, not skipped.
+_APP_VENV_PYTHON_SUFFIX = ".venv/bin/python"
 
 
 def _find_main_function(tree: ast.Module) -> ast.FunctionDef:
@@ -99,18 +114,66 @@ def registered_cli_subcommands(cli_path: Path = CLI_PATH) -> set[str]:
     return names
 
 
-def extract_cli_subcommand(service_text: str) -> str | None:
-    """The subcommand named in an `ExecStart=... -m app.cli <subcommand>` line.
+def _exec_start_commands(service_text: str) -> list[str]:
+    """The raw command text of every `ExecStart=` line (systemd allows more than one)."""
+    commands = []
+    for raw_line in service_text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("ExecStart="):
+            commands.append(stripped[len("ExecStart=") :])
+    return commands
 
-    Returns ``None`` for a service whose `ExecStart` does not invoke
-    `app.cli` at all (e.g. the firewall-guard service, which runs `nft`).
+
+def _strip_systemd_exec_prefix(command: str) -> str:
+    index = 0
+    while index < len(command) and command[index] in _SYSTEMD_EXEC_PREFIX_CHARS:
+        index += 1
+    return command[index:]
+
+
+def _resolve_argv(command: str) -> list[str]:
+    """`shlex.split` the command, unwrapping a `sh -c '...'` layer if present."""
+    argv = shlex.split(_strip_systemd_exec_prefix(command))
+    if len(argv) >= 3 and argv[0].endswith("sh") and argv[1] == "-c":
+        argv = shlex.split(argv[2])
+    return argv
+
+
+def _cli_subcommand_from_argv(argv: list[str]) -> str | None:
+    """`argv[3]` if `argv` is exactly `<venv-python> -m app.cli <subcommand> ...`."""
+    if len(argv) >= 4 and argv[0].endswith(_APP_VENV_PYTHON_SUFFIX) and argv[1] == "-m" and argv[2] == "app.cli":
+        return argv[3]
+    return None
+
+
+def extract_cli_subcommand(service_text: str) -> str | None:
+    """The subcommand actually invoked by this service's `ExecStart=`, or `None`.
+
+    A `.service` file can have more than one `ExecStart=` line; each is
+    parsed independently (systemd prefix characters stripped, `shlex.split`,
+    one `sh -c '...'` layer unwrapped if present) and the first that resolves
+    to `<venv-python> -m app.cli <subcommand>` wins.
+
+    Returns `None` only when NO `ExecStart=` line even mentions the literal
+    substring `app.cli` — a service genuinely unrelated to the CLI (the
+    firewall-guard service runs `nft`). A line that DOES mention `app.cli`
+    but fails to parse into the exact expected shape (wrong interpreter,
+    `echo` instead of the venv python, mismatched argv) raises `ValueError`
+    instead of being silently skipped — treating a near-miss shape as
+    "nothing to check here" is exactly the false accept this scan exists to
+    close.
     """
-    for line in service_text.splitlines():
-        if not line.strip().startswith("ExecStart="):
+    for command in _exec_start_commands(service_text):
+        if "app.cli" not in command:
             continue
-        match = _EXEC_START_CLI_RE.search(line)
-        if match:
-            return match.group(1)
+        argv = _resolve_argv(command)
+        subcommand = _cli_subcommand_from_argv(argv)
+        if subcommand is None:
+            raise ValueError(
+                "ExecStart mentions app.cli but does not parse as "
+                f"<venv-python> -m app.cli <subcommand>: {command!r}"
+            )
+        return subcommand
     return None
 
 
@@ -119,7 +182,8 @@ def find_unregistered_subcommand(commands: set[str], service_text: str) -> str |
 
     Returns ``None`` if the service either invokes no `app.cli` subcommand,
     or invokes one that is registered — the two "nothing wrong" cases a
-    caller does not need to distinguish.
+    caller does not need to distinguish. Propagates `extract_cli_subcommand`'s
+    `ValueError` unchanged for a malformed `app.cli` ExecStart line.
     """
     subcommand = extract_cli_subcommand(service_text)
     if subcommand is None or subcommand in commands:
@@ -235,3 +299,42 @@ def test_sensitivity_a_non_app_cli_execstart_is_not_flagged() -> None:
     commands = registered_cli_subcommands()
     planted_text = "[Service]\nExecStart=/usr/sbin/nft --file /etc/nftables.d/example.nft\n"
     assert find_unregistered_subcommand(commands, planted_text) is None
+
+
+def test_sensitivity_a_valid_direct_execstart_extracts_its_subcommand() -> None:
+    planted_text = (
+        "[Service]\nExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs\n"
+    )
+    assert extract_cli_subcommand(planted_text) == "reap-labs"
+
+
+def test_sensitivity_a_valid_sh_c_wrapped_execstart_extracts_its_subcommand() -> None:
+    """The real `academy-hr-report.service` shape: a quoted `sh -c` wrapper."""
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/bin/sh -c "
+        "'/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli hr-report --to \"x@example.com\"'\n"
+    )
+    assert extract_cli_subcommand(planted_text) == "hr-report"
+
+
+def test_sensitivity_echo_pretending_to_run_app_cli_is_an_error_not_a_skip() -> None:
+    """The exact false-accept this module was fixed to close: `echo` never runs Python."""
+    planted_text = "[Service]\nExecStart=/bin/echo -m app.cli reap-labs\n"
+    try:
+        extract_cli_subcommand(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected extract_cli_subcommand to raise ValueError for an /bin/echo ExecStart")
+
+
+def test_sensitivity_a_wrong_interpreter_is_an_error_not_a_skip() -> None:
+    """A system Python (not the app's own venv) is refused, not silently accepted."""
+    planted_text = "[Service]\nExecStart=/usr/bin/python3 -m app.cli reap-labs\n"
+    try:
+        extract_cli_subcommand(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected extract_cli_subcommand to raise ValueError for a non-venv interpreter")
