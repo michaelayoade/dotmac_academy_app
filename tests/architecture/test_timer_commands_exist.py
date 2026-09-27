@@ -64,6 +64,7 @@ _SYSTEMD_EXEC_PREFIX_CHARS = "-@+!:"
 #: already asserts as a substring. A different interpreter (`/bin/echo`,
 #: system Python, a stray shell) is refused, not skipped.
 _APP_VENV_PYTHON_SUFFIX = ".venv/bin/python"
+_SUPPORTED_SHELLS = {"/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash"}
 
 
 def _find_main_function(tree: ast.Module) -> ast.FunctionDef:
@@ -120,6 +121,8 @@ def _exec_start_commands(service_text: str) -> list[str]:
     for raw_line in service_text.splitlines():
         stripped = raw_line.strip()
         if stripped.startswith("ExecStart="):
+            if stripped.endswith("\\"):
+                raise ValueError("continued ExecStart lines need an explicit parser before they can be checked")
             commands.append(stripped[len("ExecStart=") :])
     return commands
 
@@ -134,7 +137,9 @@ def _strip_systemd_exec_prefix(command: str) -> str:
 def _resolve_argv(command: str) -> list[str]:
     """`shlex.split` the command, unwrapping a `sh -c '...'` layer if present."""
     argv = shlex.split(_strip_systemd_exec_prefix(command))
-    if len(argv) >= 3 and argv[0].endswith("sh") and argv[1] == "-c":
+    if len(argv) >= 3 and argv[0] in _SUPPORTED_SHELLS and argv[1] == "-c":
+        if any(operator in argv[2] for operator in (";", "|", "&", "`", "$(", "\n")):
+            raise ValueError("shell command lists in ExecStart need explicit per-command validation")
         argv = shlex.split(argv[2])
     return argv
 
@@ -146,49 +151,47 @@ def _cli_subcommand_from_argv(argv: list[str]) -> str | None:
     return None
 
 
-def extract_cli_subcommand(service_text: str) -> str | None:
-    """The subcommand actually invoked by this service's `ExecStart=`, or `None`.
+def extract_cli_subcommands(service_text: str) -> list[str]:
+    """Every CLI subcommand invoked by this service's `ExecStart=` lines.
 
     A `.service` file can have more than one `ExecStart=` line; each is
     parsed independently (systemd prefix characters stripped, `shlex.split`,
-    one `sh -c '...'` layer unwrapped if present) and the first that resolves
-    to `<venv-python> -m app.cli <subcommand>` wins.
+    one `sh -c '...'` layer unwrapped if present). Every matching line must
+    have the expected command shape, including lines after a valid first one.
 
-    Returns `None` only when NO `ExecStart=` line even mentions the literal
-    substring `app.cli` — a service genuinely unrelated to the CLI (the
-    firewall-guard service runs `nft`). A line that DOES mention `app.cli`
-    but fails to parse into the exact expected shape (wrong interpreter,
-    `echo` instead of the venv python, mismatched argv) raises `ValueError`
-    instead of being silently skipped — treating a near-miss shape as
-    "nothing to check here" is exactly the false accept this scan exists to
-    close.
+    Returns an empty list only when there are no `ExecStart=` lines. Every
+    command in a CLI service must parse into the expected shape; this refuses
+    environment-expanded module names and non-CLI commands rather than
+    guessing what systemd will execute. The firewall service is excluded by
+    name at the caller because its command is intentionally unrelated.
     """
+    subcommands: list[str] = []
     for command in _exec_start_commands(service_text):
-        if "app.cli" not in command:
-            continue
         argv = _resolve_argv(command)
         subcommand = _cli_subcommand_from_argv(argv)
         if subcommand is None:
             raise ValueError(
-                "ExecStart mentions app.cli but does not parse as "
+                "ExecStart does not parse as "
                 f"<venv-python> -m app.cli <subcommand>: {command!r}"
             )
-        return subcommand
-    return None
+        subcommands.append(subcommand)
+    return subcommands
+
+
+def extract_cli_subcommand(service_text: str) -> str | None:
+    """Return the first CLI command after validating every `ExecStart=` line."""
+    subcommands = extract_cli_subcommands(service_text)
+    return subcommands[0] if subcommands else None
 
 
 def find_unregistered_subcommand(commands: set[str], service_text: str) -> str | None:
     """The service's subcommand if it names one `commands` does not contain.
 
-    Returns ``None`` if the service either invokes no `app.cli` subcommand,
-    or invokes one that is registered — the two "nothing wrong" cases a
-    caller does not need to distinguish. Propagates `extract_cli_subcommand`'s
-    `ValueError` unchanged for a malformed `app.cli` ExecStart line.
+    Returns ``None`` if the service has no `ExecStart=` or all subcommands are
+    registered. Propagates `extract_cli_subcommands`'s `ValueError` for any
+    command that cannot be verified as a CLI invocation.
     """
-    subcommand = extract_cli_subcommand(service_text)
-    if subcommand is None or subcommand in commands:
-        return None
-    return subcommand
+    return next((name for name in extract_cli_subcommands(service_text) if name not in commands), None)
 
 
 def test_registered_subcommands_extraction_is_not_vacuous() -> None:
@@ -203,10 +206,11 @@ def test_every_app_cli_service_names_a_registered_subcommand() -> None:
         if service_file.name == HOST_FIREWALL_SERVICE:
             continue
         text = service_file.read_text(encoding="utf-8")
-        subcommand = extract_cli_subcommand(text)
-        assert subcommand is not None, f"{service_file.name} has no `-m app.cli <subcommand>` ExecStart line to check"
-        if subcommand not in commands:
-            offenders.append(f"{service_file.name}: {subcommand!r}")
+        subcommands = extract_cli_subcommands(text)
+        assert subcommands, f"{service_file.name} has no `-m app.cli <subcommand>` ExecStart line to check"
+        offenders.extend(
+            f"{service_file.name}: {name!r}" for name in subcommands if name not in commands
+        )
     assert not offenders, "these services name a subcommand that app/cli.py does not register:\n  " + "\n  ".join(
         offenders
     )
@@ -294,11 +298,15 @@ def test_sensitivity_a_real_registered_subcommand_is_not_flagged() -> None:
     assert find_unregistered_subcommand(commands, planted_text) is None
 
 
-def test_sensitivity_a_non_app_cli_execstart_is_not_flagged() -> None:
-    """The firewall-guard shape (no `app.cli` at all) must not read as an offender."""
-    commands = registered_cli_subcommands()
+def test_sensitivity_a_non_app_cli_execstart_is_rejected() -> None:
+    """An unclassified command in a CLI service cannot silently count as checked."""
     planted_text = "[Service]\nExecStart=/usr/sbin/nft --file /etc/nftables.d/example.nft\n"
-    assert find_unregistered_subcommand(commands, planted_text) is None
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a non-CLI ExecStart to raise ValueError")
 
 
 def test_sensitivity_a_valid_direct_execstart_extracts_its_subcommand() -> None:
@@ -338,3 +346,83 @@ def test_sensitivity_a_wrong_interpreter_is_an_error_not_a_skip() -> None:
         pass
     else:
         raise AssertionError("expected extract_cli_subcommand to raise ValueError for a non-venv interpreter")
+
+
+def test_sensitivity_every_execstart_is_checked_after_a_valid_first_command() -> None:
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs\n"
+        "ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli missing-command\n"
+    )
+    assert find_unregistered_subcommand({"reap-labs"}, planted_text) == "missing-command"
+
+
+def test_sensitivity_malformed_second_execstart_is_rejected() -> None:
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs\n"
+        "ExecStart=/bin/echo -m app.cli reap-labs\n"
+    )
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a malformed second ExecStart to raise ValueError")
+
+
+def test_sensitivity_continued_second_execstart_is_rejected() -> None:
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs\n"
+        "ExecStart=/bin/echo \\\n"
+        "    -m app.cli reap-labs\n"
+    )
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a continued ExecStart to raise ValueError")
+
+
+def test_sensitivity_shell_command_list_is_rejected() -> None:
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/bin/sh -c "
+        "'/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs; "
+        "/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli missing-command'\n"
+    )
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a shell command list to raise ValueError")
+
+
+def test_sensitivity_unknown_shell_is_rejected() -> None:
+    planted_text = (
+        "[Service]\nExecStart=/tmp/not-a-shell -c "
+        "'/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs'\n"
+    )
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected an unknown shell to raise ValueError")
+
+
+def test_sensitivity_expanded_second_execstart_is_rejected() -> None:
+    planted_text = (
+        "[Service]\n"
+        "ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs\n"
+        "ExecStart=/bin/echo -m ${PYTHON_MODULE} missing-command\n"
+    )
+    try:
+        extract_cli_subcommands(planted_text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected an expanded non-CLI ExecStart to raise ValueError")
