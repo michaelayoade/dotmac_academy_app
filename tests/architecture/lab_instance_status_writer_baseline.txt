@@ -1,0 +1,23 @@
+# Files allowed to write LabInstance.status (app/models/lab.py), and how
+# many times each does it today.
+#
+# Owner: the lab worker/lifecycle services — lab_operations.py is the
+# worker's operation-settlement code (queue/start/reset/deploy/error
+# transitions), lab_lifecycle.py is provision/destroy/reap. Every other
+# module (web routes, admin handlers, metrics, jobs, scripts) reads
+# LabInstance.status; it never assigns it.
+#
+# This is a RATCHET, both directions. See
+# tests/architecture/test_lab_instance_status_writers.py:
+#   * a write in a file not listed here fails the build;
+#   * a listed file's count rising fails the build;
+#   * a listed file's count falling (or the file disappearing) without this
+#     file being updated to match also fails the build — the list only
+#     shrinks, and it must shrink for real, on record.
+#
+# Do not regenerate this file to make a failure go away. A new entry means a
+# new writer of derived lifecycle state that was supposed to have exactly two
+# owners.
+17 app/services/lab_operations.py
+11 app/services/lab_lifecycle.py
+TOTAL 28
