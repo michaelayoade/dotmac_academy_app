@@ -28,6 +28,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
+from app.models.rbac import PersonRole, Role
 from app.models.track import Track
 from app.services import announcements as ann_svc
 from app.services import attempt_policy, scheduling
@@ -44,7 +45,7 @@ from app.services.lifecycle import set_account_status
 from app.services.localtime import local_to_utc
 from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
-from app.services.roster import bulk_enroll, set_roster_state
+from app.services.roster import assign_facilitator, bulk_enroll, set_roster_state
 from app.services.security import hash_token
 from app.services.web_auth import require_web_role, require_web_user
 from app.web.responses import hx_redirect
@@ -89,6 +90,7 @@ def cohorts_list(
     # must stay visible so an instructor can act on it, not disappear silently.
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
     active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
+    facilitators_by_cohort: dict[UUID, list[Person]] = {cohort.id: [] for cohort in rows}
     for enrollment, student in roster_rows:
         if enrollment.cohort_id not in roster_by_cohort:
             continue
@@ -97,7 +99,26 @@ def cohorts_list(
         )
         if is_active_student:
             active_student_counts[enrollment.cohort_id] += 1
+        if enrollment.status == "active" and enrollment.role_in_cohort == "instructor":
+            facilitators_by_cohort[enrollment.cohort_id].append(student)
         roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
+    instructor_candidates = list(
+        db.scalars(
+            select(Person)
+            .join(
+                PersonRole,
+                (PersonRole.person_id == Person.id) & (PersonRole.tenant_id == Person.tenant_id),
+            )
+            .join(
+                Role,
+                (Role.id == PersonRole.role_id) & (Role.tenant_id == PersonRole.tenant_id),
+            )
+            .where(Person.tenant_id == tenant.id)
+            .where(Person.status == "active")
+            .where(Role.slug == "instructor")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).unique().all()
+    )
     tracks_by_cohort = {
         cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
     }
@@ -144,6 +165,12 @@ def cohorts_list(
             "cohort": cohort,
             "roster": roster_by_cohort.get(cohort.id, []),
             "active_student_count": active_student_counts.get(cohort.id, 0),
+            "facilitators": facilitators_by_cohort.get(cohort.id, []),
+            "available_facilitators": [
+                candidate
+                for candidate in instructor_candidates
+                if candidate.id not in {person.id for person in facilitators_by_cohort.get(cohort.id, [])}
+            ],
             "tracks": tracks_by_cohort.get(cohort.id, []),
             "available_courses": courses,
         }
@@ -250,6 +277,57 @@ def _authorable_course_or_404(db: Session, *, tenant_id: UUID, person_id: UUID, 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return course
 
+
+@router.post("/cohorts/{cohort_id}/facilitators")
+def add_cohort_facilitator(
+    cohort_id: UUID,
+    request: Request,
+    facilitator_id: UUID = Form(...),
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    assign_facilitator(
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
+        person_id=facilitator_id,
+        actor_is_admin=True,
+    )
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/facilitators/{facilitator_id}/remove")
+def remove_cohort_facilitator(
+    cohort_id: UUID,
+    facilitator_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    enrollment = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant.id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == facilitator_id)
+        .where(Enrollment.role_in_cohort == "instructor")
+    ).first()
+    if enrollment is None:
+        raise NotFoundError("facilitator enrollment not found")
+    set_roster_state(
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
+        person_id=facilitator_id,
+        state="dropped",
+    )
+    return hx_redirect(request, "/instructor/cohorts")
 
 @router.post("/cohorts/{cohort_id}/enroll")
 def enroll_student(

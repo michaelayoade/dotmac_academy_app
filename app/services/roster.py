@@ -15,9 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.cohort import Enrollment
+from app.models.person import Person
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.identity import person_for_email
 from app.services.lookups import cohort_or_404
+from app.services.roles import role_slugs
 from app.services.tracks import assign_enrollment_track, ensure_track_offerings
 
 ROSTER_STATES = frozenset({"active", "waitlisted", "dropped"})
@@ -66,6 +68,65 @@ def activate_enrollment(
     previous_status = enrollment.status
     enrollment.status = "active"
     return ActivationResult(outcome="reactivated", previous_status=previous_status)
+
+
+def assign_facilitator(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    cohort_id: UUID,
+    person_id: UUID,
+    actor_is_admin: bool,
+) -> Enrollment:
+    """Assign an existing active instructor to a cohort.
+
+    Cohort instructor enrollments are the existing source of course-authoring
+    access. Reuse the enrollment activation lifecycle when restoring a dropped
+    or waitlisted enrollment so facilitator management cannot drift from roster
+    state behavior.
+    """
+    if not actor_is_admin:
+        raise BadRequestError("only an admin can assign a cohort facilitator")
+
+    cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
+    person = db.scalars(
+        select(Person)
+        .where(Person.tenant_id == tenant_id)
+        .where(Person.id == person_id)
+    ).first()
+    if person is None:
+        raise NotFoundError("person not found for tenant")
+    if person.status != "active":
+        raise BadRequestError("facilitator must be an active user")
+    if "instructor" not in role_slugs(db, tenant_id, person_id):
+        raise BadRequestError("facilitator must have the instructor role")
+
+    enrollment = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant_id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == person_id)
+    ).first()
+    if enrollment is None:
+        enrollment = Enrollment(
+            tenant_id=tenant_id,
+            cohort_id=cohort_id,
+            person_id=person_id,
+            role_in_cohort="instructor",
+            status="active",
+        )
+        db.add(enrollment)
+    else:
+        enrollment.role_in_cohort = "instructor"
+        enrollment.track_id = None
+        activate_enrollment(
+            db,
+            tenant_id=tenant_id,
+            enrollment=enrollment,
+            actor_is_admin=actor_is_admin,
+        )
+    db.flush()
+    return enrollment
 
 
 def _normalize_emails(emails) -> list[str]:

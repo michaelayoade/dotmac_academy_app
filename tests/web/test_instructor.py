@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import select
 
 from app.models.auth import UserCredential
@@ -60,6 +61,126 @@ def _grant_admin(admin_session, tenant):
     )
     admin_session.commit()
 
+
+def _person_with_role(admin_session, tenant, *, email, role="instructor", status="active"):
+    roles = ensure_roles(admin_session, tenant.id)
+    person = Person(
+        tenant_id=tenant.id, email=email, first_name="Test", last_name="Instructor", status=status
+    )
+    admin_session.add(person)
+    admin_session.flush()
+    if role is not None:
+        admin_session.add(PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles[role].id))
+    return person
+
+
+def _post_facilitator(app_client, headers, cohort_id, person_id):
+    csrf = app_client.cookies.get("csrf_token", "")
+    return app_client.post(
+        f"/instructor/cohorts/{cohort_id}/facilitators",
+        headers={**headers, "x-csrf-token": csrf},
+        data={"facilitator_id": str(person_id)},
+        follow_redirects=False,
+    )
+
+
+def test_admin_can_assign_and_remove_existing_instructor_facilitator(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Facilitated", discipline="networking", status="active")
+    facilitator = _person_with_role(admin_session, tenant_a, email="facilitator@a.edu")
+    admin_session.add(cohort)
+    admin_session.commit()
+
+    response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
+    assert response.status_code == 303
+    admin_session.expire_all()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant_a.id)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == facilitator.id)
+    ).one()
+    assert enrollment.role_in_cohort == "instructor"
+    assert enrollment.status == "active"
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/instructor/cohorts/{cohort.id}/facilitators/{facilitator.id}/remove",
+        headers={**headers, "x-csrf-token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    admin_session.expire_all()
+    assert enrollment.status == "dropped"
+
+
+@pytest.mark.parametrize("previous_status", ["dropped", "waitlisted"])
+def test_admin_reactivates_existing_facilitator_enrollment(
+    app_client, admin_session, tenant_a, previous_status
+):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Reactivation", discipline="networking", status="active")
+    facilitator = _person_with_role(admin_session, tenant_a, email=f"{previous_status}@a.edu")
+    admin_session.add(cohort)
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant_a.id, cohort_id=cohort.id, person_id=facilitator.id,
+        role_in_cohort="instructor", status=previous_status,
+    )
+    admin_session.add(enrollment)
+    admin_session.commit()
+
+    response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
+    assert response.status_code == 303
+    admin_session.expire_all()
+    assert enrollment.role_in_cohort == "instructor"
+    assert enrollment.status == "active"
+
+
+def test_non_admin_instructor_cannot_assign_facilitator(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Admin Only", discipline="networking", status="active")
+    facilitator = _person_with_role(admin_session, tenant_a, email="peer-facilitator@a.edu")
+    admin_session.add(cohort)
+    admin_session.commit()
+
+    response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
+    assert response.status_code == 403
+    assert admin_session.query(Enrollment).filter(
+        Enrollment.cohort_id == cohort.id, Enrollment.person_id == facilitator.id
+    ).count() == 0
+
+
+def test_user_without_instructor_role_cannot_be_facilitator(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Role Gate", discipline="networking", status="active")
+    learner = _person_with_role(admin_session, tenant_a, email="learner-only@a.edu", role=None)
+    admin_session.add(cohort)
+    admin_session.commit()
+
+    response = _post_facilitator(app_client, headers, cohort.id, learner.id)
+    assert response.status_code == 400
+    assert "instructor role" in response.text
+
+
+def test_facilitator_assignment_preserves_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort_a = Cohort(tenant_id=tenant_a.id, name="Alpha Cohort", discipline="networking", status="active")
+    instructor_a = _person_with_role(admin_session, tenant_a, email="alpha-facilitator@a.edu")
+    cohort_b = Cohort(tenant_id=tenant_b.id, name="Beta Cohort", discipline="networking", status="active")
+    instructor_b = _person_with_role(admin_session, tenant_b, email="beta-facilitator@b.edu")
+    admin_session.add_all([cohort_a, cohort_b])
+    admin_session.commit()
+
+    assert _post_facilitator(app_client, headers, cohort_a.id, instructor_b.id).status_code == 404
+    assert _post_facilitator(app_client, headers, cohort_b.id, instructor_a.id).status_code == 404
+    assert admin_session.query(Enrollment).filter(
+        Enrollment.person_id.in_([instructor_a.id, instructor_b.id])
+    ).count() == 0
 
 def test_instructor_can_create_cohort(app_client, admin_session, tenant_a):
     """An instructor can POST to create a cohort; the row lands in the DB."""

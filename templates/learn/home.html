@@ -35,7 +35,7 @@
     <div class="flex flex-wrap items-baseline gap-3">
       <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
       {% if c.state == 'locked' %}
-      <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Locked</span>
+      <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft" title="{{ c.locked_reason }}" aria-label="Locked: {{ c.locked_reason }}">Locked</span>
       {% elif c.state == 'upcoming' %}
       <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Starts {{ c.starts_at | localtime | datefmt if c.starts_at else 'soon' }}</span>
       {% elif c.state == 'completed' %}
