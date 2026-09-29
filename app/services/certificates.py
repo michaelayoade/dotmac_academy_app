@@ -21,8 +21,37 @@ from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.services.exceptions import ConflictError
 
-# Ornamental certificate frame (generated). app/services/ -> repo root.
-_FRAME = Path(__file__).resolve().parents[2] / "static" / "img" / "cert-frame.png"
+# Certificate background (built by content/management/figures-src/
+# generate_cert_frame.py -- a guilloche/banknote-style border generated via
+# Gemini plus a code-composited watermark and ribbon seal carrying the real
+# brand mark; see that script's docstring). app/services/ -> repo root.
+_FRAME = Path(__file__).resolve().parents[2] / "static" / "img" / "cert-frame.jpg"
+
+# Content sits centered on the full page, inside the background's guilloche
+# border -- unlike an earlier brand-panel design, this layout has no side
+# panel offsetting the center. Bounds are the border's inner (orange-rule)
+# content field, sampled from the generated background, with an 8mm inset;
+# keep in sync with generate_cert_frame.py if the border proportions change.
+_CONTENT_X0 = 39.0
+_CONTENT_X1 = 258.0
+_CONTENT_CX = 148.5  # page center; the design is symmetric, unlike the panel layout
+_CONTENT_W = _CONTENT_X1 - _CONTENT_X0
+
+# Certificate-only typefaces (OFL-licensed, static instances baked from the
+# Google Fonts variable sources -- see static/fonts/certificate/OFL-*.txt for
+# the license text of each). Fraunces/Manrope match the academy's own web
+# type scale (static/fonts/fraunces-*.woff2, manrope-*.woff2); Pacifico is a
+# certificate-only script accent used solely for the title, matching the
+# reference certificate's flowing cursive treatment.
+_FONTS = Path(__file__).resolve().parents[2] / "static" / "fonts" / "certificate"
+_FRAUNCES = _FONTS / "Fraunces-SemiBold.ttf"
+_MANROPE = _FONTS / "Manrope-Regular.ttf"
+_MANROPE_SEMIBOLD = _FONTS / "Manrope-SemiBold.ttf"
+_PACIFICO = _FONTS / "Pacifico-Regular.ttf"
+
+_EMERALD = (47, 122, 82)
+_CHARCOAL = (35, 35, 35)
+_MUTED = (114, 106, 96)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +112,19 @@ def issue_certificate(
     return cert
 
 
+def _tracked(pdf: FPDF, *, y: float, text: str, size: float, spacing: float,
+             color: tuple[int, int, int], font: str) -> None:
+    """One line of letter-spaced small caps, centered in the content area --
+    the supporting-text treatment used throughout the certificate (labels,
+    dividers' captions)."""
+    pdf.set_font(font, "", size)
+    pdf.set_text_color(*color)
+    pdf.set_char_spacing(spacing)
+    pdf.set_xy(_CONTENT_X0, y)
+    pdf.cell(_CONTENT_W, 6, text.upper(), align="C")
+    pdf.set_char_spacing(0)
+
+
 def render_certificate_pdf(
     *, recipient_name: str, course_title: str, serial: str, issued_at: datetime
 ) -> bytes:
@@ -94,36 +136,79 @@ def render_certificate_pdf(
     if _FRAME.exists():
         pdf.image(str(_FRAME), 0, 0, 297, 210)
     else:
-        pdf.set_draw_color(47, 122, 82)
+        pdf.set_draw_color(*_EMERALD)
         pdf.set_line_width(2)
         pdf.rect(10, 10, 277, 190)
 
-    pdf.set_text_color(47, 122, 82)
-    pdf.set_font("Helvetica", "B", 36)
-    pdf.set_y(45)
-    pdf.cell(0, 20, "Certificate of Completion", align="C")
+    # All four or none: a partial set (e.g. Fraunces present but Manrope
+    # missing) previously still hardcoded "Manrope" for every label below,
+    # which fpdf2 raises on ("Undefined font") since add_font was never
+    # called for it -- that's not the graceful degrade the comment promised.
+    if all(p.exists() for p in (_FRAUNCES, _MANROPE, _MANROPE_SEMIBOLD, _PACIFICO)):
+        pdf.add_font("Fraunces", "", str(_FRAUNCES))
+        pdf.add_font("Manrope", "", str(_MANROPE))
+        pdf.add_font("Manrope", "B", str(_MANROPE_SEMIBOLD))
+        pdf.add_font("Pacifico", "", str(_PACIFICO))
+        display_font, script_font, label_font = "Fraunces", "Pacifico", "Manrope"
+    else:  # fonts not vendored (e.g. a stripped checkout) -- degrade gracefully
+        display_font = script_font = label_font = "Helvetica"
 
-    pdf.set_text_color(30, 30, 30)
-    pdf.set_font("Helvetica", "", 16)
-    pdf.set_y(85)
-    pdf.cell(0, 10, "This certifies that", align="C")
+    # Title in the script face, natural mixed case with no letter-spacing --
+    # a connected cursive font reads as broken with tracking applied.
+    pdf.set_font(script_font, "", 40 if script_font == "Pacifico" else 26)
+    pdf.set_text_color(*_CHARCOAL)
+    pdf.set_xy(_CONTENT_X0, 34)
+    pdf.cell(_CONTENT_W, 18, "Certificate of Completion", align="C")
 
-    pdf.set_font("Helvetica", "B", 28)
-    pdf.set_y(98)
-    pdf.cell(0, 14, recipient_name, align="C")
+    _tracked(pdf, y=58, text="This is to certify that", size=10.5, spacing=0.8,
+             color=_MUTED, font=label_font)
 
-    pdf.set_font("Helvetica", "", 16)
-    pdf.set_y(120)
-    pdf.cell(0, 10, "has successfully completed", align="C")
+    # Recipient name -- bold serif, sitting over the background's faint
+    # "Dotmac Academy" watermark, with a plain rule underneath.
+    pdf.set_font(display_font, "", 30)
+    pdf.set_text_color(*_CHARCOAL)
+    pdf.set_xy(_CONTENT_X0, 68)
+    pdf.cell(_CONTENT_W, 16, recipient_name, align="C")
 
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_y(132)
-    pdf.cell(0, 12, course_title, align="C")
+    pdf.set_draw_color(*_MUTED)
+    pdf.set_line_width(0.2)
+    pdf.line(_CONTENT_CX - 45, 90, _CONTENT_CX + 45, 90)
 
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_text_color(90, 90, 90)
-    pdf.set_y(170)
-    pdf.cell(0, 8, f"Issued {issued_at:%d %B %Y}    -    Serial {serial}", align="C")
+    _tracked(pdf, y=98, text="has successfully completed the course",
+             size=10.5, spacing=0.8, color=_MUTED, font=label_font)
+
+    pdf.set_font(label_font, "B", 15)
+    pdf.set_text_color(*_CHARCOAL)
+    pdf.set_xy(_CONTENT_X0, 108)
+    pdf.cell(_CONTENT_W, 10, course_title, align="C")
+
+    # Signature / seal / date footer -- the background's ribbon seal is
+    # centered between these two columns (see generate_cert_frame.py), so
+    # they stop well short of the middle rather than spanning full width.
+    # The rule's y (140) is matched by hand to the seal's baked-in vertical
+    # position there -- keep the two in sync if either moves.
+    col_w = 62.0
+    left_x = _CONTENT_X0 + 8
+    right_x = _CONTENT_X1 - 8 - col_w
+
+    pdf.set_font(label_font, "B", 11)
+    pdf.set_text_color(*_CHARCOAL)
+    pdf.set_xy(right_x, 128)
+    pdf.cell(col_w, 7, f"{issued_at:%d %B %Y}", align="C")
+
+    pdf.set_draw_color(*_EMERALD)
+    pdf.set_line_width(0.25)
+    pdf.line(left_x, 140, left_x + col_w, 140)
+    pdf.line(right_x, 140, right_x + col_w, 140)
+
+    for x, label in ((left_x, "Academy Director"), (right_x, "Date")):
+        pdf.set_font(label_font, "", 9)
+        pdf.set_text_color(*_MUTED)
+        pdf.set_xy(x, 142.5)
+        pdf.cell(col_w, 5, label, align="C")
+
+    _tracked(pdf, y=165, text=f"Certificate Serial  ·  {serial}", size=8,
+             spacing=0.4, color=_MUTED, font=label_font)
 
     out = pdf.output()  # fpdf2 >= 2.7 returns a bytearray
     return bytes(out)
