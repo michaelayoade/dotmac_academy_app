@@ -149,13 +149,12 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
         requires_course_id for _course_id, requires_course_id in prereq_rows if requires_course_id not in course_titles
     }
     if missing_title_ids:
-        course_titles.update(
-            db.execute(
-                select(Course.id, Course.title)
-                .where(Course.tenant_id == tenant_id)
-                .where(Course.id.in_(missing_title_ids))
-            ).all()
-        )
+        missing_title_rows = db.execute(
+            select(Course.id, Course.title)
+            .where(Course.tenant_id == tenant_id)
+            .where(Course.id.in_(missing_title_ids))
+        ).all()
+        course_titles.update({course_id: title for course_id, title in missing_title_rows})
     for course_id, requires_course_id in prereq_rows:
         if requires_course_id in completed:
             continue
