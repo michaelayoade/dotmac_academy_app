@@ -6,9 +6,13 @@ import json
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import select
+
 from app.config import settings
+from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services import erp_sync
 
@@ -28,13 +32,13 @@ class _FakeResp:
 _UNREADABLE = object()
 
 
-def _seed(admin_session, tenant, *, status="completed"):
+def _seed(admin_session, tenant, *, status="completed", pct=1.0):
     course = Course(
         tenant_id=tenant.id,
         slug=f"c-{uuid.uuid4().hex[:6]}",
         title="Fiber Splicing",
         discipline="fiber",
-        source_ref="x",
+        source_ref="fiber-splicing@1",
         version=1,
     )
     person = Person(
@@ -43,15 +47,38 @@ def _seed(admin_session, tenant, *, status="completed"):
         first_name="E",
         last_name="M",
     )
-    admin_session.add_all([course, person])
+    cohort = Cohort(
+        tenant_id=tenant.id,
+        name=f"Staff {uuid.uuid4().hex[:6]}",
+        discipline="fiber",
+        status="active",
+    )
+    admin_session.add_all([course, person, cohort])
+    admin_session.flush()
+    enrollment = Enrollment(
+        tenant_id=tenant.id,
+        cohort_id=cohort.id,
+        person_id=person.id,
+        role_in_cohort="student",
+        status="active",
+        audience="staff",
+        employee_ref="EMP-2026-0001",
+    )
+    offering = CourseOffering(
+        tenant_id=tenant.id,
+        cohort_id=cohort.id,
+        course_id=course.id,
+        status="active",
+    )
+    admin_session.add_all([enrollment, offering])
     admin_session.flush()
     comp = CourseCompletion(
         tenant_id=tenant.id,
         person_id=person.id,
         course_id=course.id,
         status=status,
-        pct=1.0,
-        completed_at=datetime(2026, 7, 11, tzinfo=UTC),
+        pct=pct,
+        completed_at=datetime(2026, 7, 11, tzinfo=UTC) if status == "completed" else None,
     )
     admin_session.add(comp)
     admin_session.flush()
@@ -73,16 +100,20 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
 
     monkeypatch.setattr(erp_sync.httpx, "post", fake_post)
 
-    comp, person, _ = _seed(admin_session, tenant_a)
+    comp, _, _ = _seed(admin_session, tenant_a)
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.SYNCED
     assert comp.erp_synced_at is not None
     body = json.loads(captured["content"])
     assert body["event"] == "course_completed"
-    assert body["email"] == person.email
+    assert body["employee_ref"] == "EMP-2026-0001"
+    assert "email" not in body
+    assert body["academy_course_ref"] == "fiber-splicing@1"
+    assert body["progress_pct"] == 100
     assert body["course_title"] == "Fiber Splicing"
     assert body["passed"] is True
     assert body["certificate_ref"] == str(comp.id)
+    assert comp.erp_synced_pct == 1.0
     assert captured["headers"]["X-Webhook-Signature-256"].startswith("sha256=")
     admin_session.rollback()
 
@@ -104,6 +135,52 @@ def test_sync_pending_dedups(admin_session, tenant_a, monkeypatch):
     assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 1
     # already synced → nothing to push
     assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 0
+    admin_session.rollback()
+
+
+def test_sync_pending_emits_changed_in_progress_percentage(
+    admin_session, tenant_a, monkeypatch
+):
+    _configure(monkeypatch)
+    captured = []
+
+    def fake_post(url, content=None, headers=None, timeout=None):
+        captured.append(json.loads(content))
+        return _FakeResp(200)
+
+    monkeypatch.setattr(erp_sync.httpx, "post", fake_post)
+    comp, _, _ = _seed(admin_session, tenant_a, status="in_progress", pct=0.4)
+
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 1
+    assert captured[0]["event"] == "training_progress_updated"
+    assert captured[0]["progress_pct"] == 40
+    assert comp.erp_synced_pct == 0.4
+    assert comp.erp_synced_at is None
+
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 0
+    comp.pct = 0.75
+    admin_session.flush()
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 1
+    assert captured[-1]["progress_pct"] == 75
+    admin_session.rollback()
+
+
+def test_sync_pending_skips_external_learners(admin_session, tenant_a, monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200))
+    comp, _, _ = _seed(admin_session, tenant_a, status="in_progress", pct=0.2)
+    enrollment = admin_session.scalar(
+        select(Enrollment).where(
+            Enrollment.tenant_id == tenant_a.id,
+            Enrollment.person_id == comp.person_id,
+        )
+    )
+    enrollment.audience = "external"
+    enrollment.employee_ref = None
+    admin_session.flush()
+
+    assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)[erp_sync.SYNCED] == 0
+    assert comp.erp_synced_pct is None
     admin_session.rollback()
 
 
