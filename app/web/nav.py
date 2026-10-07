@@ -8,17 +8,17 @@ areas, a request path → its area, and an area → its sidebar items.
 from __future__ import annotations
 
 # Ordered top-level areas. `required` gates visibility:
-#   None        → always visible (Learn)
+#   None        → always visible (Learning)
 #   "instructor"→ instructor OR admin
 #   "admin"     → admin only
 AREAS: list[dict] = [
     {
         "key": "learn",
-        "label": "Learn",
-        "home": "/",
+        "label": "Learning",
+        "home": "/learn",
         "required": None,
         "sidebar": [
-            {"label": "Home", "path": "/"},
+            {"label": "Home", "path": "/learn"},
             {"label": "To-Do", "path": "/todo"},
             {"label": "Courses", "path": "/courses"},
             {"label": "Calendar", "path": "/calendar"},
@@ -67,8 +67,7 @@ def areas_for_roles(is_instructor: bool, is_admin: bool) -> list[dict]:
     for area in AREAS:
         required = area["required"]
         if required is None:
-            if not (is_instructor and not is_admin):
-                visible.append(area)
+            visible.append(area)
         elif required == "instructor" and (is_instructor or is_admin):
             visible.append(area)
         elif required == "admin" and is_admin:

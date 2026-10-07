@@ -17,9 +17,12 @@ def test_areas_for_roles_student():
 
 
 def test_areas_for_roles_instructor():
-    # A pure instructor (not also admin) gets the teaching area only — the learner
-    # "learn" area is intentionally hidden for instructor-only accounts.
-    assert [a["key"] for a in nav.areas_for_roles(True, False)] == ["teaching"]
+    # An instructor can also be enrolled as a learner, so both workspaces stay
+    # available even when the person is not an administrator.
+    assert [a["key"] for a in nav.areas_for_roles(True, False)] == [
+        "learn",
+        "teaching",
+    ]
 
 
 def test_areas_for_roles_admin():

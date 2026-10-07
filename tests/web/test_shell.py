@@ -64,6 +64,38 @@ def test_student_shell_shows_learn_only(app_client, admin_session, tenant_a):
     assert "Admin" not in body
 
 
+def test_learning_workspace_requires_sign_in(app_client):
+    response = app_client.get("/learn", headers={"Host": "alpha.localhost"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_instructor_can_switch_between_learning_and_teaching(app_client, admin_session, tenant_a):
+    _p, h = _login(
+        app_client,
+        admin_session,
+        tenant_a,
+        email="dual-mode@a.edu",
+        role="instructor",
+    )
+
+    # Keep Teaching as the default landing workspace for instructor-only users.
+    root = app_client.get("/", headers=h, follow_redirects=False)
+    assert root.status_code == 303
+    assert root.headers["location"] == "/instructor"
+
+    learning = app_client.get("/learn", headers=h)
+    assert learning.status_code == 200
+    assert 'aria-label="Workspace mode"' in learning.text
+    assert 'href="/learn"' in learning.text
+    assert 'href="/instructor"' in learning.text
+    assert 'aria-label="Switch to Learning workspace" aria-current="page"' in learning.text
+
+    teaching = app_client.get("/instructor", headers=h)
+    assert teaching.status_code == 200
+    assert 'aria-label="Switch to Teaching workspace" aria-current="page"' in teaching.text
+
+
 def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a, email="admin@a.edu", role="admin")
 

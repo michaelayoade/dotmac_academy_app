@@ -132,18 +132,23 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
 
 
 @router.get("/", response_class=HTMLResponse)
+@router.get("/learn", response_class=HTMLResponse)
 def home(
     request: Request,
     person: Person | None = Depends(optional_web_user),
     db: Session = Depends(get_db),
 ):
-    """Signed-in: Learn Home. Anonymous: the public landing page.
+    """Signed-in: Learning workspace. Anonymous root: public landing page.
 
     The landing (and /courses) is the academy's public web presence — the
-    catalog projection replaces the hand-maintained marketing-site copy.
+    catalog projection replaces the hand-maintained marketing-site copy. Pure
+    instructors still land in Teaching from ``/`` after login, while ``/learn``
+    is their explicit route into their own enrolled learning.
     """
     tenant = require_tenant(request)
     if person is None:
+        if request.url.path == "/learn":
+            return RedirectResponse("/login", status_code=303)
         listed = catalog_service.public_catalog(db, tenant_id=tenant.id)
         mgmt = [i for i in listed if i["course"].discipline == "management"]
         tech = [i for i in listed if i["course"].discipline != "management"]
@@ -158,7 +163,7 @@ def home(
             },
         )
     slugs = role_slugs(db, tenant.id, person.id)
-    if "instructor" in slugs and "admin" not in slugs:
+    if request.url.path == "/" and "instructor" in slugs and "admin" not in slugs:
         return RedirectResponse("/instructor", status_code=303)
 
     # Dashboard projection (roadmap P1a): the service owns state derivation.

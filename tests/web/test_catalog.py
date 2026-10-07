@@ -138,6 +138,34 @@ def test_courses_list_staff_sees_all_courses(app_client, admin_session, tenant_a
         _cleanup(admin_session, tenant_a)
 
 
+def test_enrolled_instructor_sees_course_in_learning_workspace(
+    app_client, admin_session, tenant_a
+):
+    """A teaching role must not hide the person's own learner enrollment."""
+    person = _login_staff(
+        app_client,
+        admin_session,
+        tenant_a,
+        role="instructor",
+        email="dual_mode_instructor@a.edu",
+    )
+    course = _seed_course(
+        admin_session,
+        tenant_a,
+        "instructor-learning-course",
+        "Instructor Learning Course",
+    )
+    _enroll(admin_session, tenant_a, person, course)
+    try:
+        response = app_client.get("/learn", headers=H)
+        assert response.status_code == 200
+        assert "Instructor Learning Course" in response.text
+        assert 'aria-label="Switch to Learning workspace" aria-current="page"' in response.text
+        assert 'aria-label="Switch to Teaching workspace"' in response.text
+    finally:
+        _cleanup(admin_session, tenant_a)
+
+
 def test_courses_list_student_no_all_courses_section(app_client, admin_session, tenant_a):
     """Student does not see the 'All courses' section."""
     _login(app_client, admin_session, tenant_a, "cat_list_noall@a.edu")
