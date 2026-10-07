@@ -219,6 +219,12 @@ def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return "admin" in role_slugs(db, tenant_id, person_id)
 
 
+def _cohort_action_target(cohort_id: UUID, return_to: str) -> str:
+    """Allow membership actions to return only to a known cohort workspace."""
+    workspace = f"/instructor/cohorts/{cohort_id}"
+    return workspace if return_to == workspace else "/instructor/cohorts"
+
+
 @router.get("/cohorts/{cohort_id}", response_class=HTMLResponse)
 def cohort_detail(
     cohort_id: UUID,
@@ -533,6 +539,7 @@ def enroll_student(
     emails: str = Form(""),
     email: str = Form(""),
     track_id: str = Form(""),
+    return_to: str = Form(""),
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
@@ -572,9 +579,14 @@ def enroll_student(
         )
     if result["not_found"]:
         summary += " Unknown (not enrolled): " + ", ".join(_e(e) for e in result["not_found"]) + "."
+    target = _cohort_action_target(cohort_id, return_to)
+    if request.headers.get("HX-Request") and target != "/instructor/cohorts" and not (
+        result["admin_required"] or result["not_found"]
+    ):
+        return hx_redirect(request, target)
     if request.headers.get("HX-Request"):
         return HTMLResponse(f'<div class="enroll-summary" role="status">{summary}</div>')
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/cohorts/{cohort_id}/roster/{person_id}/state")
@@ -583,6 +595,7 @@ def change_roster_state(
     person_id: UUID,
     request: Request,
     state: str = Form(...),
+    return_to: str = Form(""),
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
@@ -607,7 +620,7 @@ def change_roster_state(
         set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
     except NotFoundError as exc:
         return _hx_error(request, f"roster-state-error-{cohort_id}-{person_id}", str(exc))
-    return hx_redirect(request, "/instructor/cohorts")
+    return hx_redirect(request, _cohort_action_target(cohort_id, return_to))
 
 
 async def _positions_from_form(request: Request, course_ids: list[UUID]) -> dict[UUID, int]:
@@ -768,6 +781,7 @@ def invite_to_cohort(
     first_name: str = Form("New"),
     last_name: str = Form("Learner"),
     track_id: str = Form(""),
+    return_to: str = Form(""),
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
@@ -834,6 +848,9 @@ def invite_to_cohort(
         status = "Student enrolled. Existing account can sign in."
     else:
         status = "Invite email queued." if sent else "Invite email could not be queued."
+    target = _cohort_action_target(cohort_id, return_to)
+    if request.headers.get("HX-Request") and target != "/instructor/cohorts":
+        return hx_redirect(request, target)
     # Surface _apply_assignment's descriptions (e.g. "reactivated (was
     # dropped)", "already an instructor, role unchanged") — previously
     # computed but silently discarded on this surface.

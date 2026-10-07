@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
@@ -112,6 +114,124 @@ def test_admin_sees_complete_cohort_workspace(app_client, admin_session, tenant_
     assert "facilitator@a.edu" in response.text
     assert f'/instructor/gradebook/{cohort.id}' in response.text
     assert f'/instructor/reports/cohort/{cohort.id}' in response.text
+    assert f'/instructor/cohorts/{cohort.id}/invite' in response.text
+    assert f'/instructor/cohorts/{cohort.id}/enroll' in response.text
+    assert f'/instructor/cohorts/{cohort.id}/roster/' in response.text
+    assert 'name="return_to"' in response.text
+    assert 'Un-enroll' in response.text
+    assert 'Send invite and enroll' in response.text
+    assert 'Enroll students' in response.text
+
+
+def test_admin_can_unenroll_student_from_cohort_workspace(app_client, admin_session, tenant_a):
+    _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
+    cohort = _seed_detail(admin_session, tenant_a)
+    learner = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "learner@a.edu")
+    ).one()
+    headers = _login(app_client, "admin@a.edu")
+    csrf = app_client.cookies.get("csrf_token", "")
+    workspace = f"/instructor/cohorts/{cohort.id}"
+
+    response = app_client.post(
+        f"{workspace}/roster/{learner.id}/state",
+        headers={**headers, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"state": "dropped", "return_to": workspace},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("HX-Redirect") == workspace
+    admin_session.expire_all()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == learner.id)
+    ).one()
+    assert enrollment.status == "dropped"
+
+
+def test_admin_can_enroll_existing_student_from_cohort_workspace(app_client, admin_session, tenant_a):
+    _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
+    cohort = _seed_detail(admin_session, tenant_a)
+    learner = Person(
+        tenant_id=tenant_a.id,
+        email="existing@a.edu",
+        first_name="Existing",
+        last_name="Learner",
+    )
+    admin_session.add(learner)
+    admin_session.commit()
+    headers = _login(app_client, "admin@a.edu")
+    csrf = app_client.cookies.get("csrf_token", "")
+    workspace = f"/instructor/cohorts/{cohort.id}"
+
+    response = app_client.post(
+        f"{workspace}/enroll",
+        headers={**headers, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"emails": learner.email, "return_to": workspace},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("HX-Redirect") == workspace
+    admin_session.expire_all()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == learner.id)
+    ).one()
+    assert enrollment.status == "active"
+    assert enrollment.role_in_cohort == "student"
+
+
+def test_admin_can_invite_student_from_cohort_workspace(app_client, admin_session, tenant_a):
+    _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
+    cohort = _seed_detail(admin_session, tenant_a)
+    headers = _login(app_client, "admin@a.edu")
+    csrf = app_client.cookies.get("csrf_token", "")
+    workspace = f"/instructor/cohorts/{cohort.id}"
+
+    response = app_client.post(
+        f"{workspace}/invite",
+        headers={**headers, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={
+            "email": "invited@a.edu",
+            "first_name": "Invited",
+            "last_name": "Learner",
+            "return_to": workspace,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("HX-Redirect") == workspace
+    admin_session.expire_all()
+    learner = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "invited@a.edu")
+    ).one()
+    enrollment = admin_session.scalars(
+        select(Enrollment)
+        .where(Enrollment.cohort_id == cohort.id)
+        .where(Enrollment.person_id == learner.id)
+    ).one()
+    assert enrollment.status == "active"
+
+
+def test_cohort_action_rejects_external_return_target(app_client, admin_session, tenant_a):
+    _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
+    cohort = _seed_detail(admin_session, tenant_a)
+    learner = admin_session.scalars(
+        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "learner@a.edu")
+    ).one()
+    headers = _login(app_client, "admin@a.edu")
+    csrf = app_client.cookies.get("csrf_token", "")
+
+    response = app_client.post(
+        f"/instructor/cohorts/{cohort.id}/roster/{learner.id}/state",
+        headers={**headers, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"state": "dropped", "return_to": "https://evil.example"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("HX-Redirect") == "/instructor/cohorts"
 
 
 def test_cohort_workspace_student_table_is_paginated(app_client, admin_session, tenant_a):
