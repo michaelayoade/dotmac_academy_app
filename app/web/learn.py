@@ -147,8 +147,6 @@ def home(
     """
     tenant = require_tenant(request)
     if person is None:
-        if request.url.path == "/learn":
-            return RedirectResponse("/login", status_code=303)
         listed = catalog_service.public_catalog(db, tenant_id=tenant.id)
         mgmt = [i for i in listed if i["course"].discipline == "management"]
         tech = [i for i in listed if i["course"].discipline != "management"]

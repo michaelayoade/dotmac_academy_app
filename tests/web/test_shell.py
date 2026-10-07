@@ -64,10 +64,9 @@ def test_student_shell_shows_learn_only(app_client, admin_session, tenant_a):
     assert "Admin" not in body
 
 
-def test_learning_workspace_requires_sign_in(app_client):
+def test_learning_workspace_is_not_available_without_sign_in(app_client):
     response = app_client.get("/learn", headers={"Host": "alpha.localhost"}, follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+    assert response.status_code == 404
 
 
 def test_instructor_can_switch_between_learning_and_teaching(app_client, admin_session, tenant_a):
