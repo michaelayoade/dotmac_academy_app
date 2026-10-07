@@ -105,6 +105,8 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     # GET chapter page — response sets the csrf_token cookie in the TestClient jar.
     r_ch = app_client.get("/courses/foundation/chapters/3", headers=h)
     assert r_ch.status_code == 200
+    assert 'class="shell-layout shell-layout-full"' in r_ch.text
+    assert 'class="shell-footer shell-footer-full ' in r_ch.text
 
     # Extract csrf token — TestClient (httpx-based) stores cookies from responses.
     csrf = app_client.cookies.get("csrf_token") or r_ch.cookies.get("csrf_token", "")

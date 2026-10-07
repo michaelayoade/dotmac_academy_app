@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ chapter.title }} — {{ course.title }}{% endblock %}
 {% block shell_sidebar %}{% endblock %}
+{% block shell_layout_class %}shell-layout-full{% endblock %}
+{% block shell_footer_class %}shell-footer-full{% endblock %}
 {% block content %}
 {% set chapter_progress = (100 * chapter.number / total_chapters)|round(0, "floor") if total_chapters else 0 %}
 {% set read_progress = (100 * completed_chapters / total_chapters)|round(0, "floor") if total_chapters else 0 %}

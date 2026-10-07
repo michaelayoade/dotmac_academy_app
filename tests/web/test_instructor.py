@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
+from app.models.course import Chapter, Course
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
@@ -82,6 +82,43 @@ def _post_facilitator(app_client, headers, cohort_id, person_id):
         data={"facilitator_id": str(person_id)},
         follow_redirects=False,
     )
+
+
+def test_admin_course_preview_renders_imported_html_content(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="helpdesk-preview",
+        title="Service Delivery & Helpdesk",
+        discipline="networking",
+        source_ref="imported",
+        version=1,
+        status="published",
+    )
+    admin_session.add(course)
+    admin_session.flush()
+    admin_session.add(
+        Chapter(
+            tenant_id=tenant_a.id,
+            course_id=course.id,
+            number=1,
+            title="Helpdesk Foundations",
+            part="Foundations",
+            body_html="<h2>Learning objectives</h2><p>Resolve customer incidents.</p>",
+            source_hash="helpdesk-html",
+            order_index=1,
+        )
+    )
+    admin_session.commit()
+
+    response = app_client.get(f"/instructor/courses/{course.id}/preview", headers=headers)
+
+    assert response.status_code == 200
+    assert "Service Delivery &amp; Helpdesk" in response.text
+    assert "Helpdesk Foundations" in response.text
+    assert "Learning objectives" in response.text
+    assert "Resolve customer incidents." in response.text
 
 
 def test_admin_can_assign_and_remove_existing_instructor_facilitator(app_client, admin_session, tenant_a):

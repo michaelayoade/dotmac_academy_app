@@ -121,6 +121,15 @@ def test_admin_sees_complete_cohort_workspace(app_client, admin_session, tenant_
     assert 'Un-enroll' in response.text
     assert 'Send invite and enroll' in response.text
     assert 'Enroll students' in response.text
+    course = admin_session.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant_a.id)
+        .where(Course.slug == "fiber-safety")
+    ).one()
+    assert f'/instructor/courses/{course.id}/preview' in response.text
+    assert f'/instructor/courses/{course.id}/edit' in response.text
+    assert 'Open course content' in response.text
+    assert 'Edit course' in response.text
 
 
 def test_admin_can_unenroll_student_from_cohort_workspace(app_client, admin_session, tenant_a):
