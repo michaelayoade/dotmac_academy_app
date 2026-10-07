@@ -12,7 +12,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   {% include "_dotmac_ui_head.html" %}
   <!-- Compiled Tailwind v3 build + self-hosted Academic Modernist fonts. Bump ?v= on css change. -->
-  <link rel="stylesheet" href="/static/app.css?v=9">
+  <link rel="stylesheet" href="/static/app.css?v=10">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
@@ -22,7 +22,7 @@
 {% if current_person %}
   {% include "shell/_topbar.html" %}
 
-  <div class="shell-layout">
+  <div class="shell-layout {% block shell_layout_class %}{% endblock %}">
     {% block shell_sidebar %}{% include "shell/_sidebar.html" %}{% endblock %}
 
     <main id="main-content" class="shell-main min-w-0 flex-1 px-4 py-7 sm:px-7 sm:py-9 lg:px-10">
@@ -40,7 +40,7 @@
     </main>
   </div>
 
-  <footer class="shell-footer px-4 pb-8 pt-2 sm:px-7 lg:px-10">
+  <footer class="shell-footer {% block shell_footer_class %}{% endblock %} px-4 pb-8 pt-2 sm:px-7 lg:px-10">
     <p class="text-xs text-ink-soft/80">{{ branding_name | default("Dotmac Academy") }} — learn the network, hands on.</p>
   </footer>
 {% else %}
