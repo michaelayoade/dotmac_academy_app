@@ -22,9 +22,9 @@
       <span class="hidden font-display text-base font-bold tracking-tight text-ink sm:inline">{{ branding_name | default("Dotmac Academy") }}</span>
     </a>
 
-    <nav class="shell-area-nav flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Areas">
+    <nav class="shell-area-nav flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Workspace mode">
       {% for area in nav_areas %}
-      <a href="{{ area.home }}" class="shell-tab{% if area.key == current_area %} shell-tab-active{% endif %}"{% if area.key == current_area %} aria-current="page"{% endif %}>{{ area.label }}</a>
+      <a href="{{ area.home }}" class="shell-tab{% if area.key == current_area %} shell-tab-active{% endif %}" aria-label="Switch to {{ area.label }} workspace"{% if area.key == current_area %} aria-current="page"{% endif %}>{{ area.label }}</a>
       {% endfor %}
     </nav>
 

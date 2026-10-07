@@ -9,7 +9,7 @@
   </div>
   <nav class="shell-sidebar-nav flex flex-col gap-1 px-3 py-5" aria-label="{{ current_area | capitalize }} navigation">
     {% for item in nav_sidebar %}
-    {% set is_active = item.path == request.url.path or (item.path != '/' and item.path != '/admin' and item.path != '/instructor' and request.url.path.startswith(item.path ~ '/')) %}
+    {% set is_active = item.path == request.url.path or (item.path == '/learn' and request.url.path == '/') or (item.path != '/learn' and item.path != '/admin' and item.path != '/instructor' and request.url.path.startswith(item.path ~ '/')) %}
     <a href="{{ item.path }}" class="shell-navlink{% if is_active %} shell-navlink-active{% endif %}"{% if is_active %} aria-current="page"{% endif %}>
       {% include "shell/_nav_icon.html" %}<span>{{ item.label }}</span>
     </a>
