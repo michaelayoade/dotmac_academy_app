@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
+from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
@@ -48,6 +49,7 @@ from app.services.roles import role_slugs
 from app.services.roster import assign_facilitator, bulk_enroll, set_roster_state
 from app.services.security import hash_token
 from app.services.web_auth import require_web_role, require_web_user
+from app.web.pagination import pagination_context
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
@@ -216,6 +218,201 @@ def _split_emails(*fields: str) -> list[str]:
 def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return "admin" in role_slugs(db, tenant_id, person_id)
 
+
+@router.get("/cohorts/{cohort_id}", response_class=HTMLResponse)
+def cohort_detail(
+    cohort_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = Query(12, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Dedicated cohort workspace with roster progress and curriculum detail."""
+    tenant = require_tenant(request)
+    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+
+    roster_pairs = list(
+        db.execute(
+            select(Enrollment, Person)
+            .join(
+                Person,
+                (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
+            )
+            .where(Enrollment.tenant_id == tenant.id)
+            .where(Enrollment.cohort_id == cohort_id)
+            .where(Enrollment.role_in_cohort == "student")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).all()
+    )
+    student_ids = [student.id for _, student in roster_pairs]
+
+    offering_pairs = list(
+        db.execute(
+            select(CourseOffering, Course)
+            .join(
+                Course,
+                (Course.id == CourseOffering.course_id)
+                & (Course.tenant_id == CourseOffering.tenant_id),
+            )
+            .where(CourseOffering.tenant_id == tenant.id)
+            .where(CourseOffering.cohort_id == cohort_id)
+            .order_by(Course.title)
+        ).all()
+    )
+    active_course_ids = [offering.course_id for offering, _ in offering_pairs if offering.status == "active"]
+
+    completion_by_student: dict[UUID, dict[UUID, float]] = {}
+    if student_ids and active_course_ids:
+        for person_id, course_id, pct in db.execute(
+            select(CourseCompletion.person_id, CourseCompletion.course_id, CourseCompletion.pct)
+            .where(CourseCompletion.tenant_id == tenant.id)
+            .where(CourseCompletion.person_id.in_(student_ids))
+            .where(CourseCompletion.course_id.in_(active_course_ids))
+        ).all():
+            completion_by_student.setdefault(person_id, {})[course_id] = pct
+
+    last_activity_by_student: dict[UUID, datetime] = {}
+    if student_ids and active_course_ids:
+        last_activity_by_student = {
+            person_id: last_activity
+            for person_id, last_activity in db.execute(
+                select(Submission.person_id, func.max(Score.created_at))
+                .join(
+                    Score,
+                    (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id),
+                )
+                .join(
+                    Activity,
+                    (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id),
+                )
+                .where(Submission.tenant_id == tenant.id)
+                .where(Submission.person_id.in_(student_ids))
+                .where(Activity.course_id.in_(active_course_ids))
+                .group_by(Submission.person_id)
+            ).all()
+        }
+
+    track_items = track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    track_names = {item["track"].id: item["track"].name for item in track_items}
+    course_track_names: dict[UUID, list[str]] = {}
+    for item in track_items:
+        for course in item["courses"]:
+            course_track_names.setdefault(course.id, []).append(item["track"].name)
+
+    stale_before = datetime.now(UTC) - timedelta(days=14)
+    student_rows_all: list[dict] = []
+    for enrollment, student in roster_pairs:
+        pcts = completion_by_student.get(student.id, {})
+        completion_pct = (
+            sum(pcts.get(course_id, 0.0) for course_id in active_course_ids) / len(active_course_ids)
+            if active_course_ids
+            else 0.0
+        )
+        last_activity_at = last_activity_by_student.get(student.id)
+        is_current = enrollment.status == "active" and student.status == "active"
+        student_rows_all.append(
+            {
+                "person": student,
+                "enrollment": enrollment,
+                "track_name": track_names.get(enrollment.track_id),
+                "completion_pct": completion_pct,
+                "last_activity_at": last_activity_at,
+                "at_risk": is_current
+                and completion_pct < 0.5
+                and (last_activity_at is None or last_activity_at < stale_before),
+            }
+        )
+
+    active_rows = [
+        row
+        for row in student_rows_all
+        if row["enrollment"].status == "active" and row["person"].status == "active"
+    ]
+    at_risk_count = sum(1 for row in active_rows if row["at_risk"])
+    average_progress = (
+        sum(row["completion_pct"] for row in active_rows) / len(active_rows) if active_rows else 0.0
+    )
+    student_rows = student_rows_all[offset : offset + limit]
+
+    facilitator_pairs = list(
+        db.execute(
+            select(Enrollment, Person)
+            .join(
+                Person,
+                (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
+            )
+            .where(Enrollment.tenant_id == tenant.id)
+            .where(Enrollment.cohort_id == cohort_id)
+            .where(Enrollment.role_in_cohort == "instructor")
+            .where(Enrollment.status == "active")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).all()
+    )
+
+    offered_course_ids = [course.id for _, course in offering_pairs]
+    chapters_by_course: dict[UUID, list[Chapter]] = {course_id: [] for course_id in offered_course_ids}
+    activities_by_course: dict[UUID, list[Activity]] = {course_id: [] for course_id in offered_course_ids}
+    if offered_course_ids:
+        for chapter in db.scalars(
+            select(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id.in_(offered_course_ids))
+            .order_by(Chapter.course_id, Chapter.order_index, Chapter.number)
+        ).all():
+            chapters_by_course.setdefault(chapter.course_id, []).append(chapter)
+        for activity in db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant.id)
+            .where(Activity.course_id.in_(offered_course_ids))
+            .order_by(Activity.course_id, Activity.chapter_number, Activity.title)
+        ).all():
+            activities_by_course.setdefault(activity.course_id, []).append(activity)
+
+    course_rows: list[dict] = []
+    for offering, course in offering_pairs:
+        course_chapters = chapters_by_course.get(course.id, [])
+        course_activities = activities_by_course.get(course.id, [])
+        chapter_numbers = {chapter.number for chapter in course_chapters}
+        chapter_rows = [
+            {
+                "chapter": chapter,
+                "activities": [activity for activity in course_activities if activity.chapter_number == chapter.number],
+            }
+            for chapter in course_chapters
+        ]
+        standalone_activities = [
+            activity
+            for activity in course_activities
+            if activity.chapter_number is None or activity.chapter_number not in chapter_numbers
+        ]
+        course_rows.append(
+            {
+                "offering": offering,
+                "course": course,
+                "chapters": chapter_rows,
+                "standalone_activities": standalone_activities,
+                "activity_count": len(course_activities),
+                "track_names": course_track_names.get(course.id, []),
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "instructor/cohort_detail.html",
+        {
+            "request": request,
+            "cohort": cohort,
+            "students": student_rows,
+            "student_total": len(student_rows_all),
+            "active_student_count": len(active_rows),
+            "at_risk_count": at_risk_count,
+            "average_progress": average_progress,
+            "facilitators": facilitator_pairs,
+            "course_rows": course_rows,
+            "track_items": track_items,
+            "pagination": pagination_context(total=len(student_rows_all), limit=limit, offset=offset),
+        },
+    )
 
 def _hx_error(request: Request, target_id: str, message: str) -> HTMLResponse:
     """Render a small inline error fragment (finding #1/#3).
