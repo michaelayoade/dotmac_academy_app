@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Activity
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.person import Person
 from app.services.assessment import best_scores_for
+from app.services.completion_aggregate import ensure_locked_completion
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,8 @@ def recompute_completion(
     now: datetime | None = None,
 ) -> CourseCompletion:
     """Upsert the person's completion record for the course and return it."""
-    db.execute(
-        select(Person.id)
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.id == person_id)
-        .with_for_update()
+    rec = ensure_locked_completion(
+        db, tenant_id=tenant_id, person_id=person_id, course_id=course_id
     )
     total = (
         db.scalar(
@@ -53,16 +50,6 @@ def recompute_completion(
     passed = sum(1 for s in best.values() if s.passed)
     pct = (passed / total) if total else 0.0
     is_complete = total > 0 and passed == total
-
-    rec = db.scalars(
-        select(CourseCompletion)
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.person_id == person_id)
-        .where(CourseCompletion.course_id == course_id)
-    ).first()
-    if rec is None:
-        rec = CourseCompletion(tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-        db.add(rec)
 
     first_completion = is_complete and rec.completed_at is None
     rec.pct = pct
@@ -81,30 +68,29 @@ def recompute_completion(
         # independent of the email path (which is skipped for opted-out or
         # email-less learners). The PDF still renders lazily on download.
         # Without this, a completed course shows a permanent certificate_blocked.
-        try:
-            from app.services.certificates import issue_certificate
+        from app.services.certificates import issue_certificate
 
-            issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now)
-        except Exception as exc:
-            logger.warning("certificate issuance on completion failed: %s", exc)
+        issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now)
         try:
             from app.services.notifications import notify
 
-            notify(
-                db,
-                tenant_id=tenant_id,
-                person_id=person_id,
-                kind="course_completed",
-                title="Well done, course completed",
-                body=f"Congratulations on completing {course_title}.",
-                link=f"/certificates/{course_id}",
-            )
+            with db.begin_nested():
+                notify(
+                    db,
+                    tenant_id=tenant_id,
+                    person_id=person_id,
+                    kind="course_completed",
+                    title="Well done, course completed",
+                    body=f"Congratulations on completing {course_title}.",
+                    link=f"/certificates/{course_id}",
+                )
         except Exception as exc:
             logger.warning("course completion notification failed: %s", exc)
         try:
-            _email_certificate(
-                db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, course_title=course_title
-            )
+            with db.begin_nested():
+                _email_certificate(
+                    db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, course_title=course_title
+                )
         except Exception as exc:
             logger.warning("course completion certificate email failed: %s", exc)
     return rec

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
+
+from sqlalchemy.orm import sessionmaker
 
 from app.models.assessment import Activity, Question, QuestionBank, Score, Submission
+from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.learning_event import LearningEvent
 from app.models.person import Person
 from app.services.assessment import submit_activity
 from app.services.completion import recompute_completion
@@ -100,3 +106,47 @@ def test_submit_activity_updates_completion(admin_session, tenant_a):
     assert rec.status == "completed"
     assert rec.pct == 1.0
     admin_session.rollback()
+
+
+def test_concurrent_first_recomputes_create_one_completion_and_certificate(
+    admin_engine, admin_session, tenant_a
+):
+    """First-creation serialization also covers callers without a Person lock."""
+    tid = tenant_a.id
+    person = Person(tenant_id=tid, email="race@a.edu", first_name="Race", last_name="Learner")
+    admin_session.add(person)
+    admin_session.flush()
+    course, first, last = _course_with_two_activities(admin_session, tid)
+    _pass(admin_session, tid, person, first)
+    _pass(admin_session, tid, person, last)
+    person_id, course_id = person.id, course.id
+    admin_session.commit()
+    factory = sessionmaker(bind=admin_engine, autoflush=False)
+    start = Barrier(2)
+
+    def recompute(_):
+        with factory() as db:
+            start.wait(timeout=5)
+            completion = recompute_completion(
+                db, tenant_id=tid, person_id=person_id, course_id=course_id
+            )
+            identity = completion.id, completion.completed_at
+            db.commit()
+            return identity
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        identities = list(pool.map(recompute, (1, 2)))
+    assert identities[0] == identities[1]
+    assert identities[0][1] is not None
+    admin_session.expire_all()
+    completion = admin_session.query(CourseCompletion).filter_by(
+        tenant_id=tid, person_id=person_id, course_id=course_id
+    ).one()
+    assert completion.pct == 1
+    assert completion.status == "completed"
+    assert admin_session.query(Certificate).filter_by(
+        tenant_id=tid, person_id=person_id, course_id=course_id
+    ).count() == 1
+    assert admin_session.query(LearningEvent).filter_by(
+        tenant_id=tid, person_id=person_id, course_id=course_id, kind="certificate_earned"
+    ).count() == 1
