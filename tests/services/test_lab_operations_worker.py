@@ -9,19 +9,24 @@ from threading import Barrier
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
-from app.models.assessment import Activity, Submission
+from app.models.assessment import Activity, Score, Submission
+from app.models.certificate import Certificate
+from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.email_outbox import EmailOutbox
 from app.models.lab import LabInstance, LabOperation, LabTemplate
+from app.models.learning_event import LearningEvent
+from app.models.notification import Notification
 from app.models.person import Person
 from app.services import host_lock, lab_jobs, lab_lifecycle, lab_operations
 from app.services.exceptions import ConflictError
 from app.services.labengine.containerlab import ContainerlabEngine
-from app.services.labengine.interface import LabHandle
+from app.services.labengine.interface import ExecResult, LabHandle
 
 
 def _seed(db, tenant_id, *, name: str = "one", status: str = "queued", presence: str | None = None):
@@ -137,6 +142,76 @@ def test_competing_claims_claim_an_operation_once(admin_engine, admin_session, t
         second.rollback()
         first.close()
         second.close()
+
+
+def test_open_operation_conflict_inference_survives_forced_generic_prepared_plans(
+    admin_engine, admin_session, tenant_a
+):
+    """Force actual enqueue through server-prepared generic plans from call one.
+
+    A bound arbiter predicate cannot infer the partial index in that plan. The
+    dedicated engine prevents this test's preparation settings or prepared
+    statements from leaking into another test through the shared fixture pool.
+    """
+    first_instance, first_person = _seed(admin_session, tenant_a.id, name="generic-first")
+    second_instance, second_person = _seed(admin_session, tenant_a.id, name="generic-second")
+    first_instance_id, second_instance_id = first_instance.id, second_instance.id
+    first_person_id, second_person_id = first_person.id, second_person.id
+    admin_session.commit()
+    engine = create_engine(admin_engine.url, connect_args={"prepare_threshold": 0})
+    factory = sessionmaker(bind=engine, autoflush=False)
+    try:
+        with factory() as db:
+            try:
+                db.execute(text("SET LOCAL plan_cache_mode = force_generic_plan"))
+                db.execute(text("SET LOCAL lock_timeout = '2s'"))
+                db.execute(text("SET LOCAL statement_timeout = '8s'"))
+                first_instance = db.get(LabInstance, first_instance_id)
+                second_instance = db.get(LabInstance, second_instance_id)
+                first = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                for _ in range(6):
+                    duplicate = lab_operations.enqueue(
+                        db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                    )
+                    assert duplicate.id == first.id
+                first.state = "claimed"
+                db.flush()
+                duplicate = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                assert duplicate.id == first.id
+                second = lab_operations.enqueue(
+                    db, instance=second_instance, kind="deploy", requested_by=second_person_id
+                )
+                assert second.id != first.id
+                first.state = "succeeded"
+                db.flush()
+                replacement = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                assert replacement.id != first.id
+                plans = db.execute(
+                    text(
+                        "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
+                        "WHERE statement LIKE :insert AND statement LIKE :conflict"
+                    ),
+                    {"insert": "%INSERT INTO lab_operations%", "conflict": "%ON CONFLICT%"},
+                ).all()
+                assert plans, "actual enqueue INSERT was not server-prepared"
+                assert sum(row.generic_plans for row in plans) >= 10
+                assert all(row.custom_plans == 0 for row in plans)
+                for instance_id in (first_instance_id, second_instance_id):
+                    assert db.query(LabOperation).filter(
+                        LabOperation.instance_id == instance_id,
+                        LabOperation.state.in_(("queued", "claimed")),
+                    ).count() == 1
+                assert db.query(LabOperation).filter_by(instance_id=first_instance_id).count() == 2
+            finally:
+                db.rollback()
+    finally:
+        engine.dispose()
 
 
 def test_competing_pollers_claim_each_operation_exactly_once(
@@ -306,6 +381,262 @@ def test_failed_reset_does_not_leave_a_closed_operation_in_resetting(
     assert instance.status == "active"
     assert instance.error == "pre-engine failure"
     assert operation.state == "failed"
+
+
+@pytest.mark.parametrize("worker_fixture", ["admin_session", "lab_worker_session"])
+def test_final_lab_check_completes_course_once_in_worker_transaction(
+    admin_session, tenant_a, tenant_b, request, worker_fixture
+):
+    """Use the actual grader/completion/certificate writers, including worker ACLs.
+
+    A failed final lab stays incomplete; passing it completes the course. A
+    repeated check, recovered claim, and stale replay cannot issue it again.
+    The second tenant deliberately has the same course slug and learner email.
+    """
+    worker = request.getfixturevalue(worker_fixture)
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="final-lab", status="active"
+    )
+    other_instance, other_person = _seed(
+        admin_session, tenant_b.id, name="final-lab-other", status="active"
+    )
+    activity = admin_session.get(Activity, instance.activity_id)
+    other_activity = admin_session.get(Activity, other_instance.activity_id)
+    other_person.email = person.email
+    admin_session.get(Course, other_activity.course_id).slug = admin_session.get(Course, activity.course_id).slug
+    template = admin_session.scalars(
+        select(LabTemplate).where(LabTemplate.activity_id == activity.id)
+    ).one()
+    template.checks = [{
+        "id": "reach", "type": "probe", "node": "client",
+        "probe": {"kind": "ping", "target": "10.0.0.1", "count": 1},
+    }]
+    instance.consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.5"}}
+    quiz = Activity(
+        tenant_id=tenant_a.id, course_id=activity.course_id,
+        chapter_number=1, type="mcq_test", title="Already passed quiz",
+        pass_threshold=0.5,
+    )
+    admin_session.add(quiz)
+    admin_session.flush()
+    submission = Submission(
+        tenant_id=tenant_a.id, activity_id=quiz.id, person_id=person.id,
+        answers={}, attempt_no=1,
+    )
+    admin_session.add(submission)
+    admin_session.flush()
+    admin_session.add(Score(
+        tenant_id=tenant_a.id, submission_id=submission.id,
+        score=1, max_score=1, fraction=1, passed=True, per_item=[], source="auto",
+    ))
+    admin_session.add_all([
+        CourseCompletion(
+            tenant_id=tenant_a.id, person_id=person.id,
+            course_id=activity.course_id, pct=0.5, status="in_progress",
+        ),
+        CourseCompletion(
+            tenant_id=tenant_b.id, person_id=other_person.id,
+            course_id=other_activity.course_id, pct=0, status="in_progress",
+        ),
+    ])
+    admin_session.commit()
+    engine = _engine(instance.instance_name)
+
+    def check(*, passed, recover=False):
+        operation = lab_operations.enqueue(
+            admin_session, instance=instance, kind="check", requested_by=person.id
+        )
+        operation_id = operation.id
+        if recover:
+            operation.state = "claimed"
+            operation.claimed_by = "interrupted-worker"
+            operation.claimed_at = datetime.now(UTC) - timedelta(minutes=20)
+            operation.heartbeat_at = operation.claimed_at
+        admin_session.commit()
+        if recover:
+            assert lab_operations.reconcile_stuck(worker, lease_seconds=60) == 1
+            worker.commit()
+        claimed = lab_operations.claim_next(worker, claimed_by="final-lab-worker")
+        assert claimed is not None and claimed.id == operation_id
+        worker.commit()
+        engine.exec.return_value = ExecResult(
+            "1 packets transmitted, 1 received" if passed else "1 packets transmitted, 0 received",
+            "", 0 if passed else 1,
+        )
+        assert lab_operations.run_claimed(
+            worker, operation_id=operation_id,
+            claimed_by="final-lab-worker", engine=engine,
+        ) == "succeeded"
+        # Query from the caller's independent admin connection after settlement.
+        admin_session.expire_all()
+        assert admin_session.get(LabOperation, operation_id).state == "succeeded"
+        stored = admin_session.scalars(
+            select(CourseCompletion).where(CourseCompletion.person_id == person.id)
+        ).one()
+        return operation_id, stored
+
+    _, completion = check(passed=False)
+    assert completion.status == "in_progress"
+    assert completion.pct == 0.5
+    assert completion.completed_at is None
+    certificates = admin_session.query(Certificate).filter(
+        Certificate.tenant_id.in_((tenant_a.id, tenant_b.id))
+    )
+    assert certificates.count() == 0
+
+    operation_id, completion = check(passed=True)
+    assert completion.status == "completed"
+    assert completion.pct == 1
+    completed_at = completion.completed_at
+    assert completed_at is not None
+    certificate = certificates.one()
+    certificate_identity = certificate.id, certificate.serial, certificate.issued_at
+    assert certificate.tenant_id == tenant_a.id
+    assert certificate.person_id == person.id
+    assert certificate.course_id == activity.course_id
+
+    for passed in (True, False):
+        _, completion = check(passed=passed, recover=passed)
+        assert completion.status == "completed"
+        assert completion.pct == 1
+        assert completion.completed_at == completed_at
+    calls = engine.exec.call_count
+    assert lab_operations.run_claimed(
+        worker, operation_id=operation_id,
+        claimed_by="final-lab-worker", engine=engine,
+    ) == "stale"
+    assert engine.exec.call_count == calls
+    assert lab_operations.reconcile_stuck(worker, lease_seconds=60) == 0
+    worker.rollback()
+    admin_session.expire_all()
+    certificate = certificates.one()
+    assert (certificate.id, certificate.serial, certificate.issued_at) == certificate_identity
+    event = admin_session.query(LearningEvent).filter(
+        LearningEvent.tenant_id.in_((tenant_a.id, tenant_b.id)),
+        LearningEvent.kind == "certificate_earned",
+    ).one()
+    assert (event.tenant_id, event.person_id, event.course_id) == (
+        tenant_a.id, person.id, activity.course_id,
+    )
+    other_completion = admin_session.query(CourseCompletion).filter_by(
+        person_id=other_person.id
+    ).one()
+    assert other_completion.status == "in_progress"
+    assert other_completion.pct == 0
+    assert other_completion.completed_at is None
+    scores = admin_session.scalars(
+        select(Score).join(Submission, Submission.id == Score.submission_id)
+        .where(Submission.activity_id == activity.id)
+    ).all()
+    assert len(scores) == 4
+    assert sorted(score.passed for score in scores) == [False, False, True, True]
+    assert all(score.source == "auto" for score in scores)
+    assert all(score.max_score == 1 for score in scores)
+
+
+@pytest.mark.parametrize("denied_table", ["certificates", "notifications", "email_outbox"])
+def test_worker_check_required_write_is_atomic_and_optional_hooks_are_isolated(
+    admin_session, tenant_a, lab_worker_session, denied_table
+):
+    """Cause a real PG privilege error without mutating any role's grants."""
+    instance, person = _seed(
+        admin_session, tenant_a.id, name="denied-consequence", status="active"
+    )
+    template = admin_session.scalars(
+        select(LabTemplate).where(LabTemplate.activity_id == instance.activity_id)
+    ).one()
+    template.checks = [{
+        "id": "reach", "type": "probe", "node": "client",
+        "probe": {"kind": "ping", "target": "10.0.0.1", "count": 1},
+    }]
+    instance.consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.5"}}
+    operation = lab_operations.enqueue(
+        admin_session, instance=instance, kind="check", requested_by=person.id
+    )
+    operation_id = operation.id
+    admin_session.commit()
+    claimed = lab_operations.claim_next(lab_worker_session, claimed_by="denied-worker")
+    assert claimed is not None and claimed.id == operation_id
+    lab_worker_session.commit()
+    engine = _engine(instance.instance_name)
+    engine.exec.return_value = ExecResult("1 packets transmitted, 1 received", "", 0)
+    intercepted = []
+    injected_contexts = {}
+    refusals = []
+
+    def deny_write(_conn, _cursor, statement, parameters, _context, _executemany):
+        if statement.lstrip().lower().startswith(f"insert into {denied_table} "):
+            intercepted.append(statement)
+            injected_contexts[_context] = parameters.get("kind")
+            # The ACL test separately requires no people UPDATE privilege.
+            # WHERE false also prevents mutation if that boundary ever drifts.
+            return "UPDATE people SET first_name = first_name WHERE false", {}
+        return statement, parameters
+
+    def observe_refusal(error_context):
+        context = error_context.execution_context
+        if context in injected_contexts:
+            refusals.append((
+                injected_contexts[context],
+                getattr(error_context.original_exception, "sqlstate", None),
+            ))
+
+    bind = lab_worker_session.get_bind()
+    lab_worker_session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    lab_worker_session.execute(text("SET LOCAL statement_timeout = '8s'"))
+    event.listen(bind, "before_cursor_execute", deny_write, retval=True)
+    event.listen(bind, "handle_error", observe_refusal)
+    try:
+        result = lab_operations.run_claimed(
+            lab_worker_session, operation_id=operation_id,
+            claimed_by="denied-worker", engine=engine,
+        )
+        assert lab_worker_session.scalar(select(1)) == 1
+    finally:
+        event.remove(bind, "before_cursor_execute", deny_write)
+        event.remove(bind, "handle_error", observe_refusal)
+        injected_contexts.clear()
+        # A settlement exception must fail promptly, not retain worker row/FK
+        # locks while the earlier tenant fixture tries to DELETE its rows.
+        lab_worker_session.rollback()
+    assert intercepted
+    assert len(refusals) == len(intercepted)
+    assert all(sqlstate == "42501" for _, sqlstate in refusals)
+    denied_kinds = {kind for kind, _ in refusals}
+    assert all(sql.lstrip().lower().startswith(f"insert into {denied_table} ") for sql in intercepted)
+    admin_session.expire_all()
+    stored = admin_session.get(LabOperation, operation_id)
+    if denied_table == "certificates":
+        assert result == "failed"
+        assert stored.state == "failed"
+        assert "permission denied for table people" in stored.last_error
+        for model in (
+            Submission, Score, CourseCompletion, Certificate,
+            LearningEvent, Notification, EmailOutbox,
+        ):
+            assert admin_session.query(model).filter_by(tenant_id=tenant_a.id).count() == 0
+    else:
+        assert result == "succeeded"
+        assert stored.state == "succeeded"
+        assert stored.last_error is None
+        assert admin_session.query(Score).filter_by(tenant_id=tenant_a.id).one().passed
+        assert admin_session.query(CourseCompletion).filter_by(tenant_id=tenant_a.id).one().status == "completed"
+        assert admin_session.query(Certificate).filter_by(tenant_id=tenant_a.id).count() == 1
+        assert admin_session.query(LearningEvent).filter_by(
+            tenant_id=tenant_a.id, kind="certificate_earned"
+        ).count() == 1
+        optional_model = Notification if denied_table == "notifications" else EmailOutbox
+        assert admin_session.query(optional_model).filter_by(tenant_id=tenant_a.id).count() == 0
+        if denied_table == "email_outbox":
+            assert {"certificate", "score_pass"} <= denied_kinds
+            assert {
+                kind for (kind,) in admin_session.query(Notification.kind).filter_by(tenant_id=tenant_a.id)
+            } == {"certificate", "course_completed", "result"}
+        else:
+            assert {"certificate", "course_completed", "result"} <= denied_kinds
+            assert {
+                kind for (kind,) in admin_session.query(EmailOutbox.kind).filter_by(tenant_id=tenant_a.id)
+            } == {"certificate", "score_pass"}
 
 
 def test_failed_check_rolls_back_a_partial_submission(

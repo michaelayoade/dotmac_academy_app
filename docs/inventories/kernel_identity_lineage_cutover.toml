@@ -13,8 +13,17 @@ physical_references = 11
 logical_references = 16
 
 # Static source revalidation only. Hosted/production rehearsal gates remain open.
-[source_revalidation]
+[prior_source_revalidation]
 academy_revision = "a99a395e066db4eea3ec1d73219ab5dd006c1d1d"
+academy_head = "0060_lab_conditional_ops"
+date = "2026-10-17"
+evidence = "source_only"
+human_references = 28
+physical_references = 11
+logical_references = 17
+
+[source_revalidation]
+academy_revision = "61f69194d6591c6a2d13472a5e38c3a5ecf34454"
 date = "2026-10-17"
 evidence = "source_only"
 production_cutover_proven = false
@@ -101,7 +110,7 @@ reject = "legacy_person_credential_session_rbac_schema"
 [current_lineage]
 owner = "academy_legacy"
 root = "0001_initial_tenant_schema"
-head = "0060_lab_conditional_ops"
+head = "0061_lab_completion_grants"
 root_file = "alembic/versions/20260504_0001_initial_tenant_schema.py"
 shares_kernel_root_id = true
 

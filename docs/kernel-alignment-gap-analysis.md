@@ -13,8 +13,9 @@ current sequence or ownership decision.
 > remain pending. The partial `Person`-beside-`Party` strategy and sequencing
 > below would leave parallel identity owners and are rejected. The current
 > source census is 28 human references (11 physical, 17 logical), revalidated
-> at Academy `a99a395e`; the initial 27-reference/0053 design coordinates remain
-> historical. ADR 0008 belongs to the dedicated lab-worker database role.
+> at Academy `61f69194` through `0061_lab_completion_grants`; the preceding
+> `a99a395e`/0060 checkpoint has the same census. The initial 27-reference/0053
+> design coordinates remain historical. ADR 0008 belongs to the dedicated lab-worker database role.
 > Canonical entry mechanics remain unresolved. The entire unchanged Kernel
 > chain must execute with genuine independent history before runtime cutover;
 > the historical stamp/deferred-revision bridge is superseded.

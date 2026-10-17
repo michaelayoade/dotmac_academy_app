@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-17 at Academy `a99a395e066db4eea3ec1d73219ab5dd006c1d1d`  
+**Source revalidated:** 2026-10-17 at Academy `61f69194d6591c6a2d13472a5e38c3a5ecf34454`  
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -42,8 +42,11 @@ branch-aware rollback unreliable because its root is also the kernel root.
 This refresh continues the accepted design in existing PR #122; it is not a
 new decision awaiting acceptance or an implemented cutover. Its initial commit
 `2d9506f` counted 27 references (11 physical, 16 logical) and ended the Academy
-chain at `0053_entrance_defaults`. Source revalidation at `a99a395e` counts 28
-and ends at `0060_lab_conditional_ops`. These are source coordinates only; no
+chain at `0053_entrance_defaults`. The prior source checkpoint at `a99a395e`
+counted 28 and ended at `0060_lab_conditional_ops`. Current revalidation at
+`61f69194` retains 28 references (11 physical, 17 logical) and ends at
+`0061_lab_completion_grants`; PR #177 adds grants over existing identity columns.
+These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
 uses ADR 0009 and preserves that current document.
@@ -208,7 +211,7 @@ assembly: a001_adopt_academy -> a002 -> ...
           depends_on = <that same actually executed Kernel head>
 ```
 
-The existing numeric Academy chain (`0001` ... `0060` at source revalidation,
+The existing numeric Academy chain (`0001` ... `0061` at source revalidation,
 originally `0001` ... `0053` in PR #122, followed by future bridge revisions) is
 a temporary `academy_legacy` lineage. Those recorded IDs are not relabelled or
 reparented. Selecting the installed Kernel file for the shared `0001` ID cannot

@@ -27,13 +27,14 @@ from app.services.labengine.interface import ExecResult, LabHandle
 from tests.services.test_lab_operations_worker import _seed
 
 # (table, granted privileges, privileges that must NOT be granted)
-SELECT_ONLY_TABLES = ("lab_templates", "platform_settings", "activities", "people", "tenants")
+SELECT_ONLY_TABLES = ("lab_templates", "platform_settings", "activities", "people", "tenants", "courses")
 SELECT_INSERT_TABLES = (
     "submissions",
     "scores",
     "learning_events",
     "notifications",
     "email_outbox",
+    "certificates",
 )
 LAB_INSTANCES_PRIVILEGES = ("SELECT", "UPDATE")
 
@@ -99,6 +100,7 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         "lab_instances": {"SELECT", "UPDATE"},
         **{table: {"SELECT"} for table in SELECT_ONLY_TABLES},
         **{table: {"INSERT", "SELECT"} for table in SELECT_INSERT_TABLES},
+        "course_completions": {"SELECT"},
     }
     direct_acl = {
         table: set(privileges)
@@ -130,6 +132,29 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         assert not _has_privilege(
             lab_worker_session, table, "INSERT"
         ), f"academy_lab_worker should not have INSERT on {table}"
+        for privilege in ("UPDATE", "DELETE"):
+            assert not _has_privilege(lab_worker_session, table, privilege)
+        assert not lab_worker_session.scalar(
+            text("SELECT has_any_column_privilege('academy_lab_worker', :table, 'UPDATE')"),
+            {"table": table},
+        )
+
+    # Completion is a learning aggregate, not a grant to edit learner identity
+    # or the ERP synchronization projection. INSERT is column-scoped too.
+    completion_insert = {"id", "tenant_id", "person_id", "course_id", "status", "pct"}
+    completion_update = {"status", "pct", "completed_at", "updated_at"}
+    completion_columns = {
+        "id", "tenant_id", "person_id", "course_id", "status", "pct",
+        "completed_at", "created_at", "updated_at", "erp_synced_at",
+    }
+    assert _has_privilege(lab_worker_session, "course_completions", "SELECT")
+    for privilege in ("INSERT", "UPDATE", "DELETE"):
+        assert not _has_privilege(lab_worker_session, "course_completions", privilege)
+    for column in completion_columns:
+        for privilege, allowed in (("INSERT", completion_insert), ("UPDATE", completion_update)):
+            assert _has_column_privilege(
+                lab_worker_session, "academy_lab_worker", "course_completions", column, privilege
+            ) == (column in allowed)
 
     for table in SELECT_INSERT_TABLES:
         assert _has_privilege(lab_worker_session, table, "SELECT"), f"expected SELECT on {table}"
@@ -137,6 +162,10 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         assert not _has_privilege(
             lab_worker_session, table, "UPDATE"
         ), f"academy_lab_worker should not have UPDATE on {table}"
+        assert not lab_worker_session.scalar(
+            text("SELECT has_any_column_privilege('academy_lab_worker', :table, 'UPDATE')"),
+            {"table": table},
+        )
         assert not _has_privilege(
             lab_worker_session, table, "DELETE"
         ), f"academy_lab_worker should not have DELETE on {table}"

@@ -129,7 +129,9 @@ def _insert_open_operation_stmt(
         .values(**values)
         .on_conflict_do_nothing(
             index_elements=[LabOperation.instance_id],
-            index_where=LabOperation.state.in_(OPEN_STATES),
+            # Generic prepared plans cannot infer a partial index from bound
+            # states. This closed schema predicate must stay literal (0055).
+            index_where=text("state IN ('queued', 'claimed')"),
         )
         .returning(LabOperation.id)
     )

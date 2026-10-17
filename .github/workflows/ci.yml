@@ -7,6 +7,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     services:
       db:
@@ -109,4 +110,4 @@ jobs:
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -q
+        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120

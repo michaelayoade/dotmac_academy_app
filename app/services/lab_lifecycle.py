@@ -847,6 +847,15 @@ def grade(
         detail={"instance": str(instance.id),
                 "checks": len(result.get("per_check") or [])},
     )
+    if _course_id is not None:
+        from app.services.completion import recompute_completion
+
+        # Completion, certificate, and check settlement share the caller's
+        # transaction. The completion aggregate owns serialization.
+        recompute_completion(
+            db, tenant_id=instance.tenant_id, person_id=instance.person_id,
+            course_id=_course_id,
+        )
     # Auto-on-pass notification — best effort, must never break grading.
     try:
         from app.models.person import Person
@@ -857,6 +866,8 @@ def grade(
         ).first()
         person = db.get(Person, instance.person_id)
         if act is not None:
+            # The optional-intent owner rolls back its own savepoints before
+            # returning False; this caller retains the grading transaction.
             notify_score_if_first_pass(db, score=score, activity=act, person=person)
     except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)

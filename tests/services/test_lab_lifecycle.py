@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.models.assessment import Activity, Submission
+from app.models.certificate import Certificate
+from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
@@ -579,7 +581,20 @@ def test_grade_writes_score_and_submission(admin_session, tenant_a):
     assert sub is not None
     assert sub.answers["seed"] == {"o": 5}
     assert sub.answers["instance"] == str(inst.id)
+    completion = admin_session.query(CourseCompletion).filter_by(
+        tenant_id=tenant_a.id, person_id=p.id, course_id=act.course_id
+    ).one()
+    assert completion.status == "completed"
+    assert completion.pct == 1
+    assert admin_session.query(Certificate).filter_by(
+        tenant_id=tenant_a.id, person_id=p.id, course_id=act.course_id
+    ).count() == 1
     admin_session.rollback()
+    # grade and its completion/certificate consequences only flush. The caller
+    # can still roll back the entire learning result before settlement.
+    assert admin_session.query(Submission).filter_by(tenant_id=tenant_a.id).count() == 0
+    assert admin_session.query(CourseCompletion).filter_by(tenant_id=tenant_a.id).count() == 0
+    assert admin_session.query(Certificate).filter_by(tenant_id=tenant_a.id).count() == 0
 
 
 @pytest.mark.parametrize("status", ["queued", "provisioning", "resetting", "error", "reaped"])
