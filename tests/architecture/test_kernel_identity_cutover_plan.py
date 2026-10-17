@@ -19,9 +19,9 @@ from uuid import UUID
 
 from dotmac_kernel.migrations import versions_dir as kernel_versions_dir
 
-import app.models  # noqa: F401  (register product metadata for the census)
-import app.models.auth  # noqa: F401  (not exported from app.models)
-import app.models.person  # noqa: F401
+import app.models  # register product metadata for the census
+import app.models.auth  # not exported from app.models
+import app.models.person
 import app.models.rbac  # noqa: F401  (not exported from app.models)
 from app.models.base import Base
 
