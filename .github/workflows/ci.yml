@@ -110,4 +110,4 @@ jobs:
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -q -o faulthandler_timeout=120
+        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120
