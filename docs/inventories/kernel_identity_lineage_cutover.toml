@@ -6,7 +6,7 @@ kernel_version = "0.1.0a38"
 
 # Initial accepted PR #122 design coordinates; not current source or production proof.
 [historical_design_baseline]
-academy_revision = "2d9506f"
+academy_revision = "2d9506fbfa8e9dd00549f7822fa28a868c35024c"
 academy_head = "0053_entrance_defaults"
 human_references = 27
 physical_references = 11
