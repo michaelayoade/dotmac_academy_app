@@ -9,7 +9,7 @@ from threading import Barrier
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -142,6 +142,76 @@ def test_competing_claims_claim_an_operation_once(admin_engine, admin_session, t
         second.rollback()
         first.close()
         second.close()
+
+
+def test_open_operation_conflict_inference_survives_forced_generic_prepared_plans(
+    admin_engine, admin_session, tenant_a
+):
+    """Force actual enqueue through server-prepared generic plans from call one.
+
+    A bound arbiter predicate cannot infer the partial index in that plan. The
+    dedicated engine prevents this test's preparation settings or prepared
+    statements from leaking into another test through the shared fixture pool.
+    """
+    first_instance, first_person = _seed(admin_session, tenant_a.id, name="generic-first")
+    second_instance, second_person = _seed(admin_session, tenant_a.id, name="generic-second")
+    first_instance_id, second_instance_id = first_instance.id, second_instance.id
+    first_person_id, second_person_id = first_person.id, second_person.id
+    admin_session.commit()
+    engine = create_engine(admin_engine.url, connect_args={"prepare_threshold": 0})
+    factory = sessionmaker(bind=engine, autoflush=False)
+    try:
+        with factory() as db:
+            try:
+                db.execute(text("SET LOCAL plan_cache_mode = force_generic_plan"))
+                db.execute(text("SET LOCAL lock_timeout = '2s'"))
+                db.execute(text("SET LOCAL statement_timeout = '8s'"))
+                first_instance = db.get(LabInstance, first_instance_id)
+                second_instance = db.get(LabInstance, second_instance_id)
+                first = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                for _ in range(6):
+                    duplicate = lab_operations.enqueue(
+                        db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                    )
+                    assert duplicate.id == first.id
+                first.state = "claimed"
+                db.flush()
+                duplicate = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                assert duplicate.id == first.id
+                second = lab_operations.enqueue(
+                    db, instance=second_instance, kind="deploy", requested_by=second_person_id
+                )
+                assert second.id != first.id
+                first.state = "succeeded"
+                db.flush()
+                replacement = lab_operations.enqueue(
+                    db, instance=first_instance, kind="deploy", requested_by=first_person_id
+                )
+                assert replacement.id != first.id
+                plans = db.execute(
+                    text(
+                        "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
+                        "WHERE statement LIKE :insert AND statement LIKE :conflict"
+                    ),
+                    {"insert": "%INSERT INTO lab_operations%", "conflict": "%ON CONFLICT%"},
+                ).all()
+                assert plans, "actual enqueue INSERT was not server-prepared"
+                assert sum(row.generic_plans for row in plans) >= 10
+                assert all(row.custom_plans == 0 for row in plans)
+                for instance_id in (first_instance_id, second_instance_id):
+                    assert db.query(LabOperation).filter(
+                        LabOperation.instance_id == instance_id,
+                        LabOperation.state.in_(("queued", "claimed")),
+                    ).count() == 1
+                assert db.query(LabOperation).filter_by(instance_id=first_instance_id).count() == 2
+            finally:
+                db.rollback()
+    finally:
+        engine.dispose()
 
 
 def test_competing_pollers_claim_each_operation_exactly_once(
