@@ -866,8 +866,9 @@ def grade(
         ).first()
         person = db.get(Person, instance.person_id)
         if act is not None:
-            with db.begin_nested():
-                notify_score_if_first_pass(db, score=score, activity=act, person=person)
+            # The optional-intent owner rolls back its own savepoints before
+            # returning False; this caller retains the grading transaction.
+            notify_score_if_first_pass(db, score=score, activity=act, person=person)
     except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score

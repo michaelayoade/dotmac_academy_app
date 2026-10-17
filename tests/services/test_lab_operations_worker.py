@@ -536,7 +536,7 @@ def test_final_lab_check_completes_course_once_in_worker_transaction(
 
 @pytest.mark.parametrize("denied_table", ["certificates", "notifications", "email_outbox"])
 def test_worker_check_required_write_is_atomic_and_optional_hooks_are_isolated(
-    admin_session, lab_worker_session, tenant_a, denied_table
+    admin_session, tenant_a, lab_worker_session, denied_table
 ):
     """Cause a real PG privilege error without mutating any role's grants."""
     instance, person = _seed(
@@ -561,25 +561,48 @@ def test_worker_check_required_write_is_atomic_and_optional_hooks_are_isolated(
     engine = _engine(instance.instance_name)
     engine.exec.return_value = ExecResult("1 packets transmitted, 1 received", "", 0)
     intercepted = []
+    injected_contexts = {}
+    refusals = []
 
     def deny_write(_conn, _cursor, statement, parameters, _context, _executemany):
         if statement.lstrip().lower().startswith(f"insert into {denied_table} "):
             intercepted.append(statement)
+            injected_contexts[_context] = parameters.get("kind")
             # The ACL test separately requires no people UPDATE privilege.
             # WHERE false also prevents mutation if that boundary ever drifts.
             return "UPDATE people SET first_name = first_name WHERE false", {}
         return statement, parameters
 
+    def observe_refusal(error_context):
+        context = error_context.execution_context
+        if context in injected_contexts:
+            refusals.append((
+                injected_contexts[context],
+                getattr(error_context.original_exception, "sqlstate", None),
+            ))
+
     bind = lab_worker_session.get_bind()
+    lab_worker_session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    lab_worker_session.execute(text("SET LOCAL statement_timeout = '8s'"))
     event.listen(bind, "before_cursor_execute", deny_write, retval=True)
+    event.listen(bind, "handle_error", observe_refusal)
     try:
         result = lab_operations.run_claimed(
             lab_worker_session, operation_id=operation_id,
             claimed_by="denied-worker", engine=engine,
         )
+        assert lab_worker_session.scalar(select(1)) == 1
     finally:
         event.remove(bind, "before_cursor_execute", deny_write)
+        event.remove(bind, "handle_error", observe_refusal)
+        injected_contexts.clear()
+        # A settlement exception must fail promptly, not retain worker row/FK
+        # locks while the earlier tenant fixture tries to DELETE its rows.
+        lab_worker_session.rollback()
     assert intercepted
+    assert len(refusals) == len(intercepted)
+    assert all(sqlstate == "42501" for _, sqlstate in refusals)
+    denied_kinds = {kind for kind, _ in refusals}
     assert all(sql.lstrip().lower().startswith(f"insert into {denied_table} ") for sql in intercepted)
     admin_session.expire_all()
     stored = admin_session.get(LabOperation, operation_id)
@@ -604,6 +627,16 @@ def test_worker_check_required_write_is_atomic_and_optional_hooks_are_isolated(
         ).count() == 1
         optional_model = Notification if denied_table == "notifications" else EmailOutbox
         assert admin_session.query(optional_model).filter_by(tenant_id=tenant_a.id).count() == 0
+        if denied_table == "email_outbox":
+            assert {"certificate", "score_pass"} <= denied_kinds
+            assert {
+                kind for (kind,) in admin_session.query(Notification.kind).filter_by(tenant_id=tenant_a.id)
+            } == {"certificate", "course_completed", "result"}
+        else:
+            assert {"certificate", "course_completed", "result"} <= denied_kinds
+            assert {
+                kind for (kind,) in admin_session.query(EmailOutbox.kind).filter_by(tenant_id=tenant_a.id)
+            } == {"certificate", "score_pass"}
 
 
 def test_failed_check_rolls_back_a_partial_submission(

@@ -136,60 +136,70 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
     """Queue congratulations IFF this is the student's FIRST passing score.
 
     Fires only when ``score.passed`` is true AND there is no other passing
-    :class:`Score` for the same (tenant, activity, person). Returns whether a
-    transactional delivery intent was accepted. Wrapped in try/except so an
-    unexpected notification failure never rolls back grading.
+    :class:`Score` for the same (tenant, activity, person). Each optional intent
+    owns a savepoint; catches run after rollback so a database refusal cannot
+    poison the caller's grading transaction. No caller rollback or commit.
     """
     try:
-        if not getattr(score, "passed", False):
-            return False
-        if person is None or not getattr(person, "email", None):
-            return False
-        # Respect the recipient's own opt-out (Account → Notifications).
-        if not recipient_allows(person, "email_results"):
-            return False
-        # Respect the platform "email on first pass" toggle (DB-over-env).
-        from app.services.settings_store import effective
+        with db.begin_nested():
+            return _queue_first_pass_intents(db, score=score, activity=activity, person=person)
+    except Exception as exc:  # non-fatal: grading must still succeed
+        logger.warning("notify_score_if_first_pass failed: %s", exc)
+        return False
 
-        if not effective(db).email_auto_on_pass:
-            return False
 
-        prior_passes = db.scalar(
-            select(func.count())
-            .select_from(Score)
-            .join(
-                Submission,
-                (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id),
-            )
-            .where(Score.tenant_id == score.tenant_id)
-            .where(Submission.activity_id == activity.id)
-            .where(Submission.person_id == person.id)
-            .where(Score.passed.is_(True))
-            .where(Score.id != score.id)
+def _queue_first_pass_intents(db: Session, *, score, activity, person) -> bool:
+    """Evaluate eligibility inside the public helper's savepoint."""
+    if not getattr(score, "passed", False):
+        return False
+    if person is None or not getattr(person, "email", None):
+        return False
+    # Respect the recipient's own opt-out (Account → Notifications).
+    if not recipient_allows(person, "email_results"):
+        return False
+    # Respect the platform "email on first pass" toggle (DB-over-env).
+    from app.services.settings_store import effective
+
+    if not effective(db).email_auto_on_pass:
+        return False
+
+    prior_passes = db.scalar(
+        select(func.count())
+        .select_from(Score)
+        .join(
+            Submission,
+            (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id),
         )
-        if int(prior_passes or 0) > 0:
-            return False
+        .where(Score.tenant_id == score.tenant_id)
+        .where(Submission.activity_id == activity.id)
+        .where(Submission.person_id == person.id)
+        .where(Score.passed.is_(True))
+        .where(Score.id != score.id)
+    )
+    if int(prior_passes or 0) > 0:
+        return False
 
-        subject = f"You passed {activity.title}"
-        name_text = (getattr(person, "first_name", "") or "there").strip()
-        name = html_lib.escape(name_text)
-        activity_title = html_lib.escape(activity.title)
-        pct = f"{score.fraction * 100:.0f}%"
-        html = (
-            f"<p>Hi {name},</p>"
-            f"<p>Congratulations — you passed <strong>{activity_title}</strong> "
-            f"with a score of {pct}.</p>"
-            f"<p>Keep up the great work!</p>"
-            f"<p>— Dotmac Academy</p>"
-        )
-        text = (
-            f"Hi {name_text},\n\n"
-            f"Congratulations — you passed {activity.title} with a score of {pct}.\n\n"
-            f"Keep up the great work!\n\n— Dotmac Academy\n"
-        )
-        try:
-            from app.services.notifications import notify as _notify
+    subject = f"You passed {activity.title}"
+    name_text = (getattr(person, "first_name", "") or "there").strip()
+    name = html_lib.escape(name_text)
+    activity_title = html_lib.escape(activity.title)
+    pct = f"{score.fraction * 100:.0f}%"
+    html = (
+        f"<p>Hi {name},</p>"
+        f"<p>Congratulations — you passed <strong>{activity_title}</strong> "
+        f"with a score of {pct}.</p>"
+        f"<p>Keep up the great work!</p>"
+        f"<p>— Dotmac Academy</p>"
+    )
+    text = (
+        f"Hi {name_text},\n\n"
+        f"Congratulations — you passed {activity.title} with a score of {pct}.\n\n"
+        f"Keep up the great work!\n\n— Dotmac Academy\n"
+    )
+    try:
+        from app.services.notifications import notify as _notify
 
+        with db.begin_nested():
             _notify(
                 db,
                 tenant_id=score.tenant_id,
@@ -198,22 +208,24 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
                 title=f"You passed {activity.title}",
                 body=f"Score: {pct}",
             )
-        except Exception as _exc:
-            logger.warning("in-app notify (result) failed: %s", _exc)
-        from app.services.email_outbox import enqueue_email
+    except Exception as _exc:
+        logger.warning("in-app notify (result) failed: %s", _exc)
+    from app.services.email_outbox import enqueue_email
 
-        return enqueue_email(
-            db,
-            tenant_id=score.tenant_id,
-            idempotency_key=f"score-pass:{score.id}",
-            kind="score_pass",
-            recipient=person.email,
-            subject=subject,
-            html_body=html,
-            text_body=text,
-        )
-    except Exception as exc:  # non-fatal: grading must still succeed
-        logger.warning("notify_score_if_first_pass failed: %s", exc)
+    try:
+        with db.begin_nested():
+            return enqueue_email(
+                db,
+                tenant_id=score.tenant_id,
+                idempotency_key=f"score-pass:{score.id}",
+                kind="score_pass",
+                recipient=person.email,
+                subject=subject,
+                html_body=html,
+                text_body=text,
+            )
+    except Exception as exc:
+        logger.warning("score-pass email intent failed: %s", exc)
         return False
 
 
