@@ -30,6 +30,9 @@ jobs:
       # conftest fixture can patch it), so it must be present in the job env too.
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
+      # Separate disposable database: canonical-entry rehearsals must never move
+      # relations in the database used by the application tests.
+      KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
       # Real dedicated-role evidence for lab-worker privilege tests (see
       # tests/services/test_lab_worker_privileges.py) — distinct from the
       # migration/superuser DSN above.
@@ -88,6 +91,19 @@ jobs:
       - name: Run migrations
         run: poetry run alembic upgrade head
 
+      - name: Bootstrap isolated Kernel entry rehearsal database
+        env:
+          PGPASSWORD: academy_super
+        run: |
+          psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE DATABASE academy_kernel_entry OWNER app_admin;
+          CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
       # them in one run instead of peeling them off one push at a time.
@@ -110,4 +126,13 @@ jobs:
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120
+        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
+
+      - name: Retain hosted rehearsal execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: academy-hosted-tests-${{ github.run_id }}
+          path: artifacts/pytest.xml
+          if-no-files-found: error
+          retention-days: 30

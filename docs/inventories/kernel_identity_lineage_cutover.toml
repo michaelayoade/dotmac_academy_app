@@ -83,6 +83,28 @@ kernel_revisions_deferred_after_runtime_cutover = false
 historical_a38_bridge = "superseded_rejected_stamp_and_deferred_revisions"
 selected_escrow_executor = "none"
 
+[account_state_amendment]
+date = "2026-10-17"
+source = "people.status"
+owner = "assembly"
+preserve_exact_recognized_status = true
+account_status_is_party_activation = false
+explicit_identity_activation_provenance_required = true
+implicit_active_default_allowed = false
+
+[canonical_entry_rehearsal]
+status = "source_preparation"
+scope = "fixture_only_physical_relocation_then_unchanged_installed_kernel_replay"
+legacy_relations = ["tenants", "tenant_domains", "people", "user_credentials", "auth_sessions", "roles", "person_roles", "audit_events"]
+legacy_version_relation = "alembic_version"
+caller_owned_connection_and_transaction = true
+original_relation_and_incoming_fk_oids_preserved = true
+legacy_version_rows_preserved = true
+actual_per_revision_execution_evidence_required = true
+injected_failure_rollback_required = true
+qualified = false
+runtime_activation_authorized = false
+
 [[baseline_evidence]]
 owner = "dotmac-kernel"
 concern = "canonical_security_identity"

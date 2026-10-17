@@ -334,3 +334,45 @@ schema mutation is included with this decision. General Vendor P11 completion
 does not satisfy ADR 0017's separate Sub tenant-plane gate or Academy's own
 identity/facet/published-floor gates. Those must pass before Academy activates
 the identity lineage transfer.
+
+## Amendment — 2026-10-17: account state and canonical-entry rehearsal
+
+Academy's account status and Kernel identity activation are separate facts.
+This amendment supersedes the earlier mapping
+`Party.is_active = (people.status = 'active')`. Preserve the exact recognized
+legacy account status in Academy-owned account state keyed by tenant and Party
+UUID. Account suspension continues to govern the existing product policies;
+it must not silently activate or deactivate the canonical identity. Importing
+`Party.is_active` requires explicit, justified identity-activation provenance.
+An absent activation disposition blocks import; neither an implicit active
+default nor an inference from account status satisfies that requirement.
+
+The next canonical-entry rehearsal will preserve the eight colliding legacy
+relations (`tenants`, `tenant_domains`, `people`, `user_credentials`,
+`auth_sessions`, `roles`, `person_roles`, `audit_events`) and their genuine
+`alembic_version` table in a schema owned by the Academy host. The proposed
+fixture uses a caller-owned migration connection and transaction, then executes
+the entire unchanged installed Kernel directory into its canonical namespace
+with new, genuine migration history. It must prove preservation of original
+relation identities, rows, incoming foreign-key targets, privileges and legacy
+version rows, and complete rollback after injected failures. Cluster roles are
+not relocated. Canonical heads alone are insufficient evidence: retain actual
+per-revision execution and immutable migration-source evidence.
+
+This is a rehearsal candidate, not a selected or qualified production entry
+executor. The inventory remains `design_only`, canonical entry remains
+`unresolved`, and the installed historical a38 coordinates remain historical.
+The production Alembic environment, dependency pins, identity writers and
+runtime assembly do not change through this amendment. The actual published
+floor, Sub tenant-plane findings, complete import, catalog-exact reference
+rebinding and populated rollback gates still precede activation.
+
+The fallback must be a named compatibility release whose behavior is proved
+against the resulting schema. Do not promise that the unmodified old binary
+can run after canonical identity entry. A fallback that restores legacy domain
+writers while retaining genuine Kernel identity/auth authority must reconcile
+accepted new inserts, updates, events, ACK state and deletions before the writer
+flip. If identity authority is also reversed, first prove that every accepted
+new canonical fact is representable, including longer names/email, credential
+multiplicity, grants and deletions. Neither an old snapshot nor an insert-only
+copy establishes that safety. No fallback activation or retirement is claimed.
