@@ -63,7 +63,7 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0060 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
+# repo head is now 0061 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
 # 0057/0058, and 0058/0059 tests are updated to assert against that instead of
 # assuming an earlier revision is still head.
 DOWN_REVISION = "0055_lab_operations"
@@ -75,7 +75,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # below stop silently assuming an earlier revision is head once a later one
 # exists — mirroring how the 0058->0059 transition itself updated this same
 # constant last time, rather than the fixed boundary constants below it.
-HEAD_REVISION = "0060_lab_conditional_ops"
+HEAD_REVISION = "0061_lab_completion_grants"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -91,7 +91,7 @@ TARGET_REVISION_0059 = "0059_lab_claim_owner"
 
 # 0059 <-> 0060 boundary, for the new tests further down this file.
 DOWN_REVISION_0060 = TARGET_REVISION_0059  # "0059_lab_claim_owner"
-TARGET_REVISION_0060 = HEAD_REVISION  # "0060_lab_conditional_ops"
+TARGET_REVISION_0060 = "0060_lab_conditional_ops"
 
 INSTANCE_NAME_INDEX = "uq_lab_instances_instance_name"
 RUNTIME_PRESENCE_CHECK = "ck_lab_instances_runtime_presence"
@@ -312,7 +312,7 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
 
     with _migration_env(url):
         try:
-            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0060)
+            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0061)
             # downgrades through every later revision first, landing at 0055 —
             # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
             # only cover grants/check-constraints that later revisions never
@@ -531,7 +531,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     cfg = _make_config()
     url = _migration_url()
 
-    # Checks the actual repo head (now 0060, not 0057 — see HEAD_REVISION):
+    # Checks the actual repo head (now 0061, not 0057 — see HEAD_REVISION):
     # this test's own upgrade/downgrade calls stay pinned to the 0056/0057
     # boundary specifically via DOWN_REVISION_0057/TARGET_REVISION_0057, but
     # the sanity check that the CI database starts at head must track
@@ -577,7 +577,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         "the unique index's shape after a downgrade/upgrade round trip does "
         "not match the pre-cycle baseline — 0057 leaks or loses state across cycles"
     )
-    # The `finally` block above always ends at real head (now 0060), not at
+    # The `finally` block above always ends at real head (now 0061), not at
     # the 0057 boundary this test's own round trip exercises.
     assert final_version == HEAD_REVISION
 
