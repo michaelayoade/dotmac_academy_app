@@ -2,10 +2,10 @@
 <img src="/static/img/cover-{{ course.slug }}.webp" alt=""
      class="mb-6 h-44 w-full rounded-2xl object-cover" loading="lazy"
      onerror="this.style.display='none'">
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">
+<p class="page-eyebrow">
   <a href="/courses" class="hover:text-brand-800">Courses</a> &rsaquo;
 </p>
-<h1 class="mt-1.5 text-3xl tracking-tight">{{ course.title }}</h1>
+<h1 class="page-title">{{ course.title }}</h1>
 
 {% if structure.locked %}
 <div class="card mt-6 border border-clay-500/30 bg-clay-500/5 p-5">

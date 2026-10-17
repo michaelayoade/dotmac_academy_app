@@ -29,6 +29,10 @@ jobs:
       # conftest fixture can patch it), so it must be present in the job env too.
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
+      # Real dedicated-role evidence for lab-worker privilege tests (see
+      # tests/services/test_lab_worker_privileges.py) — distinct from the
+      # migration/superuser DSN above.
+      TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://academy_lab_worker:academy_lab_worker@localhost:5437/academy
       # Platform-scoped writes (e.g. admin settings) run as the platform_api role,
       # which holds INSERT/UPDATE on platform_settings; app_user is SELECT-only there.
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
@@ -48,8 +52,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Kernel composition observations
+        uses: michaelayoade/dotmac_starter_mt/.github/actions/verify-composition-observations@8b4b6d4b42e650c47fe4c04a679a5ccb51c4b2cd
+        with:
+          product: academy
+
+      # PINNED, and it must stay in step with deploy/install.sh's production
+      # version check. CI owns this installation; production resolves Poetry
+      # from the operator's PATH and verifies the version rather than assuming
+      # a host-specific executable location.
+      # Unpinned, CI floats to the latest Poetry and writes a poetry.lock the
+      # host's Poetry cannot read — which fails as "pyproject.toml changed
+      # significantly since poetry.lock was last generated", blaming the repo
+      # rather than the toolchain. Bump both sides together or not at all.
       - name: Install Poetry
-        run: pipx install poetry
+        run: pipx install poetry==2.4.1
 
       - name: Install dependencies
         run: poetry install --no-interaction --no-root

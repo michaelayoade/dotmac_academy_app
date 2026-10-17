@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -157,14 +157,17 @@ def _inactivity_title(*, never_started: bool, final: bool) -> str:
             else "Last reminder — your course is still waiting"
         )
     return (
-        "Ready to begin? Your course is waiting"
-        if never_started
-        else "It's been a while — pick up where you left off"
+        "Ready to begin? Your course is waiting" if never_started else "It's been a while — pick up where you left off"
     )
 
 
 def _detect_events(
-    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime, inactivity_days: int,
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    now: datetime,
+    inactivity_days: int,
     inactivity_max_nudges: int = DEFAULT_INACTIVITY_MAX_NUDGES,
 ) -> list[dict]:
     """Every reminder occurrence that exists for this person right now."""
@@ -181,19 +184,23 @@ def _detect_events(
         .where(Enrollment.created_at >= lookback)
     ).all()
     for enr_id, cohort_name in rows:
-        events.append({
-            "kind": "course_assigned",
-            "key": f"course_assigned:{enr_id}",
-            "title": f"You've been enrolled: {cohort_name}",
-            "link": "/courses",
-        })
+        events.append(
+            {
+                "kind": "course_assigned",
+                "key": f"course_assigned:{enr_id}",
+                "title": f"You've been enrolled: {cohort_name}",
+                "link": "/courses",
+            }
+        )
 
     # Offerings opening within 72h -> course_starting.
     offering_rows = db.execute(
         select(CourseOffering.id, Course.title, CourseOffering.starts_at)
         .join(Course, (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id))
-        .join(Enrollment, (Enrollment.cohort_id == CourseOffering.cohort_id)
-              & (Enrollment.tenant_id == CourseOffering.tenant_id))
+        .join(
+            Enrollment,
+            (Enrollment.cohort_id == CourseOffering.cohort_id) & (Enrollment.tenant_id == CourseOffering.tenant_id),
+        )
         .where(CourseOffering.tenant_id == tenant_id)
         .where(Enrollment.person_id == person_id)
         .where(Enrollment.status == "active")
@@ -203,38 +210,46 @@ def _detect_events(
         .where(CourseOffering.starts_at <= now + timedelta(hours=72))
     ).all()
     for off_id, course_title, _starts in offering_rows:
-        events.append({
-            "kind": "course_starting",
-            "key": f"course_starting:{off_id}",
-            "title": f"Course opening soon: {course_title}",
-            "link": "/courses",
-        })
+        events.append(
+            {
+                "kind": "course_starting",
+                "key": f"course_starting:{off_id}",
+                "title": f"Course opening soon: {course_title}",
+                "link": "/courses",
+            }
+        )
 
     # Deadlines -> due_72h / due_24h / overdue (reuses the To-Do derivation).
     for row in todo_service._deadline_rows(db, tenant_id=tenant_id, person_id=person_id):
         due, activity = row["due_at"], row["activity"]
         link = "/todo"
         if due < now:
-            events.append({
-                "kind": "overdue",
-                "key": f"overdue:{activity.id}:{due.date().isoformat()}",
-                "title": f"Overdue: {activity.title} ({row['course_title']})",
-                "link": link,
-            })
+            events.append(
+                {
+                    "kind": "overdue",
+                    "key": f"overdue:{activity.id}:{due.date().isoformat()}",
+                    "title": f"Overdue: {activity.title} ({row['course_title']})",
+                    "link": link,
+                }
+            )
         elif due <= now + timedelta(hours=24):
-            events.append({
-                "kind": "due_24h",
-                "key": f"due_24h:{activity.id}:{due.date().isoformat()}",
-                "title": f"Due tomorrow: {activity.title} ({row['course_title']})",
-                "link": link,
-            })
+            events.append(
+                {
+                    "kind": "due_24h",
+                    "key": f"due_24h:{activity.id}:{due.date().isoformat()}",
+                    "title": f"Due tomorrow: {activity.title} ({row['course_title']})",
+                    "link": link,
+                }
+            )
         elif due <= now + timedelta(hours=72):
-            events.append({
-                "kind": "due_72h",
-                "key": f"due_72h:{activity.id}:{due.date().isoformat()}",
-                "title": f"Due in 3 days: {activity.title} ({row['course_title']})",
-                "link": link,
-            })
+            events.append(
+                {
+                    "kind": "due_72h",
+                    "key": f"due_72h:{activity.id}:{due.date().isoformat()}",
+                    "title": f"Due in 3 days: {activity.title} ({row['course_title']})",
+                    "link": link,
+                }
+            )
 
     # Live sessions -> session_24h / session_1h. The occurrence key is versioned
     # by the scheduled start time, so rescheduling a session issues a FRESH
@@ -246,19 +261,23 @@ def _detect_events(
         link = f"/timetable/sessions/{session.id}"
         sched = session.starts_at.astimezone(UTC).strftime("%Y%m%dT%H%M")
         if timedelta(0) < delta <= timedelta(hours=1):
-            events.append({
-                "kind": "session_1h",
-                "key": f"session_1h:{session.id}:{sched}",
-                "title": f"Starting soon: {session.title}",
-                "link": link,
-            })
+            events.append(
+                {
+                    "kind": "session_1h",
+                    "key": f"session_1h:{session.id}:{sched}",
+                    "title": f"Starting soon: {session.title}",
+                    "link": link,
+                }
+            )
         elif timedelta(0) < delta <= timedelta(hours=24):
-            events.append({
-                "kind": "session_24h",
-                "key": f"session_24h:{session.id}:{sched}",
-                "title": f"Tomorrow: {session.title}",
-                "link": link,
-            })
+            events.append(
+                {
+                    "kind": "session_24h",
+                    "key": f"session_24h:{session.id}:{sched}",
+                    "title": f"Tomorrow: {session.title}",
+                    "link": link,
+                }
+            )
 
     # Grades -> graded. Only non-auto scores: auto-graded quiz results are shown
     # on screen the instant the learner submits, so emailing them is pure noise
@@ -273,12 +292,14 @@ def _detect_events(
         .where(Score.created_at >= lookback)
     ).all()
     for score_id, activity_title in rows:
-        events.append({
-            "kind": "graded",
-            "key": f"graded:{score_id}",
-            "title": f"Graded: {activity_title}",
-            "link": "/progress",
-        })
+        events.append(
+            {
+                "kind": "graded",
+                "key": f"graded:{score_id}",
+                "title": f"Graded: {activity_title}",
+                "link": "/progress",
+            }
+        )
 
     # Completions -> course_completed.
     rows = db.execute(
@@ -291,12 +312,14 @@ def _detect_events(
         .where(CourseCompletion.completed_at >= lookback)
     ).all()
     for comp_id, course_title in rows:
-        events.append({
-            "kind": "course_completed",
-            "key": f"course_completed:{comp_id}",
-            "title": f"Completed: {course_title}",
-            "link": "/progress",
-        })
+        events.append(
+            {
+                "kind": "course_completed",
+                "key": f"course_completed:{comp_id}",
+                "title": f"Completed: {course_title}",
+                "link": "/progress",
+            }
+        )
 
     # Certificates -> certificate_issued. (The Certificate model has no expiry
     # field, so certificate-expiry reminders are out of scope until it does.)
@@ -308,12 +331,14 @@ def _detect_events(
         .where(Certificate.issued_at >= lookback)
     ).all()
     for cert_id, course_title in rows:
-        events.append({
-            "kind": "certificate_issued",
-            "key": f"certificate_issued:{cert_id}",
-            "title": f"Certificate ready: {course_title}",
-            "link": "/progress",
-        })
+        events.append(
+            {
+                "kind": "certificate_issued",
+                "key": f"certificate_issued:{cert_id}",
+                "title": f"Certificate ready: {course_title}",
+                "link": "/progress",
+            }
+        )
 
     # Inactivity -> one reminder per elapsed inactivity window, capped. The
     # learning-event ledger is the canonical record of meaningful activity
@@ -358,12 +383,14 @@ def _detect_events(
         )
         if already < inactivity_max_nudges:
             final = already == inactivity_max_nudges - 1
-            events.append({
-                "kind": "inactivity",
-                "key": f"inactivity:{spell}:w{window}",
-                "title": _inactivity_title(never_started=never_started, final=final),
-                "link": "/",
-            })
+            events.append(
+                {
+                    "kind": "inactivity",
+                    "key": f"inactivity:{spell}:w{window}",
+                    "title": _inactivity_title(never_started=never_started, final=final),
+                    "link": "/",
+                }
+            )
 
     return events
 
@@ -373,8 +400,17 @@ def _detect_events(
 # ---------------------------------------------------------------------------
 
 
-def _record(db: Session, *, tenant_id: UUID, person_id: UUID, event: dict,
-            channel: str, status: str, outbox_key: str | None, now: datetime) -> bool:
+def _record(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    event: dict,
+    channel: str,
+    status: str,
+    outbox_key: str | None,
+    now: datetime,
+) -> bool:
     """Insert the ledger row; False when this occurrence was already handled."""
     result = db.execute(
         insert(ReminderLog)
@@ -419,9 +455,7 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     if not bool(cfg.get("reminders_enabled", True)):
         return {"detected": 0, "sent": 0, "queued": 0, "skipped": 0, "flushed": 0, "disabled": True}
     inactivity_days = int(str(cfg.get("reminder_inactivity_days", 7)))
-    inactivity_max_nudges = int(
-        str(cfg.get("reminder_inactivity_max_nudges", DEFAULT_INACTIVITY_MAX_NUDGES))
-    )
+    inactivity_max_nudges = int(str(cfg.get("reminder_inactivity_max_nudges", DEFAULT_INACTIVITY_MAX_NUDGES)))
     digest_hour = int(str(cfg.get("reminder_digest_hour", 7)))
     digest_weekday = int(str(cfg.get("reminder_digest_weekday", 0)))
     branding = str(cfg.get("branding_name", "Dotmac Academy"))
@@ -429,29 +463,46 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
 
     # Student reminders are for students: an instructor enrolment must not draw
     # due-date nags or inactivity chides for coursework that isn't theirs.
-    person_rows = db.execute(
-        select(Person)
-        .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.status == "active")
-        .where(Enrollment.status == "active")
-        .where(Enrollment.role_in_cohort == "student")
-        .distinct()
-    ).scalars().all()
+    person_rows = (
+        db.execute(
+            select(Person)
+            .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
+            .where(Person.tenant_id == tenant_id)
+            .where(Person.status == "active")
+            .where(Enrollment.status == "active")
+            .where(Enrollment.role_in_cohort == "student")
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
 
     counts = {"detected": 0, "sent": 0, "queued": 0, "skipped": 0, "flushed": 0}
 
     for person in person_rows:
         pref = get_preference(db, tenant_id=tenant_id, person_id=person.id)
         optouts = set(pref.optouts or [])
-        events = _detect_events(db, tenant_id=tenant_id, person_id=person.id,
-                                now=now, inactivity_days=inactivity_days,
-                                inactivity_max_nudges=inactivity_max_nudges)
+        events = _detect_events(
+            db,
+            tenant_id=tenant_id,
+            person_id=person.id,
+            now=now,
+            inactivity_days=inactivity_days,
+            inactivity_max_nudges=inactivity_max_nudges,
+        )
 
         for event in events:
             if event["kind"] in optouts:
-                if _record(db, tenant_id=tenant_id, person_id=person.id, event=event,
-                           channel="none", status=STATUS_SKIPPED, outbox_key=None, now=now):
+                if _record(
+                    db,
+                    tenant_id=tenant_id,
+                    person_id=person.id,
+                    event=event,
+                    channel="none",
+                    status=STATUS_SKIPPED,
+                    outbox_key=None,
+                    now=now,
+                ):
                     counts["detected"] += 1
                     counts["skipped"] += 1
                 continue
@@ -464,40 +515,77 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
                 # outbox key — so the enqueue below cannot collide, and the
                 # recorded "sent" status is truthful (unlike the digest path,
                 # where batches can recur and the key is content-hashed).
-                if _record(db, tenant_id=tenant_id, person_id=person.id, event=event,
-                           channel="email", status=STATUS_SENT, outbox_key=outbox_key, now=now):
+                if _record(
+                    db,
+                    tenant_id=tenant_id,
+                    person_id=person.id,
+                    event=event,
+                    channel="email",
+                    status=STATUS_SENT,
+                    outbox_key=outbox_key,
+                    now=now,
+                ):
                     counts["detected"] += 1
                     counts["sent"] += 1
                     subject, html, text = _email_for(event["title"], event.get("link"), branding, base_url)
-                    enqueue_email(db, tenant_id=tenant_id, idempotency_key=outbox_key,
-                                  kind=f"reminder_{event['kind']}", recipient=person.email,
-                                  subject=subject, html_body=html, text_body=text)
-                    notifications.notify(db, tenant_id=tenant_id, person_id=person.id,
-                                         kind="reminder", title=event["title"], link=event.get("link"))
+                    enqueue_email(
+                        db,
+                        tenant_id=tenant_id,
+                        idempotency_key=outbox_key,
+                        kind=f"reminder_{event['kind']}",
+                        recipient=person.email,
+                        subject=subject,
+                        html_body=html,
+                        text_body=text,
+                    )
+                    notifications.notify(
+                        db,
+                        tenant_id=tenant_id,
+                        person_id=person.id,
+                        kind="reminder",
+                        title=event["title"],
+                        link=event.get("link"),
+                    )
             else:
-                if _record(db, tenant_id=tenant_id, person_id=person.id, event=event,
-                           channel="email", status=STATUS_QUEUED, outbox_key=None, now=now):
+                if _record(
+                    db,
+                    tenant_id=tenant_id,
+                    person_id=person.id,
+                    event=event,
+                    channel="email",
+                    status=STATUS_QUEUED,
+                    outbox_key=None,
+                    now=now,
+                ):
                     counts["detected"] += 1
                     counts["queued"] += 1
-                    notifications.notify(db, tenant_id=tenant_id, person_id=person.id,
-                                         kind="reminder", title=event["title"], link=event.get("link"))
+                    notifications.notify(
+                        db,
+                        tenant_id=tenant_id,
+                        person_id=person.id,
+                        kind="reminder",
+                        title=event["title"],
+                        link=event.get("link"),
+                    )
 
         # Flush queued rows: digest boundary, or deferred-immediate leaving quiet hours.
-        flush = (
-            _digest_due(pref, now, hour=digest_hour, weekday=digest_weekday)
-            or (pref.frequency == "immediate" and not _in_quiet_hours(pref, now))
+        flush = _digest_due(pref, now, hour=digest_hour, weekday=digest_weekday) or (
+            pref.frequency == "immediate" and not _in_quiet_hours(pref, now)
         )
         if flush:
             counts["flushed"] += _flush_queued(
-                db, tenant_id=tenant_id, person=person, branding=branding,
-                base_url=base_url, now=now,
+                db,
+                tenant_id=tenant_id,
+                person=person,
+                branding=branding,
+                base_url=base_url,
+                now=now,
             )
 
     return counts
 
 
-def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str,
-                  base_url: str, now: datetime) -> int:
+def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str, base_url: str, now: datetime) -> int:
     queued = db.scalars(
         select(ReminderLog)
         .where(ReminderLog.tenant_id == tenant_id)
@@ -513,19 +601,20 @@ def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str
     # email was silently dropped while these rows were still marked sent. The
     # content hash gives each distinct batch its own email; only mark rows sent
     # when the enqueue actually took.
-    digest_disc = hashlib.sha1(
-        ",".join(str(r.id) for r in queued).encode(), usedforsecurity=False
-    ).hexdigest()[:12]
+    digest_disc = hashlib.sha1(",".join(str(r.id) for r in queued).encode(), usedforsecurity=False).hexdigest()[:12]
     outbox_key = f"reminder_digest:{person.id}:{digest_disc}"
     items_html = "".join(f"<li>{escape(r.title)}</li>" for r in queued)
     items_text = "\n".join(f"- {r.title}" for r in queued)
     enqueued = enqueue_email(
-        db, tenant_id=tenant_id, idempotency_key=outbox_key, kind="reminder_digest",
+        db,
+        tenant_id=tenant_id,
+        idempotency_key=outbox_key,
+        kind="reminder_digest",
         recipient=person.email,
         subject=f"Your learning reminders ({len(queued)}) — {branding}",
         html_body=f"<p>While you were away:</p><ul>{items_html}</ul>"
-                  f'<p><a href="{base_url}/todo">Open your To-Do list</a></p>'
-                  f"<p>— {branding}</p>",
+        f'<p><a href="{base_url}/todo">Open your To-Do list</a></p>'
+        f"<p>— {branding}</p>",
         text_body=f"While you were away:\n{items_text}\n— {branding}",
     )
     if not enqueued:
@@ -545,30 +634,46 @@ def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str
 # ---------------------------------------------------------------------------
 
 
-def recent_log(db: Session, *, tenant_id: UUID, limit: int = 100, offset: int = 0) -> list:
+def recent_log(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    limit: int = 100,
+    offset: int = 0,
+    status: str | None = None,
+    event_kind: str | None = None,
+    search: str | None = None,
+) -> list:
     """Recent ledger rows joined with the person for the admin history page."""
-    return list(db.execute(
+    stmt = (
         select(ReminderLog, Person)
         .join(Person, (Person.id == ReminderLog.person_id) & (Person.tenant_id == ReminderLog.tenant_id))
         .where(ReminderLog.tenant_id == tenant_id)
-        .order_by(ReminderLog.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    ).all())
+    )
+    if status:
+        stmt = stmt.where(ReminderLog.status == status)
+    if event_kind:
+        stmt = stmt.where(ReminderLog.event_kind == event_kind)
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        stmt = stmt.where(
+            or_(
+                Person.email.ilike(pattern),
+                ReminderLog.title.ilike(pattern),
+                ReminderLog.event_kind.ilike(pattern),
+            )
+        )
+    return list(db.execute(stmt.order_by(ReminderLog.created_at.desc()).limit(limit).offset(offset)).all())
 
 
 def resend(db: Session, *, tenant_id: UUID, log_id: UUID, actor_person_id: UUID) -> ReminderLog:
     """Authorized re-delivery of one ledger entry through a fresh outbox row."""
     log = db.scalars(
-        select(ReminderLog)
-        .where(ReminderLog.tenant_id == tenant_id)
-        .where(ReminderLog.id == log_id)
+        select(ReminderLog).where(ReminderLog.tenant_id == tenant_id).where(ReminderLog.id == log_id)
     ).first()
     if log is None:
         raise ValueError("reminder not found")
-    person = db.scalars(
-        select(Person).where(Person.tenant_id == tenant_id).where(Person.id == log.person_id)
-    ).first()
+    person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.id == log.person_id)).first()
     if person is None:
         raise ValueError("person not found")
     cfg = effective(db)
@@ -576,14 +681,27 @@ def resend(db: Session, *, tenant_id: UUID, log_id: UUID, actor_person_id: UUID)
     base_url = str(cfg.get("academy_base_url", "https://academy.dotmac.io")).rstrip("/")
     outbox_key = f"reminder_resend:{log.id}:{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     subject, html, text = _email_for(log.title, log.link, branding, base_url)
-    enqueue_email(db, tenant_id=tenant_id, idempotency_key=outbox_key,
-                  kind=f"reminder_{log.event_kind}", recipient=person.email,
-                  subject=subject, html_body=html, text_body=text)
+    enqueue_email(
+        db,
+        tenant_id=tenant_id,
+        idempotency_key=outbox_key,
+        kind=f"reminder_{log.event_kind}",
+        recipient=person.email,
+        subject=subject,
+        html_body=html,
+        text_body=text,
+    )
     log.status = STATUS_SENT
     log.outbox_key = outbox_key
     log.sent_at = datetime.now(UTC)
-    write_audit_event(db, tenant_id=tenant_id, actor_person_id=actor_person_id,
-                      action="reminder.resend", entity_type="reminder_log",
-                      entity_id=str(log.id), details={"event_kind": log.event_kind})
+    write_audit_event(
+        db,
+        tenant_id=tenant_id,
+        actor_person_id=actor_person_id,
+        action="reminder.resend",
+        entity_type="reminder_log",
+        entity_id=str(log.id),
+        details={"event_kind": log.event_kind},
+    )
     db.flush()
     return log

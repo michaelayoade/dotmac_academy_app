@@ -156,7 +156,7 @@
     if (!bar || !sections.length) return;
     var idx = sections.findIndex(function (entry) { return entry.slug === activeSlug; });
     var pct = idx >= 0 ? ((idx + 1) / sections.length) * 100 : 0;
-    bar.style.width = pct.toFixed(1) + "%";
+    bar.style.transform = "scaleX(" + (pct / 100).toFixed(3) + ")";
   }
   function updateStepActions() {
     if (!stepActions || !completeButton || !nextButton || !activeSlug) return;

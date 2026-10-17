@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T14:43:39.7670204+01:00",
+  "title": "Design System: Dotmac Academy — Academic Modernist",
+  "extensions": {
+    "colorMeta": {
+      "forest-700": { "role": "primary", "displayName": "Oxford Forest", "canonical": "#084728", "tonalRamp": ["#eef7f0", "#dcefe1", "#b8dec4", "#87c39c", "#4e9b6d", "#226b47", "#0d5a34", "#084728", "#003b20", "#002f18", "#001d0f"] },
+      "sage-canvas": { "role": "neutral", "displayName": "Sage Canvas", "canonical": "#f8faf4", "tonalRamp": ["#ffffff", "#f8faf4", "#f4f6f0", "#e2e5dc", "#c0c9bf", "#919b91", "#6b756d", "#404942", "#2b312c", "#191c19", "#0e100e"] },
+      "clay-600": { "role": "secondary", "displayName": "Clay Signal", "canonical": "#8a3d16", "tonalRamp": ["oklch(0.98 0.02 80)", "oklch(0.95 0.04 78)", "oklch(0.90 0.07 72)", "oklch(0.83 0.09 67)", "oklch(0.76 0.11 62)", "oklch(0.70 0.125 58)", "#8a3d16", "oklch(0.54 0.12 46)", "oklch(0.45 0.10 42)", "oklch(0.37 0.075 39)", "oklch(0.25 0.05 36)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Academic Display", "purpose": "Page titles and major editorial hierarchy." },
+      "headline": { "displayName": "Section Heading", "purpose": "Compact working-section hierarchy." },
+      "body": { "displayName": "Operational Body", "purpose": "Prose, controls, labels, and navigation." },
+      "data": { "displayName": "Dense Data", "purpose": "Tables, metrics, dates, and operational state." }
+    },
+    "shadows": [
+      { "name": "sm", "value": "0 1px 2px rgb(0 47 24 / 0.04)", "purpose": "Lowest structural separation." },
+      { "name": "card", "value": "0 1px 3px rgb(0 47 24 / 0.05)", "purpose": "Default white working surfaces." },
+      { "name": "md", "value": "0 1px 3px rgb(0 47 24 / 0.06)", "purpose": "Slightly stronger compact elevation." },
+      { "name": "lg", "value": "0 8px 20px -12px rgb(0 47 24 / 0.22)", "purpose": "Temporary elevated surfaces." },
+      { "name": "xl", "value": "0 12px 28px -16px rgb(0 47 24 / 0.28)", "purpose": "Menus and genuinely lifted media." }
+    ],
+    "motion": [
+      { "name": "fast", "value": "150ms", "purpose": "Hover, color, border, and press response." },
+      { "name": "standard", "value": "220ms", "purpose": "Mobile drawer movement." },
+      { "name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "All authored Academy state transitions." },
+      { "name": "reduced", "value": "0.01ms; 1 iteration", "purpose": "Reduced-motion collapse for transitions and animations." }
+    ],
+    "breakpoints": [
+      { "name": "xs-filter-stack", "value": "480px" },
+      { "name": "sm-table-guidance", "value": "640px" },
+      { "name": "md-desktop-shell", "value": "768px" },
+      { "name": "xl-shell-padding", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default consequential action: compact, square-shouldered, and forest-led.",
+      "html": "<button class=\"ds-btn-primary\">Save changes</button>",
+      "css": ".ds-btn-primary{display:inline-flex;min-height:40px;align-items:center;justify-content:center;padding:8px 16px;border:0;border-radius:4px;background:#084728;color:#fff;font:600 14px/1.25 'Hanken Grotesk',system-ui,sans-serif;transition:background 150ms cubic-bezier(.22,1,.36,1),transform 150ms cubic-bezier(.22,1,.36,1)}.ds-btn-primary:hover{background:#003b20}.ds-btn-primary:active{transform:scale(.98)}.ds-btn-primary:focus-visible{outline:2px solid #0d5a34;outline-offset:3px}.ds-btn-primary:disabled{cursor:not-allowed;opacity:.5;transform:none}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A quiet secondary action on a paper surface.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;min-height:40px;align-items:center;justify-content:center;padding:8px 16px;border:1px solid #c0c9bf;border-radius:4px;background:#fff;color:#191c19;font:600 14px/1.25 'Hanken Grotesk',system-ui,sans-serif;transition:color 150ms cubic-bezier(.22,1,.36,1),border-color 150ms cubic-bezier(.22,1,.36,1),transform 150ms cubic-bezier(.22,1,.36,1)}.ds-btn-ghost:hover{border-color:#4e9b6d;color:#084728}.ds-btn-ghost:active{transform:scale(.98)}.ds-btn-ghost:focus-visible{outline:2px solid #0d5a34;outline-offset:3px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "description": "White, compact field with an explicit emerald focus treatment.",
+      "html": "<label class=\"ds-field\"><span>Email address</span><input type=\"email\" placeholder=\"name@example.com\"></label>",
+      "css": ".ds-field{display:grid;gap:6px;color:#191c19;font:600 13px/1.3 'Hanken Grotesk',system-ui,sans-serif}.ds-field input{min-height:40px;padding:8px 12px;border:1px solid #e2e5dc;border-radius:4px;background:#fff;color:#191c19;font:400 14px/1.4 'Hanken Grotesk',system-ui,sans-serif}.ds-field input::placeholder{color:#6b756d}.ds-field input:focus{outline:0;border-color:#226b47;box-shadow:0 0 0 3px rgb(34 107 71 / .22)}"
+    },
+    {
+      "name": "Active Sidebar Link",
+      "kind": "nav",
+      "description": "The shared active-navigation signature: sage field, forest copy, and precise edge marker.",
+      "html": "<a class=\"ds-nav-active\" href=\"#\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9 20v-6h6v6\"/></svg><span>Home</span></a>",
+      "css": ".ds-nav-active{position:relative;display:flex;min-height:44px;align-items:center;gap:12px;padding:9.6px 12.8px;border-radius:4px;background:#eef7f0;color:#084728;font:600 14px/1.25 'Hanken Grotesk',system-ui,sans-serif;text-decoration:none}.ds-nav-active:before{content:'';position:absolute;inset:7.2px auto 7.2px -12px;width:3px;border-radius:0 3px 3px 0;background:#226b47}.ds-nav-active svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ds-nav-active:focus-visible{outline:2px solid #0d5a34;outline-offset:3px}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "status-badge",
+      "description": "A pill reserved for short, explicit operational state.",
+      "html": "<span class=\"ds-status\">Complete</span>",
+      "css": ".ds-status{display:inline-flex;align-items:center;padding:2.88px 9.6px;border-radius:9999px;background:#eef7f0;color:#084728;font:650 12px/1.4 'Hanken Grotesk',system-ui,sans-serif}"
+    },
+    {
+      "name": "Working Surface",
+      "kind": "card",
+      "refersTo": "surface-card",
+      "description": "A white operational container with a warm hairline and nearly-flat forest shadow.",
+      "html": "<section class=\"ds-card\"><h3>Current work</h3><p>Review the latest submissions and recorded status.</p></section>",
+      "css": ".ds-card{padding:24px;border:1px solid #e2e5dc;border-radius:8px;background:#fff;color:#191c19;box-shadow:0 1px 3px rgb(0 47 24 / .05);font:400 16px/1.5 'Hanken Grotesk',system-ui,sans-serif}.ds-card h3{margin:0 0 8px;font:600 18px/1.35 Domine,Georgia,serif;letter-spacing:-.025em}.ds-card p{margin:0;color:#404942}"
+    },
+    {
+      "name": "Operational Table",
+      "kind": "custom",
+      "description": "Dense, horizontally reachable data with a warm-grey header and visible row rules.",
+      "html": "<div class=\"ds-table-frame\" tabindex=\"0\" role=\"region\" aria-label=\"Results table\"><table class=\"ds-table\"><thead><tr><th>Learner</th><th>Status</th><th>Updated</th></tr></thead><tbody><tr><td>Ada Okafor</td><td>Complete</td><td>06 Oct 2026</td></tr><tr><td>Musa Bello</td><td>In progress</td><td>05 Oct 2026</td></tr></tbody></table></div>",
+      "css": ".ds-table-frame{overflow:auto;border:1px solid #e2e5dc;border-radius:8px;background:#fff;scrollbar-gutter:stable}.ds-table-frame:focus-visible{outline:2px solid #0d5a34;outline-offset:3px}.ds-table{width:100%;min-width:672px;border-collapse:separate;border-spacing:0;color:#191c19;font:400 14px/1.25 'Hanken Grotesk',system-ui,sans-serif;text-align:left}.ds-table th{height:44px;padding:10.4px 16px;border-bottom:1px solid #e2e5dc;background:#f4f6f0;color:#404942;font-size:11px;font-weight:600;letter-spacing:.115em;text-transform:uppercase;white-space:nowrap}.ds-table td{min-height:52px;padding:13.6px 16px;border-bottom:1px solid #e2e5dc;vertical-align:middle}.ds-table tbody tr:last-child td{border-bottom:0}.ds-table tbody tr:hover{background:#f8faf4}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Academic Operations Desk",
+    "overview": "A calm Academic Modernist workspace with pale sage canvas, paper-white working surfaces, Oxford-forest controls, warm-grey structure, editorial Domine headings, and crisp Hanken Grotesk data. It is designed for complete operational visibility across learner, teaching, and admin work.",
+    "keyCharacteristics": ["4px controls and 8px surfaces", "64px desktop header and 240px sidebar", "Accessible 390px off-canvas navigation", "Horizontally reachable dense and matrix tables", "Restrained state motion with a global reduced-motion contract", "Existing Dotmac Academy logo retained"],
+    "rules": [
+      { "name": "The Signal Rule", "body": "Use forest and clay for action, selection, progress, and status; pair color with text or semantics.", "section": "colors" },
+      { "name": "The Density Rule", "body": "Preserve every data field and table column; narrow screens scroll instead of hiding evidence.", "section": "components" },
+      { "name": "The Focus Contract", "body": "All interactive controls show visible focus; mobile navigation traps focus while open and restores it on dismiss.", "section": "components" },
+      { "name": "The Application Contract", "body": "Visual work preserves routes, permissions, Jinja conditions, form semantics, data, factual copy, CSRF handling, and HTMX behavior.", "section": "components" }
+    ],
+    "dos": ["Do retain the Dotmac logo and name in the header.", "Do keep tables horizontally scrollable and matrix headers/first columns sticky.", "Do use Domine for hierarchy and Hanken Grotesk for operations.", "Do honor reduced motion and 40px minimum controls."],
+    "donts": ["Don't hide columns or convert operational tables into incomplete mobile cards.", "Don't use pills for general controls or containers.", "Don't add decorative gradients, glass, nostalgia, or oversized radii.", "Don't change routes, data, permissions, copy, or HTMX behavior while styling."]
+  }
+}

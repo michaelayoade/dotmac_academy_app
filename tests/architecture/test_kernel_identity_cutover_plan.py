@@ -1,4 +1,4 @@
-"""Ratchets for ADR 0008's database identity and lineage boundary.
+"""Ratchets for ADR 0009's accepted database identity and lineage boundary.
 
 The ADR is deliberately design-only today. These tests make its evidence
 executable: all existing kernel collisions and person-identity references must
@@ -13,13 +13,15 @@ import ast
 import configparser
 import importlib.metadata
 import pathlib
+import re
 import tomllib
+from uuid import UUID
 
 from dotmac_kernel.migrations import versions_dir as kernel_versions_dir
 
-import app.models
-import app.models.auth
-import app.models.person
+import app.models  # noqa: F401  (register product metadata for the census)
+import app.models.auth  # noqa: F401  (not exported from app.models)
+import app.models.person  # noqa: F401
 import app.models.rbac  # noqa: F401  (not exported from app.models)
 from app.models.base import Base
 
@@ -29,6 +31,7 @@ BASELINE_PATH = pathlib.Path(__file__).with_name("kernel_duplication_baseline.tx
 ACADEMY_VERSIONS = ROOT / "alembic" / "versions"
 PERSON_IDENTITY_ALIASES = {
     ("attempt_grants", "granted_by"),
+    ("lab_operations", "requested_by"),
     ("success_queue_entries", "assigned_to"),
     ("success_queue_entries", "resolved_by"),
 }
@@ -145,10 +148,46 @@ def test_every_person_identity_column_is_classified_with_its_real_integrity() ->
     }
     assert len(planned) == len(references), "identity reference appears more than once"
     assert planned == _person_columns()
-    assert len(planned) == 27
+    assert len(planned) == 28
     assert list(planned.values()).count("strong") == 11
-    assert list(planned.values()).count("logical") == 16
+    assert list(planned.values()).count("logical") == 17
     assert PERSON_IDENTITY_ALIASES <= set(planned)
+
+
+def test_lab_requester_is_nullable_human_attribution_not_worker_fencing() -> None:
+    references = {
+        (entry["table"], entry["column"]): entry
+        for entry in _inventory()["identity_reference"]
+    }
+    requester = references[("lab_operations", "requested_by")]
+    assert requester == {
+        "table": "lab_operations",
+        "column": "requested_by",
+        "current_integrity": "logical",
+        "disposition": "retain_human_semantics",
+        "nullable": True,
+        "value_semantics": "person_uuid_for_user_request_null_for_automated_request",
+        "introduced_by": "0055_lab_operations",
+        "excluded_worker_identity": "lab_operations.claimed_by",
+    }
+    columns = Base.metadata.tables["lab_operations"].c
+    assert columns.requested_by.nullable
+    assert columns.requested_by.type.python_type is UUID
+    assert columns.claimed_by.type.python_type is str
+    assert ("lab_operations", "claimed_by") not in references
+
+
+def test_source_refresh_does_not_relabel_historical_design_as_production_proof() -> None:
+    inventory = _inventory()
+    refreshed = inventory["source_revalidation"]
+    assert refreshed["evidence"] == "source_only"
+    assert refreshed["production_cutover_proven"] is False
+    assert re.fullmatch(r"[a-f0-9]{40}", refreshed["academy_revision"])
+    decision = "docs/adr/0009-kernel-identity-and-lineage-cutover.md"
+    assert inventory["decision"] == decision
+    assert (ROOT / decision).is_file()
+    assert (ROOT / "docs/adr/0008-lab-worker-database-role.md").is_file()
+    assert not (ROOT / "docs/adr/0008-kernel-identity-and-lineage-cutover.md").exists()
 
 
 def test_inventory_pins_the_installed_kernel_and_both_lineage_endpoints() -> None:
@@ -214,10 +253,66 @@ def test_sub_reference_lineage_gate_blocks_activation_but_not_rehearsal_design()
         "blocks_academy_lineage_activation": True,
         "academy_may_design_rehearsals": True,
         "academy_may_activate_lineage": False,
+        "plane": "tenant_plane_1",
+        "expected_first_failure": "0001_initial_tenant_schema",
+        "reference_evidence": "dotmac_starter_mt/docs/inventories/sub-lineage-dispositions.md",
     }
 
 
-def test_the_shared_root_id_is_one_ddl_contract_not_two_independent_owners() -> None:
+def test_vendor_platform_gate_cannot_satisfy_tenant_identity_adoption() -> None:
+    inventory = _inventory()
+    platform = inventory["platform_p11_gate"]
+    assert platform["status"] == "met"
+    assert platform["proves_sub_tenant_plane"] is False
+    assert platform["proves_academy_identity_cutover"] is False
+    prerequisites = inventory["kernel_adoption_prerequisites"]
+    assert prerequisites["status"] == "pending_external_evidence"
+    assert prerequisites["true_party_and_facet_contract_required"] is True
+    assert prerequisites["published_floor_required"] is True
+    assert prerequisites["facade_or_shadow_binding_satisfies_gate"] is False
+
+
+def test_current_migration_tools_cannot_manufacture_kernel_execution_history() -> None:
+    """Inspect real tooling, not just inventory declarations about stamping.
+
+    There is no approved entry executor today. An implementation must update
+    this ratchet with its independent-history/full-chain rehearsal evidence;
+    a stamp call or direct version-table write is never that evidence.
+    """
+    paths = [ROOT / "alembic/env.py", ROOT / "app/cli.py"]
+    paths.extend(ACADEMY_VERSIONS.glob("*.py"))
+    paths.extend((ROOT / "app/migrations").rglob("*.py"))
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "alembic.command":
+                assert all(alias.name != "stamp" for alias in node.names), path
+            if isinstance(node, ast.Call):
+                function = node.func
+                name = function.attr if isinstance(function, ast.Attribute) else (
+                    function.id if isinstance(function, ast.Name) else None
+                )
+                assert name != "stamp", f"version-history stamping in {path}:{node.lineno}"
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not re.search(r"\balembic\s+stamp\b", node.value, re.IGNORECASE), path
+                assert not re.search(
+                    r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?alembic_version\b",
+                    node.value, re.IGNORECASE,
+                ), path
+    for path in (ROOT / "deploy").rglob("*.sh"):
+        assert not re.search(r"\balembic\s+stamp\b", path.read_text(encoding="utf-8")), path
+
+    entry = _inventory()["canonical_kernel_entry"]
+    assert entry["status"] == "unresolved"
+    assert entry["entire_unchanged_chain_before_runtime_cutover"] is True
+    assert entry["genuine_independent_history_required"] is True
+    assert entry["legacy_version_row_substitutes_kernel_history"] is False
+    assert entry["kernel_stamping_allowed"] is False
+    assert entry["kernel_existence_skips_allowed"] is False
+    assert entry["kernel_revisions_deferred_after_runtime_cutover"] is False
+
+
+def test_shared_root_ddl_equivalence_does_not_establish_kernel_history() -> None:
     inventory = _inventory()
     root_revision = inventory["current_lineage"]["root"]
     academy_root = ROOT / inventory["current_lineage"]["root_file"]

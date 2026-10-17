@@ -1,7 +1,9 @@
-# ADR 0008 — Kernel Identity and Migration-Lineage Cutover
+# ADR 0009 — Kernel Identity and Migration-Lineage Cutover
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
+**Source revalidated:** 2026-10-17 at Academy `a99a395e066db4eea3ec1d73219ab5dd006c1d1d`  
+**Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
 
@@ -17,23 +19,34 @@ boundary is not seven independent import substitutions:
 - `Person`/`PersonRole` are semantic predecessors of kernel
   `Party`/`PartyRole`, and `audit_events.actor_person_id` is another dependent
   identity edge.
-- Twenty-seven Academy columns carry human identity. Twenty-four say `person`
+- Twenty-eight Academy columns carry human identity. Twenty-four say `person`
   in the column name; `attempt_grants.granted_by` and
-  `success_queue_entries.assigned_to`/`resolved_by` are the three semantic
-  aliases. Eleven currently have physical foreign keys to `people`; sixteen are
-  logical references only.
+  `success_queue_entries.assigned_to`/`resolved_by` and
+  `lab_operations.requested_by` are the four semantic aliases. Eleven currently
+  have physical foreign keys to `people`; seventeen are logical references only.
 - Academy and kernel both ship revision `0001_initial_tenant_schema`. Their DDL
   functions are AST-equivalent, but two files declaring the same revision make
   a composed Alembic graph fail before it can run.
 - Kernel revision `0003_party_identity` is explicitly destructive: it was
   written for an empty starter and drops `people`, `person_roles`,
-  `user_credentials`, and `auth_sessions`. It must never execute against an
-  Academy database containing production identity.
+  `user_credentials`, and `auth_sessions`. It must never run directly over
+  Academy's populated legacy identity or destroy that data. The unchanged
+  revision must still execute in genuine independently owned Kernel history
+  through the separately rehearsed canonical-entry mechanics.
 
 The current Academy lineage also mixes platform tables and Academy product
 tables in one numeric chain. Keeping that chain as the permanent assembly
 lineage would preserve the original ownership ambiguity and would make
 branch-aware rollback unreliable because its root is also the kernel root.
+
+This refresh continues the accepted design in existing PR #122; it is not a
+new decision awaiting acceptance or an implemented cutover. Its initial commit
+`2d9506f` counted 27 references (11 physical, 16 logical) and ended the Academy
+chain at `0053_entrance_defaults`. Source revalidation at `a99a395e` counts 28
+and ends at `0060_lab_conditional_ops`. These are source coordinates only; no
+production database, rollout or rehearsal result is inferred from this census.
+ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
+uses ADR 0009 and preserves that current document.
 
 ## Decision
 
@@ -55,7 +68,7 @@ each existing system instead of copying any one product schema:
 | Concern | Pattern to reuse | Boundary not copied |
 |---|---|---|
 | Canonical security identity | Kernel's tenant-scoped `Party`, subtypes, credentials, sessions, RBAC, composite tenant constraints, RLS, and single email authority | No Academy, Sub, or ERP identity model is promoted into Starter or kernel |
-| Schema and lineage adoption | Starter's `a001_adopt_custom_field_definitions` create-or-adopt revision and PostgreSQL migration rehearsals: full catalog/RLS/grant verification, drift rejection, destructive-downgrade refusal, and real stamp/rollback proof | Starter is not a runtime identity system of record |
+| Schema and lineage adoption | Starter's `a001_adopt_custom_field_definitions` create-or-adopt product baseline and PostgreSQL migration rehearsals: full catalog/RLS/grant verification, drift rejection and destructive-downgrade refusal | Starter is not a runtime identity system of record; product-baseline adoption does not authorize stamping or skipping canonical Kernel revisions |
 | Legacy-data adoption | Sub's party-identity audit, adjudication, exact-plan digest, expiring approval, serializable execution, row locking, idempotent receipt, and drift/collision/repoint refusal | Sub's untenant-scoped business-party tables and business-role vocabulary are not kernel RBAC and are not copied |
 | External authentication | ERP's replaceable OIDC-provider boundary: bind exact issuer/subject locally, create a local session, and ignore provider authorization claims | ERP's legacy `Person`, credential, session, and RBAC schema is not copied |
 
@@ -71,19 +84,37 @@ The checked-in reference evidence is:
   `tests/test_party_identity_backfill.py`; and
 - `dotmac_erp/docs/oidc_identity_contract.md`.
 
-Accepted Starter ADR 0017 makes adoption the scarce resource and names Sub as
-the reference kernel-lineage adopter. Academy may design its adapter and its
-rehearsals now, but it must not activate the identity lineage transfer until
-Sub has run the released kernel lineage in a product database and the reusable
-findings have been incorporated here. Academy also does not add a speculative
-kernel identity-adoption SDK: it uses existing released kernel surfaces. A new
-public kernel seam is extracted only after Sub and Academy demonstrate the same
-need, making that extraction demand-pulled.
+Accepted Starter ADR 0017 now separates the two persistence planes. Its general
+platform/P11 gate is **met** by Vendor Control Plane production evidence, as
+recorded in `dotmac_starter_mt/docs/inventories/p11-adoption-status.md` and the
+2026-08-17 amendment to ADR 0017. The earlier fleet-wide implementation
+moratorium is not today's blocker. That evidence does not prove Sub's tenant
+plane or Academy's identity adoption.
+
+Sub remains the tenant-plane-1/RLS reference adopter. Its expected first failure
+at `0001_initial_tenant_schema`, documented in
+`dotmac_starter_mt/docs/inventories/sub-lineage-dispositions.md`, remains a
+separate `pending_external_evidence` gate here. Academy may design its adapter
+and rehearsals, but must not activate identity lineage transfer until that
+tenant-plane evidence and reusable findings are incorporated. Partial canaries
+on later revisions do not satisfy the atomic root/RLS/GUC contract. Academy
+adds no speculative kernel identity-adoption SDK, facade or shadow binding.
 
 If the Sub gate advances the required kernel revision beyond Academy's pinned
 version, Academy updates and validates that dependency in a separate adoption
 change before changing this ADR's lineage endpoints. It does not silently
 substitute a newer head during a database cutover.
+
+True Kernel Party/person-facet contracts and their validated **published** floor
+are required before runtime adoption. The checked-in `0.1.0a38` pin and
+`0020_delivery_receipts` endpoint below remain exact current source/design
+coordinates; they do not prove that future contract. Selection of the future
+floor is unresolved. In particular, later Kernel ADR 0019's RBAC rename from
+`party_roles` to `party_role_grants` must be reconciled against that selected
+release rather than silently replacing the a38 `PartyRole` spellings below.
+Any resulting endpoint/catalog conflict must be resolved explicitly before
+implementation. The accepted final independent `a001_adopt_academy` assembly
+strategy is unchanged.
 
 ### Target ownership
 
@@ -126,9 +157,17 @@ The migration is an identity map, not a remint:
   Existing strong references are retargeted to `parties` and the person subtype;
   currently FK-less references remain explicitly classified and are checked for
   orphans before the legacy `people` table can retire.
-- The three actor/assignee aliases (`granted_by`, `assigned_to`, `resolved_by`)
+- The four actor/requester/assignee aliases (`granted_by`, `requested_by`,
+  `assigned_to`, `resolved_by`)
   also retain their UUIDs and human semantics. They are explicitly inventoried
   so a name-based scan cannot hide them from the shadow and orphan checks.
+
+`lab_operations.requested_by` was introduced by `0055_lab_operations` as a
+nullable Person UUID without a foreign key. User-triggered requests supply the
+person's UUID; automated worker/reconciler requests supply NULL. Preserve both
+human attribution and valid NULL automation through adoption. In contrast,
+`lab_operations.claimed_by` is a worker fencing string, not a Person reference;
+it and its host/epoch decomposition do not enter the human-identity census.
 
 `user_credentials` and `auth_sessions` retain their table and row IDs. The
 expand phase adds/backfills `party_id` and enforces `party_id = person_id` while
@@ -156,43 +195,65 @@ The shadow period is directional:
 
 ### Migration-lineage transfer
 
-The final graph has two independently owned roots:
+The accepted final assembly strategy has two independently owned roots. Its
+dependency must truthfully name the selected published Kernel head after that
+entire canonical chain has actually executed:
 
 ```text
-kernel:   0001_initial_tenant_schema -> ... -> 0020_delivery_receipts
+kernel:   0001_initial_tenant_schema -> ... -> <installed canonical Kernel head>
 
 assembly: a001_adopt_academy -> a002 -> ...
           down_revision = None
           branch_labels = ("assembly",)
-          depends_on = "0020_delivery_receipts"
+          depends_on = <that same actually executed Kernel head>
 ```
 
-The existing numeric Academy chain (`0001` ... `0053`, followed by the bridge
-revisions) is a temporary `academy_legacy` lineage. It is not relabelled or
-reparented: those IDs may already be recorded. The installed kernel copy becomes
-the only selected file for the shared `0001` during the transitional tooling;
-the equivalent Academy root is not selected, preventing a duplicate revision.
+The existing numeric Academy chain (`0001` ... `0060` at source revalidation,
+originally `0001` ... `0053` in PR #122, followed by future bridge revisions) is
+a temporary `academy_legacy` lineage. Those recorded IDs are not relabelled or
+reparented. Selecting the installed Kernel file for the shared `0001` ID cannot
+turn an existing Academy version row into genuine Kernel execution history;
+AST-equivalent DDL and catalog existence are insufficient. The Kernel requires
+its own genuine independent history and owning connection. No canonical
+Kernel revision may be stamped, existence-skipped, deferred past runtime
+cutover, rewritten or replaced by a facade.
 
-The cutover sequence is:
+**Historical and superseded bridge.** Initial PR #122 used a38 coordinates
+ending at `0020_delivery_receipts`, proposed stamping `0003_party_identity`
+after verification, selected one shared-root file, and postponed `0005` through
+`0020` until after runtime cutover. That bridge is rejected under the current
+immutable/full-canonical-lineage requirement. These coordinates remain in the
+historical inventory for traceability, not as an executable option or accepted
+entry algorithm. Verification does not make a Kernel stamp permissible.
 
-1. **Legacy expand.** A revision after the current Academy head creates and
-   backfills the kernel-shaped identity tables/columns plus Academy profile and
-   lockout state. It drops nothing required by the fallback release.
-2. **Kernel bridge.** Apply kernel `0002_settings_table` normally. After the
-   full target-catalog verifier passes, stamp `0003_party_identity` instead of
-   executing it. Apply `0004_custom_fields` normally. A bare or unverified stamp
-   is forbidden.
-3. **Runtime cutover.** Deploy kernel-model readers/writers, flip the one-way
-   identity projector, and run the shadow comparisons for the agreed observation
-   window. The legacy release remains the only rollback target.
-4. **Fallback retirement.** After the rollback gate closes, apply kernel
-   `0005_single_email_authority` through `0020_delivery_receipts` normally and
-   remove the compatibility columns/tables through their owning migration path.
+**Canonical entry algorithm: unresolved.** A separate proposal and PostgreSQL
+rehearsal must prove execution of the entire unchanged installed Kernel chain
+on its owning connection with genuine independent history, without destroying
+legacy identity. This document selects no escrow executor or other mechanics,
+grants no operational authority, and changes no released DDL or lineage rows.
+
+1. **Legacy expand.** Preserve all data and behavior needed by the named
+   fallback release, including Academy profile and login-security state.
+2. **Canonical entry gate.** Through the separately reviewed entry algorithm,
+   execute the full unchanged installed Kernel lineage to its actual canonical
+   head. Prove lossless identity import, UUID/tenant/person-facet mappings,
+   source-writer closure, catalog/RLS/grants, fallback safety and durable
+   execution evidence. Existing legacy tables or version rows cannot satisfy
+   a missing revision. Failure leaves runtime authority with legacy Academy.
+3. **Runtime cutover.** Only after the actual canonical head, identity mapping,
+   published-floor and external gates pass, flip the one-way projector and
+   runtime readers/writers. Preserve the named fallback release throughout the
+   observation/rollback window.
+4. **Fallback retirement.** After that window and its evidence gate close,
+   retire only Academy's product-legacy compatibility state through its owning
+   migration path. No Kernel revision remains deferred to this phase.
 5. **Assembly rebaseline.** `a001_adopt_academy` is an idempotent full product
    baseline: it creates the Academy-owned schema on a fresh database and verifies
    the complete existing contract on an adopted database. Only after that check
-   passes is the legacy head unrecorded and its directory removed from active
-   `version_locations`.
+   passes may the separately reviewed product-history transition retire the
+   legacy directory from active `version_locations`. This cannot manufacture
+   or replace canonical Kernel history. The accepted `a001_adopt_academy`
+   strategy remains; its dependency must be the actual selected Kernel head.
 6. **Normal operation.** The sole migration entrypoint composes the installed
    kernel `versions_dir()` and the Academy assembly directory. Development, CI,
    and deploy all run `alembic upgrade heads`. Static tests require exactly one
@@ -201,31 +262,38 @@ The cutover sequence is:
 `a001` depends on the kernel head, so Alembic may store only the assembly head in
 `alembic_version`; that row implies its dependency. Static head attribution and
 catalog verification, not an assumed two-row runtime shape, are authoritative.
+This graph dependency is not proof of execution: the full unchanged Kernel
+chain and its genuine independent history still require their own evidence,
+even when Alembic compacts the final recorded heads.
 
 ### Required cutover evidence
 
 Implementation cannot contract or activate the final graph until disposable
 PostgreSQL rehearsals prove all of the following:
 
-- the ADR-0017 Sub reference-adopter lineage gate is complete and its reusable
-  findings are reflected in Academy's pinned contract;
+- the ADR-0017 Sub tenant-plane reference-adopter lineage gate is complete and
+  its reusable findings are reflected in Academy's pinned contract;
 - fresh kernel-plus-Academy install;
 - adoption from a copy at every supported Academy legacy head;
 - a PII-free, digest-bound adoption plan whose exact input, approval window,
   maximum row counts, and durable execution receipt are verified before any
   backfill write;
+- a published Kernel Party/facet floor is selected and separately validated,
+  including the RBAC spelling/catalog and lineage-endpoint reconciliation;
 - exact row/count/hash equivalence for people, names, email, active state,
-  profiles, credentials, sessions, roles, audit actors, and all 27 classified
+  profiles, credentials, sessions, roles, audit actors, and all 28 classified
   person references;
 - zero tenant mismatch, orphan, invalid status, or case-insensitive email
   collision;
 - complete PK/FK/index/unique/check/default/nullability contract and exact RLS,
   grants, and absence of unsafe grants;
-- the negative control that executing kernel `0003` is destructive and is not
-  used by the adoption path;
+- the negative control that running Kernel `0003` directly over populated
+  legacy identity is destructive; the genuine canonical-entry path instead
+  executes every unchanged revision in its independently owned history without
+  legacy data loss, and refuses stamping, existence-skips or substitute rows;
 - drift injection causes the adoption migration to fail closed;
-- the real pre-retirement rollback command restores the legacy revision record
-  without dropping data, then boots the named fallback release;
+- the real pre-retirement rollback restores the named legacy release and
+  product-owned state without dropping data or changing genuine Kernel history;
 - destructive downgrades refuse by default; and
 - the final graph resolves `kernel@head` and `assembly@head` to the pinned
   expected revisions with no extra head or root.
@@ -238,11 +306,13 @@ pair. No target host is inferred by this ADR.
 
 Before fallback retirement, rollback is a controlled authority flip, not an
 Alembic downgrade: stop writers, reconcile Party state back to the legacy
-projection, verify it, restore the release-specific legacy revision record with
-the transitional migrator, then start the named fallback release. Additive
-kernel tables remain in place.
+projection, verify it, and start the named fallback release using the separately
+rehearsed product-history procedure. Genuine Kernel execution history is never
+rewritten or stamped to simulate rollback. Canonical Kernel state remains in
+place.
 
-After kernel `0005` and the assembly rebaseline, the legacy fallback is retired.
+After the observation/rollback window and assembly rebaseline, the legacy
+fallback is retired. The complete Kernel chain already ran before runtime cutover.
 Routine rollback is then limited to code compatible with the active kernel and
 assembly heads. Schema faults are repaired forward; `a001.downgrade()` must fail
 closed because dropping the adopted Academy schema would destroy product data.
@@ -257,5 +327,7 @@ from silently becoming a learner or instructor.
 
 This ADR authorizes the design and its tests only. Each implementation phase is
 a separate, reviewable change with its own PostgreSQL rehearsal evidence; no
-schema mutation is included with this decision. ADR 0017's Sub-first lineage
-gate must be satisfied before Academy activates the identity lineage transfer.
+schema mutation is included with this decision. General Vendor P11 completion
+does not satisfy ADR 0017's separate Sub tenant-plane gate or Academy's own
+identity/facet/published-floor gates. Those must pass before Academy activates
+the identity lineage transfer.

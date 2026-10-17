@@ -1,0 +1,41 @@
+# Every file under app/ that writes a `.status` attribute today, and how
+# many times each does it — for ANY model, not just LabInstance. See
+# tests/architecture/test_lab_instance_status_writers.py's module docstring
+# for why the scan is file-wide rather than gated on a LabInstance reference
+# (a gated scan cannot prove a bare attribute target is NOT LabInstance, so
+# it let a new LabInstance.status writer through uncounted).
+#
+# LabInstance.status (app/models/lab.py) itself has exactly two owners:
+# lab_operations.py is the worker's operation-settlement code
+# (queue/start/reset/deploy/error transitions), lab_lifecycle.py is
+# provision/destroy/reap. Every other entry below writes a DIFFERENT
+# model's `.status` (Enrollment, EmailOutbox, SuccessQueueEntry, Person,
+# CourseOffering-adjacent records, ...) — listed here because the scan is
+# honestly file-wide, not because they touch LabInstance.
+#
+# This is a RATCHET, both directions. See
+# tests/architecture/test_lab_instance_status_writers.py:
+#   * a write in a file not listed here fails the build;
+#   * a listed file's count rising fails the build;
+#   * a listed file's count falling (or the file disappearing) without this
+#     file being updated to match also fails the build — the list only
+#     shrinks, and it must shrink for real, on record.
+#
+# Do not regenerate this file to make a failure go away. A new entry means a
+# new file assigning some model's `.status`, LabInstance's included, and
+# that always deserves a human look before it is added here deliberately.
+17 app/services/lab_operations.py
+11 app/services/lab_lifecycle.py
+4 app/services/success_queue.py
+3 app/services/email_outbox.py
+2 app/services/completion.py
+2 app/services/reminders.py
+2 app/services/roster.py
+1 app/services/account_invitations.py
+1 app/services/admissions.py
+1 app/services/lifecycle.py
+1 app/services/onboarding.py
+1 app/services/scheduling.py
+1 app/services/tracks.py
+1 app/web/instructor.py
+TOTAL 48

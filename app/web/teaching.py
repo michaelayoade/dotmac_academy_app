@@ -6,17 +6,12 @@ require_web_role("instructor") (exact match), which would lock out an admin who
 does not also hold the instructor role. This route instead accepts instructor OR
 admin via the same inline gate used by app/web/accounts.py and app/web/reports.py.
 
-Routing note: this router uses prefix="/instructor" with route path "" so it
-resolves to exactly "/instructor" and does NOT shadow the other /instructor/*
-routes (cohorts, reports, results, labs) on their own routers.
-
-IMPORTANT: no db.commit() inside any handler — get_db owns the transaction and
-commits after the response (a mid-handler commit clears the RLS tenant GUC).
+IMPORTANT: no db.commit() inside handlers — get_db owns the transaction.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -26,6 +21,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
+from app.web.pagination import pagination_context
 from app.web.templating import templates
 
 router = APIRouter(prefix="/instructor", dependencies=[Depends(require_tenant)])
@@ -36,11 +32,14 @@ def teaching_home(
     request: Request,
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
+    limit: int = Query(6, ge=1, le=50),
+    offset: int = Query(0, ge=0),
 ):
     tenant = require_tenant(request)
     if not ({"instructor", "admin"} & role_slugs(db, tenant.id, person.id)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
+    total = int(db.scalar(select(func.count()).select_from(Cohort).where(Cohort.tenant_id == tenant.id)) or 0)
     rows = db.execute(
         select(Cohort, func.count(Person.id))
         .outerjoin(
@@ -59,7 +58,17 @@ def teaching_home(
         .where(Cohort.tenant_id == tenant.id)
         .group_by(Cohort.id)
         .order_by(Cohort.name)
+        .limit(limit)
+        .offset(offset)
     ).all()
-    cohorts = [{"cohort": c, "count": n} for c, n in rows]
+    cohorts = [{"cohort": cohort, "count": count} for cohort, count in rows]
 
-    return templates.TemplateResponse(request, "teaching/home.html", {"request": request, "cohorts": cohorts})
+    return templates.TemplateResponse(
+        request,
+        "teaching/home.html",
+        {
+            "request": request,
+            "cohorts": cohorts,
+            "pagination": pagination_context(total=total, limit=limit, offset=offset),
+        },
+    )

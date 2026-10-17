@@ -1,62 +1,25 @@
 {% extends "base.html" %}
+{% from "components/_pagination.html" import table_pagination %}
 {% block title %}Teaching — Dotmac Academy{% endblock %}
+{% block content_width %}max-w-[1360px]{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Teaching</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Teaching home</h1>
-<p class="mt-2 text-ink-soft">Your cohorts, reports and labs at a glance.</p>
-
-<h2 class="mt-10 text-xl tracking-tight">My cohorts</h2>
-<div class="card mt-4 overflow-hidden">
-  <ul class="divide-y divide-sand-200">
-    {% for item in cohorts %}
-    <li class="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-sand-100">
-      <span class="font-medium text-ink">{{ item.cohort.name }}
-        <span class="ml-1 text-sm font-normal text-ink-soft">{{ item.cohort.discipline }}</span>
-      </span>
-      <span class="flex items-center gap-4">
-        <span class="text-sm text-ink-soft">{{ item.count }} student{{ "" if item.count == 1 else "s" }}</span>
-        <a class="group inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:text-brand-800"
-           href="/instructor/cohorts">
-          Manage
-          <span class="transition-transform group-hover:translate-x-0.5" aria-hidden="true">&rarr;</span>
-        </a>
-      </span>
-    </li>
-    {% else %}
-    <li class="p-8 text-center text-ink-soft">
-      No cohorts yet. <a class="font-semibold text-brand-700 hover:text-brand-800" href="/instructor/cohorts">Create your first cohort</a>.
-    </li>
-    {% endfor %}
-  </ul>
-</div>
-
-<h2 class="mt-10 text-xl tracking-tight">Quick links</h2>
-<div class="card mt-4 p-2">
-  <ul class="divide-y divide-sand-200">
-    <li>
-      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/cohorts">
-        <span class="font-medium text-ink">Cohorts</span>
-        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
-      </a>
-    </li>
-    <li>
-      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/courses">
-        <span class="font-medium text-ink">Course content</span>
-        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
-      </a>
-    </li>
-    <li>
-      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/reports">
-        <span class="font-medium text-ink">Reports</span>
-        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
-      </a>
-    </li>
-    <li>
-      <a class="flex items-center justify-between gap-4 p-3 transition-colors hover:bg-sand-100" href="/instructor/labs">
-        <span class="font-medium text-ink">Lab monitor</span>
-        <span class="text-ink-soft" aria-hidden="true">&rarr;</span>
-      </a>
-    </li>
-  </ul>
-</div>
+<header class="page-header">
+  <div class="page-header-copy"><p class="page-eyebrow">Teaching console</p><h1 class="page-title">Teaching home</h1><p class="page-intro">Your cohorts, enrollment, reports, and labs at a glance.</p></div>
+  <div class="page-header-actions"><a class="btn-primary" href="/instructor/cohorts">Manage cohorts</a></div>
+</header>
+<section class="data-table-card" aria-labelledby="cohorts-heading">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-sand-200 px-4 py-4 sm:px-5"><div><h2 id="cohorts-heading" class="section-title">Cohort directory</h2><p class="mt-1 text-sm text-ink-soft">Active enrollment and delivery details for every cohort.</p></div><a class="inline-flex min-h-11 items-center font-semibold text-brand-700 hover:text-brand-800" href="/instructor/cohorts">View detailed management</a></div>
+  <div class="table-frame" role="region" aria-label="Cohort directory; scroll horizontally to see all columns" tabindex="0">
+    <table class="data-table">
+      <thead><tr><th scope="col">Cohort name &amp; track</th><th scope="col">Enrollment</th><th scope="col">Delivery mode</th><th scope="col">Status</th><th scope="col" class="text-right">Actions</th></tr></thead>
+      <tbody>
+        {% for item in cohorts %}
+        <tr><td><p class="cell-primary">{{ item.cohort.name }}</p><p class="cell-secondary">{{ item.cohort.discipline }}</p></td><td><p class="cell-primary font-mono tabular-nums">{{ item.count }} students</p><p class="cell-secondary">Active enrollment</p></td><td><p class="cell-primary">{{ item.cohort.delivery_mode | replace('_', ' ') | title }}</p></td><td><span class="status-badge {% if item.cohort.status == 'active' %}bg-brand-50 text-brand-700{% else %}bg-sand-200 text-ink-soft{% endif %}">{{ item.cohort.status | capitalize }}</span></td><td class="text-right"><a class="btn-ghost text-xs" href="/instructor/cohorts/{{ item.cohort.id }}" aria-label="Manage {{ item.cohort.name }}">Manage</a></td></tr>
+        {% else %}<tr><td colspan="5" class="py-12 text-center text-ink-soft">No cohorts yet. <a class="font-semibold text-brand-700" href="/instructor/cohorts">Create your first cohort</a>.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ table_pagination(request, pagination, "cohorts", (6, 12, 24, 48)) }}
+</section>
+<section class="mt-8" aria-labelledby="quick-links-heading"><h2 id="quick-links-heading" class="section-title">Quick links</h2><div class="card mt-4 p-2"><ul class="action-list grid md:grid-cols-2 md:gap-px md:bg-sand-300"><li class="bg-white"><a class="action-row flex min-h-16 items-center justify-between gap-4 p-4 hover:bg-sand-100" href="/instructor/cohorts"><span class="font-semibold text-ink">Cohorts</span><span aria-hidden="true">→</span></a></li><li class="bg-white"><a class="action-row flex min-h-16 items-center justify-between gap-4 p-4 hover:bg-sand-100" href="/instructor/courses"><span class="font-semibold text-ink">Course content</span><span aria-hidden="true">→</span></a></li><li class="bg-white"><a class="action-row flex min-h-16 items-center justify-between gap-4 p-4 hover:bg-sand-100" href="/instructor/reports"><span class="font-semibold text-ink">Reports</span><span aria-hidden="true">→</span></a></li><li class="bg-white"><a class="action-row flex min-h-16 items-center justify-between gap-4 p-4 hover:bg-sand-100" href="/instructor/labs"><span class="font-semibold text-ink">Lab monitor</span><span aria-hidden="true">→</span></a></li></ul></div></section>
 {% endblock %}

@@ -13,21 +13,23 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
+from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
+from app.models.rbac import PersonRole, Role
 from app.models.track import Track
 from app.services import announcements as ann_svc
 from app.services import attempt_policy, scheduling
@@ -44,9 +46,10 @@ from app.services.lifecycle import set_account_status
 from app.services.localtime import local_to_utc
 from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
-from app.services.roster import bulk_enroll, set_roster_state
+from app.services.roster import assign_facilitator, bulk_enroll, set_roster_state
 from app.services.security import hash_token
 from app.services.web_auth import require_web_role, require_web_user
+from app.web.pagination import pagination_context
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
@@ -73,6 +76,7 @@ def cohorts_list(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    is_admin = _is_admin(db, tenant.id, person.id)
     rows = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)).all()
     roster_rows = db.execute(
         select(Enrollment, Person)
@@ -83,9 +87,12 @@ def cohorts_list(
         .where(Enrollment.tenant_id == tenant.id)
         .order_by(Person.last_name, Person.first_name, Person.email)
     ).all()
+    # Every enrollment is shown regardless of Enrollment.status, Enrollment.role_in_cohort
+    # or Person.status (finding #3): a dropped/waitlisted student or a suspended account
+    # must stay visible so an instructor can act on it, not disappear silently.
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
     active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
-    cohort_names = {cohort.id: cohort.name for cohort in rows}
+    facilitators_by_cohort: dict[UUID, list[Person]] = {cohort.id: [] for cohort in rows}
     for enrollment, student in roster_rows:
         if enrollment.cohort_id not in roster_by_cohort:
             continue
@@ -94,12 +101,50 @@ def cohorts_list(
         )
         if is_active_student:
             active_student_counts[enrollment.cohort_id] += 1
-        if is_active_student or cohort_names.get(enrollment.cohort_id) == "Dotmac Academy Demo Cohort":
-            roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
+        if enrollment.status == "active" and enrollment.role_in_cohort == "instructor":
+            facilitators_by_cohort[enrollment.cohort_id].append(student)
+        roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
+    instructor_candidates = list(
+        db.scalars(
+            select(Person)
+            .join(
+                PersonRole,
+                (PersonRole.person_id == Person.id) & (PersonRole.tenant_id == Person.tenant_id),
+            )
+            .join(
+                Role,
+                (Role.id == PersonRole.role_id) & (Role.tenant_id == PersonRole.tenant_id),
+            )
+            .where(Person.tenant_id == tenant.id)
+            .where(Person.status == "active")
+            .where(Role.slug == "instructor")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).unique().all()
+    )
     tracks_by_cohort = {
         cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
     }
-    courses = list(db.scalars(select(Course).where(Course.tenant_id == tenant.id).order_by(Course.title)).all())
+    # Draft courses are excluded from the ADD/CREATE checkbox lists (finding #2): a
+    # draft is invisible to learners (see entitlements.py), so placing one in a track
+    # would silently grant nothing. This does not touch a track's EXISTING membership
+    # (list_cohort_tracks, above) — a draft already added keeps showing there.
+    courses = list(
+        db.scalars(
+            select(Course)
+            .where(Course.tenant_id == tenant.id)
+            .where(Course.status.in_(("published", "completed")))
+            .order_by(Course.title)
+        ).all()
+    )
+    draft_course_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(Course)
+            .where(Course.tenant_id == tenant.id)
+            .where(Course.status == "draft")
+        )
+        or 0
+    )
     offering_rows = db.execute(
         select(CourseOffering.cohort_id, Course)
         .join(
@@ -122,6 +167,12 @@ def cohorts_list(
             "cohort": cohort,
             "roster": roster_by_cohort.get(cohort.id, []),
             "active_student_count": active_student_counts.get(cohort.id, 0),
+            "facilitators": facilitators_by_cohort.get(cohort.id, []),
+            "available_facilitators": [
+                candidate
+                for candidate in instructor_candidates
+                if candidate.id not in {person.id for person in facilitators_by_cohort.get(cohort.id, [])}
+            ],
             "tracks": tracks_by_cohort.get(cohort.id, []),
             "available_courses": courses,
         }
@@ -136,6 +187,8 @@ def cohorts_list(
             "cohort_rows": cohort_rows,
             "courses": courses,
             "all_courses": courses,
+            "draft_course_count": draft_course_count,
+            "is_admin": is_admin,
         },
     )
 
@@ -164,6 +217,230 @@ def _split_emails(*fields: str) -> list[str]:
 
 def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return "admin" in role_slugs(db, tenant_id, person_id)
+
+
+def _cohort_action_target(cohort_id: UUID, return_to: str) -> str:
+    """Allow membership actions to return only to a known cohort workspace."""
+    workspace = f"/instructor/cohorts/{cohort_id}"
+    return workspace if return_to == workspace else "/instructor/cohorts"
+
+
+@router.get("/cohorts/{cohort_id}", response_class=HTMLResponse)
+def cohort_detail(
+    cohort_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = Query(12, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Dedicated cohort workspace with roster progress and curriculum detail."""
+    tenant = require_tenant(request)
+    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+
+    roster_pairs = list(
+        db.execute(
+            select(Enrollment, Person)
+            .join(
+                Person,
+                (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
+            )
+            .where(Enrollment.tenant_id == tenant.id)
+            .where(Enrollment.cohort_id == cohort_id)
+            .where(Enrollment.role_in_cohort == "student")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).all()
+    )
+    student_ids = [student.id for _, student in roster_pairs]
+
+    offering_pairs = list(
+        db.execute(
+            select(CourseOffering, Course)
+            .join(
+                Course,
+                (Course.id == CourseOffering.course_id)
+                & (Course.tenant_id == CourseOffering.tenant_id),
+            )
+            .where(CourseOffering.tenant_id == tenant.id)
+            .where(CourseOffering.cohort_id == cohort_id)
+            .order_by(Course.title)
+        ).all()
+    )
+    active_course_ids = [offering.course_id for offering, _ in offering_pairs if offering.status == "active"]
+
+    completion_by_student: dict[UUID, dict[UUID, float]] = {}
+    if student_ids and active_course_ids:
+        for person_id, course_id, pct in db.execute(
+            select(CourseCompletion.person_id, CourseCompletion.course_id, CourseCompletion.pct)
+            .where(CourseCompletion.tenant_id == tenant.id)
+            .where(CourseCompletion.person_id.in_(student_ids))
+            .where(CourseCompletion.course_id.in_(active_course_ids))
+        ).all():
+            completion_by_student.setdefault(person_id, {})[course_id] = pct
+
+    last_activity_by_student: dict[UUID, datetime] = {}
+    if student_ids and active_course_ids:
+        last_activity_by_student = {
+            person_id: last_activity
+            for person_id, last_activity in db.execute(
+                select(Submission.person_id, func.max(Score.created_at))
+                .join(
+                    Score,
+                    (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id),
+                )
+                .join(
+                    Activity,
+                    (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id),
+                )
+                .where(Submission.tenant_id == tenant.id)
+                .where(Submission.person_id.in_(student_ids))
+                .where(Activity.course_id.in_(active_course_ids))
+                .group_by(Submission.person_id)
+            ).all()
+        }
+
+    track_items = track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    track_names = {item["track"].id: item["track"].name for item in track_items}
+    course_track_names: dict[UUID, list[str]] = {}
+    for item in track_items:
+        for course in item["courses"]:
+            course_track_names.setdefault(course.id, []).append(item["track"].name)
+
+    stale_before = datetime.now(UTC) - timedelta(days=14)
+    student_rows_all: list[dict] = []
+    for enrollment, student in roster_pairs:
+        pcts = completion_by_student.get(student.id, {})
+        completion_pct = (
+            sum(pcts.get(course_id, 0.0) for course_id in active_course_ids) / len(active_course_ids)
+            if active_course_ids
+            else 0.0
+        )
+        last_activity_at = last_activity_by_student.get(student.id)
+        is_current = enrollment.status == "active" and student.status == "active"
+        student_rows_all.append(
+            {
+                "person": student,
+                "enrollment": enrollment,
+                "track_name": track_names.get(enrollment.track_id),
+                "completion_pct": completion_pct,
+                "last_activity_at": last_activity_at,
+                "at_risk": is_current
+                and completion_pct < 0.5
+                and (last_activity_at is None or last_activity_at < stale_before),
+            }
+        )
+
+    active_rows = [
+        row
+        for row in student_rows_all
+        if row["enrollment"].status == "active" and row["person"].status == "active"
+    ]
+    at_risk_count = sum(1 for row in active_rows if row["at_risk"])
+    average_progress = (
+        sum(row["completion_pct"] for row in active_rows) / len(active_rows) if active_rows else 0.0
+    )
+    student_rows = student_rows_all[offset : offset + limit]
+
+    facilitator_pairs = list(
+        db.execute(
+            select(Enrollment, Person)
+            .join(
+                Person,
+                (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
+            )
+            .where(Enrollment.tenant_id == tenant.id)
+            .where(Enrollment.cohort_id == cohort_id)
+            .where(Enrollment.role_in_cohort == "instructor")
+            .where(Enrollment.status == "active")
+            .order_by(Person.last_name, Person.first_name, Person.email)
+        ).all()
+    )
+
+    offered_course_ids = [course.id for _, course in offering_pairs]
+    chapters_by_course: dict[UUID, list[Chapter]] = {course_id: [] for course_id in offered_course_ids}
+    activities_by_course: dict[UUID, list[Activity]] = {course_id: [] for course_id in offered_course_ids}
+    if offered_course_ids:
+        for chapter in db.scalars(
+            select(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id.in_(offered_course_ids))
+            .order_by(Chapter.course_id, Chapter.order_index, Chapter.number)
+        ).all():
+            chapters_by_course.setdefault(chapter.course_id, []).append(chapter)
+        for activity in db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant.id)
+            .where(Activity.course_id.in_(offered_course_ids))
+            .order_by(Activity.course_id, Activity.chapter_number, Activity.title)
+        ).all():
+            activities_by_course.setdefault(activity.course_id, []).append(activity)
+
+    course_rows: list[dict] = []
+    for offering, course in offering_pairs:
+        course_chapters = chapters_by_course.get(course.id, [])
+        course_activities = activities_by_course.get(course.id, [])
+        chapter_numbers = {chapter.number for chapter in course_chapters}
+        chapter_rows = [
+            {
+                "chapter": chapter,
+                "activities": [activity for activity in course_activities if activity.chapter_number == chapter.number],
+            }
+            for chapter in course_chapters
+        ]
+        standalone_activities = [
+            activity
+            for activity in course_activities
+            if activity.chapter_number is None or activity.chapter_number not in chapter_numbers
+        ]
+        course_rows.append(
+            {
+                "offering": offering,
+                "course": course,
+                "chapters": chapter_rows,
+                "standalone_activities": standalone_activities,
+                "activity_count": len(course_activities),
+                "track_names": course_track_names.get(course.id, []),
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "instructor/cohort_detail.html",
+        {
+            "request": request,
+            "cohort": cohort,
+            "students": student_rows,
+            "student_total": len(student_rows_all),
+            "active_student_count": len(active_rows),
+            "at_risk_count": at_risk_count,
+            "average_progress": average_progress,
+            "facilitators": facilitator_pairs,
+            "course_rows": course_rows,
+            "track_items": track_items,
+            "pagination": pagination_context(total=len(student_rows_all), limit=limit, offset=offset),
+        },
+    )
+
+def _hx_error(request: Request, target_id: str, message: str) -> HTMLResponse:
+    """Render a small inline error fragment (finding #1/#3).
+
+    ``create_track``/``add_courses_to_track``/the roster-track and
+    roster-state handlers used to let a ``BadRequestError``/``NotFoundError``
+    become a raw kernel-rendered 400/404 response, which htmx never swaps into
+    ``hx-target="body"`` — so the page just sat there with no feedback. This
+    always answers 200 (htmx swaps 200 responses) and, for an htmx caller,
+    retargets the swap to the small per-form ``target_id`` div placed next to
+    the form instead of ``body`` — ``hx-target="body"`` on the form itself is
+    left alone, since ``HX-Redirect`` (the success path) ignores it anyway.
+    """
+    response = templates.TemplateResponse(
+        request,
+        "instructor/_form_error.html",
+        {"request": request, "message": message},
+    )
+    if request.headers.get("HX-Request"):
+        response.headers["HX-Retarget"] = f"#{target_id}"
+        response.headers["HX-Reswap"] = "innerHTML"
+    return response
 
 
 def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
@@ -204,6 +481,57 @@ def _authorable_course_or_404(db: Session, *, tenant_id: UUID, person_id: UUID, 
     return course
 
 
+@router.post("/cohorts/{cohort_id}/facilitators")
+def add_cohort_facilitator(
+    cohort_id: UUID,
+    request: Request,
+    facilitator_id: UUID = Form(...),
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    assign_facilitator(
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
+        person_id=facilitator_id,
+        actor_is_admin=True,
+    )
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/facilitators/{facilitator_id}/remove")
+def remove_cohort_facilitator(
+    cohort_id: UUID,
+    facilitator_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    enrollment = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant.id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == facilitator_id)
+        .where(Enrollment.role_in_cohort == "instructor")
+    ).first()
+    if enrollment is None:
+        raise NotFoundError("facilitator enrollment not found")
+    set_roster_state(
+        db,
+        tenant_id=tenant.id,
+        cohort_id=cohort_id,
+        person_id=facilitator_id,
+        state="dropped",
+    )
+    return hx_redirect(request, "/instructor/cohorts")
+
 @router.post("/cohorts/{cohort_id}/enroll")
 def enroll_student(
     cohort_id: UUID,
@@ -211,10 +539,19 @@ def enroll_student(
     emails: str = Form(""),
     email: str = Form(""),
     track_id: str = Form(""),
+    return_to: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Bulk-enroll people by email; reports unknown emails instead of silently
-    dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``."""
+    dropping them (finding #6). Accepts ``emails`` (textarea) and/or ``email``.
+
+    Reactivating a non-student (e.g. instructor-role) enrollment is
+    admin-only (see ``activate_enrollment``). ``bulk_enroll`` never raises for
+    this — a non-admin instructor's attempt is reported in the summary as
+    "Requires admin to reactivate", the same per-email-outcome contract as
+    an unknown email, and the rest of the batch is still processed.
+    """
     tenant = require_tenant(request)
     # bulk_enroll raises NotFoundError (-> 404) when the cohort is not in-tenant.
     track_uuid = UUID(track_id) if track_id else None
@@ -224,17 +561,32 @@ def enroll_student(
         cohort_id=cohort_id,
         emails=_split_emails(emails, email),
         track_id=track_uuid,
+        actor_is_admin=_is_admin(db, tenant.id, person.id),
     )
-    enrolled = len(result["enrolled"]) + len(result["reactivated"])
+    enrolled = len(result["enrolled"])
+    reactivated = len(result["reactivated"])
     already_active = len(result["already_active"])
     summary = f"Enrolled {enrolled}."
+    if reactivated:
+        summary += f" Reactivated {reactivated}."
     if already_active:
         summary += f" Already active: {already_active}."
+    if result["admin_required"]:
+        summary += (
+            " Requires admin to reactivate: "
+            + ", ".join(_e(e) for e in result["admin_required"])
+            + "."
+        )
     if result["not_found"]:
         summary += " Unknown (not enrolled): " + ", ".join(_e(e) for e in result["not_found"]) + "."
+    target = _cohort_action_target(cohort_id, return_to)
+    if request.headers.get("HX-Request") and target != "/instructor/cohorts" and not (
+        result["admin_required"] or result["not_found"]
+    ):
+        return hx_redirect(request, target)
     if request.headers.get("HX-Request"):
         return HTMLResponse(f'<div class="enroll-summary" role="status">{summary}</div>')
-    return RedirectResponse("/instructor/cohorts", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/cohorts/{cohort_id}/roster/{person_id}/state")
@@ -243,16 +595,56 @@ def change_roster_state(
     person_id: UUID,
     request: Request,
     state: str = Form(...),
+    return_to: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
-    """Drop / waitlist / reactivate a roster member (finding #6)."""
+    """Drop / waitlist / reactivate a roster member (finding #6).
+
+    A plain instructor may change a ``student``-role enrollment's state. Only
+    an admin may change a non-student (e.g. ``instructor``) enrollment's
+    state — dropping a fellow instructor's own enrollment silently strips
+    their authoring access (``_assigned_course_ids``), so this must not be
+    reachable by any instructor with a UI button, not just a crafted request.
+    """
     tenant = require_tenant(request)
-    set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
-    return hx_redirect(request, "/instructor/cohorts")
+    target = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant.id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == person_id)
+    ).first()
+    if target is not None and target.role_in_cohort != "student" and not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    try:
+        set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+    except NotFoundError as exc:
+        return _hx_error(request, f"roster-state-error-{cohort_id}-{person_id}", str(exc))
+    return hx_redirect(request, _cohort_action_target(cohort_id, return_to))
+
+
+async def _positions_from_form(request: Request, course_ids: list[UUID]) -> dict[UUID, int]:
+    """Read optional ``position_<course_id>`` fields for the given course ids.
+
+    A blank/absent position input is fine — that course is simply left
+    unpositioned (appended after any positioned courses in submission
+    order); a non-integer value is treated the same as absent.
+    """
+    form = await request.form()
+    positions: dict[UUID, int] = {}
+    for course_id in course_ids:
+        raw = form.get(f"position_{course_id}")
+        if not raw:
+            continue
+        try:
+            positions[course_id] = int(str(raw))
+        except ValueError:
+            continue
+    return positions
 
 
 @router.post("/cohorts/{cohort_id}/tracks")
-def create_track_for_cohort(
+async def create_track_for_cohort(
     cohort_id: UUID,
     request: Request,
     name: str = Form(...),
@@ -265,17 +657,18 @@ def create_track_for_cohort(
     for raw in [*course_ids, course_id]:
         if raw:
             selected.append(UUID(raw))
+    positions = await _positions_from_form(request, selected)
     try:
-        track_svc.create_cohort_track(db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected)
-    except BadRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        track_svc.create_cohort_track(
+            db, tenant_id=tenant.id, cohort_id=cohort_id, name=name, course_ids=selected, positions=positions
+        )
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-form-error-{cohort_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
 @router.post("/cohorts/{cohort_id}/tracks/{track_id}/courses")
-def add_courses_to_track(
+async def add_courses_to_track(
     cohort_id: UUID,
     track_id: UUID,
     request: Request,
@@ -288,6 +681,7 @@ def add_courses_to_track(
     for raw in [*course_ids, course_id]:
         if raw:
             selected.append(UUID(raw))
+    positions = await _positions_from_form(request, selected)
     try:
         track_svc.add_courses_to_cohort_track(
             db,
@@ -295,11 +689,44 @@ def add_courses_to_track(
             cohort_id=cohort_id,
             track_id=track_id,
             course_ids=selected,
+            positions=positions,
         )
-    except BadRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-courses-error-{track_id}", str(exc))
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/tracks/{track_id}/reorder")
+async def reorder_track(
+    track_id: UUID,
+    request: Request,
+    course_ids: list[str] = Form([]),
+    db: Session = Depends(get_db),
+):
+    """Reorder an EXISTING track's courses (not just at creation).
+
+    A Track is tenant-level, not cohort-scoped (CohortTrack is the join), so
+    this route is not nested under a specific cohort. Gated the same as
+    other track-management actions (require_web_role("instructor"), already
+    the router-level default) — this is not the admin-only case.
+    """
+    tenant = require_tenant(request)
+    submitted: list[UUID] = [UUID(raw) for raw in course_ids if raw]
+    form = await request.form()
+    ranked: list[tuple[int, int, UUID]] = []
+    for idx, course_id in enumerate(submitted):
+        raw_pos = form.get(f"position_{course_id}")
+        try:
+            pos = int(str(raw_pos)) if raw_pos else idx
+        except ValueError:
+            pos = idx
+        ranked.append((pos, idx, course_id))
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    ordered = [course_id for _, _, course_id in ranked]
+    try:
+        track_svc.reorder_track_courses(db, tenant_id=tenant.id, track_id=track_id, ordered_course_ids=ordered)
+    except (BadRequestError, NotFoundError) as exc:
+        return _hx_error(request, f"track-reorder-error-{track_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -317,7 +744,32 @@ def change_roster_track(
             db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, track_id=UUID(track_id)
         )
     except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _hx_error(request, f"roster-track-error-{cohort_id}-{person_id}", str(exc))
+    return hx_redirect(request, "/instructor/cohorts")
+
+
+@router.post("/cohorts/{cohort_id}/roster/{person_id}/track/clear")
+def clear_roster_track(
+    cohort_id: UUID,
+    person_id: UUID,
+    request: Request,
+    person: Person = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
+    """Admin-only recovery: null out a stuck learner's track assignment.
+
+    Deliberately admin-gated regardless of the target's role — clearing a
+    learner's track is a bigger structural change than a routine
+    drop/reactivate (mirrors the admin gate already used in
+    change_roster_state above).
+    """
+    tenant = require_tenant(request)
+    if not _is_admin(db, tenant.id, person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    try:
+        track_svc.clear_enrollment_track(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id)
+    except NotFoundError as exc:
+        return _hx_error(request, f"roster-track-clear-error-{cohort_id}-{person_id}", str(exc))
     return hx_redirect(request, "/instructor/cohorts")
 
 
@@ -329,10 +781,18 @@ def invite_to_cohort(
     first_name: str = Form("New"),
     last_name: str = Form("Learner"),
     track_id: str = Form(""),
+    return_to: str = Form(""),
+    person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
-    where unknown emails were silently dropped. Queues the activation email."""
+    where unknown emails were silently dropped. Queues the activation email.
+
+    Reactivating a non-student (e.g. instructor-role) enrollment through this
+    form is admin-only (see ``activate_enrollment``); a non-admin instructor
+    attempting it gets an inline error instead of silently restoring the
+    target's authoring access.
+    """
     tenant = require_tenant(request)
     track_uuid = UUID(track_id) if track_id else None
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
@@ -347,16 +807,20 @@ def invite_to_cohort(
         track = db.scalars(
             select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
         ).first()
-    result = invite_and_enroll(
-        db,
-        tenant_id=tenant.id,
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        role="student",
-        assignments=(CohortAssignment(cohort=cohort, track=track),),
-    )
-    person = result.person
+    try:
+        result = invite_and_enroll(
+            db,
+            tenant_id=tenant.id,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            role="student",
+            actor_is_admin=_is_admin(db, tenant.id, person.id),
+            assignments=(CohortAssignment(cohort=cohort, track=track),),
+        )
+    except BadRequestError as exc:
+        return _hx_error(request, f"invite-result-{cohort_id}", str(exc))
+    invited_person = result.person
     sent = False
     if result.token is not None:
         link = str(request.url_for("accept_form").include_query_params(token=result.token))
@@ -364,18 +828,18 @@ def invite_to_cohort(
         sent = enqueue_email(
             db,
             tenant_id=tenant.id,
-            idempotency_key=f"account-invite:{person.id}:{hash_token(result.token)}",
+            idempotency_key=f"account-invite:{invited_person.id}:{hash_token(result.token)}",
             kind="account_invite",
-            recipient=person.email,
+            recipient=invited_person.email,
             subject="You're invited to Dotmac Academy",
             html_body=(
-                f"<p>Hi {_e(person.first_name)},</p>"
+                f"<p>Hi {_e(invited_person.first_name)},</p>"
                 f"<p>You have been invited to Dotmac Academy.</p>"
                 f'<p><a href="{link_e}">Set up your account</a></p>'
                 f"<p>If the button does not work, open this link: {link_e}</p>"
             ),
             text_body=(
-                f"Hi {person.first_name},\n\n"
+                f"Hi {invited_person.first_name},\n\n"
                 f"You have been invited to Dotmac Academy.\n\n"
                 f"Set up your account: {link}\n"
             ),
@@ -384,10 +848,21 @@ def invite_to_cohort(
         status = "Student enrolled. Existing account can sign in."
     else:
         status = "Invite email queued." if sent else "Invite email could not be queued."
+    target = _cohort_action_target(cohort_id, return_to)
+    if request.headers.get("HX-Request") and target != "/instructor/cohorts":
+        return hx_redirect(request, target)
+    # Surface _apply_assignment's descriptions (e.g. "reactivated (was
+    # dropped)", "already an instructor, role unchanged") — previously
+    # computed but silently discarded on this surface.
+    assignments_html = ""
+    if result.assignments:
+        items = "".join(f"<li>{_e(item)}</li>" for item in result.assignments)
+        assignments_html = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
     return HTMLResponse(
         f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
         f'<p class="font-semibold">{_e(status)}</p>'
-        f"<p>Student: {_e(person.email)}</p>"
+        f"<p>Student: {_e(invited_person.email)}</p>"
+        f"{assignments_html}"
         f"</div>"
     )
 

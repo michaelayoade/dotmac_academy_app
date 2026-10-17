@@ -32,6 +32,12 @@ class CourseAccessState:
     locked_until_course_id: UUID | None = None
 
 
+def _course_lock_reason(title: str | None, fallback: str) -> str:
+    if title:
+        return f'Complete "{title}" to unlock this course.'
+    return fallback
+
+
 def _entitled_course_rows(db: Session, *, tenant_id: UUID, person_id: UUID):
     return db.execute(
         select(
@@ -97,6 +103,7 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
 
     track_sequences: dict[UUID, list[UUID]] = {}
     legacy_courses: set[UUID] = set()
+    course_titles = {course_id: title for course_id, _track_id, _order_index, title in rows}
     for course_id, track_id, _order_index, _title in rows:
         if track_id is None:
             legacy_courses.add(course_id)
@@ -117,7 +124,10 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
                 else CourseAccessState(
                     course_id=course_id,
                     locked=True,
-                    locked_reason="Complete the previous course to unlock this course.",
+                    locked_reason=_course_lock_reason(
+                        course_titles.get(previous_course_id),
+                        "Complete the previous course to unlock this course.",
+                    ),
                     locked_until_course_id=previous_course_id,
                 )
             )
@@ -135,6 +145,16 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
         .where(CoursePrerequisite.tenant_id == tenant_id)
         .where(CoursePrerequisite.course_id.in_(entitled_ids))
     ).all()
+    missing_title_ids = {
+        requires_course_id for _course_id, requires_course_id in prereq_rows if requires_course_id not in course_titles
+    }
+    if missing_title_ids:
+        missing_title_rows = db.execute(
+            select(Course.id, Course.title)
+            .where(Course.tenant_id == tenant_id)
+            .where(Course.id.in_(missing_title_ids))
+        ).all()
+        course_titles.update({course_id: title for course_id, title in missing_title_rows})
     for course_id, requires_course_id in prereq_rows:
         if requires_course_id in completed:
             continue
@@ -144,7 +164,10 @@ def course_access_states(db: Session, *, tenant_id: UUID, person_id: UUID) -> di
         states[course_id] = CourseAccessState(
             course_id=course_id,
             locked=True,
-            locked_reason="Complete the prerequisite course to unlock this course.",
+            locked_reason=_course_lock_reason(
+                course_titles.get(requires_course_id),
+                "Complete the prerequisite course to unlock this course.",
+            ),
             locked_until_course_id=requires_course_id,
         )
     return states

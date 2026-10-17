@@ -19,6 +19,7 @@ such as the migration/superuser URL, e.g.::
 from __future__ import annotations
 
 import argparse
+import signal
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -856,31 +857,192 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
         print(f"re-banded {changed} applicant(s) by percentile (bottom 25% / middle / top 25%).")
 
 
+class _WorkerShutdownRequested(BaseException):
+    """Raised by the lab worker's own SIGTERM handler (see
+    :func:`_sigterm_raises_shutdown_requested`).
+
+    Subclasses ``BaseException``, not ``Exception`` — mirroring
+    ``KeyboardInterrupt``/``SystemExit``'s own convention — for two reasons:
+    it must never be accidentally swallowed by a bare ``except Exception:``
+    anywhere in the call stack (e.g. a containerlab call site's
+    ``RuntimeError`` handling), and it must be caught and re-raised by
+    ``_run_contained``'s existing ``except BaseException:`` cleanup path
+    exactly like it already handles ``KeyboardInterrupt`` today.
+    """
+
+
+@contextmanager
+def _sigterm_raises_shutdown_requested() -> Iterator[None]:
+    """Convert a received SIGTERM into a Python-level exception.
+
+    Python's default SIGTERM disposition terminates the process immediately
+    with no exception raised anywhere — unlike SIGINT, which Python's own
+    default handling turns into ``KeyboardInterrupt``. Without this, a bare
+    ``kill <pid>`` against a manually-launched worker bypasses every cleanup
+    path in this process (the singleton lock's own ``with``-block teardown,
+    ``_run_contained``'s process-group cleanup) because the process simply
+    dies mid-instruction, leaking a detached ``start_new_session=True``
+    subprocess tree that the systemd-managed worker's cgroup-wide
+    ``KillMode=control-group`` backstop never covers for a manual invocation.
+
+    Restores whatever SIGTERM handler was previously installed on exit, for
+    any reason — including when :class:`_WorkerShutdownRequested` itself is
+    the reason for exiting. This matters both for real-world correctness
+    (repeat calls to ``_lab_worker`` in the same process must not stack
+    handlers) and because tests call ``_lab_worker`` in-process: leaving a
+    real SIGTERM handler installed in the pytest process itself would be a
+    hazard for the rest of that run.
+    """
+
+    def _handler(signum: int, frame: object) -> None:
+        raise _WorkerShutdownRequested()
+
+    previous = signal.signal(signal.SIGTERM, _handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
-    from app.config import settings
-    from app.services import lab_jobs
+    import shutil
+
+    from app.config import settings, validate_settings
+    from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
     from app.services.labengine.containerlab import ContainerlabEngine
 
-    engine = ContainerlabEngine(settings.lab_workdir)
-    print("lab-worker started; draining pending labs every 5s")
-    while True:
-        with lab_jobs.admin_session() as db:
-            n = lab_jobs.drain_once(db, engine)
-        if n:
-            print(f"provisioned {n} lab(s)")
-        time.sleep(5)
+    if settings.lab_host_role.lower() != "lab":
+        raise SystemExit("lab-worker requires LAB_HOST_ROLE=lab")
+    if shutil.which("containerlab") is None:
+        raise SystemExit("lab-worker requires containerlab on PATH")
+    errors = validate_settings(settings)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
+    # The singleton lock is held for this whole process's lifetime (acquired
+    # before any database session or reclaim/drain work), not per-iteration
+    # like host_lock — see worker_singleton_lock's docstring. A second worker
+    # process racing this one (manual invocation, or two systemd instances)
+    # fails fast here instead of both later contending on every containerlab
+    # call. The SIGTERM handler is installed around it (early, before the
+    # lock is even attempted) so that a bare `kill` against a manually
+    # launched worker unwinds through the lock's own `with`-block teardown
+    # instead of killing the process with no cleanup running at all.
+    try:
+        with _sigterm_raises_shutdown_requested(), worker_singleton_lock():
+            # Startup restart-reclaim: exactly once, immediately after the
+            # singleton lock is held and before any ordinary poll iteration.
+            # Computed once here and passed explicitly into every later
+            # drain_once() call below, so the identity used to reclaim this
+            # host's own previous-epoch claims is the exact same value later
+            # used to make this process's own claims — never recomputed.
+            identity = lab_operations.worker_identity_parts()
+            with lab_jobs.lab_worker_session() as db:
+                try:
+                    reclaimed = lab_operations.reclaim_previous_epoch(
+                        db, host=identity.host, epoch=identity.epoch
+                    )
+                    db.commit()
+                except BaseException:
+                    # Includes _WorkerShutdownRequested (a SIGTERM arriving
+                    # mid-reclaim), which deliberately subclasses
+                    # BaseException rather than Exception. Postgres
+                    # transactions are atomic, so an interrupted commit
+                    # either fully lands or not at all — either outcome here
+                    # is safe. Re-raised so the outer
+                    # except _WorkerShutdownRequested: handler below still
+                    # catches it with no further changes needed there.
+                    db.rollback()
+                    raise
+            if reclaimed:
+                print(
+                    f"reclaimed {reclaimed} operation(s) from a previous worker "
+                    "epoch on this host"
+                )
+            print("lab-worker started; draining durable operations every 5s")
+            while True:
+                with lab_jobs.lab_worker_session() as db:
+                    repaired = lab_operations.reconcile_stuck(db)
+                    db.commit()
+                    recovered = lab_jobs.recover_missing_consoles(db, engine)
+                    db.commit()
+                    n = lab_jobs.drain_once(
+                        db,
+                        engine,
+                        claimed_by=identity.claimed_by,
+                        claimed_host=identity.host,
+                        claimed_epoch=identity.epoch,
+                    )
+                if repaired:
+                    print(f"reconciled {repaired} lab operation(s)")
+                if recovered:
+                    print(f"recovered {recovered} missing lab console(s)")
+                if n:
+                    print(f"provisioned {n} lab(s)")
+                time.sleep(5)
+    except HostLockUnavailable as exc:
+        raise SystemExit(f"lab-worker: {exc}") from exc
+    except _WorkerShutdownRequested:
+        print("lab-worker: SIGTERM received; shutting down")
 
 
 def _reap_labs(args: argparse.Namespace) -> None:
-    from app.config import settings
     from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        requested = lab_jobs.request_idle_reaps(db)
+    print(f"enqueued {requested} idle lab destroy operation(s)")
+
+
+def _lab_reconcile(args: argparse.Namespace) -> None:
+    import shutil
+
+    from app.config import settings, validate_settings
+    from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable
     from app.services.labengine.containerlab import ContainerlabEngine
 
-    engine = ContainerlabEngine(settings.lab_workdir)
-    with lab_jobs.admin_session() as db:
-        reaped = lab_jobs.reap_idle(db, engine)
-        provisioned = lab_jobs.drain_once(db, engine)
-    print(f"reaped {reaped} idle lab(s); provisioned {provisioned} pending lab(s)")
+    if settings.lab_host_role.lower() != "lab":
+        raise SystemExit("lab-reconcile requires LAB_HOST_ROLE=lab")
+    if shutil.which("containerlab") is None:
+        raise SystemExit("lab-reconcile requires containerlab on PATH")
+    errors = validate_settings(settings)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-reconcile")
+    with lab_jobs.lab_worker_session() as db:
+        requeued = lab_operations.reconcile_stuck(db)
+        # Commit the stuck-claim reconciliation in its own short transaction —
+        # its FOR UPDATE SKIP LOCKED scan takes a row lock on every currently
+        # claimed operation (not just the stuck ones; "stuck" is decided in
+        # Python after the rows are already locked), so holding it open through
+        # reconcile_runtime's live containerlab inspect/destroy calls would
+        # block a healthy worker's heartbeat()/_settle() UPDATE on those same
+        # rows for the duration of that external work. _lab_worker's loop
+        # already commits between reconcile_stuck and drain_once for the same
+        # reason.
+        db.commit()
+        try:
+            runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine)
+        except HostLockUnavailable as exc:
+            # reconcile_runtime makes no database writes before it can raise
+            # this (see its phase breakdown), so there is nothing this pass
+            # wrote that needs undoing — the rollback below is still explicit
+            # rather than assumed. Skip the console sweep and its commit too:
+            # this whole pass is abandoned, and the 1-minute timer will retry
+            # it from scratch on its own.
+            db.rollback()
+            print(f"lab-reconcile: skipped this pass — {exc}")
+            return
+        orphans = lab_jobs.sweep_orphan_consoles(db)
+        db.commit()
+    print(
+        f"reconciled {requeued} expired/cutover operation(s); "
+        f"queued {runtime_repairs} runtime repair(s); "
+        f"destroyed {destroyed_orphans} rowless lab(s); "
+        f"killed {orphans} orphan console(s)"
+    )
 
 
 def _load_curriculum(args: argparse.Namespace) -> None:
@@ -1150,11 +1312,11 @@ def main() -> None:
 
     lw = sub.add_parser(
         "lab-worker",
-        help="Run the cross-tenant provisioning worker loop (deploys pending labs).",
+        help="Run the cross-tenant durable lab-operation worker.",
         description=(
-            "Long-running background worker: every ~5s, opens an app_admin "
-            "(BYPASSRLS) session and deploys the oldest queued/provisioning lab "
-            "instances across all tenants, up to MAX_CONCURRENT_LABS. Intended to "
+            "Long-running background worker: every ~5s, opens an academy_lab_worker "
+            "(BYPASSRLS) session and claims queued lab operations across all tenants. "
+            "It must run with LAB_HOST_ROLE=lab on the containerlab host. Intended to "
             "run under systemd (academy-lab-worker.service, Restart=always)."
         ),
     )
@@ -1162,20 +1324,26 @@ def main() -> None:
 
     rl = sub.add_parser(
         "reap-labs",
-        help="One-shot: destroy idle lab instances, then drain pending ones.",
+        help="One-shot: enqueue destroy operations for idle lab instances.",
         description=(
-            "Reap active lab instances idle longer than LAB_IDLE_MINUTES (marking "
-            "them 'reaped'), then drain any pending instances. Intended to run on a "
-            "timer (academy-reap-labs.timer → academy-reap-labs.service oneshot)."
+            "Find active lab instances idle longer than LAB_IDLE_MINUTES and enqueue "
+            "worker-owned destroy intents. This command never imports or invokes the "
+            "containerlab engine and is safe on the web host."
         ),
     )
     rl.set_defaults(func=_reap_labs)
+
+    lr = sub.add_parser(
+        "lab-reconcile",
+        help="One-shot lab-host recovery: repair expired claims and runtime drift.",
+    )
+    lr.set_defaults(func=_lab_reconcile)
 
     ed = sub.add_parser(
         "email-digest",
         help="One-shot: email each cohort's instructor(s) a progress digest.",
         description=(
-            "Cross-tenant: open an app_admin (BYPASSRLS) session, build the "
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session, build the "
             "cohort progress matrix for every cohort in every tenant, and email "
             "each cohort's enrolled instructor(s) a summary. Email failures are "
             "non-fatal. Intended to run on a timer "
@@ -1188,7 +1356,7 @@ def main() -> None:
         "learner-digest",
         help="One-shot: email each learner their weekly progress summary.",
         description=(
-            "Cross-tenant: open an app_admin (BYPASSRLS) session and queue one "
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session and queue one "
             "weekly progress email per active student learner — what they did, "
             "where they are, what is next. Distinct from email-digest, which is "
             "the instructor cohort matrix. Idempotent per ISO week. Gated by the "

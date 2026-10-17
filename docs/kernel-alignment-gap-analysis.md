@@ -1,16 +1,23 @@
 # Aligning `dotmac_academy_app` with the platform kernel — gap analysis
 
-**Status:** Superseded by ADR 0007 and ADR 0008. Do not use this document as a
+**Status:** Superseded by ADR 0007 and ADR 0009. Do not use this document as a
 current sequence or ownership decision.
 **Date:** 2026-08-09. **Kernel surveyed:** `dotmac-kernel` 0.1.0a28.
 
-> **Superseded 2026-08-11.** ADR 0007 accepted Academy as a kernel product
-> assembly on kernel 0.1.0a38. ADR 0008 subsequently accepted the database
-> direction: kernel `Party`/`PartyPerson` becomes identity authority, Academy's
-> human-domain references preserve their UUIDs and semantics, and the product
-> schema is rebaselined onto an independent assembly lineage. The partial
-> `Person`-beside-`Party` strategy and sequencing below would leave parallel
-> identity owners and are rejected.
+> **Current disposition, 2026-10-17.** ADR 0007 accepted Academy as a kernel
+> product assembly on kernel 0.1.0a38. ADR 0009 preserves the accepted PR #122
+> identity design: kernel `Party`/`PartyPerson` becomes identity authority,
+> human-domain references preserve UUIDs and semantics, and Academy product
+> schema gains an independent assembly lineage. Implementation is still
+> `design_only`; external adoption and published Party/facet-floor evidence
+> remain pending. The partial `Person`-beside-`Party` strategy and sequencing
+> below would leave parallel identity owners and are rejected. The current
+> source census is 28 human references (11 physical, 17 logical), revalidated
+> at Academy `a99a395e`; the initial 27-reference/0053 design coordinates remain
+> historical. ADR 0008 belongs to the dedicated lab-worker database role.
+> Canonical entry mechanics remain unresolved. The entire unchanged Kernel
+> chain must execute with genuine independent history before runtime cutover;
+> the historical stamp/deferred-revision bridge is superseded.
 
 > **Corrected 2026-08-09.** The first version of this document claimed the
 > `Person` → `Party` migration was a prerequisite for kernel-owned roles, and

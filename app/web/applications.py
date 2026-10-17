@@ -19,6 +19,7 @@ from app.models.rbac import AuditEvent
 from app.services import admissions as admissions_service
 from app.services.csv_reports import sanitize_cell
 from app.services.web_auth import require_web_role
+from app.web.pagination import pagination_context
 from app.web.templating import templates
 
 router = APIRouter(
@@ -136,6 +137,8 @@ def applications_page(
     applied_from: str | None = Query(default=None),
     applied_to: str | None = Query(default=None),
     rank: bool = Query(default=False),
+    limit: int = Query(default=8, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
     from_date = _parse_optional_date(applied_from, "from")
@@ -144,8 +147,9 @@ def applications_page(
     if from_date is not None and to_date is not None and from_date > to_date:
         filter_error = "Start date must be before or the same as end date."
         applicants = []
+        total = 0
     else:
-        applicants = admissions_service.list_applicants(
+        total = admissions_service.count_applicants(
             db,
             status=status or None,
             search=q or None,
@@ -153,6 +157,20 @@ def applications_page(
             applied_to=to_date,
             rank_by_score=rank,
         )
+        applicants = admissions_service.list_applicants(
+            db,
+            status=status or None,
+            search=q or None,
+            applied_from=from_date,
+            applied_to=to_date,
+            rank_by_score=rank,
+            limit=limit,
+            offset=offset,
+        )
+    application_metrics = {
+        "total": admissions_service.count_applicants(db),
+        "screened": admissions_service.count_applicants(db, status="screened"),
+    }
     return templates.TemplateResponse(
         request,
         "admin/applications.html",
@@ -166,6 +184,8 @@ def applications_page(
             "applied_from": from_date.isoformat() if from_date else "",
             "applied_to": to_date.isoformat() if to_date else "",
             "rank": rank,
+            "metrics": application_metrics,
+            "pagination": pagination_context(total=total, limit=limit, offset=offset),
         },
     )
 

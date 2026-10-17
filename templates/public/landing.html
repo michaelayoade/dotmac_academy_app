@@ -7,9 +7,10 @@
   <meta name="description" content="The Dotmac Academy: cohort-based technical training for network careers, and self-paced management short courses for working professionals. Real labs, honest assessments, verifiable certificates.">
   <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
   {% include "_dotmac_ui_head.html" %}
-  <link rel="stylesheet" href="/static/public.css?v=2">
+  <link rel="stylesheet" href="/static/public.css?v=4">
 </head>
 <body class="pub">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <nav class="nav" aria-label="Main navigation">
     <div class="wrap">
@@ -24,6 +25,7 @@
     </div>
   </nav>
 
+  <main id="main-content">
   <header class="hero">
     <div class="wrap">
       <div class="hero-inner-l">
@@ -44,11 +46,11 @@
           <div class="hero-stat"><b>{{ chapter_count }}</b><span>Chapters of curriculum</span></div>
         </div>
       </div>
-      <div class="hero-media hero-carousel" id="heroCarousel">
+      <div class="hero-media hero-carousel" id="heroCarousel" role="region" aria-roledescription="carousel" aria-label="Academy programs">
         <div class="slide on"><img src="/static/img/academy-hero.png" alt="Trainees working on live network equipment" width="900" height="491"><span class="slide-tag">Technical Academy</span></div>
         <div class="slide"><img src="/static/img/scene-management.png" alt="A management training session in progress" width="900" height="514" loading="lazy"><span class="slide-tag">Management &amp; Professional Development</span></div>
         <div class="slide"><img src="/static/img/scene-labs.png" alt="Trainees practising in the hands-on lab" width="900" height="514" loading="lazy"><span class="slide-tag">Labs &amp; Certification</span></div>
-        <div class="dots" role="tablist" aria-label="Hero slides"></div>
+        <div class="dots" role="group" aria-label="Choose hero slide"></div>
       </div>
     </div>
   </header>
@@ -154,6 +156,8 @@
     </div>
   </section>
 
+  </main>
+
   <footer>
     <div class="wrap">
       <span>© {{ branding_name | default("Dotmac Academy") }} · part of <a href="https://dotmac.ng/">Dotmac Technologies</a></span>
@@ -165,16 +169,29 @@
 (function(){
   var c=document.getElementById('heroCarousel');if(!c)return;
   var slides=c.querySelectorAll('.slide'),dots=c.querySelector('.dots'),i=0,t;
-  slides.forEach(function(_,n){var b=document.createElement('button');
-    b.setAttribute('aria-label','Slide '+(n+1));if(!n)b.className='on';
+  slides.forEach(function(slide,n){var b=document.createElement('button');b.type='button';
+    slide.id='hero-slide-'+(n+1);
+    slide.setAttribute('role','group');
+    slide.setAttribute('aria-roledescription','slide');
+    slide.setAttribute('aria-label',(n+1)+' of '+slides.length);
+    slide.setAttribute('aria-hidden',n?'true':'false');
+
+    b.setAttribute('aria-controls',slide.id);
+    b.setAttribute('aria-label','Show slide '+(n+1));
+    b.setAttribute('aria-pressed',n?'false':'true');
+    if(!n)b.className='on';
     b.onclick=function(){go(n);restart();};dots.appendChild(b);});
-  function go(n){slides[i].classList.remove('on');dots.children[i].classList.remove('on');
-    i=n%slides.length;slides[i].classList.add('on');dots.children[i].classList.add('on');}
+  function go(n){slides[i].classList.remove('on');slides[i].setAttribute('aria-hidden','true');
+    dots.children[i].classList.remove('on');dots.children[i].setAttribute('aria-pressed','false');
+    i=n%slides.length;slides[i].classList.add('on');slides[i].setAttribute('aria-hidden','false');
+    dots.children[i].classList.add('on');dots.children[i].setAttribute('aria-pressed','true');}
   function restart(){clearInterval(t);start();}
   function start(){if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
     t=setInterval(function(){go(i+1);},5000);}
   c.addEventListener('mouseenter',function(){clearInterval(t);});
   c.addEventListener('mouseleave',restart);
+  c.addEventListener('focusin',function(){clearInterval(t);});
+  c.addEventListener('focusout',restart);
   start();
 })();
 </script>

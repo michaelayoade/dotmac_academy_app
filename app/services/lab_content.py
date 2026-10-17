@@ -41,7 +41,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity
-from app.models.lab import LabTemplate
+from app.models.lab import LabInstance, LabTemplate
+from app.services import authoring, lab_seed
 
 _DEFAULT_PASS_THRESHOLD = 0.7
 
@@ -169,6 +170,13 @@ def _source_hash(spec: LabSpec, instructions_html: str) -> str:
             "chapter_number": spec.chapter_number,
             "topology": spec.topology_text,
             "instructions_html": instructions_html,
+            # Raw Markdown now affects runtime output (per-instance seed
+            # interpolation renders from it directly), so it must participate
+            # in the hash — otherwise an instructions.md edit that happens to
+            # render to identical HTML today (e.g. adding a placeholder that
+            # wasn't there before but resolves to the same visible text) would
+            # be silently skipped as "unchanged".
+            "instructions_md": spec.instructions_md,
             "checks": spec.checks,
             "seed_spec": spec.seed_spec,
             "limits": spec.limits,
@@ -229,6 +237,7 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
                 title=spec.title,
                 topology=spec.topology_text,
                 instructions_html=instructions_html,
+                instructions_md=spec.instructions_md,
                 checks=spec.checks,
                 seed_spec=spec.seed_spec,
                 limits=spec.limits,
@@ -250,6 +259,7 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             template.title = spec.title
             template.topology = spec.topology_text
             template.instructions_html = instructions_html
+            template.instructions_md = spec.instructions_md
             template.checks = spec.checks
             template.seed_spec = spec.seed_spec
             template.limits = spec.limits
@@ -261,3 +271,26 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
 
     db.flush()
     return templates
+
+
+def render_instance_instructions(template: LabTemplate, instance: LabInstance) -> str:
+    """Render this instance's per-seed instructions HTML from the template.
+
+    Selects ``instructions_md`` (the canonical Markdown source), falling back
+    to the legacy ``instructions_html`` only when a template predates the
+    ``instructions_md`` backfill (``instructions_md IS NULL``). ``{{key}}``
+    placeholders are substituted with THIS instance's seed values before
+    Markdown is rendered, so two learners with different seeds — but the same
+    template — get different rendered HTML. Rendering never mutates the
+    stored template row or the instance's seed.
+
+    Uses ``authoring.render_markdown`` (not a bare ``markdown.markdown`` call)
+    so the rendered HTML goes through the same sanitisation the in-app author
+    editor already relies on — raw imported Markdown must never reach the
+    page unsanitised.
+    """
+    source = template.instructions_md
+    if source is None:
+        return template.instructions_html
+    interpolated = lab_seed.interpolate(source, instance.seed)
+    return authoring.render_markdown(interpolated)

@@ -1,8 +1,26 @@
 schema_version = 1
 status = "design_only"
-decision = "docs/adr/0008-kernel-identity-and-lineage-cutover.md"
+decision = "docs/adr/0009-kernel-identity-and-lineage-cutover.md"
 kernel_distribution = "dotmac-kernel"
 kernel_version = "0.1.0a38"
+
+# Initial accepted PR #122 design coordinates; not current source or production proof.
+[historical_design_baseline]
+academy_revision = "2d9506f"
+academy_head = "0053_entrance_defaults"
+human_references = 27
+physical_references = 11
+logical_references = 16
+
+# Static source revalidation only. Hosted/production rehearsal gates remain open.
+[source_revalidation]
+academy_revision = "a99a395e066db4eea3ec1d73219ab5dd006c1d1d"
+date = "2026-10-17"
+evidence = "source_only"
+production_cutover_proven = false
+human_references = 28
+physical_references = 11
+logical_references = 17
 
 [adoption_strategy]
 status = "accepted"
@@ -20,6 +38,41 @@ status = "pending_external_evidence"
 blocks_academy_lineage_activation = true
 academy_may_design_rehearsals = true
 academy_may_activate_lineage = false
+plane = "tenant_plane_1"
+expected_first_failure = "0001_initial_tenant_schema"
+reference_evidence = "dotmac_starter_mt/docs/inventories/sub-lineage-dispositions.md"
+
+[platform_p11_gate]
+status = "met"
+reference_adopter = "dotmac_vendor_control_plane"
+source = "dotmac_starter_mt/docs/inventories/p11-adoption-status.md"
+proves_sub_tenant_plane = false
+proves_academy_identity_cutover = false
+
+[kernel_adoption_prerequisites]
+status = "pending_external_evidence"
+true_party_and_facet_contract_required = true
+published_floor_required = true
+selected_future_floor = "unresolved"
+installed_a38_is_future_floor_proof = false
+facade_or_shadow_binding_satisfies_gate = false
+new_sdk_authorized = false
+released_ddl_mutation_authorized = false
+escrow_execution_algorithm = "separate_proposal_required"
+
+[canonical_kernel_entry]
+status = "unresolved"
+entry_algorithm = "separate_proposal_and_rehearsal_required"
+entire_unchanged_chain_before_runtime_cutover = true
+owning_connection_required = true
+genuine_independent_history_required = true
+lossless_identity_import_and_source_closure_required = true
+kernel_stamping_allowed = false
+kernel_existence_skips_allowed = false
+legacy_version_row_substitutes_kernel_history = false
+kernel_revisions_deferred_after_runtime_cutover = false
+historical_a38_bridge = "superseded_rejected_stamp_and_deferred_revisions"
+selected_escrow_executor = "none"
 
 [[baseline_evidence]]
 owner = "dotmac-kernel"
@@ -48,7 +101,7 @@ reject = "legacy_person_credential_session_rbac_schema"
 [current_lineage]
 owner = "academy_legacy"
 root = "0001_initial_tenant_schema"
-head = "0053_entrance_defaults"
+head = "0060_lab_conditional_ops"
 root_file = "alembic/versions/20260504_0001_initial_tenant_schema.py"
 shares_kernel_root_id = true
 
@@ -57,12 +110,15 @@ owner = "kernel"
 root = "0001_initial_tenant_schema"
 head = "0020_delivery_receipts"
 branch_label = "kernel"
+coordinate_status = "historical_a38_requires_selected_floor_revalidation"
 
 [target_assembly_lineage]
 owner = "assembly"
 root = "a001_adopt_academy"
 branch_label = "assembly"
 depends_on = "0020_delivery_receipts"
+coordinate_status = "historical_a38_requires_selected_floor_revalidation"
+depends_on_policy = "actual_selected_published_kernel_head_after_full_execution"
 
 [[model_edge]]
 academy_entry = "app/models/base.py:Base"
@@ -181,7 +237,7 @@ target = "academy_login_security.locked_until"
 owner = "assembly"
 
 # Every current SQLAlchemy column carrying human identity. Twenty-four contain
-# `person` in their name; the three actor/assignee aliases at the end are easy
+# `person` in their name; the four actor/requester/assignee aliases are easy
 # for a name scan to miss. `strong` means a database FK currently points to
 # people; `logical` means application joins/validation carry the relationship
 # today. Both classes are verified at cutover. Product-human columns retain
@@ -276,6 +332,16 @@ table = "lab_instances"
 column = "person_id"
 current_integrity = "logical"
 disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "lab_operations"
+column = "requested_by"
+current_integrity = "logical"
+disposition = "retain_human_semantics"
+nullable = true
+value_semantics = "person_uuid_for_user_request_null_for_automated_request"
+introduced_by = "0055_lab_operations"
+excluded_worker_identity = "lab_operations.claimed_by"
 
 [[identity_reference]]
 table = "learning_events"

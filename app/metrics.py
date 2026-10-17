@@ -59,8 +59,13 @@ LAB_HOST_UP = Gauge(
     multiprocess_mode="max",
 )
 
+LAB_WRONG_HOST_REFUSALS = Counter(
+    "academy_lab_wrong_host_refusals_total",
+    "Lab engine calls refused because this process is not on the declared lab host.",
+)
+
 # Pipeline state, as bounded snapshots. Labels are closed enumerations from the
-# models (7 applicant statuses, 5 lab statuses), so cardinality cannot grow with
+# models (7 applicant statuses, 6 lab statuses), so cardinality cannot grow with
 # traffic or data volume — per the Dotmac metrics-scrape safety rule. Refreshed
 # from ONE cheap grouped COUNT per family, cached, so scrapes carry a fixed
 # query budget rather than scaling with scrape frequency.
@@ -167,7 +172,7 @@ def refresh_pipeline_metrics() -> None:
                 str(k): int(v)
                 for k, v in db.execute(select(LabInstance.status, func.count()).group_by(LabInstance.status)).all()
             }
-            for status in ("queued", "provisioning", "active", "error", "reaped"):
+            for status in ("queued", "provisioning", "resetting", "active", "error", "reaped"):
                 LAB_INSTANCES_BY_STATUS.labels(status=status).set(lab_counts.get(status, 0))
 
             sittings: dict[bool | None, int] = {
