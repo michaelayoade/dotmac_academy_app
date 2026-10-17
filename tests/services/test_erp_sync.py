@@ -6,9 +6,13 @@ import json
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import text
+
 from app.config import settings
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
 from app.models.person import Person
 from app.services import erp_sync
 
@@ -76,7 +80,8 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
     comp, person, _ = _seed(admin_session, tenant_a)
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.SYNCED
-    assert comp.erp_synced_at is not None
+    assert admin_session.get(ERPCompletionCheckpoint, (tenant_a.id, comp.id)).erp_synced_at is not None
+    assert comp.erp_synced_at is None
     body = json.loads(captured["content"])
     assert body["event"] == "course_completed"
     assert body["email"] == person.email
@@ -91,7 +96,9 @@ def test_inert_when_unconfigured(admin_session, tenant_a, monkeypatch):
     monkeypatch.setattr(settings, "erp_webhook_url", "", raising=False)
     comp, _, _ = _seed(admin_session, tenant_a)
     assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == {
-        erp_sync.SYNCED: 0, erp_sync.UNMATCHED: 0, erp_sync.FAILED: 0
+        erp_sync.SYNCED: 0,
+        erp_sync.UNMATCHED: 0,
+        erp_sync.FAILED: 0,
     }
     assert comp.erp_synced_at is None
     admin_session.rollback()
@@ -129,7 +136,8 @@ def test_ignored_reply_is_not_recorded_as_delivered(admin_session, tenant_a, mon
     it. Never fired in production only because there were no completions."""
     _configure(monkeypatch)
     monkeypatch.setattr(
-        erp_sync.httpx, "post",
+        erp_sync.httpx,
+        "post",
         lambda *a, **k: _FakeResp(200, {"status": "ignored", "reason": "no matching employee"}),
     )
     comp, _, _ = _seed(admin_session, tenant_a)
@@ -144,9 +152,7 @@ def test_ignored_reply_is_not_recorded_as_delivered(admin_session, tenant_a, mon
 def test_unmatched_is_counted_separately_from_failure(admin_session, tenant_a, monkeypatch):
     """A silent zero and a silent hundred-unmatched used to look identical."""
     _configure(monkeypatch)
-    monkeypatch.setattr(
-        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, {"status": "ignored"})
-    )
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, {"status": "ignored"}))
     _seed(admin_session, tenant_a)
 
     counts = erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id)
@@ -159,9 +165,7 @@ def test_unmatched_is_counted_separately_from_failure(admin_session, tenant_a, m
 def test_unreadable_2xx_body_is_retried_not_assumed(admin_session, tenant_a, monkeypatch):
     """A 2xx we cannot parse is not evidence of anything."""
     _configure(monkeypatch)
-    monkeypatch.setattr(
-        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, _UNREADABLE)
-    )
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(200, _UNREADABLE))
     comp, _, _ = _seed(admin_session, tenant_a)
 
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
@@ -174,13 +178,9 @@ def test_recorded_updated_and_duplicate_replies_count_as_delivered(admin_session
     """ERP answers "updated" when re-delivering the same certificate ref."""
     _configure(monkeypatch)
     for status in ("recorded", "updated", "duplicate"):
-        monkeypatch.setattr(
-            erp_sync.httpx, "post", lambda *a, s=status, **k: _FakeResp(200, {"status": s})
-        )
+        monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, s=status, **k: _FakeResp(200, {"status": s}))
         comp, _, _ = _seed(admin_session, tenant_a)
-        assert erp_sync.push_completion(
-            admin_session, tenant_id=tenant_a.id, completion=comp
-        ) == erp_sync.SYNCED
+        assert erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp) == erp_sync.SYNCED
     admin_session.rollback()
 
 
@@ -202,19 +202,16 @@ def test_payload_carries_a_contract_version(admin_session, tenant_a, monkeypatch
     admin_session.rollback()
 
 
-def test_422_with_ignored_detail_is_unmatched_not_retryable_failure(
-    admin_session, tenant_a, monkeypatch
-):
+def test_422_with_ignored_detail_is_unmatched_not_retryable_failure(admin_session, tenant_a, monkeypatch):
     """ERP now refuses an unmatched employee with 422 and the status under
     `detail`. Reading the body before the status line keeps both the old 200 and
     the new 422 shape classified as UNMATCHED — otherwise the 422 would look
     like a transient failure and retry forever."""
     _configure(monkeypatch)
     monkeypatch.setattr(
-        erp_sync.httpx, "post",
-        lambda *a, **k: _FakeResp(
-            422, {"detail": {"status": "ignored", "reason": "no matching employee"}}
-        ),
+        erp_sync.httpx,
+        "post",
+        lambda *a, **k: _FakeResp(422, {"detail": {"status": "ignored", "reason": "no matching employee"}}),
     )
     comp, _, _ = _seed(admin_session, tenant_a)
 
@@ -228,14 +225,13 @@ def test_unsupported_event_is_unmatched_not_delivered(admin_session, tenant_a, m
     """A version ERP cannot route is not delivery either."""
     _configure(monkeypatch)
     monkeypatch.setattr(
-        erp_sync.httpx, "post",
+        erp_sync.httpx,
+        "post",
         lambda *a, **k: _FakeResp(422, {"detail": {"status": "unsupported"}}),
     )
     comp, _, _ = _seed(admin_session, tenant_a)
 
-    assert erp_sync.push_completion(
-        admin_session, tenant_id=tenant_a.id, completion=comp
-    ) == erp_sync.UNMATCHED
+    assert erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp) == erp_sync.UNMATCHED
     assert comp.erp_synced_at is None
     admin_session.rollback()
 
@@ -243,13 +239,110 @@ def test_unsupported_event_is_unmatched_not_delivered(admin_session, tenant_a, m
 def test_genuine_server_error_is_still_a_retryable_failure(admin_session, tenant_a, monkeypatch):
     """A 503 with no status body must stay FAILED — it is worth retrying."""
     _configure(monkeypatch)
-    monkeypatch.setattr(
-        erp_sync.httpx, "post", lambda *a, **k: _FakeResp(503, {"detail": "boom"})
-    )
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: _FakeResp(503, {"detail": "boom"}))
     comp, _, _ = _seed(admin_session, tenant_a)
 
-    assert erp_sync.push_completion(
-        admin_session, tenant_id=tenant_a.id, completion=comp
-    ) == erp_sync.FAILED
+    assert erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp) == erp_sync.FAILED
     assert comp.erp_synced_at is None
     admin_session.rollback()
+
+
+def test_checkpoint_ack_shortcircuits_and_preserves_completion(admin_session, tenant_a, monkeypatch):
+    _configure(monkeypatch)
+    comp, _, _ = _seed(admin_session, tenant_a)
+    before = admin_session.execute(
+        text("SELECT row_to_json(c)::text FROM course_completions c WHERE id=:id"), {"id": comp.id}
+    ).scalar_one()
+    calls = []
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: calls.append(1) or _FakeResp(200))
+    for _ in range(2):
+        assert erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp) == erp_sync.SYNCED
+    assert calls == [1]
+    after = admin_session.execute(
+        text("SELECT row_to_json(c)::text FROM course_completions c WHERE id=:id"), {"id": comp.id}
+    ).scalar_one()
+    assert before == after
+
+
+def test_missing_checkpoint_legacy_ack_refuses_replay(admin_session, tenant_a, monkeypatch):
+    _configure(monkeypatch)
+    comp, _, _ = _seed(admin_session, tenant_a)
+    comp.erp_synced_at = datetime(2026, 7, 12, tzinfo=UTC)
+    admin_session.flush()
+    monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: pytest.fail("must not replay"))
+    with pytest.raises(erp_sync.ERPCheckpointInvariantError, match="missing checkpoint"):
+        erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
+
+
+def test_timeout_and_unknown_ack_leave_checkpoint_pending(admin_session, tenant_a, monkeypatch):
+    _configure(monkeypatch)
+    comp, _, _ = _seed(admin_session, tenant_a)
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError("test timeout")
+
+    for post in (timeout, lambda *a, **k: _FakeResp(200, {"status": "unknown"})):
+        monkeypatch.setattr(erp_sync.httpx, "post", post)
+        assert erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp) == erp_sync.FAILED
+        assert admin_session.get(ERPCompletionCheckpoint, (tenant_a.id, comp.id)).erp_synced_at is None
+        assert comp.erp_synced_at is None
+
+
+def test_overlapping_first_senders_serialize_on_checkpoint(admin_engine, admin_session, tenant_a, monkeypatch):
+    """Real PostgreSQL contention, including concurrent lazy checkpoint insert."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy.orm import Session
+
+    _configure(monkeypatch)
+    comp, _, _ = _seed(admin_session, tenant_a)
+    completion_id, tenant_id = comp.id, tenant_a.id
+    admin_session.commit()
+    entered, release, second_ready = Event(), Event(), Event()
+    calls, second_pid = [], []
+
+    def post(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        assert release.wait(10), "first sender was not released"
+        return _FakeResp(200)
+
+    monkeypatch.setattr(erp_sync.httpx, "post", post)
+
+    def sender(second=False):
+        with Session(admin_engine) as db:
+            row = db.get(CourseCompletion, completion_id)
+            if second:
+                second_pid.append(db.execute(text("SELECT pg_backend_pid()")).scalar_one())
+                second_ready.set()
+            result = erp_sync.push_completion(db, tenant_id=tenant_id, completion=row)
+            db.commit()
+            return result
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(sender)
+        try:
+            assert entered.wait(10)
+            second = pool.submit(sender, True)
+            assert second_ready.wait(10)
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                with admin_engine.connect() as conn:
+                    waiting = conn.execute(
+                        text("SELECT wait_event_type FROM pg_stat_activity WHERE pid=:pid"), {"pid": second_pid[0]}
+                    ).scalar_one()
+                if waiting == "Lock":
+                    break
+                time.sleep(0.02)
+            else:
+                pytest.fail("competing sender never waited on PostgreSQL checkpoint lock")
+            assert calls == [1]
+        finally:
+            release.set()
+        assert first.result(timeout=10) == erp_sync.SYNCED
+        assert second.result(timeout=10) == erp_sync.SYNCED
+    assert calls == [1]
+    admin_session.expire_all()
+    assert admin_session.get(CourseCompletion, completion_id).erp_synced_at is None
