@@ -7,6 +7,9 @@ on:
       - .github/workflows/retained-schema-oracle.yml
       - app/maintenance/retained_schema.py
       - tests/test_academy_retained_schema.py
+      - app/maintenance/retained_environment.py
+      - tests/test_academy_retained_environment.py
+      - scripts/declare_retained_hosted_bindings.py
 
 permissions:
   contents: read
@@ -38,6 +41,15 @@ jobs:
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
       KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
       RETAINED_SCHEMA_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_schema
+      RETAINED_ENVIRONMENT_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_environment
+      # Explicit non-secret hosted protocol declarations, before observation.
+      ACADEMY_RETAINED_EXPECTED_TARGET_DATABASE: academy_retained_environment
+      ACADEMY_RETAINED_EXPECTED_SETUP_SESSION: postgres
+      ACADEMY_RETAINED_EXPECTED_ENCODING: UTF8
+      ACADEMY_RETAINED_EXPECTED_LOCALE_PROVIDER: c
+      ACADEMY_RETAINED_EXPECTED_LC_COLLATE: en_US.utf8
+      ACADEMY_RETAINED_EXPECTED_LC_CTYPE: en_US.utf8
+      ACADEMY_RETAINED_EXPECTED_EXTENSION_VERSIONS: '[ ["plpgsql", "1.0"] ]'
       TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://academy_lab_worker:academy_lab_worker@localhost:5437/academy
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
       PLATFORM_ROOT_DOMAIN: localhost
@@ -74,6 +86,7 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
           CREATE DATABASE academy_kernel_entry OWNER app_admin;
           CREATE DATABASE academy_retained_schema OWNER app_admin;
+          CREATE DATABASE academy_retained_environment OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
           CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           SQL
@@ -83,11 +96,19 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy_retained_schema -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_environment -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+      - name: Declare hosted environment expectations before profile observation
+        env:
+          ACADEMY_RETAINED_SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
+        run: poetry run python scripts/declare_retained_hosted_bindings.py
+
       - name: Run actual frozen-source catalog and planted-drift canaries
         id: retained_tests
         run: |
           mkdir -p artifacts
-          poetry run pytest tests/test_academy_retained_schema.py -vv \
+          poetry run pytest tests/test_academy_retained_schema.py tests/test_academy_retained_environment.py -vv \
             --capture=tee-sys --tb=short -o faulthandler_timeout=120 \
             -o junit_family=xunit1 --basetemp=artifacts/retained-schema-replay \
             --junitxml=artifacts/retained-schema.xml
@@ -119,6 +140,35 @@ jobs:
               raise SystemExit('no completed actual pytest execution')
           if catalog.get('admission_authority') is not False:
               raise SystemExit('catalog packet must carry no admission authority')
+          environment_paths = sorted(Path('artifacts/retained-schema-replay').rglob('frozen62-retained-environment-source-only.json'))
+          if len(environment_paths) != 1:
+              raise SystemExit('expected one actual frozen-source environment artifact')
+          environment_data = environment_paths[0].read_bytes()
+          if len(environment_data) > 1048576:
+              raise SystemExit('environment artifact exceeds source bound')
+          environment = json.loads(environment_data)
+          if not (
+              environment.get('schema_version') == 1
+              and environment.get('kind') == 'unqualified_frozen62_hosted_environment'
+              and environment.get('admission_authority') is False
+              and environment.get('source_only') is True
+              and environment.get('fixed_profile_checks') == 'NOT RUN'
+              and environment.get('binding_expectations') == 'NOT SUPPLIED'
+          ):
+              raise SystemExit('environment packet must remain explicitly unqualified')
+          bindings_data = os.environ['ACADEMY_RETAINED_ENVIRONMENT_BINDINGS'].encode('ascii')
+          if not 0 < len(bindings_data) <= 4096:
+              raise SystemExit('expected bindings exceed reviewed source bound')
+          bindings = json.loads(bindings_data)
+          binding_fields = (
+              'target_database', 'setup_session', 'service_image', 'server_version_num',
+              'encoding', 'locale_provider', 'lc_collate', 'lc_ctype', 'icu_locale',
+              'collation_version', 'actual_collation_version', 'extension_versions',
+          )
+          if type(bindings) is not dict or set(bindings) != {
+              'academy_retained_environment_' + field for field in binding_fields
+          }:
+              raise SystemExit('expected bindings differ from fixed reviewed fields')
           packet = {
               'schema_version': 1,
               'kind': 'unqualified_frozen62_retained_catalog_oracle',
@@ -132,6 +182,12 @@ jobs:
               'catalog_bytes': len(data),
               'catalog_sha256': hashlib.sha256(data).hexdigest(),
               'catalog_base64': base64.b64encode(data).decode('ascii'),
+              'environment_metadata_bytes': len(environment_data),
+              'environment_metadata_sha256': hashlib.sha256(environment_data).hexdigest(),
+              'environment_metadata_base64': base64.b64encode(environment_data).decode('ascii'),
+              'environment_expectation_bytes': len(bindings_data),
+              'environment_expectation_sha256': hashlib.sha256(bindings_data).hexdigest(),
+              'environment_expectation_base64': base64.b64encode(bindings_data).decode('ascii'),
           }
           encoded = json.dumps(packet, ensure_ascii=True, separators=(',', ':'))
           Path('artifacts/retained-schema-oracle.json').write_text(encoded + '\n')
@@ -151,5 +207,6 @@ jobs:
             artifacts/retained-schema.xml
             artifacts/retained-schema-oracle.json
             artifacts/retained-schema-replay/**/frozen62-retained-catalog-source-only.json
+            artifacts/retained-schema-replay/**/frozen62-retained-environment-source-only.json
           if-no-files-found: error
           retention-days: 30

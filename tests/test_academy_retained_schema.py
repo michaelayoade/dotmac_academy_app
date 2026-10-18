@@ -567,3 +567,206 @@ def test_policy_public_role_shared_dependency_drift_is_refused(retained_engine):
         with pytest.raises(retained.RetainedSchemaRefused) as error:
             retained._check_policy_dependencies(packet)
         assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_natural_source_touching_fk_ri_and_dependency_graph(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        assert len(packet["ri_foreign_keys"]) == 17
+        assert len(packet["ri_triggers"]) == 68
+        assert len(packet["ri_dependencies"]) == 153
+        assert len(packet["ri_relations"]) == 15
+        assert len({row[28] for row in packet["ri_parent_keys"]}) == 6
+        # These are genuine unrelated frozen owner FKs on external parents.
+        # Their classification does not qualify their full constraint family.
+        assert packet["ri_external_parent_other_triggers"]
+        retained._check_ri_graph(packet)
+        with pytest.raises(retained.RetainedSchemaUnsupported):
+            retained._verify_historical_retained_schema(connection)
+
+
+@pytest.mark.parametrize("parent", ("applicants", "lab_instances"))
+def test_unexpected_incoming_fk_from_outside_retained_is_refused(retained_engine, parent):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        assert parent in ("applicants", "lab_instances")
+        connection.execute(
+            sa.text(
+                "CREATE TABLE public.retained_incoming_canary (tenant_id uuid, object_id uuid, "
+                "FOREIGN KEY (tenant_id,object_id) REFERENCES public." + parent + "(tenant_id,id))"
+            )
+        )
+        packet = retained._observe_historical_catalog(connection)
+        assert len(packet["ri_foreign_keys"]) == 18
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize("mode", ("DISABLE", "ENABLE REPLICA", "ENABLE ALWAYS"))
+@pytest.mark.parametrize("side", ("child", "parent"))
+def test_real_internal_ri_trigger_firing_drift_is_refused(retained_engine, mode, side):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        fk = next(row for row in packet["ri_foreign_keys"] if row[3] == "email_outbox")
+        relation_oid = fk[4] if side == "child" else fk[11]
+        trigger = next(row for row in packet["ri_triggers"] if row[20] == fk[0] and row[1] == relation_oid)
+        assert mode in ("DISABLE", "ENABLE REPLICA", "ENABLE ALWAYS")
+        # Real system triggers require the hosted disposable database superuser.
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        assert trigger[3] in ("email_outbox", "tenants")
+        assert trigger[4].startswith("RI_ConstraintTrigger_") and trigger[4].rsplit("_", 1)[1].isdigit()
+        connection.execute(sa.text("ALTER TABLE public." + trigger[3] + " " + mode + ' TRIGGER "' + trigger[4] + '"'))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE pg_catalog.pg_trigger SET tgfoid='pg_catalog.\"RI_FKey_check_upd\"()'::regprocedure " "WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgconstraint=0 WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgconstrindid=0 WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgconstrrelid=tgrelid WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgdeferrable=true WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgtype=7 WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgnargs=1,tgargs=decode('7800','hex') WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgparentid=oid WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgoldtable='planted_transition' WHERE oid=:oid",
+    ),
+)
+def test_real_ri_trigger_catalog_metadata_drift_is_refused(retained_engine, statement):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        trigger = next(row for row in packet["ri_triggers"] if row[3] == "email_outbox" and row[15] == 5)
+        # Mutate only a real disposable PG catalog negative, transactionally.
+        # This is never a manufactured positive packet or production operation.
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        connection.execute(sa.text(statement), {"oid": trigger[0]})
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE pg_catalog.pg_constraint SET conindid=0 WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_constraint SET conpfeqop=ARRAY['pg_catalog.<>(uuid,uuid)'::regoperator]::oid[] WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_constraint SET conppeqop=ARRAY['pg_catalog.<>(uuid,uuid)'::regoperator]::oid[] WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_constraint SET conffeqop=ARRAY['pg_catalog.<>(uuid,uuid)'::regoperator]::oid[] WHERE oid=:oid",
+    ),
+)
+def test_real_fk_parent_index_or_equality_operator_drift_is_refused(retained_engine, statement):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        fk = next(row for row in packet["ri_foreign_keys"] if row[3] == "email_outbox")
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        connection.execute(sa.text(statement), {"oid": fk[0]})
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_external_supporting_parent_key_name_drift_is_refused(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        connection.execute(
+            sa.text(
+                "ALTER TABLE public.question_banks RENAME CONSTRAINT "
+                "uq_question_banks_tenant_id_id TO planted_parent_key"
+            )
+        )
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize("table,make_internal", (("tenants", False), ("email_outbox", True), ("tenants", True)))
+def test_custom_or_unassociated_external_parent_trigger_is_refused(retained_engine, table, make_internal):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        assert table in ("tenants", "email_outbox")
+        connection.execute(
+            sa.text(
+                "CREATE FUNCTION public.retained_trigger_canary() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$"
+            )
+        )
+        connection.execute(
+            sa.text(
+                "CREATE TRIGGER retained_trigger_canary AFTER INSERT ON public."
+                + table
+                + " FOR EACH ROW EXECUTE FUNCTION public.retained_trigger_canary()"
+            )
+        )
+        if make_internal:
+            connection.execute(sa.text("SET LOCAL ROLE NONE"))
+            assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+            connection.execute(
+                sa.text(
+                    "UPDATE pg_catalog.pg_trigger SET tgisinternal=true "
+                    "WHERE tgrelid=CAST(:table AS regclass) AND tgname='retained_trigger_canary'"
+                ),
+                {"table": "public." + table},
+            )
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_ri_dependency_multiplicity_is_not_deduplicated(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        fk = next(row for row in packet["ri_foreign_keys"] if row[3] == "email_outbox")
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        connection.execute(
+            sa.text(
+                "INSERT INTO pg_catalog.pg_depend "
+                "SELECT * FROM pg_catalog.pg_depend WHERE classid='pg_catalog.pg_constraint'::regclass "
+                "AND objid=:oid AND refclassid='pg_catalog.pg_class'::regclass AND deptype='n' LIMIT 1"
+            ),
+            {"oid": fk[0]},
+        )
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        assert len(packet["ri_dependencies"]) == 154
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE pg_catalog.pg_index SET indnullsnotdistinct=true WHERE indexrelid=:oid",
+        "UPDATE pg_catalog.pg_index SET indisvalid=false WHERE indexrelid=:oid",
+        "UPDATE pg_catalog.pg_index SET indimmediate=false WHERE indexrelid=:oid",
+    ),
+)
+def test_real_supporting_parent_index_flag_drift_is_refused(retained_engine, statement):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        key = next(row for row in packet["ri_parent_keys"] if row[4] == "uq_question_banks_tenant_id_id")
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        connection.execute(sa.text(statement), {"oid": key[2]})
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused

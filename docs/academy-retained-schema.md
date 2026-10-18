@@ -382,3 +382,71 @@ composition. Earlier immutable source/proof records compared against the
 captured template, not byte-exact actual-a5 CI; no unchanged-actual-CI or exact
 five-lines-only-against-actual-a5 claim is made here. The extra newline has no
 execution effect and does not qualify or invalidate schema admission.
+
+
+## V8 candidate touching FK and RI closure
+
+This slice checks the initial historical public graph only. Frozen62 declares
+17 outgoing FKs touching the eleven retained tables. Its only incoming retained
+edges are onboarding_tasks→applicants and lab_operations→lab_instances, already
+included in those seventeen. Full62 source inventory finds no other retained
+incoming references. Additional incoming FKs fail even when their child is
+outside the retained set. No logical UUID relationships become invented FKs.
+
+Six fixed supporting parent keys are tenants_pkey; uq_people_tenant_id_id;
+uq_applicants_tenant_id_id; uq_lab_instances_tenant_id_id;
+uq_cohort_tracks_cohort_track; and uq_question_banks_tenant_id_id. Parent
+relations, columns, physical positions, UUID types, constraint/index names and
+actual OID associations are checked independently of the adopted catalog.
+UUID FK equality resolves actual pg_catalog.=(uuid,uuid) and uuid_eq identities;
+no literal Genesis OIDs are expected. The parent supporting indexes are checked
+for their source uniqueness, validity, immediate enforcement, BTREE uuid_ops,
+column order, absence of expressions/predicates/collations and source key
+constraints. Source UUID columns have no server defaults.
+
+PostgreSQL 16 tablecmds.c and trigger.c generate four internal RI triggers per
+FK: child AFTER ROW INSERT (5)/UPDATE (17), parent DELETE (9)/UPDATE (17).
+The source CASCADE deletions use RI_FKey_cascade_del; the two applicant Learning
+references use RI_FKey_noaction_del. Every update uses NO ACTION. All 68 triggers
+must be enabled for origin, internal, nondeferrable, initially immediate,
+without arguments, column filters, qualifications, transitions or parent-trigger
+overrides. Their actual constraint, opposite relation and supporting index OIDs
+must match the fixed graph. Internal trigger names use PostgreSQL's prefix plus
+the actual trigger OID. Disabled, replica-only, always-enabled, custom internal
+or unassociated triggers fail.
+
+The exact candidate pg_depend multiset comprises 67 FK column/index edges,
+68 trigger→FK internal edges, twelve supporting-key→column auto edges, and six
+supporting-index→key internal edges: 153 rows. Builtin UUID operators/opclasses
+and RI functions are PostgreSQL pinned objects, whose dependency edges are
+omitted by pg_depend.c. Multiplicity is preserved; extra incoming dependencies
+to the touching FKs or selected RI triggers fail. This expected set comes from
+frozen DDL and PostgreSQL source, never from copying a live adoption packet.
+
+External parents tenants, people, cohort_tracks and question_banks also carry
+legitimate unrelated frozen FK-owned internal triggers. This slice observes
+and classifies those only as external-parent FK-owned associations. Their
+functions, firing modes, full FK families and dependency closure require their
+actual owner's composed catalog qualification. External-parent noninternal or
+unassociated internal extras fail. This is a seventeen-FK closure, not a claim
+that every unrelated owner's graph has been qualified.
+
+All new RI projections and 153-row expectations are source candidates pending
+genuine hosted frozen62 replay. The existing eighteen test functions, isolated
+replay fixture, rendering/helper/context guards, CI bytes (including the
+previously disclosed extra final newline) and unconditional final Unsupported
+remain unchanged. New authored PostgreSQL canaries mutate only the disposable
+hosted transaction; system-trigger/catalog negatives require its actual
+superuser and restore app_admin before observation. No new tests ran locally.
+Remaining gates include hosted RI qualification, unrelated owner graph closure,
+reviewed environment SecuritySpec, private fence/ordered locks and physical
+transaction continuity, genuine identity relocation, a004, and whole-product
+conservation/recovery. No admission receipt or production activation exists.
+
+Primary semantics: [pg_trigger](https://www.postgresql.org/docs/16/catalog-pg-trigger.html),
+[pg_constraint](https://www.postgresql.org/docs/16/catalog-pg-constraint.html),
+[tablecmds.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/commands/tablecmds.c),
+[trigger.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/commands/trigger.c),
+[pg_constraint.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/pg_constraint.c),
+[pg_depend.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/pg_depend.c),
+and [index.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/index.c).

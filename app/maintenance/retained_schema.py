@@ -842,6 +842,661 @@ def _check_policy_dependencies(packet):
     _require(not packet["policy_shared_dependencies"])
 
 
+# Source17 outgoing edges include the ONLY two incoming retained edges below.
+# Full62 AST/text inventory found no other references targeting retained tables.
+_RI_INCOMING = (
+    ("onboarding_tasks", "fk_onboarding_tasks_tenant_applicant", "applicants"),
+    ("lab_operations", "fk_lab_operations_tenant_instance", "lab_instances"),
+)
+_RI_PARENT_KEYS = (
+    ("applicants", ("tenant_id", "id"), "uq_applicants_tenant_id_id", "u"),
+    ("cohort_tracks", ("tenant_id", "cohort_id", "track_id"), "uq_cohort_tracks_cohort_track", "u"),
+    ("lab_instances", ("tenant_id", "id"), "uq_lab_instances_tenant_id_id", "u"),
+    ("people", ("tenant_id", "id"), "uq_people_tenant_id_id", "u"),
+    ("question_banks", ("tenant_id", "id"), "uq_question_banks_tenant_id_id", "u"),
+    ("tenants", ("id",), "tenants_pkey", "p"),
+)
+_RI_PARENT_NUMBERS = (
+    ("applicants", (2, 1)),
+    ("cohort_tracks", (2, 3, 4)),
+    ("lab_instances", (2, 1)),
+    ("people", (2, 1)),
+    ("question_banks", (2, 1)),
+    ("tenants", (1,)),
+)
+_RI_FK_FIELDS = (
+    "oid",
+    "namespace",
+    "child_namespace",
+    "child",
+    "child_oid",
+    "name",
+    "kind",
+    "columns",
+    "column_numbers",
+    "parent_namespace",
+    "parent",
+    "parent_oid",
+    "parent_columns",
+    "parent_numbers",
+    "delete_action",
+    "update_action",
+    "match",
+    "validated",
+    "deferrable",
+    "deferred",
+    "noinherit",
+    "local",
+    "inheritance_count",
+    "parent_constraint",
+    "index_oid",
+    "delete_set_columns",
+    "expression_absent",
+)
+_RI_TRIGGER_FIELDS = (
+    "oid",
+    "relation_oid",
+    "relation_namespace",
+    "relation",
+    "name",
+    "function_oid",
+    "function_namespace",
+    "function",
+    "function_language",
+    "function_source",
+    "function_arguments",
+    "function_return_namespace",
+    "function_return_type",
+    "function_kind",
+    "function_returns_set",
+    "type",
+    "enabled",
+    "internal",
+    "constraint_relation_oid",
+    "index_oid",
+    "constraint_oid",
+    "parent_trigger",
+    "deferrable",
+    "deferred",
+    "argument_count",
+    "arguments_absent",
+    "columns",
+    "qual_absent",
+    "old_table",
+    "new_table",
+)
+_RI_KEY_FIELDS = (
+    "fk_oid",
+    "parent_oid",
+    "index_oid",
+    "index_namespace",
+    "index_name",
+    "index_relation_oid",
+    "index_kind",
+    "index_owner",
+    "index_options",
+    "index_tablespace",
+    "index_partitioned",
+    "method",
+    "unique",
+    "primary",
+    "valid",
+    "ready",
+    "live",
+    "immediate",
+    "exclusion",
+    "key_count",
+    "attribute_count",
+    "keys",
+    "numbers",
+    "expression_absent",
+    "predicate_absent",
+    "ordering_options",
+    "opclasses",
+    "collations",
+    "constraint_oid",
+    "constraint_namespace",
+    "constraint_name",
+    "constraint_kind",
+    "constraint_relation_oid",
+    "constraint_index_oid",
+    "constraint_numbers",
+    "constraint_valid",
+    "constraint_deferrable",
+    "constraint_deferred",
+    "constraint_noinherit",
+    "constraint_local",
+    "constraint_inheritance_count",
+    "constraint_parent",
+    "nulls_not_distinct",
+    "opclass_input_types",
+    "opclass_methods",
+    "opclass_families",
+    "opclass_defaults",
+)
+_RI_CTE = """
+    WITH ri_retained AS (
+        SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname=ANY(:names)
+    ), ri_touching AS (
+        SELECT k.* FROM pg_catalog.pg_constraint k WHERE k.contype='f'
+        AND (k.conrelid IN (SELECT oid FROM ri_retained) OR k.confrelid IN (SELECT oid FROM ri_retained))
+    ), ri_parent_indexes AS (SELECT DISTINCT conindid AS oid FROM ri_touching),
+    ri_key_constraints AS (
+        SELECT k.* FROM pg_catalog.pg_constraint k WHERE k.contype IN ('p','u')
+        AND k.conindid IN (SELECT oid FROM ri_parent_indexes)
+    ), ri_selected_triggers AS (
+        SELECT t.* FROM pg_catalog.pg_trigger t WHERE t.tgrelid IN (SELECT oid FROM ri_retained)
+        OR t.tgconstraint IN (SELECT oid FROM ri_touching)
+    ), ri_relations AS (
+        SELECT oid FROM ri_retained UNION SELECT confrelid FROM ri_touching
+    ), ri_key_columns AS (
+        SELECT conrelid AS oid,unnest(conkey) AS num FROM ri_touching
+        UNION SELECT confrelid,unnest(confkey) FROM ri_touching
+    )
+"""
+
+
+def _ri_records(packet, name, fields):
+    records: list[dict] = []
+    for row in packet[name]:
+        _require(len(row) == len(fields))
+        records.append(dict(zip(fields, row, strict=True)))
+    return tuple(records)
+
+
+def _observe_ri_graph(connection):
+    """Read-only touching graph; unrelated external-parent RI belongs to its owner."""
+    queries = {
+        "ri_foreign_keys": """
+            SELECT f.oid,kn.nspname,cn.nspname,c.relname,c.oid,f.conname,f.contype,
+                   ARRAY(SELECT a.attname FROM unnest(f.conkey) WITH ORDINALITY x(num,ord)
+                         LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=f.conrelid AND a.attnum=x.num
+                         ORDER BY x.ord),
+                   f.conkey,pn.nspname,p.relname,p.oid,
+                   ARRAY(SELECT a.attname FROM unnest(f.confkey) WITH ORDINALITY x(num,ord)
+                         LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=f.confrelid AND a.attnum=x.num
+                         ORDER BY x.ord),
+                   f.confkey,f.confdeltype,f.confupdtype,f.confmatchtype,f.convalidated,f.condeferrable,
+                   f.condeferred,f.connoinherit,f.conislocal,f.coninhcount,f.conparentid,f.conindid,
+                   f.confdelsetcols,f.conbin IS NULL
+            FROM ri_touching f LEFT JOIN pg_catalog.pg_namespace kn ON kn.oid=f.connamespace
+            LEFT JOIN pg_catalog.pg_class c ON c.oid=f.conrelid
+            LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid=c.relnamespace
+            LEFT JOIN pg_catalog.pg_class p ON p.oid=f.confrelid
+            LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid=p.relnamespace ORDER BY cn.nspname,c.relname,f.conname
+        """,
+        "ri_relations": """
+            SELECT c.oid,n.nspname,c.relname,c.relkind,pg_catalog.pg_get_userbyid(c.relowner),
+                   c.relpersistence,c.relispartition,c.relhassubclass,c.relhastriggers
+            FROM pg_catalog.pg_class c LEFT JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.oid IN (SELECT oid FROM ri_relations) ORDER BY n.nspname,c.relname
+        """,
+        "ri_columns": """
+            SELECT c.oid,n.nspname,c.relname,a.attnum,a.attname,tn.nspname,ty.typname,a.atttypmod,
+                   a.attnotnull,a.attisdropped,a.attidentity,a.attgenerated,co_n.nspname,co.collname,
+                   a.attinhcount,a.attislocal,d.oid IS NULL
+            FROM ri_key_columns kc LEFT JOIN pg_catalog.pg_class c ON c.oid=kc.oid
+            LEFT JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=kc.oid AND a.attnum=kc.num
+            LEFT JOIN pg_catalog.pg_type ty ON ty.oid=a.atttypid
+            LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid=ty.typnamespace
+            LEFT JOIN pg_catalog.pg_collation co ON co.oid=a.attcollation
+            LEFT JOIN pg_catalog.pg_namespace co_n ON co_n.oid=co.collnamespace
+            LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+            ORDER BY n.nspname,c.relname,a.attnum
+        """,
+        "ri_parent_keys": """
+            SELECT f.oid,f.confrelid,f.conindid,ixn.nspname,ix.relname,i.indrelid,ix.relkind,
+                   pg_catalog.pg_get_userbyid(ix.relowner),ix.reloptions,ix.reltablespace,ix.relispartition,
+                   am.amname,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,
+                   i.indimmediate,i.indisexclusion,i.indnkeyatts,i.indnatts,
+                   ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY x(num,ord)
+                         LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=x.num
+                         ORDER BY x.ord),
+                   ARRAY(SELECT x.num FROM unnest(i.indkey) WITH ORDINALITY x(num,ord) ORDER BY x.ord),
+                   i.indexprs IS NULL,i.indpred IS NULL,i.indoption::text,
+                   ARRAY(SELECT ns.nspname||'.'||op.opcname FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_opclass op ON op.oid=x.id
+                         LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=op.opcnamespace ORDER BY x.ord),
+                   ARRAY(SELECT CASE WHEN x.id=0 THEN NULL ELSE ns.nspname||'.'||co.collname END
+                         FROM unnest(i.indcollation) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_collation co ON co.oid=x.id
+                         LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=co.collnamespace ORDER BY x.ord),
+                   k.oid,kn.nspname,k.conname,k.contype,k.conrelid,k.conindid,k.conkey,k.convalidated,
+                   k.condeferrable,k.condeferred,k.connoinherit,k.conislocal,k.coninhcount,k.conparentid,
+                   i.indnullsnotdistinct,
+                   ARRAY(SELECT ns.nspname||'.'||ty.typname FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_opclass op ON op.oid=x.id
+                         LEFT JOIN pg_catalog.pg_type ty ON ty.oid=op.opcintype
+                         LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=ty.typnamespace ORDER BY x.ord),
+                   ARRAY(SELECT am.amname FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_opclass op ON op.oid=x.id
+                         LEFT JOIN pg_catalog.pg_am am ON am.oid=op.opcmethod ORDER BY x.ord),
+                   ARRAY(SELECT ns.nspname||'.'||fam.opfname FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_opclass op ON op.oid=x.id
+                         LEFT JOIN pg_catalog.pg_opfamily fam ON fam.oid=op.opcfamily
+                         LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=fam.opfnamespace ORDER BY x.ord),
+                   ARRAY(SELECT op.opcdefault FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_opclass op ON op.oid=x.id ORDER BY x.ord)
+            FROM ri_touching f LEFT JOIN pg_catalog.pg_class ix ON ix.oid=f.conindid
+            LEFT JOIN pg_catalog.pg_namespace ixn ON ixn.oid=ix.relnamespace
+            LEFT JOIN pg_catalog.pg_index i ON i.indexrelid=f.conindid LEFT JOIN pg_catalog.pg_am am ON am.oid=ix.relam
+            LEFT JOIN ri_key_constraints k ON k.conindid=f.conindid AND k.conrelid=f.confrelid
+            LEFT JOIN pg_catalog.pg_namespace kn ON kn.oid=k.connamespace ORDER BY f.oid,k.oid
+        """,
+        "ri_operators": """
+            SELECT f.oid,z.label,x.ord,o.oid,onsp.nspname,o.oprname,o.oprkind,
+                   ln.nspname,lt.typname,rn.nspname,rt.typname,otn.nspname,ot.typname,
+                   p.oid,pn.nspname,p.proname,l.lanname,p.prosrc,p.pronargs,
+                   ARRAY(SELECT an.nspname||'.'||a.typname FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY v(id,ord)
+                         LEFT JOIN pg_catalog.pg_type a ON a.oid=v.id
+                         LEFT JOIN pg_catalog.pg_namespace an ON an.oid=a.typnamespace ORDER BY v.ord),
+                   prn.nspname,pr.typname,p.prokind,p.proretset,p.proconfig IS NULL
+            FROM ri_touching f CROSS JOIN LATERAL
+                 (VALUES ('pf',f.conpfeqop),('pp',f.conppeqop),('ff',f.conffeqop)) z(label,ops)
+            CROSS JOIN LATERAL unnest(z.ops) WITH ORDINALITY x(id,ord)
+            LEFT JOIN pg_catalog.pg_operator o ON o.oid=x.id
+            LEFT JOIN pg_catalog.pg_namespace onsp ON onsp.oid=o.oprnamespace
+            LEFT JOIN pg_catalog.pg_type lt ON lt.oid=o.oprleft
+            LEFT JOIN pg_catalog.pg_namespace ln ON ln.oid=lt.typnamespace
+            LEFT JOIN pg_catalog.pg_type rt ON rt.oid=o.oprright
+            LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid=rt.typnamespace
+            LEFT JOIN pg_catalog.pg_type ot ON ot.oid=o.oprresult
+            LEFT JOIN pg_catalog.pg_namespace otn ON otn.oid=ot.typnamespace
+            LEFT JOIN pg_catalog.pg_proc p ON p.oid=o.oprcode
+            LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid=p.pronamespace
+            LEFT JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+            LEFT JOIN pg_catalog.pg_type pr ON pr.oid=p.prorettype
+            LEFT JOIN pg_catalog.pg_namespace prn ON prn.oid=pr.typnamespace
+            ORDER BY f.oid,z.label,x.ord
+        """,
+        "ri_triggers": """
+            SELECT t.oid,t.tgrelid,n.nspname,c.relname,t.tgname,t.tgfoid,pn.nspname,p.proname,l.lanname,
+                   p.prosrc,p.pronargs,rn.nspname,rt.typname,p.prokind,p.proretset,t.tgtype,t.tgenabled,
+                   t.tgisinternal,t.tgconstrrelid,t.tgconstrindid,t.tgconstraint,t.tgparentid,
+                   t.tgdeferrable,t.tginitdeferred,t.tgnargs,octet_length(t.tgargs)=0,t.tgattr::text,
+                   t.tgqual IS NULL,t.tgoldtable,t.tgnewtable
+            FROM ri_selected_triggers t LEFT JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+            LEFT JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            LEFT JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid
+            LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid=p.pronamespace
+            LEFT JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+            LEFT JOIN pg_catalog.pg_type rt ON rt.oid=p.prorettype
+            LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid=rt.typnamespace
+            ORDER BY t.tgconstraint,t.tgrelid,t.tgtype,t.oid
+        """,
+        "ri_external_parent_other_triggers": """
+            SELECT t.oid,t.tgrelid,n.nspname,c.relname,t.tgname,t.tgisinternal,t.tgconstraint,
+                   k.contype,k.conrelid,k.confrelid,t.tgconstrrelid
+            FROM pg_catalog.pg_trigger t LEFT JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+            LEFT JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            LEFT JOIN pg_catalog.pg_constraint k ON k.oid=t.tgconstraint
+            WHERE t.tgrelid IN (SELECT confrelid FROM ri_touching)
+                  AND t.tgrelid NOT IN (SELECT oid FROM ri_retained)
+                  AND t.tgconstraint NOT IN (SELECT oid FROM ri_touching) ORDER BY t.oid
+        """,
+        "ri_inheritance": """
+            SELECT inhrelid,inhparent,inhseqno FROM pg_catalog.pg_inherits
+            WHERE inhrelid IN (SELECT oid FROM ri_relations) OR inhparent IN (SELECT oid FROM ri_relations)
+            ORDER BY 1,2,3
+        """,
+        "ri_dependencies": """
+            SELECT ns.nspname||'.'||cl.relname,d.objid,d.objsubid,rns.nspname||'.'||rcl.relname,
+                   d.refobjid,d.refobjsubid,d.deptype
+            FROM pg_catalog.pg_depend d LEFT JOIN pg_catalog.pg_class cl ON cl.oid=d.classid
+            LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=cl.relnamespace
+            LEFT JOIN pg_catalog.pg_class rcl ON rcl.oid=d.refclassid
+            LEFT JOIN pg_catalog.pg_namespace rns ON rns.oid=rcl.relnamespace
+            WHERE (d.classid='pg_catalog.pg_constraint'::regclass
+                   AND d.objid IN (SELECT oid FROM ri_touching UNION SELECT oid FROM ri_key_constraints))
+               OR (d.classid='pg_catalog.pg_trigger'::regclass AND d.objid IN (SELECT oid FROM ri_selected_triggers))
+               OR (d.classid='pg_catalog.pg_class'::regclass AND d.objid IN (SELECT oid FROM ri_parent_indexes))
+               OR (d.refclassid='pg_catalog.pg_constraint'::regclass AND d.refobjid IN (SELECT oid FROM ri_touching))
+               OR (d.refclassid='pg_catalog.pg_trigger'::regclass
+                   AND d.refobjid IN (SELECT oid FROM ri_selected_triggers))
+            ORDER BY 1,2,3,4,5,6,7
+        """,
+    }
+    return {name: _rows(connection, _RI_CTE + sql, names=list(_NAMES)) for name, sql in queries.items()}
+
+
+def _check_ri_graph(packet):
+    """Fixed historical touching graph only; never private phase/adoption proof."""
+    _check_rendering_context(packet)
+    expected_fks = {(table, spec[0]): spec for table, specs in _FOREIGN_KEYS for spec in specs}
+    foreign_keys = _ri_records(packet, "ri_foreign_keys", _RI_FK_FIELDS)
+    _require(len(foreign_keys) == len(expected_fks))
+    _require({(fk["child"], fk["name"]) for fk in foreign_keys} == set(expected_fks))
+    relations = {row[2]: row for row in packet["ri_relations"]}
+    parent_keys = {table: (columns, name, kind) for table, columns, name, kind in _RI_PARENT_KEYS}
+    parent_numbers = dict(_RI_PARENT_NUMBERS)
+    _require(len(relations) == len(packet["ri_relations"]))
+    _require(set(relations) == set(_NAMES) | set(parent_keys))
+    for name, row in relations.items():
+        _require(row[1:] == ("public", name, "r", "app_admin", "p", False, False, name != "platform_settings"))
+    _require(not packet["ri_inheritance"])
+    retained_oids = {row[0]: row[1] for row in packet["relations"]}
+    for name, oid in retained_oids.items():
+        _require(relations[name][0] == oid)
+    source_columns = {(table, col[0]): (num, col) for table, columns in _COLUMNS for num, col in enumerate(columns, 1)}
+    expected_columns: set[tuple[str, str]] = set()
+    by_oid: dict[int, dict] = {}
+    for fk in foreign_keys:
+        spec = expected_fks[(fk["child"], fk["name"])]
+        _require(fk["namespace"] == fk["child_namespace"] == fk["parent_namespace"] == "public")
+        _require(fk["kind"] == "f" and fk["columns"] == spec[1] and fk["parent"] == spec[2])
+        _require(fk["parent_columns"] == spec[3] and fk["parent_numbers"] == parent_numbers[spec[2]])
+        _require(fk["column_numbers"] == tuple(source_columns[(fk["child"], col)][0] for col in spec[1]))
+        _require(fk["child_oid"] == relations[fk["child"]][0] and fk["parent_oid"] == relations[spec[2]][0])
+        _require(
+            (fk["delete_action"], fk["update_action"], fk["match"]) == ("c" if spec[4] == "CASCADE" else "a", "a", "s")
+        )
+        _require(
+            (
+                fk["validated"],
+                fk["deferrable"],
+                fk["deferred"],
+                fk["noinherit"],
+                fk["local"],
+                fk["inheritance_count"],
+                fk["parent_constraint"],
+                fk["delete_set_columns"],
+                fk["expression_absent"],
+            )
+            == (True, False, False, True, True, 0, 0, None, True)
+        )
+        _require(type(fk["oid"]) is int and fk["oid"] > 0 and fk["oid"] not in by_oid)
+        by_oid[fk["oid"]] = fk
+        expected_columns.update((fk["child"], col) for col in fk["columns"])
+        expected_columns.update((fk["parent"], col) for col in fk["parent_columns"])
+    incoming = tuple(sorted((fk["child"], fk["name"], fk["parent"]) for fk in foreign_keys if fk["parent"] in _NAMES))
+    _require(incoming == tuple(sorted(_RI_INCOMING)))
+    _require(len(packet["ri_columns"]) == len(expected_columns))
+    _require({(row[2], row[4]) for row in packet["ri_columns"]} == expected_columns)
+    for row in packet["ri_columns"]:
+        table, column = row[2], row[4]
+        if table in _COLUMN_MAP:
+            number, col = source_columns[(table, column)]
+            not_null = not col[2]
+        else:
+            number = parent_numbers[table][parent_keys[table][0].index(column)]
+            not_null = True
+        _require(
+            row
+            == (
+                relations[table][0],
+                "public",
+                table,
+                number,
+                column,
+                "pg_catalog",
+                "uuid",
+                -1,
+                not_null,
+                False,
+                "",
+                "",
+                None,
+                None,
+                0,
+                True,
+                True,
+            )
+        )
+    key_records = _ri_records(packet, "ri_parent_keys", _RI_KEY_FIELDS)
+    _require(len(key_records) == len(foreign_keys))
+    _require({key["fk_oid"] for key in key_records} == set(by_oid))
+    unique_keys: dict[int, dict] = {}
+    for key in key_records:
+        fk = by_oid[key["fk_oid"]]
+        cols, index_name, kind = parent_keys[fk["parent"]]
+        numbers = parent_numbers[fk["parent"]]
+        _require(key["parent_oid"] == fk["parent_oid"] and key["index_oid"] == fk["index_oid"])
+        _require(
+            (
+                key["index_namespace"],
+                key["index_name"],
+                key["index_relation_oid"],
+                key["index_kind"],
+                key["index_owner"],
+                key["index_options"],
+                key["index_tablespace"],
+                key["index_partitioned"],
+                key["method"],
+                key["unique"],
+                key["primary"],
+                key["valid"],
+                key["ready"],
+                key["live"],
+                key["immediate"],
+                key["exclusion"],
+                key["key_count"],
+                key["attribute_count"],
+                key["keys"],
+                key["numbers"],
+                key["expression_absent"],
+                key["predicate_absent"],
+                key["ordering_options"],
+                key["opclasses"],
+                key["collations"],
+            )
+            == (
+                "public",
+                index_name,
+                fk["parent_oid"],
+                "i",
+                "app_admin",
+                None,
+                0,
+                False,
+                "btree",
+                True,
+                kind == "p",
+                True,
+                True,
+                True,
+                True,
+                False,
+                len(cols),
+                len(cols),
+                cols,
+                numbers,
+                True,
+                True,
+                " ".join("0" for _ in cols),
+                tuple("pg_catalog.uuid_ops" for _ in cols),
+                tuple(None for _ in cols),
+            )
+        )
+        _require(
+            (
+                key["constraint_namespace"],
+                key["constraint_name"],
+                key["constraint_kind"],
+                key["constraint_relation_oid"],
+                key["constraint_index_oid"],
+                key["constraint_numbers"],
+                key["constraint_valid"],
+                key["constraint_deferrable"],
+                key["constraint_deferred"],
+                key["constraint_noinherit"],
+                key["constraint_local"],
+                key["constraint_inheritance_count"],
+                key["constraint_parent"],
+            )
+            == (
+                "public",
+                index_name,
+                kind,
+                fk["parent_oid"],
+                fk["index_oid"],
+                numbers,
+                True,
+                False,
+                False,
+                True,
+                True,
+                0,
+                0,
+            )
+        )
+        _require(
+            (
+                key["nulls_not_distinct"],
+                key["opclass_input_types"],
+                key["opclass_methods"],
+                key["opclass_families"],
+                key["opclass_defaults"],
+            )
+            == (
+                False,
+                tuple("pg_catalog.uuid" for _ in cols),
+                tuple("btree" for _ in cols),
+                tuple("pg_catalog.uuid_ops" for _ in cols),
+                tuple(True for _ in cols),
+            )
+        )
+        _require(type(key["constraint_oid"]) is int and key["constraint_oid"] > 0)
+        if key["constraint_oid"] in unique_keys:
+            prior = unique_keys[key["constraint_oid"]]
+            _require((prior["index_oid"], prior["parent_oid"]) == (key["index_oid"], key["parent_oid"]))
+        unique_keys[key["constraint_oid"]] = key
+    _require(len(unique_keys) == len(_RI_PARENT_KEYS))
+    expected_operators = tuple(
+        sorted(
+            (oid, kind, number)
+            for oid, fk in by_oid.items()
+            for kind in ("pf", "pp", "ff")
+            for number in range(1, len(fk["columns"]) + 1)
+        )
+    )
+    _require(tuple(row[:3] for row in packet["ri_operators"]) == expected_operators)
+    for row in packet["ri_operators"]:
+        _require(type(row[3]) is int and row[3] > 0 and type(row[13]) is int and row[13] > 0)
+        _require(
+            row[4:13] == ("pg_catalog", "=", "b", "pg_catalog", "uuid", "pg_catalog", "uuid", "pg_catalog", "bool")
+        )
+        _require(
+            row[14:]
+            == (
+                "pg_catalog",
+                "uuid_eq",
+                "internal",
+                "uuid_eq",
+                2,
+                ("pg_catalog.uuid", "pg_catalog.uuid"),
+                "pg_catalog",
+                "bool",
+                "f",
+                False,
+                True,
+            )
+        )
+    triggers = _ri_records(packet, "ri_triggers", _RI_TRIGGER_FIELDS)
+    _require(len(triggers) == 4 * len(foreign_keys))
+    actual_roles: list[tuple[int, str, int]] = []
+    for trigger in triggers:
+        fk = by_oid.get(trigger["constraint_oid"])
+        if fk is None:
+            raise RetainedSchemaRefused("Historical retained schema refused; root rollback required")
+        function = trigger["function"]
+        if trigger["relation_oid"] == fk["child_oid"]:
+            role = ("child", trigger["type"])
+            expected_function = {5: "RI_FKey_check_ins", 17: "RI_FKey_check_upd"}.get(trigger["type"])
+            expected_relation = fk["child"]
+            opposite_oid = fk["parent_oid"]
+            prefix = "RI_ConstraintTrigger_c_"
+        else:
+            role = ("parent", trigger["type"])
+            expected_function = {
+                9: "RI_FKey_cascade_del" if fk["delete_action"] == "c" else "RI_FKey_noaction_del",
+                17: "RI_FKey_noaction_upd",
+            }.get(trigger["type"])
+            _require(trigger["relation_oid"] == fk["parent_oid"])
+            expected_relation = fk["parent"]
+            opposite_oid = fk["child_oid"]
+            prefix = "RI_ConstraintTrigger_a_"
+        _require(expected_function is not None and function == expected_function)
+        _require(trigger["relation_namespace"] == "public" and trigger["relation"] == expected_relation)
+        _require(type(trigger["oid"]) is int and trigger["oid"] > 0)
+        _require(trigger["name"] == prefix + str(trigger["oid"]))
+        _require(
+            (
+                trigger["function_namespace"],
+                trigger["function_language"],
+                trigger["function_source"],
+                trigger["function_arguments"],
+                trigger["function_return_namespace"],
+                trigger["function_return_type"],
+                trigger["function_kind"],
+                trigger["function_returns_set"],
+            )
+            == ("pg_catalog", "internal", expected_function, 0, "pg_catalog", "trigger", "f", False)
+        )
+        _require(
+            (
+                trigger["enabled"],
+                trigger["internal"],
+                trigger["constraint_relation_oid"],
+                trigger["index_oid"],
+                trigger["parent_trigger"],
+                trigger["deferrable"],
+                trigger["deferred"],
+                trigger["argument_count"],
+                trigger["arguments_absent"],
+                trigger["columns"],
+                trigger["qual_absent"],
+                trigger["old_table"],
+                trigger["new_table"],
+            )
+            == ("O", True, opposite_oid, fk["index_oid"], 0, False, False, 0, True, "", True, None, None)
+        )
+        actual_roles.append((fk["oid"], *role))
+    _require(
+        tuple(sorted(actual_roles))
+        == tuple(
+            sorted(
+                (oid, side, flag)
+                for oid in by_oid
+                for side, flag in (("child", 5), ("child", 17), ("parent", 9), ("parent", 17))
+            )
+        )
+    )
+    # Do not bless unrelated owner FKs. Only classify their external-parent
+    # triggers as outside this slice; custom/noninternal/unassociated extras fail.
+    for row in packet["ri_external_parent_other_triggers"]:
+        _require(row[5] is True and row[7] == "f" and row[9] == row[1] and row[10] == row[8])
+    _check_ri_dependencies(packet, by_oid, unique_keys, triggers)
+
+
+def _check_ri_dependencies(packet, foreign_keys, parent_keys, triggers):
+    expected: list[tuple[str, int, int, str, int, int, str]] = []
+    for oid, fk in foreign_keys.items():
+        expected.extend(
+            ("pg_catalog.pg_constraint", oid, 0, "pg_catalog.pg_class", fk["child_oid"], num, "a")
+            for num in fk["column_numbers"]
+        )
+        expected.extend(
+            ("pg_catalog.pg_constraint", oid, 0, "pg_catalog.pg_class", fk["parent_oid"], num, "n")
+            for num in fk["parent_numbers"]
+        )
+        expected.append(("pg_catalog.pg_constraint", oid, 0, "pg_catalog.pg_class", fk["index_oid"], 0, "n"))
+    for trigger in triggers:
+        expected.append(
+            ("pg_catalog.pg_trigger", trigger["oid"], 0, "pg_catalog.pg_constraint", trigger["constraint_oid"], 0, "i")
+        )
+    for oid, key in parent_keys.items():
+        expected.extend(
+            ("pg_catalog.pg_constraint", oid, 0, "pg_catalog.pg_class", key["parent_oid"], num, "a")
+            for num in key["constraint_numbers"]
+        )
+        expected.append(("pg_catalog.pg_class", key["index_oid"], 0, "pg_catalog.pg_constraint", oid, 0, "i"))
+    # Builtin uuid operators/opclasses and RI functions are pinned PG16 objects;
+    # pg_depend.c omits those edges. Unknown/excess rows are never deduplicated.
+    _require(packet["ri_dependencies"] == tuple(sorted(expected)))
+
+
 def _rows(connection, sql, **params):
     return tuple(
         tuple(tuple(v) if isinstance(v, list) else v for v in row)
@@ -1070,6 +1725,7 @@ def _observe_historical_catalog(connection):
     packet["tenant_function_source_sha256"] = tuple(
         (row[0], hashlib.sha256(row[-1].encode("utf-8")).hexdigest()) for row in packet["tenant_function"]
     )
+    packet.update(_observe_ri_graph(connection))
     return packet
 
 
@@ -1214,6 +1870,7 @@ def _check_structure(packet):
     _require(packet["policies"] == expected_policies)
     _require(not packet["unexpected_rules_triggers"])
     _check_policy_dependencies(packet)
+    _check_ri_graph(packet)
 
 
 def _verify_historical_retained_schema(connection):
