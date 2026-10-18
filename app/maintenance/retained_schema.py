@@ -893,6 +893,19 @@ _RI_FK_FIELDS = (
     "delete_set_columns",
     "expression_absent",
 )
+_RI_EXTERNAL_TRIGGER_FIELDS = (
+    "oid",
+    "relation_oid",
+    "relation_namespace",
+    "relation",
+    "name",
+    "internal",
+    "constraint_oid",
+    "constraint_kind",
+    "child_oid",
+    "parent_oid",
+    "constraint_relation_oid",
+)
 _RI_TRIGGER_FIELDS = (
     "oid",
     "relation_oid",
@@ -1465,8 +1478,17 @@ def _check_ri_graph(packet):
     )
     # Do not bless unrelated owner FKs. Only classify their external-parent
     # triggers as outside this slice; custom/noninternal/unassociated extras fail.
-    for row in packet["ri_external_parent_other_triggers"]:
-        _require(row[5] is True and row[7] == "f" and row[9] == row[1] and row[10] == row[8])
+    # External parents may also be children of unrelated FKs. PG16 check
+    # triggers use (child, parent); action triggers use (parent, child).
+    for trigger in _ri_records(packet, "ri_external_parent_other_triggers", _RI_EXTERNAL_TRIGGER_FIELDS):
+        _require(trigger["internal"] is True and trigger["constraint_kind"] == "f")
+        _require(
+            (trigger["relation_oid"], trigger["constraint_relation_oid"])
+            in (
+                (trigger["child_oid"], trigger["parent_oid"]),
+                (trigger["parent_oid"], trigger["child_oid"]),
+            )
+        )
     _check_ri_dependencies(packet, by_oid, unique_keys, triggers)
 
 

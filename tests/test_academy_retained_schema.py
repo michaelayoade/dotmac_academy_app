@@ -580,6 +580,9 @@ def test_natural_source_touching_fk_ri_and_dependency_graph(retained_engine):
         # These are genuine unrelated frozen owner FKs on external parents.
         # Their classification does not qualify their full constraint family.
         assert packet["ri_external_parent_other_triggers"]
+        external = packet["ri_external_parent_other_triggers"]
+        assert any(row[1] == row[8] and row[10] == row[9] and row[8] != row[9] for row in external)
+        assert any(row[1] == row[9] and row[10] == row[8] and row[8] != row[9] for row in external)
         retained._check_ri_graph(packet)
         with pytest.raises(retained.RetainedSchemaUnsupported):
             retained._verify_historical_retained_schema(connection)
@@ -723,6 +726,34 @@ def test_custom_or_unassociated_external_parent_trigger_is_refused(retained_engi
             )
             connection.execute(sa.text("SET LOCAL ROLE app_admin"))
         packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize("side", ("child", "parent"))
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE pg_catalog.pg_trigger SET tgconstrrelid=0 WHERE oid=:oid",
+        "UPDATE pg_catalog.pg_trigger SET tgconstraint=0 WHERE oid=:oid",
+    ),
+)
+def test_unrelated_external_fk_trigger_association_drift_is_refused(retained_engine, side, statement):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        retained._check_ri_graph(packet)
+        trigger = next(
+            row
+            for row in packet["ri_external_parent_other_triggers"]
+            if row[8] != row[9] and row[1] == row[8 if side == "child" else 9]
+        )
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+        connection.execute(sa.text(statement), {"oid": trigger[0]})
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        packet = retained._observe_historical_catalog(connection)
+        assert any(row[0] == trigger[0] for row in packet["ri_external_parent_other_triggers"])
         with pytest.raises(retained.RetainedSchemaRefused) as error:
             retained._check_ri_graph(packet)
         assert type(error.value) is retained.RetainedSchemaRefused

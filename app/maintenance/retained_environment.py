@@ -120,8 +120,11 @@ def _check_bindings(bindings: HostedEnvironmentBindings | None) -> None:
     _require(bindings.encoding == "UTF8" and bindings.locale_provider in ("c", "i"))
     for value in (bindings.lc_collate, bindings.lc_ctype):
         _require(type(value) is str and 0 < len(value) <= 128 and value.isprintable())
-    for value in (bindings.icu_locale, bindings.collation_version, bindings.actual_collation_version):
-        _require(value is None or (type(value) is str and 0 < len(value) <= 128 and value.isprintable()))
+    for optional_value in (bindings.icu_locale, bindings.collation_version, bindings.actual_collation_version):
+        _require(
+            optional_value is None
+            or (type(optional_value) is str and 0 < len(optional_value) <= 128 and optional_value.isprintable())
+        )
     _require((bindings.icu_locale is None) is (bindings.locale_provider == "c"))
     _require(bindings.collation_version == bindings.actual_collation_version)
     _require(type(bindings.extension_versions) is tuple and len(bindings.extension_versions) == 1)
@@ -306,7 +309,7 @@ def _observe_hosted_environment(connection: Connection) -> dict[str, tuple]:
         "outbox_roles": ["outbox_dispatcher", "platform_outbox_dispatcher"],
     }
     packet = {name: retained._rows(connection, sql, **params) for name, sql in _QUERIES}
-    _require(connection.get_transaction() is root and root.is_active)
+    _require(root is not None and connection.get_transaction() is root and root.is_active)
     return packet
 
 
@@ -435,5 +438,5 @@ def observe_retained_environment(connection: Connection, bindings: HostedEnviron
         raise RetainedEnvironmentRefused(
             "Frozen retained source/security contradiction; root rollback required"
         ) from None
-    _require(connection.get_transaction() is root and root.is_active)
+    _require(root is not None and connection.get_transaction() is root and root.is_active)
     raise RetainedEnvironmentUnsupported("Hosted bindings, service image and exclusive Genesis boundary unqualified")

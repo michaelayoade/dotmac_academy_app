@@ -450,3 +450,31 @@ Primary semantics: [pg_trigger](https://www.postgresql.org/docs/16/catalog-pg-tr
 [pg_constraint.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/pg_constraint.c),
 [pg_depend.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/pg_depend.c),
 and [index.c](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/index.c).
+
+
+## V8 hosted external-trigger association correction
+
+The failed source-bound oracle39137343027 exposed a projection/validation
+mismatch, not a new expected catalog authority. The observer includes every
+unrelated trigger located on the selected external parent relations. Such a
+relation can itself be the child of another FK. The previous gate required
+only the parent-side orientation and therefore rejected genuine check triggers
+on those relations before many negative canaries reached their planted drift.
+
+The correction retains the full projection and requires each unrelated trigger
+to be internal, associated with an actual FK, and to have exactly either the
+(child, parent) or (parent, child) pair of trigger relation/opposite relation
+OIDs from that FK. PostgreSQL16 tablecmds.c passes those respective pairs to
+CreateTrigger in CreateFKCheckTrigger and createForeignKeyActionTriggers.
+Named projection fields make this endpoint distinction explicit. Neither
+orientation qualifies the unrelated owner's full function/firing/dependency
+contract; that composed owner gate remains owed. Custom/noninternal,
+unassociated, non-FK and mismatched-endpoint triggers still refuse.
+
+The genuine frozen62 baseline now asserts that both non-self orientations are
+present. Four authored hosted canaries clear the FK association or opposite
+relation for each side, retain the affected row in the observation and require
+exact base Refused. Prior tests and all graph/dependency expectations are
+preserved. Only source AST/hash and pinned Ruff checks ran locally. A new
+hosted replay is required; no hosted pass or admission is claimed. The final
+Unsupported gate remains unconditional.

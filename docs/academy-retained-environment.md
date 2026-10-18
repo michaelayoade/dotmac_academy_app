@@ -173,3 +173,33 @@ This artifact is always UNQUALIFIED and has no admission, proof, fence, consumer
 or production authority. No runtime, import, test, type or SQL execution was
 performed locally. Existing seven test-function and fixture ASTs are preserved;
 the new capture is authored, not run.
+
+
+## V3 bounded hosted typing correction
+
+Hosted CI for actual head `9e6adf4ac03ffd0f5d4aeda42605fe21430a9f8f`
+(run `39137343012`, job `117704448548`) reported three mypy errors in
+`retained_environment.py`. V3 gives the optional locale/version loop its own
+variable, so a prior string-only loop variable is not reused for `str | None`.
+Both final root checks now explicitly require a non-None transaction before
+accessing `is_active`. These preserve the existing predicate, refusal message,
+read-only observation and unconditional Unsupported gate. No bindings, roles,
+ACL expectations, SQL or security profile are changed.
+
+The same hosted run's genuine profile positive reached the retained-schema
+checks after matching the environment checks. Its contradiction is tracked in
+the separate retained-schema RI correction: the external-parent projection
+includes unrelated child-side FK check triggers, while the existing checker
+requires a parent-side orientation for every trigger. The retained-schema owner
+confirmed this source diagnosis against PostgreSQL16 trigger construction. V3
+does not suppress that refusal, reinterpret the retained packet, or accept an
+observed catalog as an expected binding. The existing genuine profile positive,
+SELECT-only/root-preservation assertions and planted-authority cases remain
+unchanged and require a hosted rerun with the separately reviewed RI correction.
+
+All 219 base files and modes were verified against the canonical environment219
+manifest before copying. V3 changes only this document and
+`app/maintenance/retained_environment.py`; the owned hosted test remains exact.
+Local checks are stdlib source AST/hash and pinned Ruff only. No application
+imports, tests, mypy, SQL or Docker were run locally. This source capsule grants
+no admission, deployment, production, proof, fence or a004 authority.
