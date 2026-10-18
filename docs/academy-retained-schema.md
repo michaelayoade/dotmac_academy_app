@@ -197,9 +197,11 @@ skip checks or reset databases. Every test body remains byte/AST-equivalent;
 only the module fixture and its necessary imports change. The engine retains
 explicit `hide_parameters=True`, `echo=False` and guaranteed disposal.
 
-The ordinary CI file is a new explicit overlay sourced from exact actual-a5 CI
-SHA256 `d717b35092eb76ad837f7bf8f97d737559257834e08c0da9502b7f5151bf9126`.
-Its only changes are a new retained DSN targeting disposable
+The ordinary CI overlay was built from the captured CI template SHA256
+`d717b35092eb76ad837f7bf8f97d737559257834e08c0da9502b7f5151bf9126`.
+The coordinator subsequently verified that template had one extra final newline;
+it was not byte-exact actual-a5 CI. This capsule preserves the assigned v6 CI
+bytes, including that serialization artifact. The intended changes are a new retained DSN targeting disposable
 `academy_retained_schema`, a database owned by app_admin created beside the
 unchanged Kernel-entry database, and public-schema USAGE/CREATE grants on that
 new database. Existing cluster-role creation still occurs once. The temporary
@@ -277,3 +279,106 @@ This doc also incorporates only the coordinator's mechanical v5b fixture-DSN
 correction from doc SHA256
 `ac611493aefb445413cff7255979c76d5fe0a85d4f933de5e68c16cedb9127d0`;
 its own v6 rendering additions do not overwrite that correction.
+
+## v7 candidate tenant-helper and policy-dependency contract
+
+V7 adds only the public tenant helper and its ten policy dependency closures.
+The source is the genuine initial migration's `_create_current_tenant_function`
+at line373 and `_grant_roles` at line414. Its exact dollar-quoted prosrc body,
+including the leading/trailing whitespace, independently hashes to SHA256
+`ca9e519dc5f4b681d52f888372ae6bb867cf622cd38fdc38cd471a1fa430bb12`.
+The passed Genesis MD5 `d75e12d0c59d482c4c709162aafb5df2` corroborates that
+body, but is no longer the observation's only source fingerprint. The observer
+fetches this named helper family only and hashes its exact UTF-8 body in Python,
+without a PostgreSQL extension. The verifier checks both exact body equality and
+SHA256. No SQL/body whitespace normalization or copied live expected value is
+used. The packet's helper body is schema source code, not application row data.
+
+The observer now records every public same-name routine. The fixed contract
+requires exactly one normal no-argument function, with no overloads, returning
+pg_catalog.uuid, owned by app_admin and implemented in plpgsql. It requires
+STABLE, SECURITY INVOKER, non-leakproof, parallel unsafe, nonstrict, non-set
+return, no argument/default/variadic/support/transform/config/binary/SQL-body
+overrides, default plpgsql cost100 and non-set rows0. Input/all-argument types
+resolve through actual pg_type/pg_namespace identities. Language and helper
+OIDs are observations, never literal Genesis OID pins. Configuration and other
+required-absent override fields are observed as absence booleans, so arbitrary
+configuration values or default expressions are not retrieved or dumped.
+
+Helper ACLs are fixed from the explicit app_user/platform_api EXECUTE grant and
+PostgreSQL's built-in owner/PUBLIC EXECUTE defaults. All four entries require
+app_admin as grantor and no explicit grant option. PUBLIC EXECUTE is preserved,
+not prohibited; the owner's implicit grant options are not ACL stars. The
+observer reads actual effective EXECUTE for every actual pg_roles row. Every
+role must have execution under the source PUBLIC grant, including the worker,
+which receives no invented helper-specific grant. No inheritance claim is used
+to substitute for that real privilege check. This does not qualify ambient
+cluster roles, their reachable schemas or ownership/SET ROLE authority.
+
+Policy dependency classes resolve to catalog namespace/name. Each of the ten
+policies must have exactly five pg_depend rows: one automatic dependency on its
+actual owning table, two normal dependencies on its actual tenant_id column,
+and two normal dependencies on the actual checked helper. PostgreSQL16 records
+USING and WITH CHECK separately, producing the duplicate normal edges. The
+verifier compares sorted tuples, preserving multiplicity rather than converting
+to a set. The observer also captures every matching current-database pg_shdepend
+row; the frozen PUBLIC policies require no shared role dependency, exactly as
+PG16 policy.c skips PUBLIC. A real TO app_user policy canary verifies refusal of
+the newly recorded shared role edge. Actual table OIDs and tenant attribute numbers come from independently
+checked table/column observations; the helper OID is derived inside the closure
+check from the source-qualified actual helper. There is no caller-supplied OID,
+namespace, expected value or dependency override. Unknown referenced catalog
+classes remain in the observation via LEFT JOIN and fail the exact comparison.
+
+All thirteen v6 test functions/scenarios, their assertions, the candidate
+rendering checks, isolated v5 fixture, ordinary CI/workflows and coordinator's
+v5b doc fix are preserved. Added hosted canaries cover body replacement,
+extra signature, SECURITY DEFINER, strictness, volatility, parallel safety,
+function-local configuration, cost, missing/extra/default-PUBLIC grants and
+grant options. A natural real-role canary exercises app_user/worker helper
+execution and valid/invalid tenant settings. A policy WITH CHECK(true) canary
+retains the same unique endpoint set while removing one copy of the normal
+edges. A shadow-schema replacement canary creates a source-identical new public
+helper while actual policies still refer to the old helper OID; isolated helper
+checks pass but dependency closure refuses. No fake catalogs are positives.
+These new canaries are AUTHORED, NOT RUN locally.
+
+The coordinator reported the v6 frozen Genesis oracle39135138894 passed42
+hosted cases on source checkout `8c9dee50870b1fbc163c05af1ad791d0f8559cdc`.
+Its catalog SHA256 is
+`e8558b7da245742616f779d787077e183862243a81901f978f662d694a6f55b4`;
+its observed narrow context was PostgreSQL160015, standard/default deparser
+settings and effective pg_catalog/public schemas. That validates only this
+source-bound rendering observation, not all PG16 minors, the new v7 attributes/
+ACL projection, a deployed security profile or adoption. V7 still ends at the
+same unconditional Unsupported verifier, and issues no proof/receipt or DDL.
+
+Remaining gates include hosted v7 helper/ACL/dependency qualification; full
+constraint/operator/type/index and incoming/outgoing RI-trigger/dependency
+semantics; a separately reviewed environment SecuritySpec; complete physical
+Connection/root/XID/OID/cohort continuity under the actual fence/ordered locks;
+private phase proof and a004; whole-product/ERP/Integration conservation and
+recovery. No compensating repair, migration runner, issuer or consumer is added.
+
+Official primary sources are PostgreSQL16's
+[pg_proc fields](https://www.postgresql.org/docs/16/catalog-pg-proc.html),
+[CREATE FUNCTION defaults](https://www.postgresql.org/docs/16/sql-createfunction.html),
+[function default implementation](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/commands/functioncmds.c),
+[privileges and PUBLIC defaults](https://www.postgresql.org/docs/16/ddl-priv.html),
+[dependency meanings](https://www.postgresql.org/docs/16/catalog-pg-depend.html),
+[shared dependencies](https://www.postgresql.org/docs/16/catalog-pg-shdepend.html), and
+[separate policy dependency recording](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/commands/policy.c).
+
+
+The coordinator's CI byte-provenance correction is recorded separately at
+receipt SHA256 `0d31c181f52e8b1c91168e989edb02435eb6e9c0fb577b89f3b718faa35a64db`.
+Actual-a5 CI is5719 bytes, blob `3dfc1b9a87a97037276977e669be3336774ba020`,
+SHA256 `c786e61f4560ca874683c4fcd154ba45620b3bccef96e25a8d54960d3bd7c6e0`.
+V7 retains its assigned v6 CI6083 bytes exactly, rather than silently changing
+an unowned file. The coordinator's separate6082-byte candidate correction
+SHA256 `21f79b71dbc65021a6947bcfa296b8d79465e1fd872442249d6988c4228b91a9`
+removes only the unintended final newline and is reserved for the next owned
+composition. Earlier immutable source/proof records compared against the
+captured template, not byte-exact actual-a5 CI; no unchanged-actual-CI or exact
+five-lines-only-against-actual-a5 claim is made here. The extra newline has no
+execution effect and does not qualify or invalidate schema admission.

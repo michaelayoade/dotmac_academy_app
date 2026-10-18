@@ -446,3 +446,124 @@ def test_catalog_observes_candidate_rendering_context_without_admission(retained
         retained._check_rendering_context(packet)
         with pytest.raises(retained.RetainedSchemaUnsupported):
             retained._verify_historical_retained_schema(connection)
+
+
+@pytest.mark.parametrize(
+    "statements",
+    (
+        (
+            "CREATE OR REPLACE FUNCTION public.app_current_tenant_id() RETURNS uuid LANGUAGE plpgsql STABLE "
+            "AS $$ BEGIN RETURN NULL; END; $$",
+        ),
+        (
+            "CREATE FUNCTION public.app_current_tenant_id(integer) RETURNS uuid LANGUAGE sql STABLE "
+            "AS $$ SELECT NULL::uuid $$",
+        ),
+        ("ALTER FUNCTION public.app_current_tenant_id() SECURITY DEFINER",),
+        ("ALTER FUNCTION public.app_current_tenant_id() STRICT",),
+        ("ALTER FUNCTION public.app_current_tenant_id() VOLATILE",),
+        ("ALTER FUNCTION public.app_current_tenant_id() PARALLEL SAFE",),
+        ("ALTER FUNCTION public.app_current_tenant_id() SET search_path=public",),
+        ("ALTER FUNCTION public.app_current_tenant_id() COST 1",),
+        ("REVOKE EXECUTE ON FUNCTION public.app_current_tenant_id() FROM PUBLIC",),
+        ("REVOKE EXECUTE ON FUNCTION public.app_current_tenant_id() FROM app_user",),
+        ("GRANT EXECUTE ON FUNCTION public.app_current_tenant_id() TO academy_lab_worker",),
+        ("GRANT EXECUTE ON FUNCTION public.app_current_tenant_id() TO app_user WITH GRANT OPTION",),
+    ),
+)
+def test_tenant_helper_source_signature_attributes_and_acl_drift_is_refused(retained_engine, statements):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        for statement in statements:
+            connection.execute(sa.text(statement))
+        packet = retained._observe_historical_catalog(connection)
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_tenant_helper(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_natural_helper_public_execute_body_and_policy_dependency_closure(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        helper_oid = retained._check_tenant_helper(packet)
+        assert packet["tenant_function_source_sha256"] == ((helper_oid, retained._TENANT_HELPER_BODY_SHA256),)
+        assert (helper_oid, "app_admin", "PUBLIC", "EXECUTE", False) in packet["tenant_function_acl"]
+        assert all(row[3] is True for row in packet["tenant_function_effective_execute"])
+        assert len(packet["policy_dependencies"]) == 50
+        retained._check_policy_dependencies(packet)
+        tenant = str(uuid4())
+        connection.execute(sa.text("SELECT set_config('app.current_tenant',:tenant,true)"), {"tenant": tenant})
+        connection.execute(sa.text("SET LOCAL ROLE app_user"))
+        assert str(connection.scalar(sa.text("SELECT public.app_current_tenant_id()"))) == tenant
+        connection.execute(sa.text("SELECT set_config('app.current_tenant','not-a-uuid',true)"))
+        assert connection.scalar(sa.text("SELECT public.app_current_tenant_id()")) is None
+        # The worker has effective execution through frozen PUBLIC EXECUTE,
+        # without an invented worker-specific helper grant or role inheritance.
+        connection.execute(sa.text("SET LOCAL ROLE academy_lab_worker"))
+        assert connection.scalar(sa.text("SELECT public.app_current_tenant_id()")) is None
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        _structurally_inspected(connection)
+        with pytest.raises(retained.RetainedSchemaUnsupported):
+            retained._verify_historical_retained_schema(connection)
+
+
+def test_policy_dependency_multiplicity_is_not_deduplicated(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        connection.execute(sa.text("ALTER POLICY applicants_tenant_isolation ON public.applicants WITH CHECK (true)"))
+        packet = retained._observe_historical_catalog(connection)
+        retained._check_tenant_helper(packet)
+        # USING retains the same table/tenant/helper endpoints. WITH CHECK now
+        # contributes neither a tenant-column nor helper dependency. A set-only
+        # comparison would lose this difference in actual catalog multiplicity.
+        dependencies = tuple(row for row in packet["policy_dependencies"] if row[0] == "applicants")
+        assert len(dependencies) == 3
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_policy_dependencies(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_policies_cannot_retain_an_old_helper_oid_after_source_identical_replacement(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        old_helper_oid = retained._check_tenant_helper(packet)
+        connection.execute(sa.text("CREATE SCHEMA retained_helper_shadow AUTHORIZATION app_admin"))
+        connection.execute(sa.text("ALTER FUNCTION public.app_current_tenant_id() SET SCHEMA retained_helper_shadow"))
+        # Fixed product source body only; no caller input, copied live body or
+        # fake catalog. This is a negative endpoint-substitution canary.
+        connection.execute(
+            sa.text(
+                "CREATE FUNCTION public.app_current_tenant_id() RETURNS uuid LANGUAGE plpgsql STABLE "
+                "AS $retained$" + retained._TENANT_HELPER_BODY + "$retained$"
+            )
+        )
+        connection.execute(sa.text("GRANT EXECUTE ON FUNCTION public.app_current_tenant_id() TO app_user,platform_api"))
+        packet = retained._observe_historical_catalog(connection)
+        new_helper_oid = retained._check_tenant_helper(packet)
+        assert new_helper_oid != old_helper_oid
+        assert (
+            sum(row[4] == "pg_catalog.pg_proc" and row[5] == old_helper_oid for row in packet["policy_dependencies"])
+            == 20
+        )
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_policy_dependencies(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_policy_public_role_shared_dependency_drift_is_refused(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        assert not packet["policy_shared_dependencies"]
+        connection.execute(sa.text("ALTER POLICY applicants_tenant_isolation ON public.applicants TO app_user"))
+        packet = retained._observe_historical_catalog(connection)
+        retained._check_tenant_helper(packet)
+        assert len(packet["policy_shared_dependencies"]) == 1
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_policy_dependencies(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused

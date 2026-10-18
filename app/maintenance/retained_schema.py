@@ -611,7 +611,8 @@ _REQUEST_COLUMNS = (
 )
 _RENDERING_GATE = (
     "frozen62_pg16_rendering_pins_and_context_hosted_qualification",
-    "frozen62_pg_policy_function_dependencies",
+    "frozen62_helper_and_policy_closure_hosted_qualification",
+    "full_catalog_RI_trigger_dependency_qualification",
     "frozen62_effective_cluster_authority_qualification",
 )
 
@@ -704,6 +705,141 @@ def _expected_index_semantics(table, columns):
         namespace, name = _column_collation(sql_type)
         collations.append(None if namespace is None else namespace + "." + name)
     return tuple(opclasses), tuple(collations)
+
+
+# Exact prosrc is the frozen initial migration's dollar-quoted body, including
+# whitespace. PG16 function defaults + explicit DDL define the attribute pins.
+# No observed function body/ACL is accepted as its own expected specification.
+_TENANT_HELPER_BODY = (
+    "\n"
+    "        BEGIN\n"
+    "            RETURN NULLIF(current_setting('app.current_tenant', true), '')::uuid;\n"
+    "        EXCEPTION\n"
+    "            WHEN invalid_text_representation THEN\n"
+    "                RETURN NULL;\n"
+    "        END;\n"
+    "        "
+)
+_TENANT_HELPER_BODY_SHA256 = "ca9e519dc5f4b681d52f888372ae6bb867cf622cd38fdc38cd471a1fa430bb12"
+_HELPER_FIELDS = (
+    "oid",
+    "namespace",
+    "name",
+    "owner",
+    "language_oid",
+    "language",
+    "kind",
+    "return_namespace",
+    "return_type",
+    "variadic_absent",
+    "support_absent",
+    "volatility",
+    "security_definer",
+    "leakproof",
+    "parallel",
+    "strict",
+    "returns_set",
+    "input_count",
+    "default_count",
+    "input_types",
+    "all_types",
+    "argument_modes",
+    "argument_names",
+    "default_expression_absent",
+    "config_absent",
+    "transform_absent",
+    "binary_absent",
+    "sql_body_absent",
+    "cost",
+    "rows",
+    "source",
+)
+_HELPER_EXPECTED = (
+    ("namespace", "public"),
+    ("name", "app_current_tenant_id"),
+    ("owner", "app_admin"),
+    ("language", "plpgsql"),
+    ("kind", "f"),
+    ("return_namespace", "pg_catalog"),
+    ("return_type", "uuid"),
+    ("variadic_absent", True),
+    ("support_absent", True),
+    ("volatility", "s"),
+    ("security_definer", False),
+    ("leakproof", False),
+    ("parallel", "u"),
+    ("strict", False),
+    ("returns_set", False),
+    ("input_count", 0),
+    ("default_count", 0),
+    ("input_types", ()),
+    ("all_types", None),
+    ("argument_modes", None),
+    ("argument_names", None),
+    ("default_expression_absent", True),
+    ("config_absent", True),
+    ("transform_absent", True),
+    ("binary_absent", True),
+    ("sql_body_absent", True),
+    ("cost", 100.0),
+    ("rows", 0.0),
+)
+# Source GRANT app_user/platform_api plus PG's default owner/PUBLIC EXECUTE.
+# Owner implicit grant options are not explicit grant-option ACL entries.
+_HELPER_ACL = (
+    ("app_admin", "PUBLIC", "EXECUTE", False),
+    ("app_admin", "app_admin", "EXECUTE", False),
+    ("app_admin", "app_user", "EXECUTE", False),
+    ("app_admin", "platform_api", "EXECUTE", False),
+)
+
+
+def _check_tenant_helper(packet):
+    rows = packet["tenant_function"]
+    _require(len(rows) == 1 and len(rows[0]) == len(_HELPER_FIELDS))
+    helper = dict(zip(_HELPER_FIELDS, rows[0], strict=True))
+    _require(type(helper["oid"]) is int and helper["oid"] > 0)
+    _require(type(helper["language_oid"]) is int and helper["language_oid"] > 0)
+    for name, expected_value in _HELPER_EXPECTED:
+        _require(helper[name] == expected_value)
+    _require(helper["source"] == _TENANT_HELPER_BODY)
+    _require(packet["tenant_function_source_sha256"] == ((helper["oid"], _TENANT_HELPER_BODY_SHA256),))
+    _require(packet["tenant_function_acl"] == tuple((helper["oid"], *entry) for entry in _HELPER_ACL))
+    execution = packet["tenant_function_effective_execute"]
+    names = tuple(row[2] for row in execution)
+    _require(len(names) == len(set(names)) and set(_ROLES).issubset(names))
+    # PUBLIC EXECUTE applies to EVERY actual role. We query the complete role
+    # catalog, rather than inferring effective privileges from direct grants.
+    _require(all(row[0] == helper["oid"] and row[3] is True for row in execution))
+    return helper["oid"]
+
+
+def _check_policy_dependencies(packet):
+    helper_oid = _check_tenant_helper(packet)
+    relations = {row[0]: row[1] for row in packet["relations"]}
+    tenant_columns = {row[0]: row[1] for row in packet["columns"] if row[2] == "tenant_id"}
+    expected_dependencies: list[tuple[str, str, str, int, str, int, int, str]] = []
+    for table in _NAMES:
+        if table == "platform_settings":
+            continue
+        policy = table + "_tenant_isolation"
+        relation_oid = relations[table]
+        tenant_number = tenant_columns[table]
+        expected_dependencies.append(
+            (table, policy, "pg_catalog.pg_policy", 0, "pg_catalog.pg_class", relation_oid, 0, "a")
+        )
+        # PG16 records USING and WITH CHECK separately. Both contain one tenant
+        # Var and one call to the actual helper. Preserve both identical rows.
+        for _ in range(2):
+            expected_dependencies.append(
+                (table, policy, "pg_catalog.pg_policy", 0, "pg_catalog.pg_class", relation_oid, tenant_number, "n")
+            )
+            expected_dependencies.append(
+                (table, policy, "pg_catalog.pg_policy", 0, "pg_catalog.pg_proc", helper_oid, 0, "n")
+            )
+    _require(packet["policy_dependencies"] == tuple(sorted(expected_dependencies)))
+    # Frozen policies target PUBLIC, for which PG16 records no shared role edge.
+    _require(not packet["policy_shared_dependencies"])
 
 
 def _rows(connection, sql, **params):
@@ -872,21 +1008,69 @@ def _observe_historical_catalog(connection):
             WHERE n.nspname='public' AND c.relname=ANY(:names) AND NOT t.tgisinternal ORDER BY 1,2,3
         """,
         "policy_dependencies": """
-            SELECT c.relname,p.polname,d.classid::regclass::text,d.objsubid,
-                   d.refclassid::regclass::text,d.refobjid,d.refobjsubid,d.deptype
+            SELECT c.relname,p.polname,onsp.nspname||'.'||oc.relname,d.objsubid,
+                   rnsp.nspname||'.'||rc.relname,d.refobjid,d.refobjsubid,d.deptype
             FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_policy p ON p.oid=d.objid
             JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            JOIN pg_catalog.pg_class oc ON oc.oid=d.classid
+            JOIN pg_catalog.pg_namespace onsp ON onsp.oid=oc.relnamespace
+            LEFT JOIN pg_catalog.pg_class rc ON rc.oid=d.refclassid
+            LEFT JOIN pg_catalog.pg_namespace rnsp ON rnsp.oid=rc.relnamespace
             WHERE d.classid='pg_catalog.pg_policy'::regclass AND n.nspname='public'
                   AND c.relname=ANY(:names) ORDER BY 1,2,3,4,5,6,7,8
         """,
+        "policy_shared_dependencies": """
+            SELECT c.relname,p.polname,d.objsubid,rn.nspname||'.'||rc.relname,d.refobjid,d.deptype
+            FROM pg_catalog.pg_shdepend d JOIN pg_catalog.pg_policy p ON p.oid=d.objid
+            JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            LEFT JOIN pg_catalog.pg_class rc ON rc.oid=d.refclassid
+            LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid=rc.relnamespace
+            WHERE d.classid='pg_catalog.pg_policy'::regclass AND n.nspname='public' AND c.relname=ANY(:names)
+                  AND d.dbid=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())
+            ORDER BY 1,2,3,4,5,6
+        """,
         "tenant_function": """
-            SELECT p.oid,pg_catalog.pg_get_userbyid(p.proowner),l.lanname,p.provolatile,p.prosecdef,
-                   p.proleakproof,p.proparallel,p.proconfig IS NULL,md5(p.prosrc),p.prorettype::regtype::text
-            FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
-            WHERE p.oid=pg_catalog.to_regprocedure('public.app_current_tenant_id()')
+            SELECT p.oid,n.nspname,p.proname,pg_catalog.pg_get_userbyid(p.proowner),p.prolang,l.lanname,
+                   p.prokind,rn.nspname,rt.typname,p.provariadic=0,p.prosupport=0,p.provolatile,p.prosecdef,
+                   p.proleakproof,p.proparallel,p.proisstrict,p.proretset,p.pronargs,p.pronargdefaults,
+                   ARRAY(SELECT an.nspname||'.'||arg_type.typname
+                         FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY x(id,ord)
+                         JOIN pg_catalog.pg_type arg_type ON arg_type.oid=x.id JOIN pg_catalog.pg_namespace an
+                         ON an.oid=arg_type.typnamespace ORDER BY x.ord),
+                   CASE WHEN p.proallargtypes IS NULL THEN NULL ELSE
+                         ARRAY(SELECT an.nspname||'.'||arg_type.typname
+                               FROM unnest(p.proallargtypes) WITH ORDINALITY x(id,ord)
+                               JOIN pg_catalog.pg_type arg_type ON arg_type.oid=x.id JOIN pg_catalog.pg_namespace an
+                               ON an.oid=arg_type.typnamespace ORDER BY x.ord) END,
+                   p.proargmodes,p.proargnames,p.proargdefaults IS NULL,p.proconfig IS NULL,p.protrftypes IS NULL,
+                   p.probin IS NULL,p.prosqlbody IS NULL,p.procost,p.prorows,p.prosrc
+            FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+            JOIN pg_catalog.pg_language l ON l.oid=p.prolang JOIN pg_catalog.pg_type rt ON rt.oid=p.prorettype
+            JOIN pg_catalog.pg_namespace rn ON rn.oid=rt.typnamespace
+            WHERE n.nspname='public' AND p.proname='app_current_tenant_id' ORDER BY p.oid
+        """,
+        "tenant_function_acl": """
+            SELECT p.oid,pg_catalog.pg_get_userbyid(a.grantor),
+                   CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,
+                   a.privilege_type,a.is_grantable
+            FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace,
+                 LATERAL pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a
+            WHERE n.nspname='public' AND p.proname='app_current_tenant_id' ORDER BY 1,2,3,4,5
+        """,
+        "tenant_function_effective_execute": """
+            SELECT p.oid,r.oid,r.rolname,pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
+            FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace,
+                 pg_catalog.pg_roles r
+            WHERE n.nspname='public' AND p.proname='app_current_tenant_id' ORDER BY p.oid,r.rolname
         """,
     }
-    return {name: _rows(connection, sql, **params) for name, sql in queries.items()}
+    packet = {name: _rows(connection, sql, **params) for name, sql in queries.items()}
+    # Hash exact body bytes in Python: no pgcrypto/extension dependency and no
+    # SQL whitespace normalization. The fixed source body is checked separately.
+    packet["tenant_function_source_sha256"] = tuple(
+        (row[0], hashlib.sha256(row[-1].encode("utf-8")).hexdigest()) for row in packet["tenant_function"]
+    )
+    return packet
 
 
 def _table_privileges(table, role):
@@ -1029,6 +1213,7 @@ def _check_structure(packet):
     )
     _require(packet["policies"] == expected_policies)
     _require(not packet["unexpected_rules_triggers"])
+    _check_policy_dependencies(packet)
 
 
 def _verify_historical_retained_schema(connection):
