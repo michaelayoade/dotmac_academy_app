@@ -273,15 +273,15 @@ def test_real_constraints_reject_bad_worker_values(retained_engine):
 
 def test_unsupported_expressions_cannot_issue_admission(retained_engine):
     with entry_transaction(retained_engine) as connection:
-        # An identically named, validated but wrong CHECK is deliberately NOT
-        # certified by the intermediate structural pass. Until hosted rendering
-        # is pinned, even an otherwise natural replay has the same refusal gate.
+        # Same name and validation cannot hide a wrong expression. Candidate
+        # source-rendered CHECK pins refuse this before the final unsupported gate.
         connection.execute(sa.text("ALTER TABLE public.lab_operations DROP CONSTRAINT ck_lab_operations_kind"))
         connection.execute(
             sa.text("ALTER TABLE public.lab_operations ADD CONSTRAINT ck_lab_operations_kind CHECK(true)")
         )
-        with pytest.raises(retained.RetainedSchemaUnsupported):
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
             retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
 
 
 def test_catalog_packet_can_be_reviewed_as_source_only_artifact(retained_engine, tmp_path, record_property):
@@ -374,3 +374,75 @@ def test_check_no_inherit_drift_is_refused(retained_engine):
         with pytest.raises(retained.RetainedSchemaRefused) as error:
             retained._verify_historical_retained_schema(connection)
         assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "statements",
+    (
+        (
+            "ALTER TABLE public.lab_operations DROP CONSTRAINT ck_lab_operations_kind",
+            "ALTER TABLE public.lab_operations ADD CONSTRAINT ck_lab_operations_kind "
+            "CHECK(kind IN ('deploy','destroy','check','invented'))",
+        ),
+        (
+            "ALTER TABLE public.lab_operations DROP CONSTRAINT ck_lab_operations_conditional_runtime",
+            "ALTER TABLE public.lab_operations ADD CONSTRAINT ck_lab_operations_conditional_runtime CHECK "
+            "((origin IS NULL AND runtime_precondition IS NULL) OR "
+            "(kind='deploy' AND origin='runtime_repair' AND runtime_precondition='absent') OR "
+            "(kind='destroy' AND origin='runtime_cleanup' AND runtime_precondition='present'))",
+        ),
+        (
+            "DROP INDEX public.uq_lab_operations_open_per_instance",
+            "CREATE UNIQUE INDEX uq_lab_operations_open_per_instance ON public.lab_operations(instance_id) "
+            "WHERE state IN ('queued','claimed','failed')",
+        ),
+        ("ALTER TABLE public.email_outbox ALTER COLUMN payload SET DEFAULT '[]'::jsonb",),
+        ("ALTER TABLE public.applicants ALTER COLUMN assessment_result_version DROP DEFAULT",),
+        (
+            "DROP INDEX public.uq_applicants_tenant_local_email",
+            "CREATE UNIQUE INDEX uq_applicants_tenant_local_email ON public.applicants "
+            "(tenant_id,email varchar_pattern_ops) WHERE external_ref IS NULL",
+        ),
+        (
+            "DROP INDEX public.ix_applicants_status",
+            'CREATE INDEX ix_applicants_status ON public.applicants(tenant_id,status COLLATE "C")',
+        ),
+        ('ALTER TABLE public.applicants ALTER COLUMN phone TYPE varchar(40) COLLATE "C"',),
+    ),
+)
+def test_rendering_semantic_drift_is_refused(retained_engine, statements):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        for statement in statements:
+            connection.execute(sa.text(statement))
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "setting",
+    (
+        "SET LOCAL quote_all_identifiers=on",
+        "SET LOCAL standard_conforming_strings=off",
+        "SET LOCAL search_path=public",
+    ),
+)
+def test_unknown_rendering_context_is_unsupported(retained_engine, setting):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        connection.execute(sa.text(setting))
+        with pytest.raises(retained.RetainedSchemaUnsupported):
+            retained._verify_historical_retained_schema(connection)
+
+
+def test_catalog_observes_candidate_rendering_context_without_admission(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        packet = retained._observe_historical_catalog(connection)
+        assert len(packet["rendering_context"]) == 1
+        context = packet["rendering_context"][0]
+        assert len(context) == 6
+        assert type(context[0]) is int and context[1]
+        retained._check_rendering_context(packet)
+        with pytest.raises(retained.RetainedSchemaUnsupported):
+            retained._verify_historical_retained_schema(connection)

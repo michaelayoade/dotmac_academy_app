@@ -60,12 +60,15 @@ btree, no expressions, INCLUDE keys, ordering options or extra indexes.
 ## SQL normalization and security boundary
 
 The intermediate verifier does **not** strip casts, parentheses, whitespace,
-collations or operators to pretend two SQL expressions are equivalent. It checks
-fixed simple null predicates and tenant policy expressions exactly. Other
-rendered checks, the lab-operation IN/ANY predicate, projected default renderings,
-and default opclasses/collations require a separately reviewed hosted frozen62
-oracle. Check names/validation and index structure alone cannot prove their
-expressions, which is why the final unsupported gate is unconditional.
+collations or operators to pretend two SQL expressions are equivalent. V6 adds
+candidate exact PostgreSQL16 non-pretty `pg_get_expr(..., false)` literals for
+all four CHECK constraints and three partial predicates. Every column default,
+including absence, remains an exact frozen-source `_COLUMNS` literal. Column
+collations and every btree index key's default opclass/collation are checked by
+resolved catalog namespace/name, with no Genesis OID pins. These source-owned
+rendering candidates still need the next hosted context-bearing positive and
+planted-negative run; complete catalog/security qualification is still owed.
+The final Unsupported gate remains unconditional.
 
 The actual connection must be PostgreSQL/psycopg, app_admin, inside one active
 nonnested nonautocommit root with parameter hiding and logging disabled. All
@@ -116,7 +119,7 @@ RLS/forced-RLS/policy/global-table violations, expanded and missing column ACLs,
 PUBLIC rights, check validation and FK deferrability. Real app_user visibility
 cannot turn hidden counts into admission. Real app_user cannot INSERT worker
 state; actual worker constraints reject invalid/half-null conditional values.
-An altered validated CHECK remains explicitly Unsupported, never accepted.
+An altered validated CHECK is refused before the final Unsupported gate.
 
 The artifact test writes `frozen62-retained-catalog-source-only.json` to pytest's
 output directory with source pins, unsupported gates and a SHA256 test property.
@@ -206,3 +209,71 @@ This CI overlay changes actual-a5 workflow bytes; it is not an unchanged-baselin
 claim. The production verifier remains byte-exact to v4 and always Unsupported.
 All v5 replay, SQL and type/test validation remains hosted-only; local checks are
 source/AST/hash and pinned Ruff only.
+
+
+## v6 candidate rendered semantics, with explicit context
+
+This bounded slice pins the four CHECK renderings and three partial predicates
+from genuine frozen DDL, PostgreSQL16 semantics and the independently source-bound
+frozen62 Genesis oracle39134154982. That packet SHA256 is
+`55935d64f96f2d7cffce2f96b805c35f4504dfaef62fc0416e3062e22c60411c`,
+with source checkout `baf727f2e8a542db8865809e1d03a4790a64881d` and30 hosted
+passing tests. It is source evidence without admission authority, not a target
+or adopted-schema baseline. Its original packet has no rendering-context
+metadata, so this slice does not infer its exact server minor, encoding or locale.
+
+The source enum CHECKs use `IN`, which PostgreSQL decompiles as typed `ANY` with
+ordered varchar constants coerced through text arrays. The conditional CHECK
+retains every explicit IS NOT NULL guard, branch order, comparison cast and
+parenthesis. Applicants' null/non-null predicates and lab_operations' queued/
+claimed predicate are exact literal pins. The 166 column/type/nullability/
+default tuples already fixed from source exactly matched the independent
+Genesis projection, including literal, JSONB, integer, boolean, now(),
+CURRENT_DATE and absent defaults; they are not replaced from observed data.
+
+Frozen DDL declares default btree opclasses: uuid→pg_catalog.uuid_ops,
+timestamptz→pg_catalog.timestamptz_ops, varchar/text→pg_catalog.text_ops.
+All current indexed source types are covered. Actual operator class identities
+are joined through pg_opclass/pg_namespace. Index collations now resolve each
+actual indcollation identity through pg_collation/pg_namespace: collatable text/
+varchar source columns require pg_catalog.default; other source types require
+no collation. This also checks all column collation identities. It does not pin
+Genesis numeric OIDs or approve the database default's underlying locale,
+library/version, operator implementation, dependencies or full security profile.
+
+The new catalog-only rendering_context contains only six allowlisted values:
+server_version_num, server_version, search_path, effective current_schemas(true),
+quote_all_identifiers and standard_conforming_strings. No arbitrary settings,
+role configuration values or connection strings are captured. The source-owned
+**candidate** deparser profile is PostgreSQL major16, literal default search_path
+`"$user", public`, effective schemas exactly pg_catalog/public, quote-all off and
+standard strings on. Non-pretty output is explicit in all expression queries.
+Unknown profiles, including missing context, raise Unsupported. The prior
+search-path guard remains exact and now identifies a mismatch as Unsupported.
+This profile is a rendering assumption requiring hosted validation, not
+permission to deploy a cluster or an assertion of complete security. Even a
+matching profile ALWAYS reaches the final Unsupported gate after all fixed
+checks. No new private issuer, adoption consumer, DDL or activation is added.
+
+The old ten test scenarios remain, with only the wrong validated CHECK scenario
+strengthened from Unsupported to exact structural Refused. Added real database
+canaries cover broader enum values, missing conditional NULL guards, widened lab
+partial uniqueness, changed and absent defaults, a pattern opclass, changed
+index/column collations and unsupported deparser GUC/search-path contexts.
+The independent v5 fixture, ordinary CI and temporary oracle workflow bytes are
+preserved. Tests and rendering-context qualification are AUTHORED, NOT RUN in
+this capsule. Local verification is stdlib AST/hash/source comparison and pinned
+Ruff only; no application import, SQL, mypy, pytest or database operation ran.
+
+Official primary references are PostgreSQL16's
+[expression decompilation/current_schemas](https://www.postgresql.org/docs/16/functions-info.html),
+[operator classes](https://www.postgresql.org/docs/16/indexes-opclass.html),
+[builtin operator-class declarations](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/include/catalog/pg_opclass.dat),
+[collations](https://www.postgresql.org/docs/16/collation.html), and
+[deparser compatibility settings](https://www.postgresql.org/docs/16/runtime-config-compatible.html).
+The independently reviewed planner pointer has SHA256
+`752bbdc7ac2f1a5b5e45a3a9be4f05dd591c98e169f94c5b7bb686092a36fc0d`.
+This doc also incorporates only the coordinator's mechanical v5b fixture-DSN
+correction from doc SHA256
+`ac611493aefb445413cff7255979c76d5fe0a85d4f933de5e68c16cedb9127d0`;
+its own v6 rendering additions do not overwrite that correction.

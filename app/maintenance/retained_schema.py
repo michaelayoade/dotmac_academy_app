@@ -1,7 +1,7 @@
 """Private historical retained-schema contract; no DDL or adoption authority.
 
 Pins derive from the genuine a5/096 frozen 62-file chain through 0061.
-PostgreSQL rendering/cluster authority qualification is explicitly unsupported;
+PostgreSQL16 rendering pins remain candidate; full qualification is unsupported;
 this source slice never issues a successful admission proof or product receipt.
 """
 
@@ -610,13 +610,100 @@ _REQUEST_COLUMNS = (
     ("lab_operations", ("id", "tenant_id", "instance_id", "kind", "requested_by")),
 )
 _RENDERING_GATE = (
-    "frozen62_pg_check_expressions",
-    "frozen62_pg_partial_index_expressions",
-    "frozen62_pg_default_rendering",
-    "frozen62_pg_opclasses_collations",
+    "frozen62_pg16_rendering_pins_and_context_hosted_qualification",
     "frozen62_pg_policy_function_dependencies",
     "frozen62_effective_cluster_authority_qualification",
 )
+
+
+# Candidate PostgreSQL16 deparser pins, derived from frozen DDL plus the
+# independently source-bound full62 Genesis replay. Not a target/live baseline.
+# Casts, parentheses, enum order and NULL guards are intentionally exact.
+_CHECK_RENDERINGS = (
+    (
+        "lab_instances",
+        "ck_lab_instances_runtime_presence",
+        "((runtime_presence)::text = ANY ((ARRAY['absent'::character varying, 'present'::character varying, "
+        "'unknown'::character varying])::text[]))",
+    ),
+    (
+        "lab_operations",
+        "ck_lab_operations_conditional_runtime",
+        "(((origin IS NULL) AND (runtime_precondition IS NULL)) OR (((kind)::text = 'deploy'::text) AND (origin IS NOT "
+        "NULL) AND ((origin)::text = 'runtime_repair'::text) AND (runtime_precondition IS NOT NULL) AND "
+        "((runtime_precondition)::text = 'absent'::text)) OR (((kind)::text = 'destroy'::text) "
+        "AND (origin IS NOT NULL) "
+        "AND ((origin)::text = 'runtime_cleanup'::text) AND (runtime_precondition IS NOT NULL) AND "
+        "((runtime_precondition)::text = 'present'::text)))",
+    ),
+    (
+        "lab_operations",
+        "ck_lab_operations_kind",
+        "((kind)::text = ANY ((ARRAY['deploy'::character varying, 'destroy'::character varying, 'check'::character "
+        "varying])::text[]))",
+    ),
+    (
+        "lab_operations",
+        "ck_lab_operations_state",
+        "((state)::text = ANY ((ARRAY['queued'::character varying, 'claimed'::character varying, "
+        "'succeeded'::character "
+        "varying, 'failed'::character varying, 'cancelled'::character varying])::text[]))",
+    ),
+)
+_PARTIAL_PREDICATE_RENDERINGS = (
+    ("applicants", "uq_applicants_tenant_external_ref", "(external_ref IS NOT NULL)"),
+    ("applicants", "uq_applicants_tenant_local_email", "(external_ref IS NULL)"),
+    (
+        "lab_operations",
+        "uq_lab_operations_open_per_instance",
+        "((state)::text = ANY ((ARRAY['queued'::character varying, 'claimed'::character varying])::text[]))",
+    ),
+)
+# Default opclasses are type-derived from PG16 builtin definitions. No OID pins.
+_BTREE_TYPE_OPCLASSES = (
+    ("uuid", "pg_catalog.uuid_ops"),
+    ("timestamp with time zone", "pg_catalog.timestamptz_ops"),
+    ("text", "pg_catalog.text_ops"),
+    ("character varying", "pg_catalog.text_ops"),
+)
+
+
+def _check_rendering_context(packet):
+    """Candidate deparser context only; never deployment/security approval."""
+    context = packet.get("rendering_context", ())
+    if len(context) != 1:
+        raise RetainedSchemaUnsupported("Historical retained rendering context unsupported")
+    row = context[0]
+    if not (
+        len(row) == 6
+        and type(row[0]) is int
+        and 160000 <= row[0] < 170000
+        and row[2:] == ('"$user", public', ("pg_catalog", "public"), "off", "on")
+    ):
+        raise RetainedSchemaUnsupported("Historical retained rendering context unsupported")
+
+
+def _column_collation(sql_type):
+    return (
+        ("pg_catalog", "default") if sql_type == "text" or sql_type.startswith("character varying(") else (None, None)
+    )
+
+
+def _expected_index_semantics(table, columns):
+    types = {name: sql_type for name, sql_type, _, _ in _COLUMN_MAP[table]}
+    classes = dict(_BTREE_TYPE_OPCLASSES)
+    opclasses: list[str] = []
+    collations: list[str | None] = []
+    for column in columns:
+        sql_type = types[column]
+        base_type = "character varying" if sql_type.startswith("character varying(") else sql_type
+        opclass = classes.get(base_type)
+        if opclass is None:
+            raise RetainedSchemaUnsupported("Historical retained index type unsupported")
+        opclasses.append(opclass)
+        namespace, name = _column_collation(sql_type)
+        collations.append(None if namespace is None else namespace + "." + name)
+    return tuple(opclasses), tuple(collations)
 
 
 def _rows(connection, sql, **params):
@@ -637,7 +724,8 @@ def _preflight(connection):
     _require(not connection.engine.logger.isEnabledFor(logging.DEBUG))
     _require(connection.get_execution_options().get("isolation_level") != "AUTOCOMMIT")
     _require(connection.scalar(sa.text("SELECT current_user")) == "app_admin")
-    _require(connection.scalar(sa.text("SELECT current_setting('search_path')")) == '"$user", public')
+    if connection.scalar(sa.text("SELECT current_setting('search_path')")) != '"$user", public':
+        raise RetainedSchemaUnsupported("Historical retained rendering context unsupported")
     return root
 
 
@@ -665,6 +753,11 @@ def _observe_historical_catalog(connection):
     _preflight(connection)
     params = {"names": list(_NAMES), "roles": list(_ROLES)}
     queries = {
+        "rendering_context": """
+            SELECT current_setting('server_version_num')::integer,current_setting('server_version'),
+                   current_setting('search_path'),pg_catalog.current_schemas(true),
+                   current_setting('quote_all_identifiers'),current_setting('standard_conforming_strings')
+        """,
         "relations": """
             SELECT c.relname,c.oid,c.relkind,pg_catalog.pg_get_userbyid(c.relowner),
                    c.relrowsecurity,c.relforcerowsecurity,c.relpersistence,c.relispartition,
@@ -674,7 +767,7 @@ def _observe_historical_catalog(connection):
         """,
         "columns": """
             SELECT c.relname,a.attnum,a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
-                   NOT a.attnotnull,pg_catalog.pg_get_expr(d.adbin,d.adrelid),a.attisdropped,
+                   NOT a.attnotnull,pg_catalog.pg_get_expr(d.adbin,d.adrelid,false),a.attisdropped,
                    a.attidentity,a.attgenerated,cn.nspname,co.collname,a.attinhcount,a.attislocal
             FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
             JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -692,7 +785,7 @@ def _observe_historical_catalog(connection):
                    ARRAY(SELECT a.attname FROM unnest(k.confkey) WITH ORDINALITY x(num,ord)
                          JOIN pg_catalog.pg_attribute a ON a.attrelid=k.confrelid AND a.attnum=x.num ORDER BY x.ord),
                    k.confdeltype,k.confupdtype,k.confmatchtype,k.convalidated,k.condeferrable,k.condeferred,
-                   k.connoinherit,pg_catalog.pg_get_expr(k.conbin,k.conrelid),k.confrelid
+                   k.connoinherit,pg_catalog.pg_get_expr(k.conbin,k.conrelid,false),k.confrelid
             FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid=k.conrelid
             JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
             LEFT JOIN pg_catalog.pg_class p ON p.oid=k.confrelid
@@ -704,12 +797,16 @@ def _observe_historical_catalog(connection):
                    ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY x(num,ord)
                          LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=x.num
                          ORDER BY x.ord),
-                   i.indnkeyatts,i.indnatts,pg_catalog.pg_get_expr(i.indexprs,i.indrelid),
-                   pg_catalog.pg_get_expr(i.indpred,i.indrelid),i.indoption::text,
+                   i.indnkeyatts,i.indnatts,pg_catalog.pg_get_expr(i.indexprs,i.indrelid,false),
+                   pg_catalog.pg_get_expr(i.indpred,i.indrelid,false),i.indoption::text,
                    ARRAY(SELECT ns.nspname||'.'||op.opcname FROM unnest(i.indclass) WITH ORDINALITY x(id,ord)
                          JOIN pg_catalog.pg_opclass op ON op.oid=x.id JOIN pg_catalog.pg_namespace ns
                          ON ns.oid=op.opcnamespace ORDER BY x.ord),
-                   i.indcollation::text,am.amname,ic.reloptions,ic.reltablespace,
+                   ARRAY(SELECT CASE WHEN x.id=0 THEN NULL ELSE ns.nspname||'.'||co.collname END
+                         FROM unnest(i.indcollation) WITH ORDINALITY x(id,ord)
+                         LEFT JOIN pg_catalog.pg_collation co ON co.oid=x.id
+                         LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=co.collnamespace ORDER BY x.ord),
+                   am.amname,ic.reloptions,ic.reltablespace,
                    pg_catalog.pg_get_userbyid(ic.relowner),i.indisexclusion,i.indimmediate
             FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indrelid
             JOIN pg_catalog.pg_class ic ON ic.oid=i.indexrelid JOIN pg_catalog.pg_am am ON am.oid=ic.relam
@@ -718,7 +815,7 @@ def _observe_historical_catalog(connection):
         """,
         "policies": """
             SELECT c.relname,p.polname,p.polcmd,p.polpermissive,p.polroles,
-                   pg_catalog.pg_get_expr(p.polqual,p.polrelid),pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid)
+                   pg_catalog.pg_get_expr(p.polqual,p.polrelid,false),pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid,false)
             FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
             JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
             WHERE n.nspname='public' AND c.relname=ANY(:names) ORDER BY c.relname,p.polname
@@ -853,6 +950,7 @@ def _check_security(packet):
 
 
 def _check_structure(packet):
+    _check_rendering_context(packet)
     _require(tuple(r[0] for r in packet["relations"]) == _NAMES)
     for row in packet["relations"]:
         _require(row[2:4] == ("r", "app_admin"))
@@ -862,13 +960,16 @@ def _check_structure(packet):
     expected_columns = tuple((t, i, *c) for t, columns in _COLUMNS for i, c in enumerate(columns, 1))
     _require(tuple(row[:6] for row in packet["columns"]) == expected_columns)
     _require(all(row[6:9] == (False, "", "") and row[11:] == (0, True) for row in packet["columns"]))
+    # Every default (including absence) is an exact frozen-source _COLUMNS pin.
+    expected_column_collations = tuple(_column_collation(c[1]) for _, columns in _COLUMNS for c in columns)
+    _require(tuple(row[9:11] for row in packet["columns"]) == expected_column_collations)
     # Fixed PK/unique/FK set, never initial-capture-equals-current authority.
     expected_constraints: list[tuple[str, str, str, tuple[str, ...]]] = []
     for table, primary_unique_keys in _KEYS:
         expected_constraints.extend((table, name, kind, columns) for name, kind, columns in primary_unique_keys)
     for table, foreign_keys in _FOREIGN_KEYS:
         expected_constraints.extend((table, name, "f", columns) for name, columns, _, _, _ in foreign_keys)
-    checks = {(t, n): expression for t, n, expression in _CHECKS}
+    checks = {(t, n): expression for t, n, expression in _CHECK_RENDERINGS}
     actual_constraints: list[tuple[str, str, str, tuple[str, ...]]] = []
     fk_map = {(t, f[0]): f for t, foreign_keys in _FOREIGN_KEYS for f in foreign_keys}
     for row in packet["constraints"]:
@@ -880,7 +981,7 @@ def _check_structure(packet):
         _require(kind in ("p", "u", "f", "c"))
         _require(row[10:14] == (True, False, False, kind != "c"))
         if kind == "c":
-            _require((table, name) in checks and row[14] is not None)
+            _require((table, name) in checks and row[14] == checks[(table, name)])
         else:
             actual_constraints.append((table, name, kind, columns))
             _require(row[14] is None)
@@ -902,6 +1003,7 @@ def _check_structure(packet):
     _require(tuple(sorted(actual_constraints)) == tuple(sorted(expected_constraints)))
     _require({(r[0], r[1]) for r in packet["constraints"] if r[2] == "c"} == set(checks))
     expected_indexes = {(t, s[0]): s for t, indexes in _INDEXES for s in indexes}
+    partial_predicates = {(t, n): expression for t, n, expression in _PARTIAL_PREDICATE_RENDERINGS}
     _require({(r[0], r[1]) for r in packet["indexes"]} == set(expected_indexes))
     for row in packet["indexes"]:
         index_spec = expected_indexes[(row[0], row[1])]
@@ -909,14 +1011,9 @@ def _check_structure(packet):
         _require(row[7:11] == (index_spec[1], len(index_spec[1]), len(index_spec[1]), None))
         _require(row[12] == " ".join("0" for _ in index_spec[1]))
         _require(row[15:] == ("btree", None, 0, "app_admin", False, True))
-        if index_spec[4] is None:
-            _require(row[11] is None)
-        elif row[0] == "applicants":
-            # These simple null predicates have one fixed source-derived shape.
-            _require(row[11] == "(" + index_spec[4] + ")")
-        else:
-            # IN→ANY and casts require the separate frozen62 hosted oracle.
-            _require(row[11] is not None)
+        expected_opclasses, expected_collations = _expected_index_semantics(row[0], index_spec[1])
+        _require(row[13:15] == (expected_opclasses, expected_collations))
+        _require(row[11] == partial_predicates.get((row[0], row[1])))
     expected_policies = tuple(
         (
             t,
