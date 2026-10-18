@@ -203,3 +203,31 @@ manifest before copying. V3 changes only this document and
 Local checks are stdlib source AST/hash and pinned Ruff only. No application
 imports, tests, mypy, SQL or Docker were run locally. This source capsule grants
 no admission, deployment, production, proof, fence or a004 authority.
+
+
+## V4 hosted transaction narrowing and observation assertion
+
+Actual head `8baa` hosted focus run `39138108944` reported 132 passing tests
+and one failure in the environment positive's statement-prefix assertion. The
+observer reached its required Unsupported exception; the assertion then rejected
+source-owned SELECT-only RI queries because their SQL begins with WITH. The
+separate RI correction passed its hosted baseline and canaries in that run.
+
+V4 inspects the exact compiled TextClause source before driver bind-marker
+rewriting. Its bounded statement guard accepts SELECT and the exact reviewed
+`retained._RI_CTE` followed by SELECT. It does not accept arbitrary WITH clauses.
+Five authored negative cases reject DELETE/INSERT/UPDATE CTEs, the fixed CTE
+followed by DELETE, and an appended data-modifying CTE. Existing genuine hosted
+observation remains the positive and still checks root and metadata preservation.
+This is a test assertion correction, not a SQL parser or admission check.
+
+Hosted general CI run `39138108904` still reported optional-transaction attribute
+errors after V3. V4 explicitly raises the same fixed Refused message when either
+preflight result is None, before transaction identity and is_active checks.
+No assertion, cast, changed query, binding expectation or security profile is
+used to suppress that error. The optional binding-loop correction remains.
+
+V4 is copied from V3 and changes only the three owned environment files. It
+contains the inherited retained-schema source; root owns integration of the
+separate reviewed RI correction. Local validation remains stdlib AST/hash and
+pinned Ruff only; hosted runtime/tests/mypy are not claimed to pass for V4.

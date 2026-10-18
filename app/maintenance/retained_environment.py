@@ -302,6 +302,8 @@ _QUERIES = (
 def _observe_hosted_environment(connection: Connection) -> dict[str, tuple]:
     """Freely constructible metadata observation; no issuance or authority."""
     root = retained._preflight(connection)
+    if root is None:
+        raise RetainedEnvironmentRefused("Disposable hosted Genesis environment refused; root rollback required")
     params = {
         "roles": list(_ROLE_NAMES),
         "runtime_roles": list(_RUNTIME_ROLES),
@@ -309,7 +311,7 @@ def _observe_hosted_environment(connection: Connection) -> dict[str, tuple]:
         "outbox_roles": ["outbox_dispatcher", "platform_outbox_dispatcher"],
     }
     packet = {name: retained._rows(connection, sql, **params) for name, sql in _QUERIES}
-    _require(root is not None and connection.get_transaction() is root and root.is_active)
+    _require(root.is_active and connection.get_transaction() is root)
     return packet
 
 
@@ -427,6 +429,8 @@ def observe_retained_environment(connection: Connection, bindings: HostedEnviron
         raise RetainedEnvironmentUnsupported("Required hosted environment bindings absent")
     _check_bindings(bindings)
     root = retained._preflight(connection)
+    if root is None:
+        raise RetainedEnvironmentRefused("Disposable hosted Genesis environment refused; root rollback required")
     packet = _observe_hosted_environment(connection)
     _check_fixed_environment(packet, bindings)
     try:
@@ -438,5 +442,5 @@ def observe_retained_environment(connection: Connection, bindings: HostedEnviron
         raise RetainedEnvironmentRefused(
             "Frozen retained source/security contradiction; root rollback required"
         ) from None
-    _require(root is not None and connection.get_transaction() is root and root.is_active)
+    _require(root.is_active and connection.get_transaction() is root)
     raise RetainedEnvironmentUnsupported("Hosted bindings, service image and exclusive Genesis boundary unqualified")

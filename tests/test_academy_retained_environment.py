@@ -107,6 +107,29 @@ def hosted_bindings():
     return environment.bindings_from_settings(values)
 
 
+def _is_metadata_select(statement):
+    # Only the exact source-owned, SELECT-only RI CTE is allowed before SELECT.
+    # This is a bounded observation guard, not a general SQL parser.
+    if statement.startswith(retained._RI_CTE):
+        statement = statement[len(retained._RI_CTE) :]
+    return statement.lstrip().upper().startswith("SELECT")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "WITH planted AS (DELETE FROM public.applicants RETURNING id) SELECT * FROM planted",
+        "WITH planted AS (INSERT INTO public.applicants DEFAULT VALUES RETURNING id) SELECT * FROM planted",
+        "WITH planted AS (UPDATE public.applicants SET notes=NULL RETURNING id) SELECT * FROM planted",
+        retained._RI_CTE + "DELETE FROM public.applicants",  # noqa: S608 - rejected text, never executed
+        retained._RI_CTE  # noqa: S608 - rejected text, never executed
+        + ", planted AS (DELETE FROM public.applicants RETURNING id) SELECT * FROM planted",
+    ),
+)
+def test_metadata_statement_guard_rejects_data_modifying_ctes(statement):
+    assert not _is_metadata_select(statement)
+
+
 def test_genuine_frozen62_profile_checks_remain_unsupported(profile_engine, hosted_bindings):
     """Positive uses real frozen62, real roles and required prior CI declaration."""
     with entry_transaction(profile_engine) as connection:
@@ -116,7 +139,11 @@ def test_genuine_frozen62_profile_checks_remain_unsupported(profile_engine, host
         statements = []
 
         def observe_statement(conn, cursor, statement, parameters, context, executemany):
-            statements.append(statement)
+            # Inspect exact SQL source before the driver rewrites bind markers.
+            assert context.compiled is not None
+            clause = context.compiled.statement
+            assert isinstance(clause, sa.sql.elements.TextClause)
+            statements.append(clause.text)
 
         event.listen(connection, "before_cursor_execute", observe_statement)
         try:
@@ -124,7 +151,7 @@ def test_genuine_frozen62_profile_checks_remain_unsupported(profile_engine, host
                 environment.observe_retained_environment(connection, hosted_bindings)
         finally:
             event.remove(connection, "before_cursor_execute", observe_statement)
-        assert statements and all(s.lstrip().upper().startswith("SELECT") for s in statements)
+        assert statements and all(_is_metadata_select(s) for s in statements)
         assert connection.get_transaction() is root and root.is_active
         assert environment._observe_hosted_environment(connection) == before
         assert before["role_database_settings"] == ((False,),)
