@@ -302,3 +302,18 @@ def test_real_request_columns_and_defaults_then_worker_settlement(retained_engin
         )
         connection.execute(sa.text("SET LOCAL ROLE app_admin"))
         _structurally_inspected(connection)
+
+
+def test_check_no_inherit_drift_is_refused(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        _structurally_inspected(connection)
+        connection.execute(sa.text("ALTER TABLE public.lab_operations DROP CONSTRAINT ck_lab_operations_kind"))
+        connection.execute(
+            sa.text(
+                "ALTER TABLE public.lab_operations ADD CONSTRAINT ck_lab_operations_kind "
+                "CHECK(kind IN ('deploy','destroy','check')) NO INHERIT"
+            )
+        )
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused

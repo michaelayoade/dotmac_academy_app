@@ -820,7 +820,7 @@ def _check_security(packet):
     _require(roles["academy_lab_worker"][4] is False)
     # No implicit inherited grant, SET ROLE escalation or worker role membership.
     _require(not packet["memberships"])
-    table_acl = []
+    table_acl: list[tuple[str, str, str, str, bool]] = []
     for table in _NAMES:
         for role in _ROLES:
             table_acl.extend((table, "app_admin", role, p, False) for p in _table_privileges(table, role))
@@ -863,41 +863,57 @@ def _check_structure(packet):
     _require(tuple(row[:6] for row in packet["columns"]) == expected_columns)
     _require(all(row[6:9] == (False, "", "") and row[11:] == (0, True) for row in packet["columns"]))
     # Fixed PK/unique/FK set, never initial-capture-equals-current authority.
-    expected = []
-    for table, keys in _KEYS:
-        expected.extend((table, name, kind, columns) for name, kind, columns in keys)
-    for table, keys in _FOREIGN_KEYS:
-        expected.extend((table, name, "f", columns) for name, columns, _, _, _ in keys)
+    expected_constraints: list[tuple[str, str, str, tuple[str, ...]]] = []
+    for table, primary_unique_keys in _KEYS:
+        expected_constraints.extend((table, name, kind, columns) for name, kind, columns in primary_unique_keys)
+    for table, foreign_keys in _FOREIGN_KEYS:
+        expected_constraints.extend((table, name, "f", columns) for name, columns, _, _, _ in foreign_keys)
     checks = {(t, n): expression for t, n, expression in _CHECKS}
-    actual = []
-    fk_map = {(t, f[0]): f for t, keys in _FOREIGN_KEYS for f in keys}
+    actual_constraints: list[tuple[str, str, str, tuple[str, ...]]] = []
+    fk_map = {(t, f[0]): f for t, foreign_keys in _FOREIGN_KEYS for f in foreign_keys}
     for row in packet["constraints"]:
         table, name, kind, columns = row[:4]
-        _require(row[10:14] == (True, False, False, False))
+        # Ordinary-table PK/UNIQUE/FK constraints do not inherit; CHECK does.
+        # Frozen DDL declares no NO INHERIT check or partitioned relation.
+        # PostgreSQL index_constraint_create/addFkConstraint set these flags;
+        # this is kind-specific source semantics, never an observed override.
+        _require(kind in ("p", "u", "f", "c"))
+        _require(row[10:14] == (True, False, False, kind != "c"))
         if kind == "c":
             _require((table, name) in checks and row[14] is not None)
         else:
-            actual.append((table, name, kind, columns))
+            actual_constraints.append((table, name, kind, columns))
             _require(row[14] is None)
         if kind == "f":
-            spec = fk_map.get((table, name))
-            _require(spec is not None)
-            _require(row[4:10] == ("public", spec[2], spec[3], "c" if spec[4] == "CASCADE" else "a", "a", "s"))
-    _require(tuple(sorted(actual)) == tuple(sorted(expected)))
+            foreign_key_spec = fk_map.get((table, name))
+            if foreign_key_spec is None:
+                raise RetainedSchemaRefused("Historical retained schema refused; root rollback required")
+            _require(
+                row[4:10]
+                == (
+                    "public",
+                    foreign_key_spec[2],
+                    foreign_key_spec[3],
+                    "c" if foreign_key_spec[4] == "CASCADE" else "a",
+                    "a",
+                    "s",
+                )
+            )
+    _require(tuple(sorted(actual_constraints)) == tuple(sorted(expected_constraints)))
     _require({(r[0], r[1]) for r in packet["constraints"] if r[2] == "c"} == set(checks))
     expected_indexes = {(t, s[0]): s for t, indexes in _INDEXES for s in indexes}
     _require({(r[0], r[1]) for r in packet["indexes"]} == set(expected_indexes))
     for row in packet["indexes"]:
-        spec = expected_indexes[(row[0], row[1])]
-        _require(row[2:7] == (spec[2], spec[3], True, True, True))
-        _require(row[7:11] == (spec[1], len(spec[1]), len(spec[1]), None))
-        _require(row[12] == " ".join("0" for _ in spec[1]))
+        index_spec = expected_indexes[(row[0], row[1])]
+        _require(row[2:7] == (index_spec[2], index_spec[3], True, True, True))
+        _require(row[7:11] == (index_spec[1], len(index_spec[1]), len(index_spec[1]), None))
+        _require(row[12] == " ".join("0" for _ in index_spec[1]))
         _require(row[15:] == ("btree", None, 0, "app_admin", False, True))
-        if spec[4] is None:
+        if index_spec[4] is None:
             _require(row[11] is None)
         elif row[0] == "applicants":
             # These simple null predicates have one fixed source-derived shape.
-            _require(row[11] == "(" + spec[4] + ")")
+            _require(row[11] == "(" + index_spec[4] + ")")
         else:
             # IN→ANY and casts require the separate frozen62 hosted oracle.
             _require(row[11] is not None)

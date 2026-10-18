@@ -50,7 +50,10 @@ these are not represented as PostgreSQL rendering qualifications.
 
 All ten tenant tables require enabled AND forced RLS and the single permissive
 PUBLIC, all-command tenant-isolation policy. Checks require validation and all
-constraints remain nondeferrable, initially immediate and inheritable. Index
+constraints remain nondeferrable and initially immediate. For these ordinary
+tables, primary/unique/foreign-key constraints require `connoinherit=true`; the
+four CHECK constraints require `connoinherit=false`, since frozen DDL never
+declares `NO INHERIT`. Index
 structure requires exact names/keys/uniqueness/primary flags, valid-ready-live,
 btree, no expressions, INCLUDE keys, ordering options or extra indexes.
 
@@ -124,3 +127,47 @@ check semantic canaries remain owed in an isolated hosted qualification lane.
 No application import, pytest, SQL, type check, install, build or Docker was run
 locally. Only stdlib AST/hash and the SHA-pinned Ruff formatter/linter are
 permitted local validation. No local Docker daemon is used.
+
+
+## v3 constraint inheritance correction
+
+The failed hosted frozen62 oracle (39133217708) yielded an unqualified
+catalog-only packet with SHA256
+`57de7fdfe32d8df6952247817f4e415b54ea4cc70a681e6b2c283fb317cf9815`.
+It exposed the intermediate verifier's incorrect uniform `connoinherit=false`
+expectation. The fix keeps validation/deferrability checks exact and requires
+true for ordinary-table primary/unique/foreign-key constraints and false for
+CHECK constraints. An added genuine database canary replaces a frozen CHECK
+with the same expression plus `NO INHERIT` and expects a structural refusal.
+All nine existing test scenarios, their assertions, and the separate engine
+fixture with explicit parameter hiding and `echo=False` are preserved.
+
+This expectation follows frozen DDL creating ordinary tables and inheritable
+CHECK constraints, together with PostgreSQL's documented inheritance semantics:
+[ordinary unique/primary/foreign-key constraints are not inherited](https://www.postgresql.org/docs/16/ddl-inherit.html),
+while [connoinherit identifies non-inheritable constraints](https://www.postgresql.org/docs/16/catalog-pg-constraint.html).
+PostgreSQL16's authoritative implementation sets this flag in
+[index_constraint_create](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/catalog/index.c)
+and
+[addFkConstraint](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/commands/tablecmds.c).
+The source-backed semantics, rather than the observed packet itself, determine
+the fixed expectation. The packet is failed, unqualified evidence and is not
+admission authority. The unconditional Unsupported gate remains unchanged.
+Static inspection found the packet's column literal projection and already
+checked index structural projections equal to the fixed source literals; it
+did not run the module, tests, SQL or an admission decision locally.
+
+
+## v4 typing repair
+
+The general hosted CI (39133217614/job117692444734) reported type errors in
+empty list inference, reused loop/spec variables with incompatible tuple
+shapes, and a nullable FK lookup that the custom assertion helper did not
+narrow. V4 explicitly annotates the ACL/constraint lists, separates meaningful
+key/FK/index variable names, and uses an explicit None guard raising the same
+RetainedSchemaRefused message. No type ignores, catalog bypasses, policy changes
+or runtime guard relaxation are introduced. The v3 kind-specific inheritance
+fix and unconditional Unsupported gate are preserved, as are all v3 test bytes.
+Local validation is AST/source inspection and pinned Ruff only; mypy and tests
+remain hosted-only. The reported first-new-test failure is not diagnosed by
+this typing repair and no additional fixture/schema qualification is claimed.
