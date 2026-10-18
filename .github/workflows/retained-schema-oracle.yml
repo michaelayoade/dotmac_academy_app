@@ -79,13 +79,17 @@ jobs:
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
       - name: Run actual frozen-source catalog and planted-drift canaries
+        id: retained_tests
         run: |
           mkdir -p artifacts
-          poetry run pytest tests/test_academy_retained_schema.py -x -vv \
+          poetry run pytest tests/test_academy_retained_schema.py -vv \
             --capture=tee-sys --tb=short -o faulthandler_timeout=120 \
             -o junit_family=xunit1 --basetemp=artifacts/retained-schema-replay \
             --junitxml=artifacts/retained-schema.xml
       - name: Bind the catalog-only artifact to its actual source execution
+        if: ${{ !cancelled() }}
+        env:
+          PYTEST_OUTCOME: ${{ steps.retained_tests.outcome }}
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           python - <<'PY'
@@ -106,12 +110,15 @@ jobs:
           if len(data) > 1048576:
               raise SystemExit('catalog artifact exceeds source bound')
           catalog = json.loads(data)
+          if os.environ['PYTEST_OUTCOME'] not in ('success', 'failure'):
+              raise SystemExit('no completed actual pytest execution')
           if catalog.get('admission_authority') is not False:
               raise SystemExit('catalog packet must carry no admission authority')
           packet = {
               'schema_version': 1,
               'kind': 'unqualified_frozen62_retained_catalog_oracle',
               'admission_authority': False,
+              'pytest_outcome': os.environ['PYTEST_OUTCOME'],
               'expected_base': os.environ['EXPECTED_BASE'],
               'pr_head_sha': os.environ['EXPECTED_PR_HEAD'],
               'checkout_sha': git('rev-parse', 'HEAD'),

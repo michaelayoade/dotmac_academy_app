@@ -21,6 +21,16 @@ from tests.test_kernel_identity_entry import entry_transaction, legacy_engine
 assert legacy_engine
 
 
+@pytest.fixture(scope="module")
+def retained_engine(legacy_engine):
+    """Reuse genuine frozen62 replay through a separate parameter-hiding pool."""
+    engine = sa.create_engine(legacy_engine.url, hide_parameters=True, echo=False, future=True)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
 def _structurally_inspected(connection):
     packet = retained._observe_historical_catalog(connection)
     retained._check_structure(packet)
@@ -28,10 +38,10 @@ def _structurally_inspected(connection):
     return packet
 
 
-def test_genuine_full_frozen62_source_and_historical_catalog(legacy_engine):
+def test_genuine_full_frozen62_source_and_historical_catalog(retained_engine):
     verify_legacy_source()
     retained._verify_frozen_source(FIXTURE / "alembic/versions")
-    with entry_transaction(legacy_engine) as connection:
+    with entry_transaction(retained_engine) as connection:
         assert tuple(connection.scalars(sa.text("SELECT version_num FROM public.alembic_version"))) == (LEGACY_HEAD,)
         packet = _structurally_inspected(connection)
         assert len(packet["relations"]) == 11
@@ -89,8 +99,8 @@ def test_genuine_full_frozen62_source_and_historical_catalog(legacy_engine):
         ),
     ),
 )
-def test_planted_structural_security_drift_is_refused_before_unsupported(legacy_engine, statements):
-    with entry_transaction(legacy_engine) as connection:
+def test_planted_structural_security_drift_is_refused_before_unsupported(retained_engine, statements):
+    with entry_transaction(retained_engine) as connection:
         _structurally_inspected(connection)
         for statement in statements:
             connection.execute(sa.text(statement))
@@ -99,8 +109,8 @@ def test_planted_structural_security_drift_is_refused_before_unsupported(legacy_
         assert type(error.value) is retained.RetainedSchemaRefused
 
 
-def test_fk_validation_and_deferrability_are_fixed(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_fk_validation_and_deferrability_are_fixed(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         _structurally_inspected(connection)
         connection.execute(
             sa.text(
@@ -113,8 +123,8 @@ def test_fk_validation_and_deferrability_are_fixed(legacy_engine):
         assert type(error.value) is retained.RetainedSchemaRefused
 
 
-def test_role_context_cannot_hide_rows_or_supply_a_positive_packet(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_role_context_cannot_hide_rows_or_supply_a_positive_packet(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         original = _structurally_inspected(connection)
         # Genuine source population is visible to the bypass admin. A restricted
         # request role without tenant context sees zero. Counts are test-only,
@@ -143,8 +153,8 @@ def test_role_context_cannot_hide_rows_or_supply_a_positive_packet(legacy_engine
             retained._verify_historical_retained_schema(connection, original)
 
 
-def test_real_app_user_cannot_insert_worker_state(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_real_app_user_cannot_insert_worker_state(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         _structurally_inspected(connection)
         connection.execute(sa.text("SET LOCAL ROLE app_user"))
         with pytest.raises(DBAPIError), connection.begin_nested():
@@ -158,8 +168,8 @@ def test_real_app_user_cannot_insert_worker_state(legacy_engine):
         _structurally_inspected(connection)
 
 
-def test_real_constraints_reject_bad_worker_values(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_real_constraints_reject_bad_worker_values(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         _structurally_inspected(connection)
         tenant = connection.scalar(sa.text("SELECT id FROM public.tenants ORDER BY id LIMIT 1"))
         instance = str(uuid4())
@@ -204,8 +214,8 @@ def test_real_constraints_reject_bad_worker_values(legacy_engine):
         _structurally_inspected(connection)
 
 
-def test_unsupported_expressions_cannot_issue_admission(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_unsupported_expressions_cannot_issue_admission(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         # An identically named, validated but wrong CHECK is deliberately NOT
         # certified by the intermediate structural pass. Until hosted rendering
         # is pinned, even an otherwise natural replay has the same refusal gate.
@@ -217,10 +227,10 @@ def test_unsupported_expressions_cannot_issue_admission(legacy_engine):
             retained._verify_historical_retained_schema(connection)
 
 
-def test_catalog_packet_can_be_reviewed_as_source_only_artifact(legacy_engine, tmp_path, record_property):
+def test_catalog_packet_can_be_reviewed_as_source_only_artifact(retained_engine, tmp_path, record_property):
     verify_legacy_source()
     retained._verify_frozen_source(FIXTURE / "alembic/versions")
-    with entry_transaction(legacy_engine) as connection:
+    with entry_transaction(retained_engine) as connection:
         packet = retained._observe_historical_catalog(connection)
         # Nothing here claims the rendering contract passed. This packet comes
         # exclusively from the immutable frozen replay fixture, never a proposed
@@ -241,8 +251,8 @@ def test_catalog_packet_can_be_reviewed_as_source_only_artifact(legacy_engine, t
         assert artifact["admission_authority"] is False
 
 
-def test_real_request_columns_and_defaults_then_worker_settlement(legacy_engine):
-    with entry_transaction(legacy_engine) as connection:
+def test_real_request_columns_and_defaults_then_worker_settlement(retained_engine):
+    with entry_transaction(retained_engine) as connection:
         _structurally_inspected(connection)
         tenant = connection.scalar(sa.text("SELECT id FROM public.tenants ORDER BY id LIMIT 1"))
         instance, operation, person, activity = (str(uuid4()) for _ in range(4))
