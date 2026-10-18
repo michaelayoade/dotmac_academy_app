@@ -101,10 +101,10 @@ historical module does not accept a caller override to simulate that phase.
 
 `tests/test_academy_retained_schema.py` imports only SQLAlchemy, stdlib, pytest,
 this private module, the genuine fixture's `rehearsal` helpers and
-`tests.test_kernel_identity_entry.legacy_engine` / `entry_transaction`. The three
-new files can be overlaid onto actual a5 for focused qualification without
-future Kernel/Learning API imports. The real fixture provisions an EMPTY
-`KERNEL_ENTRY_DATABASE_URL`, asserts hosted CI and pre-existing real roles, sets
+`tests.test_kernel_identity_entry._seed_populated_legacy` / `entry_transaction`. The three
+source files and dedicated CI database setup can be overlaid onto actual a5 for
+focused qualification without future Kernel/Learning API imports. The retained
+fixture requires an EMPTY `RETAINED_SCHEMA_DATABASE_URL`, asserts hosted CI and pre-existing real roles, sets
 session ROLE app_admin, verifies the manifest and executes all62 real files via
 Alembic, including genuine autocommit blocks. Tests roll back their changes.
 
@@ -171,3 +171,38 @@ fix and unconditional Unsupported gate are preserved, as are all v3 test bytes.
 Local validation is AST/source inspection and pinned Ruff only; mypy and tests
 remain hosted-only. The reported first-new-test failure is not diagnosed by
 this typing repair and no additional fixture/schema qualification is claimed.
+
+
+## v5 isolated retained replay fixture
+
+General hosted CI39134155045/job117695149451 reached1092 passing tests, but the
+original Kernel-entry fixture then correctly refused a nonempty entry database.
+Importing its module-scoped `legacy_engine` into this separate test module had
+registered another module-scoped fixture instance using the same persistent
+replay database. V5 removes that dependency entirely. No original Kernel test,
+fixture, migration source or database setup is changed.
+
+The retained fixture requires declarative `RETAINED_SCHEMA_DATABASE_URL` and
+hosted CI. It refuses any database name shared with a supplied Kernel-entry,
+application, platform, worker or migration DSN. It checks actual initial catalog
+emptiness and six pre-existing real roles, verifies the frozen source, then
+replays all62 original migration files as app_admin, asserting the exact head,
+revision coverage and completed transaction state before using the original
+synthetic seeding helper. It does not clone a schema, accept an existing populated
+catalog as Genesis, alter environment variables, stamp revisions, create models,
+skip checks or reset databases. Every test body remains byte/AST-equivalent;
+only the module fixture and its necessary imports change. The engine retains
+explicit `hide_parameters=True`, `echo=False` and guaranteed disposal.
+
+The ordinary CI file is a new explicit overlay sourced from exact actual-a5 CI
+SHA256 `d717b35092eb76ad837f7bf8f97d737559257834e08c0da9502b7f5151bf9126`.
+Its only changes are a new retained DSN targeting disposable
+`academy_retained_schema`, a database owned by app_admin created beside the
+unchanged Kernel-entry database, and public-schema USAGE/CREATE grants on that
+new database. Existing cluster-role creation still occurs once. The temporary
+oracle workflow receives exactly the same three additions; all actions,
+permissions, source bindings, pytest options and artifact semantics are retained.
+This CI overlay changes actual-a5 workflow bytes; it is not an unchanged-baseline
+claim. The production verifier remains byte-exact to v4 and always Unsupported.
+All v5 replay, SQL and type/test validation remains hosted-only; local checks are
+source/AST/hash and pinned Ruff only.

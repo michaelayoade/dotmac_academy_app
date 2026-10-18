@@ -33,6 +33,7 @@ jobs:
       # Separate disposable database: canonical-entry rehearsals must never move
       # relations in the database used by the application tests.
       KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
+      RETAINED_SCHEMA_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_schema
       # Real dedicated-role evidence for lab-worker privilege tests (see
       # tests/services/test_lab_worker_privileges.py) — distinct from the
       # migration/superuser DSN above.
@@ -97,10 +98,14 @@ jobs:
         run: |
           psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
           CREATE DATABASE academy_kernel_entry OWNER app_admin;
+          CREATE DATABASE academy_retained_schema OWNER app_admin;
           CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           SQL
           psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_schema -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
 
@@ -136,3 +141,4 @@ jobs:
           path: artifacts/pytest.xml
           if-no-files-found: error
           retention-days: 30
+

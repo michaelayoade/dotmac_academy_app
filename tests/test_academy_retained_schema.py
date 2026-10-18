@@ -7,25 +7,82 @@ closes the hosted gate. No fake catalog or current ORM is a positive substitute.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
+from alembic import command
+from alembic.script import ScriptDirectory
 from app.maintenance import retained_schema as retained
-from tests.fixtures.kernel_identity_entry.rehearsal import FIXTURE, LEGACY_HEAD, verify_legacy_source
-from tests.test_kernel_identity_entry import entry_transaction, legacy_engine
-
-assert legacy_engine
+from tests.fixtures.kernel_identity_entry.rehearsal import FIXTURE, LEGACY_HEAD, config_for, verify_legacy_source
+from tests.test_kernel_identity_entry import _seed_populated_legacy, entry_transaction
 
 
 @pytest.fixture(scope="module")
-def retained_engine(legacy_engine):
-    """Reuse genuine frozen62 replay through a separate parameter-hiding pool."""
-    engine = sa.create_engine(legacy_engine.url, hide_parameters=True, echo=False, future=True)
+def retained_engine(tmp_path_factory):
+    """Replay genuine frozen62 once into a separately provisioned empty database."""
+    assert os.environ.get("CI") == "true", "retained-schema rehearsals are hosted CI only"
+    url = os.environ.get("RETAINED_SCHEMA_DATABASE_URL")
+    assert url, "CI must provision RETAINED_SCHEMA_DATABASE_URL"
+    target = make_url(url)
+    assert target.get_backend_name() == "postgresql" and target.database
+    for name in (
+        "KERNEL_ENTRY_DATABASE_URL",
+        "TEST_DATABASE_URL",
+        "TEST_MIGRATION_DATABASE_URL",
+        "MIGRATION_DATABASE_URL",
+        "DATABASE_URL",
+        "TEST_LAB_WORKER_DATABASE_URL",
+        "PLATFORM_DATABASE_URL",
+    ):
+        other = os.environ.get(name)
+        if other:
+            assert target.database != make_url(other).database, "retained replay DB must be separate"
+    verify_legacy_source()
+    retained._verify_frozen_source(FIXTURE / "alembic/versions")
+    engine = sa.create_engine(url, hide_parameters=True, echo=False, future=True)
     try:
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    sa.text("""
+                SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')
+            """)
+                )
+                == 0
+            ), "retained replay DB must start empty"
+            assert (
+                connection.scalar(
+                    sa.text("""
+                SELECT count(*) FROM pg_roles WHERE rolname IN
+                ('app_admin','app_user','platform_api','academy_lab_worker',
+                 'outbox_dispatcher','platform_outbox_dispatcher')
+            """)
+                )
+                == 6
+            ), "CI must provision unchanged Kernel/legacy cluster roles"
+            assert connection.scalar(sa.text("SELECT rolbypassrls FROM pg_roles WHERE rolname='app_admin'"))
+            connection.rollback()
+            with connection.begin():
+                connection.execute(sa.text("SET ROLE app_admin"))
+            applied = []
+            cfg = config_for(
+                connection, FIXTURE / "alembic/versions", tmp_path_factory.mktemp("retained-entry-env"), applied
+            )
+            scripts = ScriptDirectory.from_config(cfg)
+            assert scripts.get_heads() == [LEGACY_HEAD]
+            command.upgrade(cfg, "heads")
+            assert len(applied) == 62
+            assert {item.revision for item in applied} == {item.revision for item in scripts.walk_revisions()}
+            assert not connection.in_transaction()
+            with connection.begin():
+                _seed_populated_legacy(connection)
         yield engine
     finally:
         engine.dispose()

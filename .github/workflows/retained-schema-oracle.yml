@@ -37,6 +37,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
       KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
+      RETAINED_SCHEMA_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_schema
       TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://academy_lab_worker:academy_lab_worker@localhost:5437/academy
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
       PLATFORM_ROOT_DOMAIN: localhost
@@ -72,10 +73,14 @@ jobs:
           poetry run alembic upgrade head
           psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
           CREATE DATABASE academy_kernel_entry OWNER app_admin;
+          CREATE DATABASE academy_retained_schema OWNER app_admin;
           CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           SQL
           psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_schema -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
       - name: Run actual frozen-source catalog and planted-drift canaries
