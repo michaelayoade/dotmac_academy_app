@@ -32,7 +32,10 @@ def _make_person(admin_session, tenant, email: str) -> Person:
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    response = app_client.post(
+        "/login", headers=h, data={"email": email, "password": "password1"}, follow_redirects=False
+    )
+    assert response.status_code == 303
     return h
 
 def _entitle(admin_session, tenant, person, course):
@@ -264,12 +267,18 @@ def test_recovered_status_and_operation_remain_owner_gated(
     operation = _operation(admin_session, instance, state="queued")
     tenant = tenant_a if wrong == "person" else tenant_b
     intruder = _make_person(admin_session, tenant, f"intruder-{wrong}@example.edu")
+    # Use a fresh browser session when changing identity, as the lab route tests do.
+    app_client.cookies.clear()
     if wrong == "person":
         headers = _login(app_client, intruder.email)
         expected = 403
     else:
         headers = {"Host": "beta.localhost"}
-        app_client.post("/login", headers=headers, data={"email": intruder.email, "password": "password1"})
+        response = app_client.post(
+            "/login", headers=headers, data={"email": intruder.email, "password": "password1"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
         expected = 404
     for url in (f"/labs/instances/{instance.id}/status", f"/labs/operations/{operation.id}"):
         response = app_client.get(url, headers=headers)
