@@ -13,7 +13,7 @@
       <div class="card p-6">
         <form hx-post="/labs/{{ activity.id }}/launch" hx-target="#lab-state" hx-swap="innerHTML">
           <button class="btn-primary w-full" type="submit">Launch lab</button>
-          <p class="mt-3 text-sm text-ink-soft">Your environment spins up in its own sandbox — give it a few seconds.</p>
+          <p class="mt-3 text-sm text-ink-soft">Your environment starts in its own sandbox. Consoles become available as each device finishes starting.</p>
         </form>
       </div>
     {% endif %}

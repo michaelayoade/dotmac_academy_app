@@ -1,3 +1,13 @@
+{% if recovered_operation and recovered_operation.kind != "check" and recovered_operation.state in ("queued", "claimed") %}
+  {% with operation=recovered_operation, score=none %}
+    {% include "labs/_operation.html" %}
+  {% endwith %}
+{% else %}
+{% if recovered_operation and recovered_operation.kind != "check" %}
+  {% with operation=recovered_operation, score=none %}
+    {% include "labs/_operation.html" %}
+  {% endwith %}
+{% endif %}
 <div class="card p-6">
   {% if instance.status in ("queued", "provisioning", "resetting") %}
     <div class="flex items-center gap-2.5">
@@ -25,6 +35,10 @@
           <span class="font-mono text-sm">{{ node }}</span>
           <span class="text-xs text-ink-soft transition-transform group-hover:translate-x-0.5" aria-hidden="true">open &nearr;</span>
         </a>
+        {% set kind = instance.consoles[node].get("kind", "") %}
+        {% if kind == "vr-ros" or kind.startswith("vr-") %}
+        <p class="text-sm text-ink-soft">The router may still be starting; retry the console if it is not available.</p>
+        {% endif %}
       </li>
     {% endfor %}
     </ul>
@@ -45,7 +59,16 @@
         <button class="btn-ghost" type="submit">Reset lab</button>
       </form>
     </div>
-    <div id="lab-checks" class="mt-5"></div>
+    <div id="lab-checks" class="mt-5">
+      {% if recovered_operation and recovered_operation.kind == "check" %}
+        {% with operation=recovered_operation, score=none %}
+          {% include "labs/_operation.html" %}
+        {% endwith %}
+      {% elif saved_score %}
+        <p class="mb-2 text-sm text-ink-soft">Last saved checks for this lab environment. Run checks again after making changes.</p>
+        {% with score=saved_score %}{% include "labs/_checks.html" %}{% endwith %}
+      {% endif %}
+    </div>
   {% elif instance.status == "error" %}
     <div class="flex items-center gap-2.5">
       <span class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">Status</span>
@@ -57,3 +80,5 @@
     </form>
   {% endif %}
 </div>
+
+{% endif %}

@@ -244,6 +244,72 @@ def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UU
     return inst
 
 
+def _operation_score(
+    db: Session, tenant: Tenant, person: Person, instance: LabInstance, operation: LabOperation
+) -> Score | None:
+    """Read only the durable result inside this worker operation's window."""
+    if (
+        operation.tenant_id != tenant.id or operation.instance_id != instance.id
+        or instance.tenant_id != tenant.id or instance.person_id != person.id
+        or operation.kind != "check" or operation.state != "succeeded"
+        or operation.claimed_at is None or operation.finished_at is None
+        or operation.finished_at < operation.claimed_at
+    ):
+        return None
+    return db.scalars(
+        select(Score)
+        .join(Submission, Score.submission_id == Submission.id)
+        .where(Score.tenant_id == tenant.id)
+        .where(Score.tenant_id == Submission.tenant_id)
+        .where(Submission.tenant_id == tenant.id)
+        .where(Submission.person_id == person.id)
+        .where(Submission.activity_id == instance.activity_id)
+        .where(Submission.answers["instance"].astext == str(instance.id))
+        .where(Submission.created_at >= operation.claimed_at)
+        .where(Submission.created_at <= operation.finished_at)
+        .order_by(Score.created_at.desc(), Score.id.desc())
+    ).first()
+
+
+def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> dict:
+    """Recover current work and the last saved check for this runtime journey.
+
+    A deploy request (including a reset that subsequently fails) invalidates the
+    old live-configuration display. Academic submissions remain untouched.
+    """
+    operations = (
+        select(LabOperation)
+        .where(LabOperation.tenant_id == tenant.id)
+        .where(LabOperation.instance_id == instance.id)
+    )
+    # Open work is authoritative even if terminal requests share a timestamp.
+    latest = db.scalars(operations.where(LabOperation.state.in_(OPEN_STATES))).first()
+    if latest is None:
+        recent = list(db.scalars(operations.order_by(LabOperation.requested_at.desc()).limit(2)))
+        latest = recent[0] if recent else None
+        if len(recent) == 2 and recent[0].requested_at == recent[1].requested_at:
+            latest = None  # UUID order cannot establish which action happened last.
+    deploy = db.scalars(
+        operations.where(LabOperation.kind == "deploy")
+        .order_by(LabOperation.requested_at.desc(), LabOperation.id.desc())
+    ).first()
+    saved_query = operations.where(LabOperation.kind == "check").where(LabOperation.state == "succeeded")
+    if deploy is not None:
+        saved_query = saved_query.where(LabOperation.requested_at > deploy.requested_at)
+    saved_checks = list(db.scalars(saved_query.order_by(LabOperation.requested_at.desc()).limit(2)))
+    saved = saved_checks[0] if saved_checks else None
+    if len(saved_checks) == 2 and saved_checks[0].requested_at == saved_checks[1].requested_at:
+        saved = None  # Never choose a result using random UUID order.
+    score = _operation_score(db, tenant, person, instance, saved) if saved else None
+    return {
+        "recovered_operation": latest if latest is not None and (
+            latest.state in OPEN_STATES or latest.state in ("failed", "cancelled")
+            or (saved is not None and latest.id == saved.id and score is None)
+        ) else None,
+        "saved_score": score,
+    }
+
+
 @router.get("/labs/{activity_id}", response_class=HTMLResponse)
 def lab_detail(
     activity_id: UUID,
@@ -269,6 +335,7 @@ def lab_detail(
             "template": tpl,
             "instance": instance,
             "instructions_html": instructions_html,
+            **(_result_context(db, tenant, person, instance) if instance else {}),
         },
     )
 
@@ -306,7 +373,10 @@ def lab_status(
     """htmx polling target — current instance status + console links when active."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    return templates.TemplateResponse(
+        request, "labs/_status.html",
+        {"request": request, "instance": instance, **_result_context(db, tenant, person, instance)},
+    )
 
 
 @router.post("/labs/instances/{instance_id}/check", response_class=HTMLResponse)
@@ -406,24 +476,21 @@ def lab_operation_status(
     if operation is None:
         raise HTTPException(status_code=404)
     instance = _owned_instance(db, tenant, person, operation.instance_id)
-    score = None
-    if operation.kind == "check" and operation.state == "succeeded":
-        score_query = (
-            select(Score)
-            .join(Submission, Score.submission_id == Submission.id)
-            .where(Submission.tenant_id == tenant.id)
-            .where(Submission.person_id == person.id)
-            .where(Submission.answers["instance"].astext == str(instance.id))
-        )
-        if operation.claimed_at is not None:
-            score_query = score_query.where(Submission.created_at >= operation.claimed_at)
-        if operation.finished_at is not None:
-            score_query = score_query.where(Submission.created_at <= operation.finished_at)
-        score = db.scalars(score_query.order_by(Score.created_at.desc())).first()
+    score = _operation_score(db, tenant, person, instance, operation)
+    # Lifecycle polling owns all of #lab-state. On settlement return the whole
+    # status fragment (including retry controls), never nest it in a poll card.
+    template = (
+        "labs/_status.html"
+        if operation.kind != "check" and operation.state not in OPEN_STATES
+        else "labs/_operation.html"
+    )
     return templates.TemplateResponse(
         request,
-        "labs/_operation.html",
-        {"request": request, "operation": operation, "instance": instance, "score": score},
+        template,
+        {
+            "request": request, "operation": operation, "instance": instance, "score": score,
+            **_result_context(db, tenant, person, instance),
+        },
     )
 
 
