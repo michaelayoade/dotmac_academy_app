@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
 from alembic import command
+from alembic.script import ScriptDirectory
 from tests.test_migration_roundtrip import _make_config, _migration_env, _migration_url
 
 REVISION = "0062_lab_template_access"
