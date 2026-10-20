@@ -132,3 +132,58 @@ def test_hash_of_lab_without_access_is_unchanged_by_this_feature():
          "instructions_md": "m", "checks": [], "seed_spec": {}, "limits": {}},
         sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     assert _source_hash(spec, "h") == legacy
+
+
+def _pw(value):
+    return [{"node": "router", "protocol": "ssh", "username": "admin", "default_password": value}]
+
+
+@pytest.mark.parametrize("ok", ["admin", "VR-netlab9", "labpw-1", "password", "changeme123", "a" * 32])
+def test_documented_lab_defaults_are_accepted(ok):
+    assert parse_access(_pw(ok), topology_text=TOPO)[0]["default_password"] == ok
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "ghp_" + "a1B2" * 4,
+        "github_pat_11ABCDEFG",
+        "sk-abc123",
+        "AKIAIOSFODNN7EXAMPLE",
+        "eyJhbGciOiJIUzI1NiJ9",
+        "xoxb-1234-abcd",
+        "-----BEGIN KEY",
+        "x" * 33,                      # over the 32 character cap
+        "Zk9qL2vXp4RtYw8N",            # 16 distinct characters: entropy 4.0
+        "q7Gd2Lm9Vx4Tz8Ws1Bc5",        # random-looking 20 characters
+    ],
+)
+def test_secret_shaped_default_passwords_are_refused(bad):
+    with pytest.raises(ValueError):
+        parse_access(_pw(bad), topology_text=TOPO)
+
+
+def test_unparsable_topology_is_an_error_not_a_silent_skip():
+    with pytest.raises(ValueError, match="could not be parsed"):
+        parse_access(GOOD, topology_text="topology: [unclosed")
+
+
+def test_no_access_with_unparsable_topology_is_fine():
+    assert parse_access(None, topology_text="topology: [unclosed") == []
+
+
+def test_reimport_refreshes_access_without_a_version_bump(admin_session, tenant_a, tmp_path):
+    """Access wiped out of band (e.g. 0062 down/up) is restored by the next import."""
+    c = _course(admin_session, tenant_a.id)
+    labs = _lab_dir(
+        tmp_path, "access:\n  - {node: client-a, protocol: console, note: No login needed.}\n"
+    )
+    t = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=labs)[0]
+    admin_session.flush()
+    v = t.version
+    t.access = []  # what a down/up cycle leaves behind
+    admin_session.flush()
+    t = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=labs)[0]
+    assert t.access == [{"node": "client-a", "protocol": "console", "note": "No login needed."}]
+    assert t.version == v
+    admin_session.rollback()

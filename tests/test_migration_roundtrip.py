@@ -75,7 +75,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # below stop silently assuming an earlier revision is head once a later one
 # exists — mirroring how the 0058->0059 transition itself updated this same
 # constant last time, rather than the fixed boundary constants below it.
-HEAD_REVISION = "0061_lab_completion_grants"
+HEAD_REVISION = "0062_lab_template_access"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
