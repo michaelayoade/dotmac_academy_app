@@ -240,6 +240,7 @@ def test_reaped_instance_cannot_reach_target_now_owned_by_another_instance(
     assert upstream == urlsplit(_console_target(old, "r1")).netloc
 
     # The reaped owner is denied and nothing is proxied.
+    app_client.cookies.clear()
     h = _login(app_client, "attacker@a.edu")
     assert app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h).status_code == 404
     assert len(proxied) == 1

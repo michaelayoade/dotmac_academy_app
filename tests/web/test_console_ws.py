@@ -236,6 +236,7 @@ def test_reaped_instance_ws_cannot_reach_port_now_owned_by_another_instance(
     assert urlsplit(captured[0]).netloc == "127.0.0.1:9001"
 
     # The reaped owner is closed 1008 and nothing is pumped.
+    app_client.cookies.clear()
     _login(app_client, "attacker@a.edu")
     with pytest.raises(WebSocketDisconnect) as ei:
         with app_client.websocket_connect(_ws_url(old), headers=H) as ws:

@@ -28,7 +28,6 @@ from app.services.exceptions import ConflictError
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import ExecResult, LabHandle
 
-
 _STALE_CONSOLES = {"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 9001}}
 
 
