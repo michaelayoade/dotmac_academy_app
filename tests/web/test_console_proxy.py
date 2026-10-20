@@ -62,15 +62,20 @@ def _login(app_client, email: str) -> dict[str, str]:
     return h
 
 
-def _seed_instance(admin_session, tenant, person_id) -> LabInstance:
+def _seed_instance(
+    admin_session, tenant, person_id, *, status="active", runtime_presence="present",
+    error=None, name="dal-x", consoles=None, activity_id=None,
+) -> LabInstance:
     li = LabInstance(
         tenant_id=tenant.id,
-        activity_id=_entitled_activity(admin_session, tenant, person_id),
+        activity_id=activity_id or _entitled_activity(admin_session, tenant, person_id),
         person_id=person_id,
-        instance_name="dal-x",
+        instance_name=name,
         seed={"o": 5},
-        status="active",
-        consoles={"r1": {"kind": "linux", "port": 9001}},
+        status=status,
+        runtime_presence=runtime_presence,
+        error=error,
+        consoles={"r1": {"kind": "linux", "port": 9001}} if consoles is None else consoles,
     )
     admin_session.add(li)
     admin_session.commit()
@@ -143,3 +148,67 @@ def test_unauthenticated_redirects(app_client, admin_session, tenant_a):
     )
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
+
+
+# --- non-live instances must never reach a console (security hotfix) --------
+
+
+async def _must_not_proxy(request, target):  # pragma: no cover - failure path
+    raise AssertionError(f"proxied a non-live instance to {target}")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "reaped", "runtime_presence": "absent"},
+        {"status": "reaped"},  # stale presence must not matter
+        {"status": "error", "error": "boom"},
+        {"status": "active", "error": "boom"},
+        {"status": "active", "runtime_presence": "absent"},
+        {"status": "active", "runtime_presence": "unknown"},
+        {"status": "resetting"},
+        {"status": "provisioning"},
+        {"status": "queued"},
+    ],
+)
+def test_non_live_instance_console_is_404(app_client, admin_session, tenant_a, monkeypatch, kwargs):
+    p = _make_person(admin_session, tenant_a, "nl@a.edu")
+    li = _seed_instance(admin_session, tenant_a, p.id, **kwargs)
+    h = _login(app_client, "nl@a.edu")
+    monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)
+
+    assert app_client.get(f"/labs/instances/{li.id}/console/r1", headers=h).status_code == 404
+    assert app_client.get(f"/labs/instances/{li.id}/console/r1/token", headers=h).status_code == 404
+
+
+def test_reaped_instance_cannot_reach_reused_port_of_another_instance(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    """The reaped owner's stored port is now another learner's live ttyd."""
+    victim = _make_person(admin_session, tenant_a, "victim@a.edu")
+    attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
+    # Another learner's live instance now owns port 9001.
+    _seed_instance(admin_session, tenant_a, victim.id, name="dal-live")
+    old = _seed_instance(
+        admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
+        name="dal-old",
+    )
+    h = _login(app_client, "attacker@a.edu")
+    monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)
+
+    r = app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h)
+    assert r.status_code == 404
+
+
+def test_reaped_routeros_instance_cannot_reach_reused_mgmt_ip(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    attacker = _make_person(admin_session, tenant_a, "attacker2@a.edu")
+    old = _seed_instance(
+        admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
+        consoles={"r1": {"kind": "vr-ros", "mgmt": "192.0.2.10"}},
+    )
+    h = _login(app_client, "attacker2@a.edu")
+    monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)
+
+    assert app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h).status_code == 404

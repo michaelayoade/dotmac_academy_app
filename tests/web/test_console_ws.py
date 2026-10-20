@@ -66,15 +66,20 @@ def _login(app_client, email: str) -> None:
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
 
 
-def _seed_instance(admin_session, tenant, person_id) -> LabInstance:
+def _seed_instance(
+    admin_session, tenant, person_id, *, status="active", runtime_presence="present",
+    error=None, name="dal-x", consoles=None, activity_id=None,
+) -> LabInstance:
     li = LabInstance(
         tenant_id=tenant.id,
-        activity_id=_entitled_activity(admin_session, tenant, person_id),
+        activity_id=activity_id or _entitled_activity(admin_session, tenant, person_id),
         person_id=person_id,
-        instance_name="dal-x",
+        instance_name=name,
         seed={"o": 5},
-        status="active",
-        consoles={"r1": {"kind": "linux", "port": 9001}},
+        status=status,
+        runtime_presence=runtime_presence,
+        error=error,
+        consoles={"r1": {"kind": "linux", "port": 9001}} if consoles is None else consoles,
     )
     admin_session.add(li)
     admin_session.commit()
@@ -157,3 +162,54 @@ def test_owner_ws_passes_gate(app_client, admin_session, tenant_a, monkeypatch):
         assert ws.receive_text() == "ok"
 
     assert captured["url"] == f"ws://127.0.0.1:9001/labs/instances/{li.id}/console/r1/ws"
+
+
+# --- non-live instances must never reach a console (security hotfix) --------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "reaped", "runtime_presence": "absent"},
+        {"status": "reaped"},
+        {"status": "error", "error": "boom"},
+        {"status": "active", "error": "boom"},
+        {"status": "active", "runtime_presence": "absent"},
+        {"status": "resetting"},
+    ],
+)
+def test_non_live_instance_ws_rejected(app_client, admin_session, tenant_a, monkeypatch, kwargs):
+    p = _make_person(admin_session, tenant_a, "nl@a.edu")
+    li = _seed_instance(admin_session, tenant_a, p.id, **kwargs)
+    _login(app_client, "nl@a.edu")
+
+    async def _must_not_pump(websocket, upstream_url):  # pragma: no cover - failure path
+        raise AssertionError(f"pumped a non-live instance to {upstream_url}")
+
+    monkeypatch.setattr("app.web.labs._proxy_ws", _must_not_pump)
+
+    with pytest.raises(WebSocketDisconnect) as ei:
+        with app_client.websocket_connect(_ws_url(li), headers=H) as ws:
+            ws.receive_text()
+    assert ei.value.code == 1008
+
+
+def test_reaped_instance_ws_cannot_reach_reused_port(app_client, admin_session, tenant_a, monkeypatch):
+    victim = _make_person(admin_session, tenant_a, "victim@a.edu")
+    attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
+    _seed_instance(admin_session, tenant_a, victim.id, name="dal-live")  # now owns port 9001
+    old = _seed_instance(
+        admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
+        name="dal-old",
+    )
+    _login(app_client, "attacker@a.edu")
+
+    async def _must_not_pump(websocket, upstream_url):  # pragma: no cover - failure path
+        raise AssertionError(f"pumped a reaped instance to {upstream_url}")
+
+    monkeypatch.setattr("app.web.labs._proxy_ws", _must_not_pump)
+
+    with pytest.raises(WebSocketDisconnect) as ei:
+        with app_client.websocket_connect(_ws_url(old), headers=H) as ws:
+            ws.receive_text()
+    assert ei.value.code == 1008

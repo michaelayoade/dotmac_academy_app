@@ -1050,6 +1050,7 @@ def run_claimed(
                     )
                     if escalation_message is not None:
                         failed_instance.status = "error"
+                        failed_instance.consoles = {}
                         failed_instance.error = escalation_message
                         # Never force "absent" here — escalation must not
                         # falsely claim the runtime is gone; presence stays
@@ -1077,6 +1078,7 @@ def run_claimed(
                     escalated_instance = db.get(LabInstance, operation_instance_id)
                     if escalated_instance is not None:
                         escalated_instance.status = "error"
+                        escalated_instance.consoles = {}
                         escalated_instance.error = escalation_message
                         # Never force "absent" here — escalation must not
                         # falsely claim the runtime is gone. Presence stays
@@ -1151,6 +1153,7 @@ def _fail_operation_at_ceiling(
         )
         if escalation_message is not None:
             instance.status = "error"
+            instance.consoles = {}
             instance.error = escalation_message
             # Presence stays "unknown" (set above) — never forced to
             # "absent" by escalation.
@@ -1176,6 +1179,7 @@ def _fail_operation_at_ceiling(
         )
         if escalation_message is not None:
             instance.status = "error"
+            instance.consoles = {}
             instance.error = escalation_message
             # Presence stays "unknown" (set above) — never forced to
             # "absent" by escalation.
