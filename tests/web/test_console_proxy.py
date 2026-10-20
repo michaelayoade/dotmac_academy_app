@@ -188,10 +188,13 @@ def test_reaped_instance_cannot_reach_reused_port_of_another_instance(
     victim = _make_person(admin_session, tenant_a, "victim@a.edu")
     attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
     # Another learner's live instance now owns port 9001.
-    _seed_instance(admin_session, tenant_a, victim.id, name="dal-live")
     old = _seed_instance(
         admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
         name="dal-old",
+    )
+    # Another learner's live instance now owns port 9001 (same activity, own row).
+    _seed_instance(
+        admin_session, tenant_a, victim.id, name="dal-live", activity_id=old.activity_id
     )
     h = _login(app_client, "attacker@a.edu")
     monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)

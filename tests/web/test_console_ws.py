@@ -197,10 +197,13 @@ def test_non_live_instance_ws_rejected(app_client, admin_session, tenant_a, monk
 def test_reaped_instance_ws_cannot_reach_reused_port(app_client, admin_session, tenant_a, monkeypatch):
     victim = _make_person(admin_session, tenant_a, "victim@a.edu")
     attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
-    _seed_instance(admin_session, tenant_a, victim.id, name="dal-live")  # now owns port 9001
     old = _seed_instance(
         admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
         name="dal-old",
+    )
+    # Another learner's live instance now owns port 9001 (same activity, own row).
+    _seed_instance(
+        admin_session, tenant_a, victim.id, name="dal-live", activity_id=old.activity_id
     )
     _login(app_client, "attacker@a.edu")
 
