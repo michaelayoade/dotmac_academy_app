@@ -335,6 +335,10 @@ def lab_detail(
             "template": tpl,
             "instance": instance,
             "instructions_html": instructions_html,
+            # Device login info is released only alongside the caller's OWN live
+            # instance (``_current_instance`` is scoped to this person and
+            # tenant), and only the sanitised list the loader validated.
+            "device_access": (tpl.access or []) if instance is not None else [],
             **(_result_context(db, tenant, person, instance) if instance else {}),
         },
     )

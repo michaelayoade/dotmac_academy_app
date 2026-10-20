@@ -19,6 +19,12 @@ database as ``Activity(type="lab")`` + :class:`LabTemplate` pairs.
       pass_threshold: 0.7          # optional; default 0.7
     checks:                        # list of check dicts, stored verbatim
       - {id: c1, type: probe, node: client, weight: 1, probe: ping}
+    access:                        # optional; device login info shown to the lab owner
+      - {node: router, protocol: webfig, username: admin, default_password: admin}
+      - {node: client, protocol: console, note: "No login needed."}
+
+``access`` carries disposable, documented lab-device defaults only (see
+:func:`parse_access`); it is validated strictly and never read from env/secrets.
 
 ``instructions.md`` may contain ``$include: <manual-file>#<anchor>`` directive
 lines; each is replaced by the slice of the referenced chapter markdown around
@@ -64,6 +70,82 @@ class LabSpec:
     checks: list = field(default_factory=list)
     seed_spec: dict = field(default_factory=dict)
     limits: dict = field(default_factory=dict)
+    access: list = field(default_factory=list)
+
+
+_ACCESS_PROTOCOLS = frozenset({"console", "webfig", "ssh"})
+_ACCESS_KEYS = frozenset({"node", "protocol", "username", "default_password", "note"})
+_ACCESS_MAX_ENTRIES = 32
+_NODE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
+_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
+# Anything that looks like templating, markup or control characters is refused:
+# the values are rendered as plain text and must stay that way.
+_ACCESS_TEXT_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f<>{}`$]")
+
+
+def _topology_nodes(topology_text: str) -> set[str] | None:
+    """Node names declared by a containerlab topology, or None if unparsable."""
+    try:
+        doc = yaml.safe_load(_PLACEHOLDER.sub("0", topology_text))
+        nodes = doc["topology"]["nodes"]
+    except Exception:
+        return None
+    return {str(k) for k in nodes} if isinstance(nodes, dict) else None
+
+
+def parse_access(raw, *, topology_text: str = "", where: str = "lab") -> list[dict]:
+    """Validate the optional ``access:`` list of a ``lab.yaml``.
+
+    Each entry describes how the owner logs in to ONE node of THIS lab:
+    ``node`` (must exist in the topology), ``protocol`` (console, webfig, ssh),
+    optional ``username``, optional ``default_password`` and optional ``note``.
+    The password key is deliberately named ``default_password``: it is only for
+    the disposable, documented default of a lab device that lives and dies with
+    the learner's own lab, never for infrastructure credentials. Values are
+    short plain text (no markup, templating or control characters). Any problem
+    raises ``ValueError`` so a bad file fails the import rather than shipping.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{where}: access must be a list")
+    if len(raw) > _ACCESS_MAX_ENTRIES:
+        raise ValueError(f"{where}: access has more than {_ACCESS_MAX_ENTRIES} entries")
+    topo_nodes = _topology_nodes(topology_text) if topology_text else None
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for i, item in enumerate(raw):
+        label = f"{where}: access[{i}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{label} must be a mapping")
+        unknown = set(item) - _ACCESS_KEYS
+        if unknown:
+            raise ValueError(f"{label} has unknown key(s): {', '.join(sorted(map(str, unknown)))}")
+        node = item.get("node")
+        if not isinstance(node, str) or not _NODE_NAME.match(node):
+            raise ValueError(f"{label}: node must be a plain node name")
+        if topo_nodes is not None and node not in topo_nodes:
+            raise ValueError(f"{label}: node {node!r} is not in the topology")
+        protocol = item.get("protocol")
+        if protocol not in _ACCESS_PROTOCOLS:
+            raise ValueError(f"{label}: protocol must be one of {sorted(_ACCESS_PROTOCOLS)}")
+        entry: dict = {"node": node, "protocol": protocol}
+        for key, limit in (("username", 64), ("default_password", 64), ("note", 200)):
+            if key not in item or item[key] is None:
+                continue
+            val = item[key]
+            if not isinstance(val, str) or not val.strip() or len(val) > limit:
+                raise ValueError(f"{label}: {key} must be a non-empty string of at most {limit} characters")
+            if _ACCESS_TEXT_FORBIDDEN.search(val):
+                raise ValueError(f"{label}: {key} contains characters that are not allowed")
+            entry[key] = val
+        if "default_password" in entry and "username" not in entry:
+            raise ValueError(f"{label}: default_password requires username")
+        if (node, protocol) in seen:
+            raise ValueError(f"{label}: duplicate entry for {node!r} over {protocol}")
+        seen.add((node, protocol))
+        out.append(entry)
+    return out
 
 
 def _slugify(text: str) -> str:
@@ -149,6 +231,7 @@ def parse_lab(dir_path, chapters_dir=None) -> LabSpec:
     checks = list(data.get("checks", []) or [])
     seed_spec = dict(data.get("seed_spec", data.get("seed", {})) or {})
     limits = dict(data.get("limits", {}) or {})
+    access = parse_access(data.get("access"), topology_text=topology_text, where=f"lab {slug or dir_path.name}")
 
     return LabSpec(
         slug=slug,
@@ -159,12 +242,15 @@ def parse_lab(dir_path, chapters_dir=None) -> LabSpec:
         checks=checks,
         seed_spec=seed_spec,
         limits=limits,
+        access=access,
     )
 
 
 def _source_hash(spec: LabSpec, instructions_html: str) -> str:
+    extra = {"access": spec.access} if spec.access else {}
     payload = json.dumps(
         {
+            **extra,
             "slug": spec.slug,
             "title": spec.title,
             "chapter_number": spec.chapter_number,
@@ -241,6 +327,7 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
                 checks=spec.checks,
                 seed_spec=spec.seed_spec,
                 limits=spec.limits,
+                access=spec.access,
                 source_hash=source_hash,
                 version=1,
             )
@@ -263,6 +350,7 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             template.checks = spec.checks
             template.seed_spec = spec.seed_spec
             template.limits = spec.limits
+            template.access = spec.access
             template.source_hash = source_hash
             template.version += 1
         # else: unchanged — skip
