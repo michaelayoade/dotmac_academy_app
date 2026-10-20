@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +84,37 @@ _PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
 _ACCESS_TEXT_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f<>{}`$]")
 
 
+#: ``default_password`` is for short, documented lab-device defaults. The loader
+#: refuses anything that looks like a real credential, so a pasted secret fails
+#: the import instead of being published to every learner:
+#: * longer than 32 characters;
+#: * a known token shape (GitHub, OpenAI-style ``sk-``, AWS access key id, JWT,
+#:   Slack, PEM block);
+#: * a long high-entropy string: at least 16 characters AND Shannon entropy of
+#:   at least 3.6 bits per character. Random base64/hex of that length sits at
+#:   4.0 or more (16 distinct characters give exactly 4.0), while human lab
+#:   defaults such as ``admin`` or ``VR-netlab9`` are short or repetitive.
+_PASSWORD_MAX = 32
+_TOKEN_SHAPES = re.compile(r"ghp_|gho_|ghs_|ghu_|github_pat_|sk-|AKIA|ASIA|eyJ|xox[abprs]-|-----BEGIN", re.I)
+_ENTROPY_MIN_LEN = 16
+_ENTROPY_MIN_BITS = 3.6
+
+
+def _entropy_bits_per_char(value: str) -> float:
+    counts = {c: value.count(c) for c in set(value)}
+    n = len(value)
+    return -sum((k / n) * math.log2(k / n) for k in counts.values())
+
+
+def _check_default_password(value: str, label: str) -> None:
+    if len(value) > _PASSWORD_MAX:
+        raise ValueError(f"{label}: default_password longer than {_PASSWORD_MAX} characters looks like a real secret")
+    if _TOKEN_SHAPES.search(value):
+        raise ValueError(f"{label}: default_password looks like an access token or key")
+    if len(value) >= _ENTROPY_MIN_LEN and _entropy_bits_per_char(value) >= _ENTROPY_MIN_BITS:
+        raise ValueError(f"{label}: default_password looks randomly generated, not a documented lab default")
+
+
 def _topology_nodes(topology_text: str) -> set[str] | None:
     """Node names declared by a containerlab topology, or None if unparsable."""
     try:
@@ -112,6 +144,8 @@ def parse_access(raw, *, topology_text: str = "", where: str = "lab") -> list[di
     if len(raw) > _ACCESS_MAX_ENTRIES:
         raise ValueError(f"{where}: access has more than {_ACCESS_MAX_ENTRIES} entries")
     topo_nodes = _topology_nodes(topology_text) if topology_text else None
+    if raw and topology_text and topo_nodes is None:
+        raise ValueError(f"{where}: topology could not be parsed, so access nodes cannot be checked")
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for i, item in enumerate(raw):
@@ -130,7 +164,7 @@ def parse_access(raw, *, topology_text: str = "", where: str = "lab") -> list[di
         if protocol not in _ACCESS_PROTOCOLS:
             raise ValueError(f"{label}: protocol must be one of {sorted(_ACCESS_PROTOCOLS)}")
         entry: dict = {"node": node, "protocol": protocol}
-        for key, limit in (("username", 64), ("default_password", 64), ("note", 200)):
+        for key, limit in (("username", 64), ("default_password", _PASSWORD_MAX), ("note", 200)):
             if key not in item or item[key] is None:
                 continue
             val = item[key]
@@ -138,6 +172,8 @@ def parse_access(raw, *, topology_text: str = "", where: str = "lab") -> list[di
                 raise ValueError(f"{label}: {key} must be a non-empty string of at most {limit} characters")
             if _ACCESS_TEXT_FORBIDDEN.search(val):
                 raise ValueError(f"{label}: {key} contains characters that are not allowed")
+            if key == "default_password":
+                _check_default_password(val, label)
             entry[key] = val
         if "default_password" in entry and "username" not in entry:
             raise ValueError(f"{label}: default_password requires username")
@@ -353,6 +389,11 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             template.access = spec.access
             template.source_hash = source_hash
             template.version += 1
+        elif template.access != spec.access:
+            # Hash unchanged but the stored access differs (for example the
+            # column was added or reset after the template was imported): refresh
+            # it without bumping the template version.
+            template.access = spec.access
         # else: unchanged — skip
 
         templates.append(template)

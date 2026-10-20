@@ -119,3 +119,27 @@ def test_status_fragment_never_carries_device_access(app_client, admin_session, 
     r = app_client.get(f"/labs/instances/{inst.id}/status", headers=h)
     assert r.status_code == 200
     assert "labpw-1" not in r.text
+
+
+def test_error_instance_shows_no_device_access(app_client, admin_session, tenant_a):
+    p = _make_person(admin_session, tenant_a, "err@a.edu")
+    course, act, tpl = _seed_lab(admin_session, tenant_a)
+    tpl.access = ACCESS
+    admin_session.commit()
+    _entitle(admin_session, tenant_a, p, course)
+    _instance(admin_session, tenant_a, act, p, "dal-acc7", status="error")
+    h = _login(app_client, "err@a.edu")
+
+    assert "labpw-1" not in app_client.get(f"/labs/{act.id}", headers=h).text
+
+
+def test_provisioning_instance_shows_device_access(app_client, admin_session, tenant_a):
+    p = _make_person(admin_session, tenant_a, "prov@a.edu")
+    course, act, tpl = _seed_lab(admin_session, tenant_a)
+    tpl.access = ACCESS
+    admin_session.commit()
+    _entitle(admin_session, tenant_a, p, course)
+    _instance(admin_session, tenant_a, act, p, "dal-acc8", status="provisioning")
+    h = _login(app_client, "prov@a.edu")
+
+    assert "labpw-1" in app_client.get(f"/labs/{act.id}", headers=h).text
