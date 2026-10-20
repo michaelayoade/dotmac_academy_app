@@ -126,3 +126,41 @@ def test_pipeline_refresh_swallows_db_failure(monkeypatch):
     monkeypatch.setattr(m, "_last_pipeline_refresh", 0.0)
     monkeypatch.setattr(lab_jobs, "admin_session", _boom)
     m.refresh_pipeline_metrics()  # must not raise
+
+
+_WORKER = """
+import sys
+from app import metrics
+metrics.LAB_INSTANCES_BY_STATUS.labels(status="queued").set(float(sys.argv[1]))
+metrics.LAB_HOST_UP.set(float(sys.argv[2]))
+"""
+
+
+def _collect_multiproc(tmp_path):
+    from prometheus_client import CollectorRegistry, multiprocess
+
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry, path=str(tmp_path))
+    return {(s.name, tuple(sorted(s.labels.items()))): s.value for fam in registry.collect() for s in fam.samples}
+
+
+def test_db_gauges_use_most_recent_worker_value_across_processes(tmp_path):
+    """A stale worker must not pin a DB-derived gauge (false queued alert).
+
+    Worker A refreshes while a lab is queued; worker B later sees it drained.
+    Collected value must be B's (0), not max(A, B) (1). The probe gauge keeps
+    ``max`` semantics: one reaching worker is enough.
+    """
+    import os
+    import subprocess
+    import sys
+    import time
+
+    env = {**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(tmp_path)}
+    for queued, host_up in (("1", "1"), ("0", "0")):
+        subprocess.run([sys.executable, "-c", _WORKER, queued, host_up], env=env, check=True)  # noqa: S603
+        time.sleep(0.05)  # distinct write timestamps for mostrecent
+
+    got = _collect_multiproc(tmp_path)
+    assert got[("academy_lab_instances", (("status", "queued"),))] == 0.0
+    assert got[("academy_lab_host_up", ())] == 1.0
