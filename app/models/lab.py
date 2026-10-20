@@ -109,6 +109,26 @@ class LabInstance(Base, TimestampMixin):
     )
 
 
+class LabConsoleActivity(Base):
+    """Web-tier observation that a learner used a console of this instance.
+
+    One row per instance, written only by ``lab_console_activity.record`` under
+    column-scoped grants (see migration 0063). It is a fact, not a decision:
+    the idle reaper alone turns it into a keep-alive. ``lab_instances`` itself
+    stays worker-owned.
+    """
+
+    __tablename__ = "lab_console_activity"
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id", "instance_id"],
+                             ["lab_instances.tenant_id", "lab_instances.id"],
+                             name="fk_lab_console_activity_instance", ondelete="CASCADE"),
+    )
+    instance_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class LabOperation(Base, TimestampMixin):
     """One requested deploy/destroy/check for a `LabInstance` — a work queue
     row, not a decision record.

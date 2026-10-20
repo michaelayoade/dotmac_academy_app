@@ -35,7 +35,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
-from app.services import lab_lifecycle, web_auth
+from app.services import lab_console_activity, lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
 from app.services.lab_content import render_instance_instructions
 from app.services.lab_operations import OPEN_STATES, enqueue
@@ -155,6 +155,19 @@ def _authorize_console(
     if target is None:
         raise HTTPException(status_code=404)
     return target
+
+
+def _note_console_use(db: Session, tenant: _TenantContext, instance_id: UUID) -> None:
+    """Record console use for the idle reaper; never lets a failure reach the proxy.
+
+    Call only AFTER ``_authorize_console`` succeeded. A savepoint keeps a failed
+    write from poisoning the request's session.
+    """
+    try:
+        with db.begin_nested():
+            lab_console_activity.record(db, tenant_id=tenant.id, instance_id=instance_id)
+    except Exception as exc:
+        logger.debug("console heartbeat skipped for %s: %s", instance_id, exc)
 
 
 async def _proxy_http(request: Request, target: str) -> Response:
@@ -509,6 +522,7 @@ async def console(
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
+    _note_console_use(db, tenant, instance_id)  # opening a console is use
     # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
     # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
     # land on the correct index for each.
@@ -540,6 +554,9 @@ async def console_subpath(
     """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
+    # Deliberately no heartbeat here: sub-resources are assets, tokens and
+    # WebFig polling, not user action, so an idle open page must not keep a lab
+    # alive. Typing is counted on the ttyd websocket; opening a console above.
     return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
 
 
@@ -559,6 +576,11 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
         await websocket.close(code=1011)
         return
 
+    # ttyd command byte "0" is INPUT (keystrokes/paste); resize, pause and
+    # keepalive frames are not user activity, so an idle open tab does not
+    # keep a lab alive.
+    beat = getattr(websocket.state, "console_heartbeat", None)
+
     async def client_to_upstream() -> None:
         try:
             while True:
@@ -566,8 +588,12 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
                 if msg["type"] == "websocket.disconnect":
                     break
                 if msg.get("text") is not None:
+                    if beat is not None and msg["text"][:1] == "0":
+                        await beat()
                     await upstream.send(msg["text"])
                 elif msg.get("bytes") is not None:
+                    if beat is not None and msg["bytes"][:1] == b"0":
+                        await beat()
                     await upstream.send(msg["bytes"])
         except (WebSocketDisconnect, websockets.ConnectionClosed):
             pass
@@ -590,6 +616,22 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
                 logger.debug("client ws close failed: %s", exc)
 
     await asyncio.gather(client_to_upstream(), upstream_to_client())
+
+
+def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
+    """Short-lived session for one heartbeat write; failures are swallowed."""
+    db = SessionLocal()
+    try:
+        db.execute(
+            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
+        db.commit()
+    except Exception as exc:
+        logger.debug("console heartbeat skipped for %s: %s", instance_id, exc)
+    finally:
+        db.close()
 
 
 @ws_router.websocket("/labs/instances/{instance_id}/console/{node}/ws")
@@ -625,6 +667,16 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
         port = urlsplit(target).port
     finally:
         db.close()
+
+    tenant_id = tenant.id
+
+    async def _heartbeat() -> None:
+        # In-process gate first: keystrokes cost a dict lookup, not a thread.
+        if not lab_console_activity.try_acquire(instance_id):
+            return
+        await asyncio.to_thread(_write_console_heartbeat, tenant_id, instance_id)
+
+    websocket.state.console_heartbeat = _heartbeat
 
     upstream_url = f"ws://{settings.lab_console_host}:{port}" f"/labs/instances/{instance_id}/console/{node}/ws"
     await _proxy_ws(websocket, upstream_url)
