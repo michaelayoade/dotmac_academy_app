@@ -24,7 +24,7 @@ import websockets
 from dotmac_kernel.db import SessionLocal
 from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
@@ -40,6 +40,14 @@ from app.services.entitlements import require_course_open
 from app.services.lab_content import render_instance_instructions
 from app.services.lab_operations import OPEN_STATES, enqueue
 from app.services.web_auth import require_web_user
+from app.web.console_proxy import (
+    MAX_DEVICE_COOKIES,
+    device_cookie_header,
+    rewrite_location,
+    rewrite_set_cookie,
+    safe_mgmt_address,
+    safe_subpath,
+)
 from app.web.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -100,7 +108,7 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
         return None
     kind = str(spec.get("kind", ""))
     if kind == "vr-ros" or kind.startswith("vr-"):
-        mgmt = spec.get("mgmt")
+        mgmt = safe_mgmt_address(spec.get("mgmt"))
         return f"http://{mgmt}/" if mgmt else None
     port = spec.get("port")
     return f"http://{settings.lab_console_host}:{port}/" if port else None
@@ -157,20 +165,89 @@ def _authorize_console(
     return target
 
 
+# Methods the console proxy accepts. RouterOS WebFig polls and submits through
+# ``POST jsproxy``; HEAD is harmless. Nothing else (PUT/DELETE/PATCH/OPTIONS/...).
+_CONSOLE_METHODS = ["GET", "HEAD", "POST"]
+
+# Request headers forwarded to the device. An allow-list, not a deny-list: the
+# learner's Cookie (Academy session + CSRF token), Authorization, X-CSRF-Token,
+# Origin/Referer and X-Forwarded-* are never sent to a lab node.
+_FORWARD_REQUEST_HEADERS = frozenset(
+    {
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "cache-control",
+        "content-type",
+        "if-modified-since",
+        "if-none-match",
+        "pragma",
+        "range",
+        "user-agent",
+    }
+)
+
+def _new_upstream_client() -> httpx.AsyncClient:
+    """Upstream HTTP client. Redirects are never followed (SSRF); tests patch this."""
+    return httpx.AsyncClient(timeout=30.0, follow_redirects=False)
+
+
+async def _read_capped_body(request: Request) -> bytes:
+    cap = settings.lab_console_max_body_bytes
+    declared = request.headers.get("content-length")
+    if declared is not None and (not declared.isdigit() or int(declared) > cap):
+        raise HTTPException(status_code=413, detail="request body too large")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(status_code=413, detail="request body too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def _proxy_http(request: Request, target: str) -> Response:
-    """Reverse-proxy an HTTP request to `target`, streaming the response back."""
-    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
-    body = await request.body()
-    client = httpx.AsyncClient(timeout=30.0)
-    upstream_req = client.build_request(
-        request.method,
-        target,
-        headers=fwd_headers,
-        content=body,
-        params=request.query_params,
-    )
-    upstream = await client.send(upstream_req, stream=True)
-    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
+    """Reverse-proxy an HTTP request to `target`, streaming the response back.
+
+    Callers must have run ``_authorize_console`` first; ``target`` is built from
+    the instance's own node only. Only allow-listed headers go upstream, the
+    body is capped, and device ``Set-Cookie``/redirects are confined to the
+    proxy prefix.
+    """
+    if request.method not in _CONSOLE_METHODS:
+        raise HTTPException(status_code=405)
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARD_REQUEST_HEADERS}
+    cookie = device_cookie_header(request)
+    if cookie:
+        fwd_headers["cookie"] = cookie
+    body = await _read_capped_body(request) if request.method == "POST" else b""
+    pp = request.scope.get("path_params") or {}
+    prefix = f"/labs/instances/{pp.get('instance_id')}/console/{pp.get('node')}"
+    client = _new_upstream_client()
+    try:
+        upstream_req = client.build_request(
+            request.method,
+            target,
+            headers=fwd_headers,
+            content=body,
+            params=request.query_params,
+        )
+        upstream = await client.send(upstream_req, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        logger.warning("console upstream request failed (%s): %s", target, exc)
+        raise HTTPException(status_code=502, detail="lab console unreachable") from exc
+    resp_headers = {
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP and k.lower() not in ("set-cookie", "location")
+    }
+    location = upstream.headers.get("location")
+    if location is not None:
+        rewritten = rewrite_location(location, target, prefix)
+        if rewritten is not None:
+            resp_headers["location"] = rewritten
 
     async def _body_iter():
         try:
@@ -180,12 +257,18 @@ async def _proxy_http(request: Request, target: str) -> Response:
             await upstream.aclose()
             await client.aclose()
 
-    return StreamingResponse(
+    response = StreamingResponse(
         _body_iter(),
         status_code=upstream.status_code,
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
     )
+    secure = (request.headers.get("x-forwarded-proto", "").split(",")[0].strip() or request.url.scheme) == "https"
+    for raw in upstream.headers.get_list("set-cookie")[:MAX_DEVICE_COOKIES]:
+        cookie_out = rewrite_set_cookie(raw, prefix, secure)
+        if cookie_out:
+            response.headers.append("set-cookie", cookie_out)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +588,11 @@ async def console(
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
+    if not request.url.path.endswith("/") and not target.startswith(f"http://{settings.lab_console_host}:"):
+        # WebFig resolves relative URLs (jsproxy, ...) against the page URL, so
+        # the page must live at ".../{node}/". Redirect the no-slash form.
+        qs = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"{request.url.path}/{qs}", status_code=308)
     # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
     # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
     # land on the correct index for each.
@@ -524,7 +612,7 @@ def _subpath_target(target: str, instance_id: UUID, node: str, subpath: str) -> 
     return f"{base}/{subpath}"
 
 
-@router.get("/labs/instances/{instance_id}/console/{node}/{subpath:path}")
+@router.api_route("/labs/instances/{instance_id}/console/{node}/{subpath:path}", methods=_CONSOLE_METHODS)
 async def console_subpath(
     instance_id: UUID,
     node: str,
@@ -533,10 +621,15 @@ async def console_subpath(
     person: Person = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
+    """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig).
+
+    GET/HEAD/POST: RouterOS WebFig submits ``POST jsproxy``. The owner, tenant
+    and entitlement gate runs for every method before anything is proxied.
+    """
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
-    return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
+    safe = safe_subpath(subpath)
+    return await _proxy_http(request, _subpath_target(target, instance_id, node, safe))
 
 
 async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:

@@ -45,6 +45,8 @@ class Settings(KernelSettings):
     # ``lab_console_host``", which is correct on a single-host deployment and on
     # the lab host itself, where the tunnel address IS local.
     lab_console_bind_host: str = ""
+    # Request-body cap for the console proxy (RouterOS WebFig POST /jsproxy).
+    lab_console_max_body_bytes: int = 1_048_576
     # Port probed on the lab host for the academy_lab_host_up health gauge.
     lab_host_probe_port: int = 22
 
