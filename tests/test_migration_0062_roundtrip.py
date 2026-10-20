@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
 from alembic import command
-from tests.test_migration_roundtrip import _head_revision, _make_config, _migration_env, _migration_url
+from tests.test_migration_roundtrip import _make_config, _migration_env, _migration_url
 
 REVISION = "0062_lab_template_access"
 
@@ -22,7 +23,7 @@ def _column(conn):
 def test_0062_downgrade_upgrade_roundtrip():
     url = _migration_url()
     cfg = _make_config()
-    assert _head_revision(cfg) == REVISION
+    assert ScriptDirectory.from_config(cfg).get_revision(REVISION) is not None
     engine = create_engine(url, future=True)
     try:
         with _migration_env(url):

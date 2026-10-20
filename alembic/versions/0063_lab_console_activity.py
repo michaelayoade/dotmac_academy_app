@@ -15,6 +15,11 @@ platform_api get nothing. Row-level security follows the tenant isolation
 pattern of the other lab tables, and the composite FK to `lab_instances`
 cascades so a deleted instance leaves no row behind.
 
+`last_seen_at` is never trusted from the client: a BEFORE INSERT OR UPDATE
+trigger overwrites it with the database clock. Without it the web role could
+store a far-future timestamp and keep a lab from ever being reaped (and clock
+skew between web hosts could do the same by accident).
+
 Revision ID: 0063_lab_console_activity
 Revises: 0062_lab_template_access
 """
@@ -55,6 +60,14 @@ def upgrade() -> None:
         f"USING (tenant_id = app_current_tenant_id()) "
         f"WITH CHECK (tenant_id = app_current_tenant_id());"
     )
+    op.execute(
+        "CREATE FUNCTION lab_console_activity_stamp() RETURNS trigger "
+        "LANGUAGE plpgsql AS $$ BEGIN NEW.last_seen_at := now(); RETURN NEW; END; $$;"
+    )
+    op.execute(
+        f"CREATE TRIGGER {TABLE}_stamp BEFORE INSERT OR UPDATE ON {TABLE} "
+        f"FOR EACH ROW EXECUTE FUNCTION lab_console_activity_stamp();"
+    )
     op.execute(f"REVOKE ALL PRIVILEGES ON {TABLE} FROM PUBLIC;")
     op.execute(f"GRANT SELECT ON {TABLE} TO app_user;")
     op.execute(f"GRANT INSERT (instance_id, tenant_id, last_seen_at) ON {TABLE} TO app_user;")
@@ -62,4 +75,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table(TABLE)
+    op.drop_table(TABLE)  # drops the trigger with it
+    op.execute("DROP FUNCTION IF EXISTS lab_console_activity_stamp();")

@@ -34,6 +34,26 @@ _MAX_TRACKED = 4096
 
 _last_attempt: dict[UUID, float] = {}
 
+#: A failing heartbeat (for example a grant missing in production) must be
+#: visible, but must not flood the log from every keystroke window.
+_WARN_EVERY_SECONDS = 300.0
+_last_warned: float | None = None
+
+
+def warn_failure(instance_id: UUID, exc: BaseException) -> None:
+    """Log a heartbeat failure at WARNING, at most once per ``_WARN_EVERY_SECONDS``."""
+    global _last_warned
+    now = time.monotonic()
+    if _last_warned is not None and now - _last_warned < _WARN_EVERY_SECONDS:
+        logger.debug("console heartbeat failed for %s: %s", instance_id, exc)
+        return
+    _last_warned = now
+    logger.warning(
+        "console heartbeat failed (labs will fall back to lifecycle activity only): %s: %s",
+        type(exc).__name__,
+        exc,
+    )
+
 
 def _due(instance_id: UUID, now: float) -> bool:
     """Claim this instance's heartbeat slot; False if one was claimed recently."""
@@ -82,4 +102,6 @@ def record(db: Session, *, tenant_id: UUID, instance_id: UUID, throttled: bool =
 
 def reset_throttle() -> None:
     """Test hook: forget in-process rate-limit state."""
+    global _last_warned
     _last_attempt.clear()
+    _last_warned = None

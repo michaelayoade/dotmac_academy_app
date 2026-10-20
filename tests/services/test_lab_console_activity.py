@@ -41,6 +41,18 @@ def _instance(admin_session, tenant, *, name, last_active=None):
     return inst
 
 
+def _put_seen(admin_session, inst, tenant, ts):
+    """Backdate a heartbeat. The stamp trigger overwrites every client value, so
+    fixtures bypass it with replica mode (superuser only), then restore it."""
+    admin_session.execute(text("SET LOCAL session_replication_role = replica"))
+    admin_session.execute(
+        text("INSERT INTO lab_console_activity (instance_id, tenant_id, last_seen_at) "
+             "VALUES (:i, :t, :ts) ON CONFLICT (instance_id) DO UPDATE SET last_seen_at = :ts"),
+        {"i": inst.id, "t": tenant.id, "ts": ts},
+    )
+    admin_session.commit()  # SET LOCAL ends with the transaction
+
+
 def _as_tenant(db, tenant):
     db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant.id)})
 
@@ -87,8 +99,7 @@ def test_sql_guard_skips_a_fresh_row_even_when_the_process_gate_is_open(
 def test_stale_row_is_refreshed(admin_session, app_user_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="rl3")
     old = datetime.now(UTC) - timedelta(minutes=10)
-    admin_session.add(LabConsoleActivity(instance_id=inst.id, tenant_id=tenant_a.id, last_seen_at=old))
-    admin_session.commit()
+    _put_seen(admin_session, inst, tenant_a, old)
     db = app_user_session
     _as_tenant(db, tenant_a)
     lca.record(db, tenant_id=tenant_a.id, instance_id=inst.id)
@@ -148,9 +159,7 @@ def test_other_roles_have_no_access(app_user_session):
 
 def test_deleting_an_instance_cascades(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="cas1")
-    admin_session.add(LabConsoleActivity(instance_id=inst.id, tenant_id=tenant_a.id,
-                                         last_seen_at=datetime.now(UTC)))
-    admin_session.commit()
+    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC))
     admin_session.delete(inst)
     admin_session.commit()
     assert admin_session.get(LabConsoleActivity, inst.id) is None
@@ -173,9 +182,7 @@ def test_reaper_still_reaps_an_idle_lab_without_heartbeat(admin_session, tenant_
 def test_recent_console_heartbeat_keeps_the_lab_alive(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="rp2",
                      last_active=datetime.now(UTC) - timedelta(minutes=999))
-    admin_session.add(LabConsoleActivity(instance_id=inst.id, tenant_id=tenant_a.id,
-                                         last_seen_at=datetime.now(UTC) - timedelta(minutes=5)))
-    admin_session.commit()
+    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=5))
     assert lab_jobs.request_idle_reaps(admin_session) == 0
     assert _ops(admin_session, inst) == 0
 
@@ -183,16 +190,88 @@ def test_recent_console_heartbeat_keeps_the_lab_alive(admin_session, tenant_a):
 def test_stale_heartbeat_does_not_save_an_idle_lab(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="rp3",
                      last_active=datetime.now(UTC) - timedelta(minutes=999))
-    admin_session.add(LabConsoleActivity(instance_id=inst.id, tenant_id=tenant_a.id,
-                                         last_seen_at=datetime.now(UTC) - timedelta(minutes=500)))
-    admin_session.commit()
+    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=500))
     assert lab_jobs.request_idle_reaps(admin_session) == 1
 
 
 def test_recent_lifecycle_activity_still_counts_with_an_old_heartbeat(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="rp4",
                      last_active=datetime.now(UTC) - timedelta(minutes=2))
-    admin_session.add(LabConsoleActivity(instance_id=inst.id, tenant_id=tenant_a.id,
-                                         last_seen_at=datetime.now(UTC) - timedelta(minutes=500)))
-    admin_session.commit()
+    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=500))
     assert lab_jobs.request_idle_reaps(admin_session) == 0
+
+
+# --- the database clock is the only clock ---------------------------------
+
+
+def test_client_supplied_future_timestamp_is_overwritten_on_insert(admin_session, app_user_session, tenant_a):
+    inst = _instance(admin_session, tenant_a, name="trg1")
+    db = app_user_session
+    _as_tenant(db, tenant_a)
+    future = datetime.now(UTC) + timedelta(days=3650)
+    db.execute(
+        text("INSERT INTO lab_console_activity (instance_id, tenant_id, last_seen_at) VALUES (:i, :t, :ts)"),
+        {"i": inst.id, "t": tenant_a.id, "ts": future},
+    )
+    db.commit()
+    seen = _seen(admin_session, inst)
+    assert abs((seen - datetime.now(UTC)).total_seconds()) < 60
+
+
+def test_client_supplied_future_timestamp_is_overwritten_on_update(admin_session, app_user_session, tenant_a):
+    inst = _instance(admin_session, tenant_a, name="trg2")
+    old = datetime.now(UTC) - timedelta(hours=3)
+    _put_seen(admin_session, inst, tenant_a, old)
+    db = app_user_session
+    _as_tenant(db, tenant_a)
+    db.execute(
+        text("UPDATE lab_console_activity SET last_seen_at = :ts WHERE instance_id = :i"),
+        {"i": inst.id, "ts": datetime.now(UTC) + timedelta(days=3650)},
+    )
+    db.commit()
+    seen = _seen(admin_session, inst)
+    assert abs((seen - datetime.now(UTC)).total_seconds()) < 60
+
+
+def test_a_future_value_cannot_keep_a_lab_from_being_reaped(admin_session, app_user_session, tenant_a):
+    inst = _instance(admin_session, tenant_a, name="trg3",
+                     last_active=datetime.now(UTC) - timedelta(minutes=999))
+    db = app_user_session
+    _as_tenant(db, tenant_a)
+    db.execute(
+        text("INSERT INTO lab_console_activity (instance_id, tenant_id, last_seen_at) VALUES (:i, :t, :ts)"),
+        {"i": inst.id, "t": tenant_a.id, "ts": datetime.now(UTC) + timedelta(days=3650)},
+    )
+    db.commit()
+    # The stamp is the database clock, not the future value: the lab is alive now...
+    assert lab_jobs.request_idle_reaps(admin_session) == 0
+    # ...and goes idle again once real time passes (simulated by backdating).
+    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=999))
+    assert lab_jobs.request_idle_reaps(admin_session) == 1
+
+
+def test_exact_column_grants_and_forced_rls(app_user_session):
+    db = app_user_session
+    cols = [r[0] for r in db.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'lab_console_activity'"))]
+    assert set(cols) == {"instance_id", "tenant_id", "last_seen_at"}
+
+    def col(priv, c):
+        return db.scalar(text("SELECT has_column_privilege('app_user', 'lab_console_activity', :c, :p)"),
+                         {"c": c, "p": priv})
+
+    # INSERT is column-scoped to exactly the three columns; UPDATE to one.
+    assert {c for c in cols if col("INSERT", c)} == set(cols)
+    assert {c for c in cols if col("UPDATE", c)} == {"last_seen_at"}
+    # No table-wide INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER beyond the above.
+    acl = db.scalar(text("SELECT relacl::text FROM pg_class WHERE relname = 'lab_console_activity'"))
+    app_entry = [e for e in (acl or "").strip("{}").split(",") if e.startswith("app_user=")]
+    assert app_entry == ["app_user=r/app_admin"] or app_entry == ["app_user=r/postgres"] or all(
+        set(e.split("=")[1].split("/")[0]) <= {"r"} for e in app_entry
+    ), acl
+    flags = db.execute(text(
+        "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'lab_console_activity'"
+    )).one()
+    assert tuple(flags) == (True, True)
+    policy = db.scalar(text("SELECT count(*) FROM pg_policies WHERE tablename = 'lab_console_activity'"))
+    assert policy == 1

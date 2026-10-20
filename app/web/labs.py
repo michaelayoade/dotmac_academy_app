@@ -172,7 +172,7 @@ def _note_console_use(db: Session, tenant: _TenantContext, instance_id: UUID) ->
         with db.begin_nested():
             lab_console_activity.record(db, tenant_id=tenant.id, instance_id=instance_id)
     except Exception as exc:
-        logger.debug("console heartbeat skipped for %s: %s", instance_id, exc)
+        lab_console_activity.warn_failure(instance_id, exc)
 
 
 async def _proxy_http(request: Request, target: str) -> Response:
@@ -627,6 +627,9 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
     await asyncio.gather(client_to_upstream(), upstream_to_client())
 
 
+_heartbeat_tasks: set[asyncio.Task] = set()
+
+
 def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
     """Short-lived session for one heartbeat write; failures are swallowed."""
     db = SessionLocal()
@@ -638,7 +641,7 @@ def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
         lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
         db.commit()
     except Exception as exc:
-        logger.debug("console heartbeat skipped for %s: %s", instance_id, exc)
+        lab_console_activity.warn_failure(instance_id, exc)
     finally:
         db.close()
 
@@ -683,7 +686,12 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
         # In-process gate first: keystrokes cost a dict lookup, not a thread.
         if not lab_console_activity.try_acquire(instance_id):
             return
-        await asyncio.to_thread(_write_console_heartbeat, tenant_id, instance_id)
+        # Background task: input forwarding must never wait on the database
+        # (a saturated pool would otherwise stall keystrokes for the pool
+        # timeout). The set keeps a reference so the task is not collected.
+        task = asyncio.create_task(asyncio.to_thread(_write_console_heartbeat, tenant_id, instance_id))
+        _heartbeat_tasks.add(task)
+        task.add_done_callback(_heartbeat_tasks.discard)
 
     websocket.state.console_heartbeat = _heartbeat
 
