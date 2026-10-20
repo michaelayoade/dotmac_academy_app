@@ -322,6 +322,7 @@ def test_console_startup_guidance_is_specific_to_router_nodes(
 ):
     _, activity, instance, headers = journey
     instance.consoles = {"node": {"kind": kind}}
+    instance.runtime_presence = "present"  # links render only for a reachable console
     admin_session.commit()
     response = app_client.get(f"/labs/{activity.id}", headers=headers)
     assert response.status_code == 200
