@@ -46,6 +46,11 @@ chain at `0053_entrance_defaults`. The prior source checkpoint at `a99a395e`
 counted 28 and ended at `0060_lab_conditional_ops`. Current revalidation at
 `61f69194` retains 28 references (11 physical, 17 logical) and ends at
 `0061_lab_completion_grants`; PR #177 adds grants over existing identity columns.
+The current lineage head is now `0062_lab_template_access`, an additive
+`lab_templates.access` JSONB column with a constant default; it touches no identity
+column, so the reference census above is unchanged.
+`0063_lab_console_activity` then adds a small tenant-isolated side table for console
+heartbeats (no identity column, column-scoped web grants); the census is again unchanged.
 These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal

@@ -882,6 +882,18 @@ def run_claimed(
                 # (only if present) -> console teardown (only if destroyed).
                 lab_lifecycle.destroy_if_present(db, instance, engine)
             else:
+                # Durable reservation BEFORE slow external work, mirroring the
+                # deploy path's commit above: once destroy begins the runtime's
+                # mgmt IPs / ttyd ports may be released and reused, so make the
+                # uncertainty (and the cleared console specs) visible to the web
+                # tier immediately rather than at the end of the destroy. The
+                # commit holds no lock we rely on (this branch takes neither the
+                # capacity advisory lock nor a row lock beyond this instance's),
+                # a later failure's rollback cannot undo it, and the existing
+                # failure handler still re-asserts "unknown" afterwards.
+                instance.runtime_presence = "unknown"
+                instance.consoles = {}
+                db.commit()
                 lab_lifecycle.destroy(db, instance, engine)
         elif operation_kind == "check":
             template = db.scalars(

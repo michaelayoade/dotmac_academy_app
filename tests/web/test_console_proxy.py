@@ -8,8 +8,11 @@ request through (non-403/404), not that bytes were shuttled.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 from fastapi import Response
+from sqlalchemy import select
 
 from app.models.assessment import Activity
 from app.models.auth import UserCredential
@@ -19,6 +22,7 @@ from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.security import hash_password
+from app.web.labs import _console_target
 
 
 def _entitled_activity(admin_session, tenant, person_id):
@@ -181,37 +185,97 @@ def test_non_live_instance_console_is_404(app_client, admin_session, tenant_a, m
     assert app_client.get(f"/labs/instances/{li.id}/console/r1/token", headers=h).status_code == 404
 
 
-def test_reaped_instance_cannot_reach_reused_port_of_another_instance(
-    app_client, admin_session, tenant_a, monkeypatch
+def _enroll(admin_session, tenant, activity_id, person_id):
+    """Entitle ``person_id`` to the course of ``activity_id`` (existing cohort)."""
+    act = admin_session.get(Activity, activity_id)
+    coh = admin_session.scalars(
+        select(Cohort).where(Cohort.tenant_id == tenant.id)
+    ).first()
+    admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person_id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.commit()
+    return act
+
+
+@pytest.mark.parametrize(
+    "consoles",
+    [
+        {"r1": {"kind": "linux", "port": 9001}},
+        {"r1": {"kind": "vr-ros", "mgmt": "192.0.2.10"}},
+    ],
+    ids=["ttyd-port", "routeros-mgmt-ip"],
+)
+def test_reaped_instance_cannot_reach_target_now_owned_by_another_instance(
+    app_client, admin_session, tenant_a, monkeypatch, consoles
 ):
-    """The reaped owner's stored port is now another learner's live ttyd."""
-    victim = _make_person(admin_session, tenant_a, "victim@a.edu")
+    """The reaped owner's stored target is byte-for-byte the victim's live target."""
     attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
-    # Another learner's live instance now owns port 9001.
+    victim = _make_person(admin_session, tenant_a, "victim@a.edu")
     old = _seed_instance(
         admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
-        name="dal-old",
+        name="dal-old", consoles=consoles,
     )
-    # Another learner's live instance now owns port 9001 (same activity, own row).
-    _seed_instance(
-        admin_session, tenant_a, victim.id, name="dal-live", activity_id=old.activity_id
+    _enroll(admin_session, tenant_a, old.activity_id, victim.id)
+    live = _seed_instance(
+        admin_session, tenant_a, victim.id, name="dal-live", consoles=consoles,
+        activity_id=old.activity_id,
     )
+    # Same upstream host:port for both rows, and the victim's is genuinely live.
+    assert urlsplit(_console_target(old, "r1")).netloc == urlsplit(_console_target(live, "r1")).netloc
+    assert (live.status, live.error, live.runtime_presence) == ("active", None, "present")
+
+    proxied: list[str] = []
+
+    async def _record(request, target):
+        proxied.append(target)
+        return Response(content=b"console", status_code=200)
+
+    monkeypatch.setattr("app.web.labs._proxy_http", _record)
+
+    # Positive control: the victim's own owner reaches the live console.
+    h = _login(app_client, "victim@a.edu")
+    assert app_client.get(f"/labs/instances/{live.id}/console/r1", headers=h).status_code == 200
+    assert len(proxied) == 1
+    upstream = urlsplit(proxied[0]).netloc
+    assert upstream == urlsplit(_console_target(old, "r1")).netloc
+
+    # The reaped owner is denied and nothing is proxied.
     h = _login(app_client, "attacker@a.edu")
-    monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)
-
-    r = app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h)
-    assert r.status_code == 404
-
-
-def test_reaped_routeros_instance_cannot_reach_reused_mgmt_ip(
-    app_client, admin_session, tenant_a, monkeypatch
-):
-    attacker = _make_person(admin_session, tenant_a, "attacker2@a.edu")
-    old = _seed_instance(
-        admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
-        consoles={"r1": {"kind": "vr-ros", "mgmt": "192.0.2.10"}},
-    )
-    h = _login(app_client, "attacker2@a.edu")
-    monkeypatch.setattr("app.web.labs._proxy_http", _must_not_proxy)
-
     assert app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h).status_code == 404
+    assert len(proxied) == 1
+
+    # And the denial is the liveness gate: the same row, made live, would be proxied
+    # to that very upstream.
+    old.status, old.runtime_presence = "active", "present"
+    admin_session.commit()
+    assert app_client.get(f"/labs/instances/{old.id}/console/r1", headers=h).status_code == 200
+    assert urlsplit(proxied[-1]).netloc == upstream
+
+
+# --- console links render only when the console is reachable -----------------
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "live"),
+    [
+        ({}, True),
+        ({"error": "boom"}, False),
+        ({"runtime_presence": "unknown"}, False),
+        ({"runtime_presence": "absent"}, False),
+    ],
+    ids=["live", "active-with-error", "uncertain-runtime", "absent-runtime"],
+)
+def test_status_fragment_shows_console_links_only_when_live(
+    app_client, admin_session, tenant_a, kwargs, live
+):
+    p = _make_person(admin_session, tenant_a, "links@a.edu")
+    li = _seed_instance(admin_session, tenant_a, p.id, **kwargs)
+    h = _login(app_client, "links@a.edu")
+
+    r = app_client.get(f"/labs/instances/{li.id}/status", headers=h)
+    assert r.status_code == 200
+    assert (f"/labs/instances/{li.id}/console/r1" in r.text) is live
+    # The link and the gate agree: whatever is linked is reachable.
+    from app.web.labs import _console_live
+
+    assert _console_live(li) is live

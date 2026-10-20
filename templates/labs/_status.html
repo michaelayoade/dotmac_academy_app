@@ -26,22 +26,24 @@
       <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-brand-800">{{ instance.status }}</span>
     </div>
 
-    <h2 class="mt-5 font-display text-lg text-ink">Consoles</h2>
-    <ul class="mt-2 space-y-1.5">
-    {% for node in instance.consoles %}
-      <li>
-        <a class="group inline-flex min-h-11 items-center gap-2 font-medium text-brand-700 hover:text-brand-800" target="_blank"
-           href="/labs/instances/{{ instance.id }}/console/{{ node }}">
-          <span class="font-mono text-sm">{{ node }}</span>
-          <span class="text-xs text-ink-soft transition-transform group-hover:translate-x-0.5" aria-hidden="true">open &nearr;</span>
-        </a>
-        {% set kind = instance.consoles[node].get("kind", "") %}
-        {% if kind == "vr-ros" or kind.startswith("vr-") %}
-        <p class="text-sm text-ink-soft">The router may still be starting; retry the console if it is not available.</p>
-        {% endif %}
-      </li>
-    {% endfor %}
-    </ul>
+    {% if lab_console_live(instance) %}
+      <h2 class="mt-5 font-display text-lg text-ink">Consoles</h2>
+      <ul class="mt-2 space-y-1.5">
+      {% for node in instance.consoles %}
+        <li>
+          <a class="group inline-flex min-h-11 items-center gap-2 font-medium text-brand-700 hover:text-brand-800" target="_blank"
+             href="/labs/instances/{{ instance.id }}/console/{{ node }}">
+            <span class="font-mono text-sm">{{ node }}</span>
+            <span class="text-xs text-ink-soft transition-transform group-hover:translate-x-0.5" aria-hidden="true">open &nearr;</span>
+          </a>
+          {% set kind = instance.consoles[node].get("kind", "") %}
+          {% if kind == "vr-ros" or kind.startswith("vr-") %}
+          <p class="text-sm text-ink-soft">The router may still be starting; retry the console if it is not available.</p>
+          {% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    {% endif %}
 
     {% if instance.error %}
       <p class="mt-4 rounded-lg bg-clay-500/10 px-4 py-3 text-sm text-clay-700">

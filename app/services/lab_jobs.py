@@ -25,13 +25,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401  # ensure all FK target tables are registered for CLI workers
 from app.config import settings
-from app.models.lab import LabInstance, LabOperation
+from app.models.lab import LabConsoleActivity, LabInstance, LabOperation
 from app.services import lab_operations
 from app.services.host_lock import HostLockUnavailable
 from app.services.lab_lifecycle import (
@@ -194,10 +194,15 @@ def request_idle_reaps(db: Session) -> int:
     from app.services.settings_store import effective
 
     cutoff = datetime.now(UTC) - timedelta(minutes=effective(db).lab_idle_minutes)
+    # Last activity is the later of the worker-owned lifecycle stamp and the web
+    # tier's console heartbeat (a separate observation table; see migration
+    # 0063). greatest() ignores NULLs, so an instance with neither stays unreaped
+    # exactly as before.
     idle = db.scalars(
         select(LabInstance)
+        .outerjoin(LabConsoleActivity, LabConsoleActivity.instance_id == LabInstance.id)
         .where(LabInstance.status == "active")
-        .where(LabInstance.last_active_at < cutoff)
+        .where(func.greatest(LabInstance.last_active_at, LabConsoleActivity.last_seen_at) < cutoff)
     ).all()
 
     requested = 0

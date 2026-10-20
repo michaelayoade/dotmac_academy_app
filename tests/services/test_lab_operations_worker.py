@@ -29,6 +29,16 @@ from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import ExecResult, LabHandle
 
 
+_STALE_CONSOLES = {"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 9001}}
+
+
+def _give_stale_consoles(db, instance):
+    """Give a not-yet-escalated instance recorded consoles, to prove escalation
+    to ``error`` clears them (stored mgmt IPs / ports are reused elsewhere)."""
+    instance.consoles = dict(_STALE_CONSOLES)
+    db.commit()
+
+
 def _seed(db, tenant_id, *, name: str = "one", status: str = "queued", presence: str | None = None):
     course = Course(
         tenant_id=tenant_id,
@@ -1069,10 +1079,49 @@ def test_enqueue_raises_conflict_error_when_retry_also_races(
     admin_session.rollback()
 
 
+def test_destroy_commits_unknown_presence_and_cleared_consoles_before_engine_work(
+    admin_session, tenant_a
+):
+    """The web tier must stop proxying as soon as destroy begins, not when it ends."""
+    from sqlalchemy.orm import Session
+
+    instance, _ = _seed(admin_session, tenant_a.id, name="destroy-visible", status="active", presence="present")
+    _give_stale_consoles(admin_session, instance)
+    operation = lab_operations.enqueue(admin_session, instance=instance, kind="destroy", requested_by=None)
+    operation.state = "claimed"
+    operation.claimed_by = "worker"
+    operation.claimed_at = datetime.now(UTC)
+    operation.heartbeat_at = datetime.now(UTC)
+    operation.attempts = 1
+    admin_session.commit()
+    instance_id = instance.id
+
+    seen: dict = {}
+
+    def _destroy(name):
+        # An independent connection only sees committed state.
+        with Session(admin_session.get_bind()) as other:
+            row = other.get(LabInstance, instance_id)
+            seen["presence"], seen["consoles"] = row.runtime_presence, row.consoles
+        raise RuntimeError("destroy refused")
+
+    engine = MagicMock()
+    engine.destroy.side_effect = _destroy
+    outcome = lab_operations.run_claimed(
+        admin_session, operation_id=operation.id, claimed_by="worker", engine=engine
+    )
+    assert outcome == "failed"
+    assert seen == {"presence": "unknown", "consoles": {}}
+    admin_session.refresh(instance)
+    assert instance.runtime_presence == "unknown"
+    assert instance.consoles == {}
+
+
 def test_five_consecutive_automatic_destroy_failures_escalate_instance_to_error(
     admin_session, tenant_a
 ):
     instance, _ = _seed(admin_session, tenant_a.id, name="escalate", status="active")
+    _give_stale_consoles(admin_session, instance)
     engine = MagicMock()
     engine.destroy.side_effect = RuntimeError("destroy refused")
 
@@ -1098,6 +1147,7 @@ def test_five_consecutive_automatic_destroy_failures_escalate_instance_to_error(
             assert instance.status == "active"
         else:
             assert instance.status == "error"
+            assert instance.consoles == {}
             assert instance.error == (
                 "automatic destroy failed 5 times; manual intervention required"
             )
@@ -1453,6 +1503,7 @@ def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
         )
     admin_session.refresh(instance)
     assert instance.status == "active"
+    _give_stale_consoles(admin_session, instance)  # isolates the escalation write
 
     stuck_operation = lab_operations.enqueue(
         admin_session, instance=instance, kind="destroy", requested_by=None
@@ -1472,6 +1523,7 @@ def test_stuck_destroy_claim_escalates_instance_via_reconcile_stuck(
     assert instance.error == (
         f"automatic destroy failed {threshold} times; manual intervention required"
     )
+    assert instance.consoles == {}
 
 
 def test_stuck_repair_deploy_claim_escalates_instance_via_reconcile_stuck(
@@ -1512,6 +1564,7 @@ def test_stuck_repair_deploy_claim_escalates_instance_via_reconcile_stuck(
         )
     admin_session.refresh(instance)
     assert instance.status == "active"
+    _give_stale_consoles(admin_session, instance)  # isolates the escalation write
 
     stuck_operation = lab_operations.enqueue(
         admin_session,
@@ -1536,6 +1589,7 @@ def test_stuck_repair_deploy_claim_escalates_instance_via_reconcile_stuck(
     assert instance.error == (
         f"automatic repair deploy failed {threshold} times; manual intervention required"
     )
+    assert instance.consoles == {}
 
 
 def test_single_stuck_destroy_row_escalates_via_reconcile_stuck_alone(
@@ -3104,6 +3158,7 @@ def test_repeated_automatic_repair_deploy_failures_escalate_to_manual_interventi
     engine.status.return_value = "absent"
     engine.deploy_if_absent.side_effect = RuntimeError("containerlab wedged")
 
+    _give_stale_consoles(admin_session, instance)
     for attempt in range(1, lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"] + 1):
         operation = lab_operations.enqueue(
             admin_session,
@@ -3129,8 +3184,10 @@ def test_repeated_automatic_repair_deploy_failures_escalate_to_manual_interventi
         assert operation.state == "failed"
         if attempt < lab_operations.MAX_ATTEMPTS_BY_KIND["deploy"]:
             assert instance.status == "active"  # reverted, not escalated yet
+            assert instance.consoles == _STALE_CONSOLES  # only escalation clears
         else:
             assert instance.status == "error"
+            assert instance.consoles == {}
             assert instance.error == (
                 "automatic repair deploy failed 3 times; manual intervention required"
             )
