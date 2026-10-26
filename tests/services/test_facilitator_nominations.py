@@ -83,6 +83,7 @@ def test_incomplete_active_learner_nomination_stays_pending_without_mutating_lea
             status="active",
         )
     )
+    admin_session.flush()
     enrollment = Enrollment(
         tenant_id=tenant_a.id,
         cohort_id=cohort.id,
