@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
@@ -11,7 +11,7 @@ from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
 from app.models.notification import Notification
 from app.models.offering import CourseOffering
 from app.models.person import Person
-from app.models.rbac import PersonRole
+from app.models.rbac import AuditEvent, PersonRole
 from app.models.track import CohortTrack, Track
 from app.services.facilitator_nominations import (
     FacilitatorScope,
@@ -84,6 +84,18 @@ def test_incomplete_active_learner_nomination_stays_pending_without_mutating_lea
         )
     )
     admin_session.flush()
+    admin_session.execute(
+        text(
+            """CREATE FUNCTION pg_temp.activate_eligible_facilitator_nominations(
+                   uuid, uuid, uuid, uuid, integer, uuid
+               ) RETURNS TABLE (candidate_nomination_id uuid, activated_now boolean)
+               LANGUAGE plpgsql AS $$
+               BEGIN
+                   RAISE EXCEPTION 'unqualified activation capability call';
+               END;
+               $$"""
+        )
+    )
     enrollment = Enrollment(
         tenant_id=tenant_a.id,
         cohort_id=cohort.id,
@@ -156,6 +168,16 @@ def test_course_nomination_activates_immediately_when_requirement_is_completed(a
         select(Notification).where(Notification.tenant_id == tenant_a.id).where(Notification.person_id == nominee.id)
     ).all()
     assert [notice.kind for notice in notices] == ["facilitator_nomination", "facilitator_activated"]
+    activation_audit = (
+        admin_session.query(AuditEvent)
+        .filter_by(
+            tenant_id=tenant_a.id,
+            action="facilitator_nomination.activate",
+            entity_id=str(outcome.nomination_id),
+        )
+        .one()
+    )
+    assert activation_audit.actor_person_id == actor.id
 
 
 def test_cohort_nomination_snapshots_requirements_and_sweep_activates_once(admin_session, tenant_a):

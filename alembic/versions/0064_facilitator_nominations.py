@@ -18,6 +18,7 @@ depends_on = None
 
 NOMINATIONS = "facilitator_nominations"
 REQUIREMENTS = "facilitator_requirements"
+ACTIVATION_CAPABILITY = "public.activate_eligible_facilitator_nominations"
 
 
 def _timestamps() -> tuple[sa.Column, sa.Column]:
@@ -145,6 +146,226 @@ def upgrade() -> None:
     _tenant_table(NOMINATIONS)
     _tenant_table(REQUIREMENTS)
 
+    # Activation is the sole privileged persistence path shared by the web tier,
+    # repair sweep, and restricted lab worker. The definer function re-derives
+    # eligibility from canonical facts and emits fixed consequences atomically;
+    # callers cannot choose arbitrary nomination, notification, or audit writes.
+    op.execute(
+        """
+        CREATE FUNCTION public.activate_eligible_facilitator_nominations(
+            p_tenant_id uuid,
+            p_nomination_id uuid DEFAULT NULL,
+            p_person_id uuid DEFAULT NULL,
+            p_course_id uuid DEFAULT NULL,
+            p_limit integer DEFAULT NULL,
+            p_actor_person_id uuid DEFAULT NULL
+        )
+        RETURNS TABLE (candidate_nomination_id uuid, activated_now boolean)
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog
+        AS $$
+        DECLARE
+            v_nomination record;
+            v_candidate_ids uuid[];
+        BEGIN
+            IF p_tenant_id IS DISTINCT FROM public.app_current_tenant_id() THEN
+                RAISE EXCEPTION 'facilitator activation tenant mismatch'
+                    USING ERRCODE = '42501';
+            END IF;
+            IF p_actor_person_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM public.people AS actor
+                    WHERE actor.tenant_id = p_tenant_id
+                      AND actor.id = p_actor_person_id
+               )
+            THEN
+                RAISE EXCEPTION 'facilitator activation actor tenant mismatch'
+                    USING ERRCODE = '22023';
+            END IF;
+            IF p_actor_person_id IS NOT NULL AND p_nomination_id IS NULL THEN
+                RAISE EXCEPTION 'automated facilitator activation cannot name an actor'
+                    USING ERRCODE = '22023';
+            END IF;
+            IF p_nomination_id IS NOT NULL THEN
+                IF p_person_id IS NOT NULL OR p_course_id IS NOT NULL OR p_limit IS NOT NULL THEN
+                    RAISE EXCEPTION 'invalid facilitator activation selector'
+                        USING ERRCODE = '22023';
+                END IF;
+            ELSIF p_person_id IS NOT NULL OR p_course_id IS NOT NULL THEN
+                IF p_person_id IS NULL OR p_course_id IS NULL OR p_limit IS NOT NULL THEN
+                    RAISE EXCEPTION 'invalid facilitator activation selector'
+                        USING ERRCODE = '22023';
+                END IF;
+            ELSIF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+                RAISE EXCEPTION 'invalid facilitator activation selector'
+                    USING ERRCODE = '22023';
+            END IF;
+
+            IF p_limit IS NOT NULL THEN
+                SELECT pg_catalog.array_agg(candidate.id ORDER BY candidate.created_at, candidate.id)
+                  INTO v_candidate_ids
+                  FROM (
+                      SELECT n.id, n.created_at
+                        FROM public.facilitator_nominations AS n
+                       WHERE n.tenant_id = p_tenant_id
+                         AND n.status = 'pending'
+                         AND EXISTS (
+                             SELECT 1
+                               FROM public.people AS person
+                              WHERE person.tenant_id = n.tenant_id
+                                AND person.id = n.person_id
+                                AND person.status = 'active'
+                         )
+                         AND EXISTS (
+                             SELECT 1
+                               FROM public.facilitator_requirements AS required
+                              WHERE required.tenant_id = n.tenant_id
+                                AND required.nomination_id = n.id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1
+                               FROM public.facilitator_requirements AS required
+                              WHERE required.tenant_id = n.tenant_id
+                                AND required.nomination_id = n.id
+                                AND NOT EXISTS (
+                                    SELECT 1
+                                      FROM public.course_completions AS completed
+                                     WHERE completed.tenant_id = required.tenant_id
+                                       AND completed.person_id = n.person_id
+                                       AND completed.course_id = required.course_id
+                                       AND completed.status = 'completed'
+                                )
+                         )
+                       ORDER BY n.created_at, n.id
+                       LIMIT p_limit
+                         FOR UPDATE OF n SKIP LOCKED
+                  ) AS candidate;
+            ELSE
+                SELECT pg_catalog.array_agg(candidate.id ORDER BY candidate.created_at, candidate.id)
+                  INTO v_candidate_ids
+                  FROM (
+                      SELECT n.id, n.created_at
+                        FROM public.facilitator_nominations AS n
+                       WHERE n.tenant_id = p_tenant_id
+                         AND (
+                             n.id = p_nomination_id
+                             OR (
+                                 p_person_id IS NOT NULL
+                                 AND n.person_id = p_person_id
+                                 AND n.status = 'pending'
+                                 AND EXISTS (
+                                     SELECT 1
+                                       FROM public.facilitator_requirements AS affected
+                                      WHERE affected.tenant_id = n.tenant_id
+                                        AND affected.nomination_id = n.id
+                                        AND affected.course_id = p_course_id
+                                 )
+                             )
+                         )
+                       ORDER BY n.created_at, n.id
+                         FOR UPDATE OF n
+                  ) AS candidate;
+            END IF;
+
+            FOR v_nomination IN
+                SELECT n.*
+                  FROM public.facilitator_nominations AS n
+                 WHERE n.id = ANY(COALESCE(v_candidate_ids, ARRAY[]::uuid[]))
+                 ORDER BY n.created_at, n.id
+            LOOP
+                candidate_nomination_id := v_nomination.id;
+                activated_now := false;
+
+                IF p_actor_person_id IS NOT NULL
+                   AND v_nomination.nominated_by_person_id IS DISTINCT FROM p_actor_person_id
+                THEN
+                    RAISE EXCEPTION 'facilitator activation actor does not own nomination provenance'
+                        USING ERRCODE = '22023';
+                END IF;
+
+                IF v_nomination.status = 'pending'
+                   AND EXISTS (
+                       SELECT 1
+                         FROM public.people AS candidate
+                        WHERE candidate.tenant_id = v_nomination.tenant_id
+                          AND candidate.id = v_nomination.person_id
+                          AND candidate.status = 'active'
+                   )
+                   AND EXISTS (
+                       SELECT 1
+                         FROM public.facilitator_requirements AS required
+                        WHERE required.tenant_id = v_nomination.tenant_id
+                          AND required.nomination_id = v_nomination.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM public.facilitator_requirements AS required
+                        WHERE required.tenant_id = v_nomination.tenant_id
+                          AND required.nomination_id = v_nomination.id
+                          AND NOT EXISTS (
+                              SELECT 1
+                                FROM public.course_completions AS completed
+                               WHERE completed.tenant_id = required.tenant_id
+                                 AND completed.person_id = v_nomination.person_id
+                                 AND completed.course_id = required.course_id
+                                 AND completed.status = 'completed'
+                          )
+                   )
+                THEN
+                    UPDATE public.facilitator_nominations
+                       SET status = 'active',
+                           activated_at = pg_catalog.clock_timestamp(),
+                           revoked_at = NULL,
+                           activation_reason = 'requirements_completed',
+                           updated_at = pg_catalog.clock_timestamp()
+                     WHERE tenant_id = v_nomination.tenant_id
+                       AND id = v_nomination.id
+                       AND status = 'pending';
+
+                    IF FOUND THEN
+                        activated_now := true;
+                        INSERT INTO public.notifications (
+                            id, tenant_id, person_id, kind, title, body, link
+                        ) VALUES (
+                            pg_catalog.gen_random_uuid(),
+                            v_nomination.tenant_id,
+                            v_nomination.person_id,
+                            'facilitator_activated',
+                            'Your facilitator assignment is active',
+                            'You completed the required course work and can now facilitate the assigned learning scope.',
+                            '/learn'
+                        );
+                        INSERT INTO public.audit_events (
+                            id, tenant_id, actor_person_id, action,
+                            entity_type, entity_id, details
+                        ) VALUES (
+                            pg_catalog.gen_random_uuid(),
+                            v_nomination.tenant_id,
+                            p_actor_person_id,
+                            'facilitator_nomination.activate',
+                            'facilitator_nomination',
+                            v_nomination.id::text,
+                            pg_catalog.jsonb_build_object(
+                                'scope', v_nomination.scope_type,
+                                'person_id', v_nomination.person_id::text
+                            )
+                        );
+                    END IF;
+                END IF;
+                RETURN NEXT;
+            END LOOP;
+        END;
+        $$;
+        """
+    )
+    op.execute(f"REVOKE ALL ON FUNCTION {ACTIVATION_CAPABILITY}(uuid, uuid, uuid, uuid, integer, uuid) FROM PUBLIC;")
+    op.execute(
+        f"GRANT EXECUTE ON FUNCTION {ACTIVATION_CAPABILITY}(uuid, uuid, uuid, uuid, integer, uuid) "
+        "TO app_user, platform_api, academy_lab_worker;"
+    )
+
     op.execute(
         """
         INSERT INTO facilitator_nominations (
@@ -166,5 +387,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(f"DROP FUNCTION {ACTIVATION_CAPABILITY}(uuid, uuid, uuid, uuid, integer, uuid);")
     op.drop_table(REQUIREMENTS)
     op.drop_table(NOMINATIONS)

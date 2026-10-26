@@ -44,6 +44,31 @@ transaction for immediate activation. The scheduled reminder sweep also runs
 an eligibility-filtered reconciliation as the repair path; incomplete older
 nominations cannot starve later eligible nominations.
 
+Activation persistence is owned by the narrowly scoped
+`activate_eligible_facilitator_nominations` database capability. This is an
+explicit exception to ADR 0001's historical preference against per-operation
+`SECURITY DEFINER` functions. A queued consequence would break this decision's
+requirement that the canonical completion and newly earned scoped access become
+visible atomically. Granting the cross-tenant lab worker direct reads and
+writes on nomination, requirement, notification, and audit tables would be a
+materially broader authority. The capability therefore fixes `search_path` to
+`pg_catalog`, schema-qualifies every application relation, revokes `PUBLIC`,
+and receives only explicit `EXECUTE` grants. Its caller-facing inputs select a
+typed nomination, completed-course reconciliation, or bounded repair sweep;
+inside the definer boundary it rechecks the transaction-local tenant binding,
+active person, nonempty immutable requirement snapshot, and every canonical
+completion under row lock. Immediate modes wait for the nomination lock;
+`SKIP LOCKED` is reserved for the bounded repair sweep. Only a successful
+pending-to-active update emits the fixed notification and audit rows.
+
+Request roles must arrive with the adapter-established tenant GUC and cannot
+change it through this service. The typed service sets the same
+transaction-local GUC only for explicitly trusted `BYPASSRLS` admin/worker
+callers, allowing offline repair and cross-tenant worker execution without
+weakening the function's exact tenant check. Nomination-time activation carries
+the validated nominating actor into the audit event; automated completion and
+repair activation records a null actor.
+
 Nomination and activation each create an in-app notification in the same
 transaction as the aggregate change. The service flushes but never commits or
 rolls back; the calling adapter owns the session transaction. Repeated

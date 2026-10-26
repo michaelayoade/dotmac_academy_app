@@ -17,6 +17,18 @@ def _table_exists(conn, table: str) -> bool:
     return bool(conn.scalar(text("SELECT to_regclass(:table) IS NOT NULL"), {"table": table}))
 
 
+def _activation_capability_exists(conn) -> bool:
+    return bool(
+        conn.scalar(
+            text(
+                "SELECT to_regprocedure("
+                "'public.activate_eligible_facilitator_nominations(uuid,uuid,uuid,uuid,integer,uuid)'"
+                ") IS NOT NULL"
+            )
+        )
+    )
+
+
 def test_0064_roundtrip_backfills_active_legacy_facilitator_without_mutating_enrollment():
     url = _migration_url()
     cfg = _make_config()
@@ -114,6 +126,7 @@ def test_0064_roundtrip_backfills_active_legacy_facilitator_without_mutating_enr
         with engine.connect() as conn:
             assert _table_exists(conn, "facilitator_nominations")
             assert _table_exists(conn, "facilitator_requirements")
+            assert _activation_capability_exists(conn)
             row = conn.execute(
                 text(
                     "SELECT scope_type, status, activation_reason FROM facilitator_nominations "
@@ -164,12 +177,52 @@ def test_0064_roundtrip_backfills_active_legacy_facilitator_without_mutating_enr
             assert "FOREIGN KEY (tenant_id, offering_id)" in constraints["fk_facilitator_nominations_offering"]
             assert "FOREIGN KEY (tenant_id, nomination_id)" in constraints["fk_facilitator_requirements_nomination"]
             assert "FOREIGN KEY (tenant_id, course_id)" in constraints["fk_facilitator_requirements_course"]
+            capability = conn.execute(
+                text(
+                    """SELECT p.prosecdef, p.proconfig, p.provolatile, p.proparallel,
+                              p.proisstrict,
+                              pg_get_userbyid(p.proowner) = current_user AS owned_by_migrator,
+                              NOT EXISTS (
+                                  SELECT 1 FROM aclexplode(p.proacl) acl WHERE acl.grantee = 0
+                              ) AS public_revoked,
+                              has_function_privilege(
+                                  'academy_lab_worker', p.oid, 'EXECUTE'
+                              ) AS worker_execute,
+                              (
+                                  SELECT array_agg(pg_get_userbyid(acl.grantee) ORDER BY pg_get_userbyid(acl.grantee))
+                                    FROM aclexplode(p.proacl) acl
+                                   WHERE acl.privilege_type = 'EXECUTE'
+                                     AND acl.grantee <> p.proowner
+                              ) AS execute_grantees
+                         FROM pg_proc p
+                        WHERE p.oid = to_regprocedure(
+                            'public.activate_eligible_facilitator_nominations(uuid,uuid,uuid,uuid,integer,uuid)'
+                        )"""
+                )
+            ).one()
+            assert tuple(capability) == (
+                True,
+                ["search_path=pg_catalog"],
+                "v",
+                "u",
+                False,
+                True,
+                True,
+                True,
+                ["academy_lab_worker", "app_user", "platform_api"],
+            )
+            for table in ("facilitator_nominations", "facilitator_requirements", "audit_events"):
+                assert not conn.scalar(
+                    text("SELECT has_table_privilege(" "'academy_lab_worker', :table, 'SELECT,INSERT,UPDATE,DELETE')"),
+                    {"table": table},
+                )
 
         with _migration_env(url):
             command.downgrade(cfg, DOWN_REVISION)
         with engine.connect() as conn:
             assert not _table_exists(conn, "facilitator_nominations")
             assert not _table_exists(conn, "facilitator_requirements")
+            assert not _activation_capability_exists(conn)
     finally:
         with _migration_env(url):
             command.upgrade(cfg, "head")

@@ -16,13 +16,17 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.models.assessment import Activity, Score, Submission
 from app.models.certificate import Certificate
+from app.models.cohort import Cohort
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
+from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.learning_event import LearningEvent
 from app.models.notification import Notification
+from app.models.offering import CourseOffering
 from app.models.person import Person
+from app.models.rbac import AuditEvent
 from app.services import host_lock, lab_jobs, lab_lifecycle, lab_operations
 from app.services.exceptions import ConflictError
 from app.services.labengine.containerlab import ContainerlabEngine
@@ -448,6 +452,38 @@ def test_final_lab_check_completes_course_once_in_worker_transaction(
             course_id=other_activity.course_id, pct=0, status="in_progress",
         ),
     ])
+    cohort = Cohort(
+        tenant_id=tenant_a.id,
+        name="Final lab facilitator scope",
+        discipline="networking",
+        status="active",
+    )
+    admin_session.add(cohort)
+    admin_session.flush()
+    offering = CourseOffering(
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        course_id=activity.course_id,
+        status="active",
+    )
+    admin_session.add(offering)
+    admin_session.flush()
+    nomination = FacilitatorNomination(
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        scope_type="course",
+        offering_id=offering.id,
+        status="pending",
+    )
+    admin_session.add(nomination)
+    admin_session.flush()
+    admin_session.add(
+        FacilitatorRequirement(
+            tenant_id=tenant_a.id,
+            nomination_id=nomination.id,
+            course_id=activity.course_id,
+        )
+    )
     admin_session.commit()
     engine = _engine(instance.instance_name)
 
@@ -503,6 +539,22 @@ def test_final_lab_check_completes_course_once_in_worker_transaction(
     assert certificate.tenant_id == tenant_a.id
     assert certificate.person_id == person.id
     assert certificate.course_id == activity.course_id
+    admin_session.refresh(nomination)
+    assert nomination.status == "active"
+    assert nomination.activation_reason == "requirements_completed"
+    activation_notices = admin_session.query(Notification).filter_by(
+        tenant_id=tenant_a.id,
+        person_id=person.id,
+        kind="facilitator_activated",
+    )
+    assert activation_notices.count() == 1
+    activation_audits = admin_session.query(AuditEvent).filter_by(
+        tenant_id=tenant_a.id,
+        action="facilitator_nomination.activate",
+        entity_id=str(nomination.id),
+    )
+    assert activation_audits.count() == 1
+    assert activation_audits.one().actor_person_id is None
 
     for passed in (True, False):
         _, completion = check(passed=passed, recover=passed)
@@ -520,6 +572,8 @@ def test_final_lab_check_completes_course_once_in_worker_transaction(
     admin_session.expire_all()
     certificate = certificates.one()
     assert (certificate.id, certificate.serial, certificate.issued_at) == certificate_identity
+    assert activation_notices.count() == 1
+    assert activation_audits.count() == 1
     event = admin_session.query(LearningEvent).filter(
         LearningEvent.tenant_id.in_((tenant_a.id, tenant_b.id)),
         LearningEvent.kind == "certificate_earned",

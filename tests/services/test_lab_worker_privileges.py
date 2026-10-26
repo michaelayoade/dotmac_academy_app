@@ -170,6 +170,57 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
             lab_worker_session, table, "DELETE"
         ), f"academy_lab_worker should not have DELETE on {table}"
 
+    # Facilitator activation is exposed only as a policy-enforcing capability.
+    # The worker cannot inspect or mutate nomination/requirement/audit rows.
+    for table in ("facilitator_nominations", "facilitator_requirements"):
+        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+            assert not _has_privilege(lab_worker_session, table, privilege)
+        assert not lab_worker_session.scalar(
+            text("SELECT has_any_column_privilege('academy_lab_worker', :table, 'UPDATE')"),
+            {"table": table},
+        )
+    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        assert not _has_privilege(lab_worker_session, "audit_events", privilege)
+    assert not lab_worker_session.scalar(
+        text("SELECT has_any_column_privilege('academy_lab_worker', 'audit_events', 'INSERT')")
+    )
+
+    capability = "public.activate_eligible_facilitator_nominations(uuid,uuid,uuid,uuid,integer,uuid)"
+    assert lab_worker_session.scalar(
+        text("SELECT has_function_privilege('academy_lab_worker', :capability, 'EXECUTE')"),
+        {"capability": capability},
+    )
+    capability_security = lab_worker_session.execute(
+        text(
+            """SELECT p.prosecdef, p.proconfig, p.provolatile, p.proparallel,
+                      p.proisstrict, pg_get_userbyid(p.proowner),
+                      pg_get_userbyid(c.relowner) AS nominations_owner,
+                      NOT EXISTS (
+                          SELECT 1 FROM aclexplode(p.proacl) acl WHERE acl.grantee = 0
+                      ) AS public_revoked,
+                      (
+                          SELECT array_agg(pg_get_userbyid(acl.grantee) ORDER BY pg_get_userbyid(acl.grantee))
+                            FROM aclexplode(p.proacl) acl
+                           WHERE acl.privilege_type = 'EXECUTE'
+                             AND acl.grantee <> p.proowner
+                      ) AS execute_grantees
+                 FROM pg_proc p
+                 JOIN pg_namespace n ON n.oid = p.pronamespace
+                 JOIN pg_class c ON c.oid = 'public.facilitator_nominations'::regclass
+                WHERE n.nspname = 'public'
+                  AND p.oid = CAST(:capability AS regprocedure)"""
+        ),
+        {"capability": capability},
+    ).one()
+    assert capability_security.prosecdef is True
+    assert capability_security.proconfig == ["search_path=pg_catalog"]
+    assert capability_security.provolatile == "v"
+    assert capability_security.proparallel == "u"
+    assert capability_security.proisstrict is False
+    assert capability_security.pg_get_userbyid == capability_security.nominations_owner
+    assert capability_security.public_revoked is True
+    assert capability_security.execute_grantees == ["academy_lab_worker", "app_user", "platform_api"]
+
     for privilege in LAB_INSTANCES_PRIVILEGES:
         assert _has_privilege(
             lab_worker_session, "lab_instances", privilege

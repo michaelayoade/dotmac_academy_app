@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, exists, select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,12 @@ class FacilitatorSweepOutcome:
     examined: int
     activated: int
     pending: int
+
+
+@dataclass(frozen=True)
+class _ActivationAttempt:
+    nomination_id: UUID
+    activated_now: bool
 
 
 def _person_or_404(db: Session, *, tenant_id: UUID, person_id: UUID) -> Person:
@@ -246,53 +252,62 @@ def _outcome(
     )
 
 
-def _activate_if_eligible(
+def _activate_eligible(
     db: Session,
-    nomination: FacilitatorNomination,
     *,
-    actor_person_id: UUID | None,
-    now: datetime,
-) -> bool:
-    if nomination.status != FacilitatorStatus.PENDING.value:
-        return False
-    person = _person_or_404(db, tenant_id=nomination.tenant_id, person_id=nomination.person_id)
-    if person.status != "active":
-        return False
-    required = _requirement_course_ids(db, nomination)
-    if not required:
-        return False
-    if _missing_course_ids(
-        db,
-        tenant_id=nomination.tenant_id,
-        person_id=nomination.person_id,
-        required_course_ids=required,
-    ):
-        return False
+    tenant_id: UUID,
+    nomination_id: UUID | None = None,
+    person_id: UUID | None = None,
+    course_id: UUID | None = None,
+    limit: int | None = None,
+    actor_person_id: UUID | None = None,
+) -> tuple[_ActivationAttempt, ...]:
+    """Invoke the sole persistence capability for facilitator activation.
 
-    nomination.status = FacilitatorStatus.ACTIVE.value
-    nomination.activated_at = now
-    nomination.revoked_at = None
-    nomination.activation_reason = "requirements_completed"
-    notify(
-        db,
-        tenant_id=nomination.tenant_id,
-        person_id=nomination.person_id,
-        kind="facilitator_activated",
-        title="Your facilitator assignment is active",
-        body="You completed the required course work and can now facilitate the assigned learning scope.",
-        link="/learn",
+    The database capability owns eligibility revalidation, row locking, the
+    status transition, and its fixed notification/audit consequences. Keeping
+    this adapter typed prevents the restricted lab worker from requiring any
+    direct privileges on facilitator or audit tables.
+    """
+
+    caller_bypasses_rls = bool(
+        db.scalar(text("SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER"))
     )
-    write_audit_event(
-        db,
-        tenant_id=nomination.tenant_id,
-        actor_person_id=actor_person_id,
-        action="facilitator_nomination.activate",
-        entity_type="facilitator_nomination",
-        entity_id=str(nomination.id),
-        details={"scope": nomination.scope_type, "person_id": str(nomination.person_id)},
+    if caller_bypasses_rls:
+        # Offline/admin and cross-tenant worker roles deliberately bypass RLS,
+        # so bind them to this typed command's tenant for the transaction. A
+        # request role may never switch its own tenant here; it must already
+        # carry the adapter-established tenant binding.
+        db.execute(
+            text("SELECT pg_catalog.set_config('app.current_tenant', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+
+    rows = db.execute(
+        text(
+            """SELECT candidate_nomination_id, activated_now
+                 FROM public.activate_eligible_facilitator_nominations(
+                     CAST(:tenant_id AS uuid), CAST(:nomination_id AS uuid),
+                     CAST(:person_id AS uuid), CAST(:course_id AS uuid), :limit,
+                     CAST(:actor_person_id AS uuid)
+                 )"""
+        ),
+        {
+            "tenant_id": tenant_id,
+            "nomination_id": nomination_id,
+            "person_id": person_id,
+            "course_id": course_id,
+            "limit": limit,
+            "actor_person_id": actor_person_id,
+        },
+    ).all()
+    return tuple(
+        _ActivationAttempt(
+            nomination_id=UUID(str(row.candidate_nomination_id)),
+            activated_now=bool(row.activated_now),
+        )
+        for row in rows
     )
-    db.flush()
-    return True
 
 
 def nominate(db: Session, *, command: NominateFacilitatorCommand) -> FacilitatorNominationOutcome:
@@ -351,12 +366,15 @@ def nominate(db: Session, *, command: NominateFacilitatorCommand) -> Facilitator
         entity_id=str(nomination.id),
         details={"scope": command.scope.value, "person_id": str(command.person_id)},
     )
-    activated = _activate_if_eligible(
+    activation = _activate_eligible(
         db,
-        nomination,
+        tenant_id=command.tenant_id,
+        nomination_id=nomination.id,
         actor_person_id=command.actor_person_id,
-        now=now,
     )
+    activated = bool(activation and activation[0].activated_now)
+    if activated:
+        db.refresh(nomination)
     return _outcome(db, nomination, created=created, activated_now=activated)
 
 
@@ -369,7 +387,14 @@ def reconcile(db: Session, *, command: ReconcileFacilitatorCommand) -> Facilitat
     ).first()
     if nomination is None:
         raise NotFoundError("facilitator nomination not found")
-    activated = _activate_if_eligible(db, nomination, actor_person_id=None, now=datetime.now(UTC))
+    activation = _activate_eligible(
+        db,
+        tenant_id=command.tenant_id,
+        nomination_id=nomination.id,
+    )
+    activated = bool(activation and activation[0].activated_now)
+    if activated:
+        db.refresh(nomination)
     return _outcome(db, nomination, created=False, activated_now=activated)
 
 
@@ -385,34 +410,17 @@ def reconcile_completed_course(
     participant consequence ever needs to be replayed.
     """
 
-    nominations = list(
-        db.scalars(
-            select(FacilitatorNomination)
-            .join(
-                FacilitatorRequirement,
-                (FacilitatorRequirement.tenant_id == FacilitatorNomination.tenant_id)
-                & (FacilitatorRequirement.nomination_id == FacilitatorNomination.id),
-            )
-            .where(FacilitatorNomination.tenant_id == command.tenant_id)
-            .where(FacilitatorNomination.person_id == command.person_id)
-            .where(FacilitatorNomination.status == FacilitatorStatus.PENDING.value)
-            .where(FacilitatorRequirement.course_id == command.course_id)
-            .order_by(FacilitatorNomination.created_at, FacilitatorNomination.id)
-            .with_for_update()
-        )
-        .unique()
-        .all()
+    attempts = _activate_eligible(
+        db,
+        tenant_id=command.tenant_id,
+        person_id=command.person_id,
+        course_id=command.course_id,
     )
-    activated = 0
-    now = datetime.now(UTC)
-    for nomination in nominations:
-        if _activate_if_eligible(db, nomination, actor_person_id=None, now=now):
-            activated += 1
-    db.flush()
+    activated = sum(attempt.activated_now for attempt in attempts)
     return FacilitatorSweepOutcome(
-        examined=len(nominations),
+        examined=len(attempts),
         activated=activated,
-        pending=len(nominations) - activated,
+        pending=len(attempts) - activated,
     )
 
 
@@ -445,49 +453,16 @@ def revoke(db: Session, *, command: RevokeFacilitatorCommand) -> FacilitatorNomi
 def sweep_pending(db: Session, *, command: SweepFacilitatorsCommand) -> FacilitatorSweepOutcome:
     if command.limit < 1:
         raise BadRequestError("sweep limit must be positive")
-    has_requirement = exists(
-        select(FacilitatorRequirement.id)
-        .where(FacilitatorRequirement.tenant_id == FacilitatorNomination.tenant_id)
-        .where(FacilitatorRequirement.nomination_id == FacilitatorNomination.id)
+    if command.limit > 1000:
+        raise BadRequestError("sweep limit must not exceed 1000")
+    attempts = _activate_eligible(
+        db,
+        tenant_id=command.tenant_id,
+        limit=command.limit,
     )
-    has_missing_requirement = exists(
-        select(FacilitatorRequirement.id)
-        .outerjoin(
-            CourseCompletion,
-            (CourseCompletion.tenant_id == FacilitatorRequirement.tenant_id)
-            & (CourseCompletion.person_id == FacilitatorNomination.person_id)
-            & (CourseCompletion.course_id == FacilitatorRequirement.course_id)
-            & (CourseCompletion.status == "completed"),
-        )
-        .where(FacilitatorRequirement.tenant_id == FacilitatorNomination.tenant_id)
-        .where(FacilitatorRequirement.nomination_id == FacilitatorNomination.id)
-        .where(CourseCompletion.id.is_(None))
-    )
-    nominations = list(
-        db.scalars(
-            select(FacilitatorNomination)
-            .join(
-                Person,
-                (Person.tenant_id == FacilitatorNomination.tenant_id) & (Person.id == FacilitatorNomination.person_id),
-            )
-            .where(FacilitatorNomination.tenant_id == command.tenant_id)
-            .where(FacilitatorNomination.status == FacilitatorStatus.PENDING.value)
-            .where(Person.status == "active")
-            .where(has_requirement)
-            .where(~has_missing_requirement)
-            .order_by(FacilitatorNomination.created_at, FacilitatorNomination.id)
-            .with_for_update(skip_locked=True)
-            .limit(command.limit)
-        ).all()
-    )
-    activated = 0
-    now = datetime.now(UTC)
-    for nomination in nominations:
-        if _activate_if_eligible(db, nomination, actor_person_id=None, now=now):
-            activated += 1
-    db.flush()
+    activated = sum(attempt.activated_now for attempt in attempts)
     return FacilitatorSweepOutcome(
-        examined=len(nominations),
+        examined=len(attempts),
         activated=activated,
-        pending=len(nominations) - activated,
+        pending=len(attempts) - activated,
     )
