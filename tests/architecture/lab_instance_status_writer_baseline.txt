@@ -28,7 +28,7 @@
 11 app/services/lab_lifecycle.py
 4 app/services/success_queue.py
 3 app/services/email_outbox.py
-3 app/services/facilitator_nominations.py
+2 app/services/facilitator_nominations.py
 2 app/services/completion.py
 2 app/services/reminders.py
 2 app/services/roster.py
@@ -39,4 +39,4 @@
 1 app/services/scheduling.py
 1 app/services/tracks.py
 1 app/web/instructor.py
-TOTAL 51
+TOTAL 50
