@@ -25,8 +25,8 @@ from app.services.assessment import attempts_used, best_scores_for, reveal_feedb
 from app.services.attempts import close_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import require_course_open, visible_course_ids
+from app.services.facilitator_access import facilitator_access
 from app.services.pacing import require_activity_readable, require_activity_submittable
-from app.services.roles import role_slugs
 from app.services.settings_store import effective
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
@@ -123,10 +123,7 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
         return []
     return list(
         db.scalars(
-            select(Course)
-            .where(Course.tenant_id == tid)
-            .where(Course.id.in_(course_ids))
-            .order_by(Course.title)
+            select(Course).where(Course.tenant_id == tid).where(Course.id.in_(course_ids)).order_by(Course.title)
         ).all()
     )
 
@@ -160,8 +157,8 @@ def home(
                 "management_contact_email": effective(db).management_inquiry_recipient,
             },
         )
-    slugs = role_slugs(db, tenant.id, person.id)
-    if request.url.path == "/" and "instructor" in slugs and "admin" not in slugs:
+    access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
+    if request.url.path == "/" and access.can_teach and not access.is_admin:
         return RedirectResponse("/instructor", status_code=303)
 
     # Dashboard projection (roadmap P1a): the service owns state derivation.
@@ -180,23 +177,18 @@ def home(
         select(Score, Activity.title)
         .join(
             Submission,
-            (Submission.id == Score.submission_id)
-            & (Submission.tenant_id == Score.tenant_id),
+            (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id),
         )
         .join(
             Activity,
-            (Activity.id == Submission.activity_id)
-            & (Activity.tenant_id == Submission.tenant_id),
+            (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id),
         )
         .where(Score.tenant_id == tenant.id)
         .where(Submission.person_id == person.id)
         .order_by(Score.created_at.desc())
         .limit(6)
     ).all()
-    recent = [
-        {"title": title, "passed": s.passed, "pct": round(100 * s.fraction)}
-        for s, title in recent_rows
-    ]
+    recent = [{"title": title, "passed": s.passed, "pct": round(100 * s.fraction)} for s, title in recent_rows]
 
     latest_announcements = ann_svc.for_person(db, tenant_id=tenant.id, person_id=person.id, limit=3)
 
@@ -226,11 +218,7 @@ def chapter(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course)
-        .where(Course.tenant_id == tenant.id)
-        .where(Course.slug == slug)
-    ).first()
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)).first()
     if course is None:
         raise HTTPException(status_code=404)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
@@ -243,25 +231,40 @@ def chapter(
     if ch is None:
         raise HTTPException(status_code=404)
     learning_events.emit(
-        db, tenant_id=tenant.id, person_id=person.id, kind="course_viewed",
-        course_id=course.id, subject_id=course.id,
+        db,
+        tenant_id=tenant.id,
+        person_id=person.id,
+        kind="course_viewed",
+        course_id=course.id,
+        subject_id=course.id,
     )
     learning_events.emit(
-        db, tenant_id=tenant.id, person_id=person.id, kind="chapter_viewed",
-        course_id=course.id, subject_id=ch.id,
+        db,
+        tenant_id=tenant.id,
+        person_id=person.id,
+        kind="chapter_viewed",
+        course_id=course.id,
+        subject_id=ch.id,
     )
-    activities = list(db.scalars(
-        select(Activity)
-        .where(Activity.tenant_id == tenant.id)
-        .where(Activity.course_id == course.id)
-        .where(Activity.chapter_number == n)
-    ).all())
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant.id)
+            .where(Activity.course_id == course.id)
+            .where(Activity.chapter_number == n)
+        ).all()
+    )
     activities.sort(key=lambda a: (0 if a.type == "mcq_test" else 1 if a.type == "lab" else 2, a.title))
     act = next((a for a in activities if a.type == "mcq_test"), activities[0] if activities else None)
-    total_chapters = int(db.scalar(
-        select(func.count()).select_from(Chapter)
-        .where(Chapter.tenant_id == tenant.id).where(Chapter.course_id == course.id)
-    ) or 0)
+    total_chapters = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Chapter)
+            .where(Chapter.tenant_id == tenant.id)
+            .where(Chapter.course_id == course.id)
+        )
+        or 0
+    )
     chapters = db.scalars(
         select(Chapter)
         .where(Chapter.tenant_id == tenant.id)
@@ -296,23 +299,31 @@ def chapter(
         else set()
     )
     prev_ch = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id).where(Chapter.number < n)
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number < n)
         .order_by(Chapter.number.desc())
     ).first()
     next_ch = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id).where(Chapter.number > n)
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number > n)
         .order_by(Chapter.number)
     ).first()
     words = len(re.sub(r"<[^>]+>", " ", ch.body_html or "").split())
     reading_minutes = max(1, round(words / 200))
-    completed = db.scalar(
-        select(func.count()).select_from(ChapterRead)
-        .where(ChapterRead.tenant_id == tenant.id)
-        .where(ChapterRead.person_id == person.id)
-        .where(ChapterRead.chapter_id == ch.id)
-    ) or 0
+    completed = (
+        db.scalar(
+            select(func.count())
+            .select_from(ChapterRead)
+            .where(ChapterRead.tenant_id == tenant.id)
+            .where(ChapterRead.person_id == person.id)
+            .where(ChapterRead.chapter_id == ch.id)
+        )
+        or 0
+    )
     best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     activity_items: list[dict[str, Any]] = []
     for item in activities:
@@ -340,12 +351,19 @@ def chapter(
         request,
         "chapter.html",
         {
-            "request": request, "course": course, "chapter": ch, "activity": act,
+            "request": request,
+            "course": course,
+            "chapter": ch,
+            "activity": act,
             "activity_items": activity_items,
-            "total_chapters": total_chapters, "previous_chapter": prev_ch,
-            "next_chapter": next_ch, "reading_minutes": reading_minutes,
-            "completed": bool(completed), "activity_taken": activity_taken,
-            "chapters": chapters, "chapter_modules": chapter_modules,
+            "total_chapters": total_chapters,
+            "previous_chapter": prev_ch,
+            "next_chapter": next_ch,
+            "reading_minutes": reading_minutes,
+            "completed": bool(completed),
+            "activity_taken": activity_taken,
+            "chapters": chapters,
+            "chapter_modules": chapter_modules,
             "completed_chapter_ids": completed_chapter_ids,
             "completed_chapters": len(completed_chapter_ids),
             "chapter_subtopics_complete": chapter_subtopics_complete,
@@ -368,15 +386,15 @@ def subtopic_complete(
     write progress for a course they cannot access.
     """
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)
-    ).first()
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)).first()
     if course is None:
         raise HTTPException(status_code=404)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     ch = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id).where(Chapter.number == n)
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number == n)
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
@@ -389,12 +407,8 @@ def subtopic_complete(
     reading_progress.mark_complete(
         db, tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id, subtopic_slug=subtopic_slug
     )
-    done = reading_progress.completed_slugs(
-        db, tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id
-    )
-    return JSONResponse(
-        {"completed": sorted(done), "chapter_complete": known.issubset(done)}
-    )
+    done = reading_progress.completed_slugs(db, tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id)
+    return JSONResponse({"completed": sorted(done), "chapter_complete": known.issubset(done)})
 
 
 @router.post("/courses/{slug}/chapters/{n}/complete", response_class=HTMLResponse)
@@ -407,9 +421,7 @@ def chapter_complete(
 ):
     """Toggle a chapter's read-completion for the current learner (htmx)."""
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)
-    ).first()
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == slug)).first()
     if course is None:
         raise HTTPException(status_code=404)
     # Gate this state-changing route like its GET sibling (:209): without it a
@@ -418,21 +430,29 @@ def chapter_complete(
     # analytics, inactivity, and the Success Queue.
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     ch = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id).where(Chapter.number == n)
+        select(Chapter)
+        .where(Chapter.tenant_id == tenant.id)
+        .where(Chapter.course_id == course.id)
+        .where(Chapter.number == n)
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
     existing = db.scalars(
-        select(ChapterRead).where(ChapterRead.tenant_id == tenant.id)
-        .where(ChapterRead.person_id == person.id).where(ChapterRead.chapter_id == ch.id)
+        select(ChapterRead)
+        .where(ChapterRead.tenant_id == tenant.id)
+        .where(ChapterRead.person_id == person.id)
+        .where(ChapterRead.chapter_id == ch.id)
     ).first()
     if existing is None:
         db.add(ChapterRead(tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id))
         done = True
         learning_events.emit(
-            db, tenant_id=tenant.id, person_id=person.id, kind="chapter_completed",
-            course_id=course.id, subject_id=ch.id,
+            db,
+            tenant_id=tenant.id,
+            person_id=person.id,
+            kind="chapter_completed",
+            course_id=course.id,
+            subject_id=ch.id,
         )
     else:
         db.delete(existing)
@@ -453,31 +473,28 @@ def activity(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    act = db.scalars(
-        select(Activity)
-        .where(Activity.id == activity_id)
-        .where(Activity.tenant_id == tenant.id)
-    ).first()
+    act = db.scalars(select(Activity).where(Activity.id == activity_id).where(Activity.tenant_id == tenant.id)).first()
     if act is None:
         raise HTTPException(status_code=404)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
-    require_activity_readable(db, tenant_id=tenant.id, person_id=person.id,
-                              course_id=act.course_id, activity_id=act.id)
+    require_activity_readable(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id, activity_id=act.id)
     if act.type == "lab":
         # A lab has no question bank; rendering it here produced an empty form
         # whose submission scored 0/0 and burned an attempt. Send the learner to
         # the workspace that can actually grade it.
         return RedirectResponse(f"/labs/{act.id}", status_code=303)
     qs = db.scalars(
-        select(Question)
-        .where(Question.tenant_id == tenant.id)
-        .where(Question.bank_id == act.bank_id)
+        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
     ).all()
     if act.question_count is not None:
         # Random pool: fix a subset+order for this attempt and render only those.
         attempt = open_or_create_attempt(
-            db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id,
-            all_ext_ids=[q.ext_id for q in qs], count=act.question_count,
+            db,
+            tenant_id=tenant.id,
+            person_id=person.id,
+            activity_id=act.id,
+            all_ext_ids=[q.ext_id for q in qs],
+            count=act.question_count,
             questions=list(qs),
         )
         order = {eid: i for i, eid in enumerate(attempt.question_ext_ids)}
@@ -497,27 +514,21 @@ async def submit(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    act = db.scalars(
-        select(Activity)
-        .where(Activity.id == activity_id)
-        .where(Activity.tenant_id == tenant.id)
-    ).first()
+    act = db.scalars(select(Activity).where(Activity.id == activity_id).where(Activity.tenant_id == tenant.id)).first()
     if act is None:
         raise HTTPException(status_code=404)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
-    require_activity_submittable(db, tenant_id=tenant.id, person_id=person.id,
-                                 course_id=act.course_id, activity_id=act.id)
+    require_activity_submittable(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id, activity_id=act.id
+    )
     form = await request.form()
     # Random pool: grade exactly the subset this attempt was shown.
     only_ext_ids: list | None = None
     if act.question_count is not None:
-        attempt = close_open_attempt(db, tenant_id=tenant.id, person_id=person.id,
-                                     activity_id=act.id)
+        attempt = close_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
         only_ext_ids = list(attempt.question_ext_ids) if attempt is not None else []
     qs = db.scalars(
-        select(Question)
-        .where(Question.tenant_id == tenant.id)
-        .where(Question.bank_id == act.bank_id)
+        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
     ).all()
     if only_ext_ids is not None:
         keep = set(only_ext_ids)
@@ -541,16 +552,10 @@ async def submit(
     # objects and clear the SET LOCAL tenant config. Render from all bank questions
     # so retakes can display the originally recorded score, including random pools.
     display_questions = db.scalars(
-        select(Question)
-        .where(Question.tenant_id == tenant.id)
-        .where(Question.bank_id == act.bank_id)
+        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
     ).all()
     by_id = {q.ext_id: q for q in display_questions}
-    course = db.scalars(
-        select(Course)
-        .where(Course.tenant_id == tenant.id)
-        .where(Course.id == act.course_id)
-    ).first()
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.id == act.course_id)).first()
     next_chapter = None
     course_completion = None
     if course is not None and act.chapter_number is not None:
@@ -583,9 +588,7 @@ async def submit(
             "reveal": reveal_feedback(
                 act,
                 passed=score.passed,
-                attempts_used=attempts_used(
-                    db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id
-                ),
+                attempts_used=attempts_used(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id),
             ),
         },
     )
@@ -598,12 +601,11 @@ def progress(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    overview = learner_dashboard.progress_overview(
-        db, tenant_id=tenant.id, person_id=person.id
-    )
+    overview = learner_dashboard.progress_overview(db, tenant_id=tenant.id, person_id=person.id)
     activity = insights.learner_activity(db, tenant_id=tenant.id, person_id=person.id)
     return templates.TemplateResponse(
-        request, "progress.html",
+        request,
+        "progress.html",
         {"request": request, "overview": overview, "activity": activity},
     )
 
@@ -617,9 +619,7 @@ def certificate(
 ) -> Response:
     """Download the learner's PDF certificate for a completed course (403 if not)."""
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)
-    ).first()
+    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)).first()
     if course is None:
         raise HTTPException(status_code=404)
     completion = db.scalars(
@@ -630,9 +630,7 @@ def certificate(
     ).first()
     if completion is None or completion.status != "completed":
         raise HTTPException(status_code=403)
-    cert = issue_certificate(
-        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id
-    )
+    cert = issue_certificate(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     pdf = render_certificate_pdf(
         recipient_name=f"{person.first_name} {person.last_name}".strip(),
         course_title=course.title,
