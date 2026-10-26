@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-17 at Academy `61f69194d6591c6a2d13472a5e38c3a5ecf34454`  
+**Source revalidated:** 2026-10-26 at Academy `f16b1aee684918a5168f9c64f3847188c8243942`
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -19,10 +19,10 @@ boundary is not seven independent import substitutions:
 - `Person`/`PersonRole` are semantic predecessors of kernel
   `Party`/`PartyRole`, and `audit_events.actor_person_id` is another dependent
   identity edge.
-- Twenty-eight Academy columns carry human identity. Twenty-four say `person`
+- Thirty Academy columns carry human identity. Twenty-six say `person`
   in the column name; `attempt_grants.granted_by` and
   `success_queue_entries.assigned_to`/`resolved_by` and
-  `lab_operations.requested_by` are the four semantic aliases. Eleven currently
+  `lab_operations.requested_by` are the four semantic aliases. Thirteen currently
   have physical foreign keys to `people`; seventeen are logical references only.
 - Academy and kernel both ship revision `0001_initial_tenant_schema`. Their DDL
   functions are AST-equivalent, but two files declaring the same revision make
@@ -43,14 +43,14 @@ This refresh continues the accepted design in existing PR #122; it is not a
 new decision awaiting acceptance or an implemented cutover. Its initial commit
 `2d9506f` counted 27 references (11 physical, 16 logical) and ended the Academy
 chain at `0053_entrance_defaults`. The prior source checkpoint at `a99a395e`
-counted 28 and ended at `0060_lab_conditional_ops`. Current revalidation at
-`61f69194` retains 28 references (11 physical, 17 logical) and ends at
-`0061_lab_completion_grants`; PR #177 adds grants over existing identity columns.
-The current lineage head is now `0062_lab_template_access`, an additive
-`lab_templates.access` JSONB column with a constant default; it touches no identity
-column, so the reference census above is unchanged.
-`0063_lab_console_activity` then adds a small tenant-isolated side table for console
-heartbeats (no identity column, column-scoped web grants); the census is again unchanged.
+counted 28 and ended at `0060_lab_conditional_ops`. The checkpoint at `61f69194`
+retained 28 references (11 physical, 17 logical) through
+`0061_lab_completion_grants`; PR #177 added grants over existing identity columns.
+Revisions `0062_lab_template_access` and `0063_lab_console_activity` added no
+identity columns. Current revalidation at `f16b1ae` ends at
+`0064_facilitator_nominations`, which adds two strongly constrained human
+references for the nominated person and nominating actor. The current census is
+therefore 30 references (13 physical, 17 logical).
 These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
@@ -216,7 +216,7 @@ assembly: a001_adopt_academy -> a002 -> ...
           depends_on = <that same actually executed Kernel head>
 ```
 
-The existing numeric Academy chain (`0001` ... `0061` at source revalidation,
+The existing numeric Academy chain (`0001` ... `0064` at source revalidation,
 originally `0001` ... `0053` in PR #122, followed by future bridge revisions) is
 a temporary `academy_legacy` lineage. Those recorded IDs are not relabelled or
 reparented. Selecting the installed Kernel file for the shared `0001` ID cannot
@@ -289,7 +289,7 @@ PostgreSQL rehearsals prove all of the following:
 - a published Kernel Party/facet floor is selected and separately validated,
   including the RBAC spelling/catalog and lineage-endpoint reconciliation;
 - exact row/count/hash equivalence for people, names, email, active state,
-  profiles, credentials, sessions, roles, audit actors, and all 28 classified
+  profiles, credentials, sessions, roles, audit actors, and all 30 classified
   person references;
 - zero tenant mismatch, orphan, invalid status, or case-insensitive email
   collision;

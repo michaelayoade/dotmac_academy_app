@@ -4,7 +4,7 @@
 current sequence or ownership decision.
 **Date:** 2026-08-09. **Kernel surveyed:** `dotmac-kernel` 0.1.0a28.
 
-> **Current disposition, 2026-10-17.** ADR 0007 accepted Academy as a kernel
+> **Current disposition, 2026-10-26.** ADR 0007 accepted Academy as a kernel
 > product assembly on kernel 0.1.0a38. ADR 0009 preserves the accepted PR #122
 > identity design: kernel `Party`/`PartyPerson` becomes identity authority,
 > human-domain references preserve UUIDs and semantics, and Academy product
@@ -12,8 +12,9 @@ current sequence or ownership decision.
 > `design_only`; external adoption and published Party/facet-floor evidence
 > remain pending. The partial `Person`-beside-`Party` strategy and sequencing
 > below would leave parallel identity owners and are rejected. The current
-> source census is 28 human references (11 physical, 17 logical), revalidated
-> at Academy `61f69194` through `0061_lab_completion_grants`; the preceding
+> source census is 30 human references (13 physical, 17 logical), revalidated
+> at Academy `f16b1ae` through `0064_facilitator_nominations`; 0064 added the
+> strongly constrained nomination subject and nominating actor. The preceding
 > `a99a395e`/0060 checkpoint has the same census. The initial 27-reference/0053
 > design coordinates remain historical. ADR 0008 belongs to the dedicated lab-worker database role.
 > Canonical entry mechanics remain unresolved. The entire unchanged Kernel

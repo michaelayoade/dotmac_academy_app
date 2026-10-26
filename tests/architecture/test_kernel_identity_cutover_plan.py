@@ -149,8 +149,8 @@ def test_every_person_identity_column_is_classified_with_its_real_integrity() ->
     }
     assert len(planned) == len(references), "identity reference appears more than once"
     assert planned == _person_columns()
-    assert len(planned) == 28
-    assert list(planned.values()).count("strong") == 11
+    assert len(planned) == 30
+    assert list(planned.values()).count("strong") == 13
     assert list(planned.values()).count("logical") == 17
     assert PERSON_IDENTITY_ALIASES <= set(planned)
 

@@ -64,8 +64,10 @@ and login-security state and the independent assembly lineage. The accepted
 `a001_adopt_academy` strategy is unchanged. ADR 0008 remains the lab-worker role
 decision, not the identity decision.
 
-The source-revalidated census is **28 human references: 11 physical foreign
-keys and 17 logical references**. `lab_operations.requested_by` adds nullable
+The source-revalidated census is **30 human references: 13 physical foreign
+keys and 17 logical references**. Migration 0064 adds the strongly constrained
+`facilitator_nominations.person_id` subject and `nominated_by_person_id` actor;
+both retain human identity semantics. `lab_operations.requested_by` adds nullable
 Person-UUID attribution introduced by 0055: user-triggered requests name the
 person; automated requests use NULL. `lab_operations.claimed_by` is a worker
 fencing string and is excluded. The initial PR #122 census (27 = 11 + 16) and

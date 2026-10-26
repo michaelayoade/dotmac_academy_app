@@ -23,12 +23,12 @@ physical_references = 11
 logical_references = 17
 
 [source_revalidation]
-academy_revision = "61f69194d6591c6a2d13472a5e38c3a5ecf34454"
-date = "2026-10-17"
+academy_revision = "f16b1aee684918a5168f9c64f3847188c8243942"
+date = "2026-10-26"
 evidence = "source_only"
 production_cutover_proven = false
-human_references = 28
-physical_references = 11
+human_references = 30
+physical_references = 13
 logical_references = 17
 
 [adoption_strategy]
@@ -132,7 +132,7 @@ reject = "legacy_person_credential_session_rbac_schema"
 [current_lineage]
 owner = "academy_legacy"
 root = "0001_initial_tenant_schema"
-head = "0063_lab_console_activity"
+head = "0064_facilitator_nominations"
 root_file = "alembic/versions/20260504_0001_initial_tenant_schema.py"
 shares_kernel_root_id = true
 
@@ -267,7 +267,7 @@ source = "user_credentials.locked_until"
 target = "academy_login_security.locked_until"
 owner = "assembly"
 
-# Every current SQLAlchemy column carrying human identity. Twenty-four contain
+# Every current SQLAlchemy column carrying human identity. Twenty-six contain
 # `person` in their name; the four actor/requester/assignee aliases are easy
 # for a name scan to miss. `strong` means a database FK currently points to
 # people; `logical` means application joins/validation carry the relationship
@@ -354,6 +354,18 @@ disposition = "retain_person_semantics"
 
 [[identity_reference]]
 table = "enrollments"
+column = "person_id"
+current_integrity = "strong"
+disposition = "retain_person_semantics"
+
+[[identity_reference]]
+table = "facilitator_nominations"
+column = "nominated_by_person_id"
+current_integrity = "strong"
+disposition = "retain_human_semantics"
+
+[[identity_reference]]
+table = "facilitator_nominations"
 column = "person_id"
 current_integrity = "strong"
 disposition = "retain_person_semantics"
