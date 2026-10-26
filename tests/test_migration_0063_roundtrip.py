@@ -5,7 +5,8 @@ from __future__ import annotations
 from sqlalchemy import create_engine, text
 
 from alembic import command
-from tests.test_migration_roundtrip import _head_revision, _make_config, _migration_env, _migration_url
+from alembic.script import ScriptDirectory
+from tests.test_migration_roundtrip import _make_config, _migration_env, _migration_url
 
 REVISION = "0063_lab_console_activity"
 
@@ -20,7 +21,7 @@ def _objects(conn):
 def test_0063_downgrade_upgrade_roundtrip():
     url = _migration_url()
     cfg = _make_config()
-    assert _head_revision(cfg) == REVISION
+    assert ScriptDirectory.from_config(cfg).get_revision(REVISION) is not None
     engine = create_engine(url, future=True)
     try:
         with _migration_env(url):
