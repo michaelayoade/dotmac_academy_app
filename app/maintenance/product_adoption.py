@@ -113,6 +113,15 @@ _FROZEN62 = (
     ("20260711_0034_entrance_resilience.py", 1860, "0b14733170a5c9cb84edb6be6e1c57e703851537f6447aa173bd2046e80b2554"),
     ("20260711_0035_applicant_profile.py", 2280, "d6bcfc0f7932cdb1aa8df3f2608e3a4911e32673512da3e3ea2533ed7d82fdc0"),
 )
+# Post-adoption ordinary-schema successors of the frozen 0061 head: pinned
+# (filename, size, sha256). 0062-0064 are the 444ce556 blobs; 0065 is the
+# renumbered applicant bank version pin. Any other live file is refused.
+_SUCCESSORS = (
+    ("0062_lab_template_access.py", 1325, "7311f8e81a271d7dc4b071a16905fb2c87c9f7466c6051897c65cc9ed7b7a3ad"),
+    ("0063_lab_console_activity.py", 3407, "15cd8b678ad53e6175e164964d391af3066c683598c5f048e19408eab19f6c04"),
+    ("0064_facilitator_nominations.py", 18086, "97bc33859c9bf6599e4e1be6ce94c5fcc5dc55f192f0abfa5bfb8c8230d6e559"),
+    ("0065_applicant_bank_version_pin.py", 1504, "5c50301d9c7a73eedf7193839c9d0e804af1a401bb85867cfdd6381b3a53639c"),
+)
 _ASSEMBLY = (
     ("a001_identity_extensions.py", 4749, "e176281e63ef99a36b3715a886fe602af03b4b6bed33718198f6e0cb35922730"),
     ("a002_credential_reset_state.py", 1537, "73d0b4912eef3c1cfe23b05bdb624e556f169be709b057784b525943365ba71d"),
@@ -317,7 +326,9 @@ def _composed_graph(directories, inventories):
 def _provenance():
     root = Path(__file__).resolve().parents[2]
     frozen = _inventory(root / "alembic/versions")
-    _require(tuple(row[:3] for row in frozen) == _FROZEN62)
+    successor_names = {row[0] for row in _SUCCESSORS}
+    _require(tuple(row[:3] for row in frozen if row[0] not in successor_names) == _FROZEN62)
+    _require(tuple(row[:3] for row in frozen if row[0] in successor_names) == _SUCCESSORS)
     revisions = {dict(row[3])["revision"] for row in frozen}
     for row in frozen:
         assignments = dict(row[3])
@@ -326,6 +337,12 @@ def _provenance():
             if parents is not None:
                 parents = (parents,) if type(parents) is str else parents
                 _require(type(parents) is tuple and all(parent in revisions for parent in parents))
+    # Successors extend the frozen history: exactly one head, and it is 0065.
+    referenced = set()
+    for row in frozen:
+        parents = dict(row[3]).get("down_revision")
+        referenced.update((parents,) if type(parents) is str else parents or ())
+    _require({dict(row[3])["revision"] for row in frozen} - referenced == {"0065_applicant_bank_version_pin"})
     assembly = _inventory(root / "alembic/identity_assembly_versions")
     _require(tuple(row[:3] for row in assembly) == _ASSEMBLY)
     _require(
