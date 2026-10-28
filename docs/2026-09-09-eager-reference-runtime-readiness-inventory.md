@@ -415,3 +415,21 @@ close on CI, not locally:
   package installed, and that only happens inside CI's subprocess calls).
 - I did not verify mypy type-correctness of the new test file by any means;
   report this as an open gap rather than an inferred pass.
+
+
+## D1 source retirement — 2026-10-28: standalone demo writer
+
+The historical `scripts/seed_academy_demo.py:51-52` observation above is retained
+as history. The entrypoint now refuses with status 2 before configuration,
+credential reads or database/runtime imports. Its direct Kernel/Learning writes
+and embedded demo content are removed. Merely importing canonical model facades
+had preserved a second writer and did not satisfy caller retirement.
+
+`docs/runbooks/RETIRED_DEMO_SEED.md` maps operator setup to current canonical
+bootstrap, Admin/instructor authoring and draft-only import workflows. No
+one-command replacement or identical historical demo rows are promised.
+`tests/test_retired_demo_seed.py` exercises cold import/invocation, planted
+import/file/environment-access detection and secret non-echo. The watched
+scripts/tasks family remains in the eager guard; it is not excluded or waived.
+This source retirement does not execute bootstrap, qualify a database or
+establish C5/production acceptance.
