@@ -17,10 +17,9 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-
-from dotmac_kernel.models import Party, PartyPerson, PartyType
 
 from app.models.auth import AuthSession, UserCredential
 from app.models.completion import CourseCompletion

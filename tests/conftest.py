@@ -236,17 +236,81 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     return client
 
 
+def make_canonical_account(
+    db: Session,
+    *,
+    tenant_id,
+    email: str,
+    first_name: str,
+    last_name: str,
+    password: str,
+    role: str,
+):
+    """Create one genuine canonical account (Party/PartyPerson/profile/
+    credential/policy/grant) for tests with no web request to authorize via.
+
+    Mirrors the canonical fixtures in tests/services/test_canonical_lifecycle.py
+    plus a role grant; ``create_web_user`` is not drop-in here because it
+    requires a live actor cookie. Caller owns commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, UserCredential
+
+    from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
+    from app.services.bootstrap import ensure_roles
+    from app.services.identity import canonical_party_for_email, normalize_email
+    from app.services.security import hash_password
+
+    roles = ensure_roles(db, tenant_id)
+    if role not in roles:
+        raise ValueError(f"Invalid role {role!r}; expected one of {sorted(roles)}")
+    email = normalize_email(email)
+    if canonical_party_for_email(db, tenant_id=tenant_id, email=email) is not None:
+        raise ValueError(f"A person with email {email!r} already exists in this tenant")
+    now = datetime.now(UTC)
+    party = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}".strip(),
+        email=email,
+        is_active=True,
+    )
+    db.add(party)
+    db.flush()
+    db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id, party_id=party.id, status="active",
+            prefs={}, created_at=now, updated_at=now,
+        )
+    )
+    credential = UserCredential(
+        tenant_id=tenant_id, party_id=party.id, password_hash=hash_password(password)
+    )
+    db.add(credential)
+    db.flush()
+    db.add(
+        AcademyCredentialPolicy(
+            tenant_id=tenant_id, credential_id=credential.id, email=email,
+            failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+            reset_required=False, created_at=now, updated_at=now,
+        )
+    )
+    db.add(PartyRoleGrant(tenant_id=tenant_id, party_id=party.id, role_id=roles[role].id))
+    db.flush()
+    return party
+
+
 @pytest.fixture
 def api_actor(admin_session):
     """Create a real tenant account and return its authenticated API context."""
 
     def _create(client: TestClient, tenant, *, role: str = "admin", email: str | None = None):
-        from app.services.accounts import create_user
-
         password = "correct horse battery staple"
         email = email or f"{role}-{uuid4().hex[:10]}@test.example"
         admin_session.rollback()
-        person = create_user(
+        person = make_canonical_account(
             admin_session,
             tenant_id=tenant.id,
             email=email,

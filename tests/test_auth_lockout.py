@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.models.auth import UserCredential
-from app.services.accounts import create_user
-from tests.conftest import client_for
+from app.models.identity_extensions import AcademyCredentialPolicy
+from tests.conftest import client_for, make_canonical_account
 
 
 def test_repeated_failures_lock_account_and_success_resets_counter(
@@ -17,7 +17,7 @@ def test_repeated_failures_lock_account_and_success_resets_counter(
     tenant_a,
 ):
     password = "correct horse battery staple"
-    person = create_user(
+    person = make_canonical_account(
         admin_session,
         tenant_id=tenant_a.id,
         email="locked@example.com",
@@ -40,11 +40,13 @@ def test_repeated_failures_lock_account_and_success_resets_counter(
     credential = admin_session.scalars(
         select(UserCredential)
         .where(UserCredential.tenant_id == tenant_a.id)
-        .where(UserCredential.person_id == person.id)
+        .where(UserCredential.party_id == person.id)
     ).one()
-    assert credential.failed_login_attempts == 5
-    assert credential.locked_until is not None
-    assert credential.locked_until > datetime.now(UTC)
+    # Lockout state is Academy credential policy, keyed by the credential.
+    policy = admin_session.get(AcademyCredentialPolicy, credential.id)
+    assert policy.failed_login_attempts == 5
+    assert policy.locked_until is not None
+    assert policy.locked_until > datetime.now(UTC)
 
     # Correct credentials remain neutral while the lock is active.
     assert (
@@ -55,7 +57,7 @@ def test_repeated_failures_lock_account_and_success_resets_counter(
         == 401
     )
 
-    credential.locked_until = datetime.now(UTC) - timedelta(seconds=1)
+    policy.locked_until = datetime.now(UTC) - timedelta(seconds=1)
     admin_session.commit()
     success = client.post(
         "/auth/login",
@@ -64,6 +66,6 @@ def test_repeated_failures_lock_account_and_success_resets_counter(
     assert success.status_code == 200
 
     admin_session.rollback()
-    admin_session.refresh(credential)
-    assert credential.failed_login_attempts == 0
-    assert credential.locked_until is None
+    admin_session.refresh(policy)
+    assert policy.failed_login_attempts == 0
+    assert policy.locked_until is None

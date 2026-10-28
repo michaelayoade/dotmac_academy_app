@@ -121,7 +121,7 @@ def push_completion(
         )
     ).first()
     course = db.get(Course, completion.course_id)
-    if party is None or course is None or not (party.email or "").strip():
+    if party is None or course is None or party.email is None or not party.email.strip():
         return FAILED
 
     payload = build_payload(

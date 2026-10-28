@@ -19,8 +19,11 @@ commits after the response (a mid-handler commit clears the RLS tenant GUC).
 from __future__ import annotations
 
 from html import escape
+from types import SimpleNamespace
 from uuid import UUID
 
+from dotmac_kernel.exceptions import BadRequestError, ForbiddenError
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import or_, select
@@ -29,13 +32,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.course import Course
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
 from app.services import tracks as track_svc
 from app.services.account_invitations import CohortAssignment
-from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
+from app.services.canonical_lifecycle import request_password_reset, set_account_status
+from app.services.credential_assignment import create_web_user
 from app.services.email_outbox import enqueue_email
 from app.services.identity import AcademyCurrentAccount
 from app.services.invitation_issuance import (
@@ -45,7 +48,6 @@ from app.services.invitation_issuance import (
     resend_web_account_invitation,
     track_fact,
 )
-from app.services.lifecycle import request_password_reset, set_account_status
 from app.services.roles import role_slugs
 from app.services.security import hash_token
 from app.services.web_auth import require_web_user
@@ -75,7 +77,7 @@ def _html_error(message: str, status_code: int = status.HTTP_200_OK) -> HTMLResp
 def users_list(
     request: Request,
     q: str = "",
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -85,18 +87,40 @@ def users_list(
     is_admin = "admin" in slugs
 
     normalized_q = (q or "").strip()
-    people_query = select(Person).where(Person.tenant_id == tenant.id)
+    people_query = (
+        select(
+            Party.id,
+            Party.email,
+            PartyPerson.first_name,
+            PartyPerson.last_name,
+            AcademyAccountProfile.status.label("status"),
+        )
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .outerjoin(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .where(Party.tenant_id == tenant.id)
+        .where(Party.party_type == PartyType.person)
+    )
     if normalized_q:
         like = f"%{normalized_q}%"
         people_query = people_query.where(
             or_(
-                Person.email.ilike(like),
-                Person.first_name.ilike(like),
-                Person.last_name.ilike(like),
-                (Person.first_name + " " + Person.last_name).ilike(like),
+                Party.email.ilike(like),
+                PartyPerson.first_name.ilike(like),
+                PartyPerson.last_name.ilike(like),
+                (PartyPerson.first_name + " " + PartyPerson.last_name).ilike(like),
             )
         )
-    people = db.scalars(people_query.order_by(Person.email)).all()
+    people = [
+        SimpleNamespace(
+            id=row.id, email=row.email, first_name=row.first_name,
+            last_name=row.last_name, status=row.status or "",
+        )
+        for row in db.execute(people_query.order_by(Party.email))
+    ]
     cohorts = db.scalars(
         select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.status == "active").order_by(Cohort.name)
     ).all()
@@ -322,14 +346,24 @@ def users_invite(
 def users_reset_link(
     person_id: UUID,
     request: Request,
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send reset links")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
+    target_row = db.execute(
+        select(Party.id, Party.email, PartyPerson.first_name)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.tenant_id == tenant.id, Party.id == person_id, Party.party_type == PartyType.person)
+    ).first()
+    target = (
+        SimpleNamespace(id=target_row.id, email=target_row.email, first_name=target_row.first_name)
+        if target_row is not None
+        else None
+    )
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     token = request_password_reset(db, tenant_id=tenant.id, email=target.email)
@@ -417,7 +451,7 @@ def users_role(
     person_id: UUID,
     request: Request,
     role: str = Form(...),
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -427,7 +461,9 @@ def users_role(
     roles = ensure_roles(db, tenant.id)
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
+    target = db.scalars(
+        select(Party).where(Party.tenant_id == tenant.id, Party.id == person_id, Party.party_type == PartyType.person)
+    ).first()
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if target.id == actor.id and role != "admin":
@@ -439,10 +475,10 @@ def users_role(
     standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
     target_role_id = roles[role].id
     existing_grants = db.scalars(
-        select(PersonRole)
-        .where(PersonRole.tenant_id == tenant.id)
-        .where(PersonRole.person_id == target.id)
-        .where(PersonRole.role_id.in_(standard_role_ids))
+        select(PartyRoleGrant)
+        .where(PartyRoleGrant.tenant_id == tenant.id)
+        .where(PartyRoleGrant.party_id == target.id)
+        .where(PartyRoleGrant.role_id.in_(standard_role_ids))
     ).all()
     has_target_role = False
     for grant in existing_grants:
@@ -451,7 +487,7 @@ def users_role(
         else:
             db.delete(grant)
     if not has_target_role:
-        db.add(PersonRole(tenant_id=tenant.id, person_id=target.id, role_id=target_role_id))
+        db.add(PartyRoleGrant(tenant_id=tenant.id, party_id=target.id, role_id=target_role_id))
     db.flush()
     return hx_redirect(request, "/admin/users")
 
@@ -461,7 +497,7 @@ def users_status(
     person_id: UUID,
     request: Request,
     status_value: str = Form(...),
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -486,7 +522,7 @@ def users_create(
     email: str = Form(...),
     password: str = Form(...),
     role: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -501,16 +537,20 @@ def users_create(
         )
 
     try:
-        create_user(
+        create_web_user(
             db,
-            tenant_id=tenant.id,
+            request=request,
             email=email,
             first_name=first_name,
             last_name=last_name,
             password=password,
             role=role,
         )
-    except ValueError as exc:
+    except ForbiddenError as exc:
+        # Canonical creation refuses by category: authorization refusals stay
+        # 403, input/conflict refusals stay 400 (the legacy ValueError split).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    except BadRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # No db.commit() here — get_db commits after the response is returned.
     return hx_redirect(request, "/admin/users")

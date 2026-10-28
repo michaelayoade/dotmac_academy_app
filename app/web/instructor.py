@@ -43,11 +43,19 @@ from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
 from app.services import announcements as ann_svc
 from app.services import attempt_policy, learning_policy, scheduling
+from app.services import bank_authoring as _banks
 from app.services import tracks as track_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
-from app.services import bank_authoring as _banks
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
+from app.services.canonical_lifecycle import set_account_status
+from app.services.dashboards import cohort_overview
+from app.services.email_outbox import enqueue_email
+from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.identity import AcademyCurrentAccount
+from app.services.invitation_issuance import cohort_fact, invite_web_cohort_account, track_fact
+from app.services.localtime import local_to_utc
+from app.services.lookups import cohort_or_404
 from app.services.product_admin_access import (
     require_bank_author_access,
     require_bank_export_access,
@@ -55,14 +63,6 @@ from app.services.product_admin_access import (
     require_bank_repoint_access,
     require_bank_retire_access,
 )
-from app.services.dashboards import cohort_overview
-from app.services.email_outbox import enqueue_email
-from app.services.exceptions import BadRequestError, NotFoundError
-from app.services.identity import AcademyCurrentAccount
-from app.services.invitation_issuance import cohort_fact, invite_web_cohort_account, track_fact
-from app.services.lifecycle import set_account_status
-from app.services.localtime import local_to_utc
-from app.services.lookups import cohort_or_404
 from app.services.roles import role_slugs
 from app.services.roster import assign_facilitator, bulk_enroll, remove_facilitator, set_roster_state
 from app.services.security import hash_token

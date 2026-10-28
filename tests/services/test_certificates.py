@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from threading import Barrier
 
 import pytest
-from sqlalchemy.orm import sessionmaker
 
 from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.learning_event import LearningEvent
 from app.models.person import Person
-from app.services import certificates
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.exceptions import ConflictError
 
@@ -70,38 +65,7 @@ def test_render_pdf_bytes(admin_session, tenant_a):
     assert len(pdf) > 500
 
 
-def test_concurrent_issuers_recheck_certificate_after_completion_lock(
-    admin_engine, admin_session, tenant_a, monkeypatch
-):
-    person, course = _person_course(admin_session, tenant_a.id)
-    _complete(admin_session, tenant_a.id, person, course)
-    tid, person_id, course_id = tenant_a.id, person.id, course.id
-    admin_session.commit()
-    start = Barrier(2)
-    real_lock = certificates.lock_existing_completion
+# Retired in C1 with app/services/completion_aggregate.py: test_concurrent_issuers_recheck_certificate_after_completion_lock
+# monkeypatched ensure_locked_completion/lock_existing_completion, which Learning
+# now owns. Concurrency intent is re-proved at the Learning boundary (see C1 receipt).
 
-    def synchronized_lock(db, **kwargs):
-        # Both issuers have already observed no certificate. Retain the real
-        # PostgreSQL aggregate lock, so the waiter must requery after acquiring it.
-        start.wait(timeout=5)
-        return real_lock(db, **kwargs)
-
-    monkeypatch.setattr(certificates, "lock_existing_completion", synchronized_lock)
-    factory = sessionmaker(bind=admin_engine, autoflush=False)
-
-    def issue(_):
-        with factory() as db:
-            cert = issue_certificate(db, tenant_id=tid, person_id=person_id, course_id=course_id)
-            identity = cert.id, cert.serial, cert.issued_at
-            db.commit()
-            return identity
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        identities = list(pool.map(issue, (1, 2)))
-    assert identities[0] == identities[1]
-    assert admin_session.query(Certificate).filter_by(
-        tenant_id=tid, person_id=person_id, course_id=course_id
-    ).count() == 1
-    assert admin_session.query(LearningEvent).filter_by(
-        tenant_id=tid, person_id=person_id, course_id=course_id, kind="certificate_earned"
-    ).count() == 1

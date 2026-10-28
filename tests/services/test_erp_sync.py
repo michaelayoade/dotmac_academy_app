@@ -6,10 +6,12 @@ import json
 import uuid
 from datetime import UTC, datetime
 
+from dotmac_kernel.models import Party, PartyType
+
 from app.config import settings
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.person import Person
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
 from app.services import erp_sync
 
 
@@ -37,11 +39,12 @@ def _seed(admin_session, tenant, *, status="completed"):
         source_ref="x",
         version=1,
     )
-    person = Person(
+    person = Party(
         tenant_id=tenant.id,
+        party_type=PartyType.person,
+        display_name="E M",
         email=f"e{uuid.uuid4().hex[:6]}@dotmac.ng",
-        first_name="E",
-        last_name="M",
+        is_active=True,
     )
     admin_session.add_all([course, person])
     admin_session.flush()
@@ -56,6 +59,12 @@ def _seed(admin_session, tenant, *, status="completed"):
     admin_session.add(comp)
     admin_session.flush()
     return comp, person, course
+
+
+def _synced_at(db, tenant, comp):
+    """The ERP acknowledgement now lives on the Academy checkpoint row."""
+    checkpoint = db.get(ERPCompletionCheckpoint, (tenant.id, comp.id))
+    return None if checkpoint is None else checkpoint.erp_synced_at
 
 
 def _configure(monkeypatch, url="https://erp.example/dotmac-academy/webhook"):
@@ -76,7 +85,7 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
     comp, person, _ = _seed(admin_session, tenant_a)
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.SYNCED
-    assert comp.erp_synced_at is not None
+    assert _synced_at(admin_session, tenant_a, comp) is not None
     body = json.loads(captured["content"])
     assert body["event"] == "course_completed"
     assert body["email"] == person.email
@@ -93,7 +102,7 @@ def test_inert_when_unconfigured(admin_session, tenant_a, monkeypatch):
     assert erp_sync.sync_pending(admin_session, tenant_id=tenant_a.id) == {
         erp_sync.SYNCED: 0, erp_sync.UNMATCHED: 0, erp_sync.FAILED: 0
     }
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()
 
 
@@ -113,7 +122,7 @@ def test_failure_leaves_unsynced(admin_session, tenant_a, monkeypatch):
     comp, _, _ = _seed(admin_session, tenant_a)
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.FAILED
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()
 
 
@@ -136,7 +145,7 @@ def test_ignored_reply_is_not_recorded_as_delivered(admin_session, tenant_a, mon
 
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.UNMATCHED
-    assert comp.erp_synced_at is None  # stays in the backlog, visible
+    assert _synced_at(admin_session, tenant_a, comp) is None  # stays in the backlog, visible
 
     admin_session.rollback()
 
@@ -166,7 +175,7 @@ def test_unreadable_2xx_body_is_retried_not_assumed(admin_session, tenant_a, mon
 
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.FAILED
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()
 
 
@@ -220,7 +229,7 @@ def test_422_with_ignored_detail_is_unmatched_not_retryable_failure(
 
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.UNMATCHED
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()
 
 
@@ -236,7 +245,7 @@ def test_unsupported_event_is_unmatched_not_delivered(admin_session, tenant_a, m
     assert erp_sync.push_completion(
         admin_session, tenant_id=tenant_a.id, completion=comp
     ) == erp_sync.UNMATCHED
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()
 
 
@@ -251,5 +260,5 @@ def test_genuine_server_error_is_still_a_retryable_failure(admin_session, tenant
     assert erp_sync.push_completion(
         admin_session, tenant_id=tenant_a.id, completion=comp
     ) == erp_sync.FAILED
-    assert comp.erp_synced_at is None
+    assert _synced_at(admin_session, tenant_a, comp) is None
     admin_session.rollback()

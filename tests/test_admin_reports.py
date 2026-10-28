@@ -106,8 +106,8 @@ def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
 
 
 def test_admin_recipients_only_active_admins(app_client, tenant_a, admin_session):
-    from app.services.accounts import create_user
     from app.services.admin_reports import admin_recipients
+    from tests.conftest import make_canonical_account as create_user
 
     create_user(
         admin_session,
