@@ -24,15 +24,23 @@
       "owner_component": "erp-applicant-assessment-service",
       "owner_implementation": "app/services/erp_applicant_assessments.py",
       "decision_interface": "app.services.erp_applicant_assessments.register",
-      "canonical_writer_paths": ["app/services/erp_applicant_assessments.py"],
-      "adapter_paths": ["app/api/erp_applicant_assessments.py"],
-      "drift_test_paths": ["tests/test_erp_applicant_assessment_api.py"]
+      "canonical_writer_paths": [
+        "app/services/erp_applicant_assessments.py"
+      ],
+      "adapter_paths": [
+        "app/api/erp_applicant_assessments.py"
+      ],
+      "drift_test_paths": [
+        "tests/test_erp_applicant_assessment_api.py"
+      ]
     }
   ],
   "typed_contract_surfaces": [
     {
       "surface_id": "erp-inbound-authenticity-contract",
-      "paths": ["app/services/erp_integration_security.py"],
+      "paths": [
+        "app/services/erp_integration_security.py"
+      ],
       "require_public_annotations": true,
       "forbid_any": true,
       "require_immutable_records": true
@@ -40,7 +48,9 @@
   ],
   "module_declared_vocabularies": [],
   "testing_kit_boundary": {
-    "test_roots": ["tests"],
+    "test_roots": [
+      "tests"
+    ],
     "kit_source_roots": [],
     "conformance_probes": []
   },
@@ -50,7 +60,7 @@
       "webhook_surface": 0,
       "provider_credential": 3,
       "connector_task": 0,
-      "sync_checkpoint": 2,
+      "sync_checkpoint": 3,
       "delivery_retry": 0
     },
     "conserved_exclusions": [
@@ -95,6 +105,18 @@
         "symbol": "test_upstream_down_is_502",
         "category": "outbound_transport",
         "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/services/test_erp_sync_contract.py",
+        "symbol": "_AbsentCheckpoint",
+        "category": "sync_checkpoint",
+        "fingerprint": "104ecada6f5e6cbdf55461fff29413c587c4caef0c55c64dd45e93a311ce867a"
+      },
+      {
+        "path": "tests/services/test_erp_sync_contract.py",
+        "symbol": "_LostImportedCheckpointSession",
+        "category": "sync_checkpoint",
+        "fingerprint": "104ecada6f5e6cbdf55461fff29413c587c4caef0c55c64dd45e93a311ce867a"
       }
     ]
   }

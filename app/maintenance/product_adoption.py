@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+from collections import deque
 from dataclasses import dataclass, field, replace
 from importlib import metadata
 from pathlib import Path
@@ -45,6 +46,34 @@ class ProductAdoptionRefused(RuntimeError):
 def _require(condition):
     if not condition:
         raise ProductAdoptionRefused("Academy product evidence refused; root rollback required")
+
+
+def _maintenance_refusal_locations(error: BaseException) -> str:
+    """Bounded owned filename/line codes only; never exception text or values."""
+    locations: deque[str] = deque(maxlen=4)
+    seen: set[int] = set()
+    current: BaseException | None = error
+    try:
+        owned = Path(__file__).resolve().parent
+        for _ in range(8):
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            frame = current.__traceback__
+            # Bound traversal as well as output; retain only the innermost four
+            # owned locations across even suppressed `from None` contexts.
+            for _ in range(64):
+                if frame is None:
+                    break
+                filename = Path(frame.tb_frame.f_code.co_filename)
+                if filename.parent == owned and filename.suffix == ".py" and filename.is_file():
+                    locations.append(f"{filename.name}:{frame.tb_lineno}")
+                frame = frame.tb_next
+            current = current.__context__
+        return " > ".join(dict.fromkeys(locations)) or "unavailable"
+    except Exception:
+        # A diagnostic must never replace the original refusal/poison outcome.
+        return "unavailable"
 
 
 # Genuine frozen096 manifest, independently matched to all62 actual a5 blobs.
@@ -119,16 +148,17 @@ _FROZEN62 = (
     ("20260711_0035_applicant_profile.py", 2280, "d6bcfc0f7932cdb1aa8df3f2608e3a4911e32673512da3e3ea2533ed7d82fdc0"),
 )
 _ASSEMBLY = (
-    ('a001_identity_extensions.py', 4749, 'e176281e63ef99a36b3715a886fe602af03b4b6bed33718198f6e0cb35922730'),
-    ('a002_credential_reset_state.py', 1537, '73d0b4912eef3c1cfe23b05bdb624e556f169be709b057784b525943365ba71d'),
-    ('a003_account_token_identity.py', 19922, 'd1f3ad5dde9ecd7379c1ddbdfcdf8f36102aae99009a83da9c8520db22e83bcb'),
-    ('a004_retained_learning_refs.py', 1226, '2791a21d5c0a7dcfe628dc3b56360aecaa3b07b227a59ac69016b8c339c0d4ed'),
-    ('a005_erp_completion_checkpoint.py', 1213, '5189ff695b2849409f8909545b39150d737f2dfd72b383d22b240d1572acd223'),
-    ('a006_lab_claim_lease.py', 1203, 'adcfeaa21816f3580fd35f7851d8b7aa44bc2d6929d9925c74d87eab6d597601'),
-    ('a007_lab_template_access.py', 1847, 'bf03d0289873e1772133ef7aa34692873b27d735aacf0a074fccc72557b24c2f'),
-    ('a008_lab_console_activity.py', 4103, 'f80ec248ecdde8cb52c485d3a40641b0936d8aa02d9274feea841ec9e91e4662'),
-    ('a009_applicant_bank_version_pin.py', 2280, '402724a0685fe9b3d147c4ae19f0e57ac2b8027d51bc16caa3a1b0251c906869'),
-    ('a010_facilitator_nominations.py', 21176, '3139eeb4cd257cbdfc8b3b6e2f6babe57cdc51b4ff6b51c0fd114203fa95219a'),
+    ("a001_identity_extensions.py", 4749, "e176281e63ef99a36b3715a886fe602af03b4b6bed33718198f6e0cb35922730"),
+    ("a002_credential_reset_state.py", 1537, "73d0b4912eef3c1cfe23b05bdb624e556f169be709b057784b525943365ba71d"),
+    ("a003_account_token_identity.py", 19922, "d1f3ad5dde9ecd7379c1ddbdfcdf8f36102aae99009a83da9c8520db22e83bcb"),
+    ("a004_retained_learning_refs.py", 1226, "2791a21d5c0a7dcfe628dc3b56360aecaa3b07b227a59ac69016b8c339c0d4ed"),
+    ("a005_erp_completion_checkpoint.py", 1213, "5189ff695b2849409f8909545b39150d737f2dfd72b383d22b240d1572acd223"),
+    ("a006_lab_claim_lease.py", 1203, "adcfeaa21816f3580fd35f7851d8b7aa44bc2d6929d9925c74d87eab6d597601"),
+    ("a007_lab_template_access.py", 1847, "bf03d0289873e1772133ef7aa34692873b27d735aacf0a074fccc72557b24c2f"),
+    ("a008_lab_console_activity.py", 4103, "f80ec248ecdde8cb52c485d3a40641b0936d8aa02d9274feea841ec9e91e4662"),
+    ("a009_applicant_bank_version_pin.py", 2280, "402724a0685fe9b3d147c4ae19f0e57ac2b8027d51bc16caa3a1b0251c906869"),
+    ("a010_facilitator_nominations.py", 21176, "3139eeb4cd257cbdfc8b3b6e2f6babe57cdc51b4ff6b51c0fd114203fa95219a"),
+    ("a011_erp_progress_checkpoint.py", 3112, "a110465aa4051eba83180058e2f1b4a5c73a1755d454ba49b6d57ff4c30dbfda"),
 )
 _IDENTITY = tokens._FAMILIES
 _RETAINED = (
@@ -356,6 +386,7 @@ def _provenance():
             "a008_lab_console_activity",
             "a009_applicant_bank_version_pin",
             "a010_facilitator_nominations",
+            "a011_erp_progress_checkpoint",
         }
     )
     kernel_directory = Path(kernel_versions())
@@ -500,7 +531,10 @@ def _capture_product_history(connection: Connection, bindings=None, *, _hosted_c
         hosted._poison_context(_hosted_context, connection)
         if not isinstance(error, Exception):
             raise
-        raise ProductAdoptionRefused("Academy product capture refused; root rollback required") from None
+        location = _maintenance_refusal_locations(error)
+        raise ProductAdoptionRefused(
+            f"Academy product capture refused; root rollback required [maintenance {location}]"
+        ) from None
 
 
 @dataclass(slots=True, repr=False)
@@ -868,13 +902,17 @@ def _run_retained_transition(connection: Connection, handle: _Capture) -> None:
         config = ordinary_migration_config()
         config.attributes["connection"] = connection
         locations = tuple(map(Path, config.attributes["academy_migration_locations"]))
-        expected_locations = {Path(kernel_versions()).resolve(), Path(learning_versions()).resolve(),
-                              (Path(__file__).resolve().parents[2] / "alembic/identity_assembly_versions").resolve()}
+        expected_locations = {
+            Path(kernel_versions()).resolve(),
+            Path(learning_versions()).resolve(),
+            (Path(__file__).resolve().parents[2] / "alembic/identity_assembly_versions").resolve(),
+        }
         _require(set(locations) == expected_locations and len(locations) == 3)
         scripts = ScriptDirectory.from_config(config)
         _require({Path(path).resolve() for path in scripts.version_locations} == expected_locations)
-        graph = tuple(sorted((script.revision, script.down_revision, script.dependencies)
-                             for script in scripts.walk_revisions()))
+        graph = tuple(
+            sorted((script.revision, script.down_revision, script.dependencies) for script in scripts.walk_revisions())
+        )
         _require((graph, tuple(sorted(scripts.get_heads()))) == state.provenance[4])
         _require(_provenance() == state.provenance and config.attributes["connection"] is connection)
         state.retained_runner = invocation
@@ -1187,3 +1225,12 @@ def _run_lab_claim_lease_transition(connection: Connection, handle: _Capture) ->
     finally:
         if type(state) is _State and state.lab_claim_runner is invocation:
             state.lab_claim_runner = None
+
+
+def _run_erp_progress_transition(connection: Connection, handle: _Capture) -> None:
+    """Continue genuine observed a006 through exactly verified successors."""
+    from app.maintenance import erp_progress_transition as erp
+
+    erp._run(connection, handle, historical=True)
+    state = _state_for(handle)
+    state.phase = "ERP progress adopted, final admission pending"

@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import inspect
+import json
 import re
 from io import StringIO
 from pathlib import Path
@@ -299,6 +300,12 @@ def synthetic_catalog(monkeypatch):
             )
         ],
         "queries": [],
+        "columns": [("mod_learning", "courses", "id", "uuid", True)],
+        "table_acl": [("public", "academy_erp_completion_checkpoints", "app_admin", "app_admin", "SELECT", False)],
+        "bodies": {},
+        "undeclared": (),
+        "function_acl": {},
+        "dependencies": [("table:mod_learning.courses", "schema:mod_learning", "n")],
     }
     monkeypatch.setattr(fresh.identity, "_connection_preflight", lambda connection: object())
     monkeypatch.setattr(fresh, "_owner_contracts", lambda: None)
@@ -306,10 +313,21 @@ def synthetic_catalog(monkeypatch):
 
     def rows(connection, sql, **params):
         state["queries"].append(sql)
+        if "SELECT 'pg_collation' WHERE EXISTS" in sql:
+            return tuple((category,) for category in state["undeclared"])
         if "c.relkind,pg_catalog.pg_get_userbyid(c.relowner)" in sql:
             return tuple(
-                ("public", name, "r", "app_admin", True, True, "p", False, None) for name in fresh._PRODUCT_TABLES
+                (namespace, name, "r", "app_admin", True, True, "p", False, None)
+                for namespace, name in fresh._canonical_relations()
             )
+        if "WITH tables AS" in sql:
+            return tuple(state["dependencies"])
+        if "format_type(a.atttypid" in sql:
+            return tuple(state["columns"])
+        if "aclexplode(COALESCE(c.relacl" in sql:
+            return tuple(state["table_acl"])
+        if "aclexplode" in sql and "signature" in params:
+            return tuple(state["function_acl"].get(params["signature"], ()))
         if "FROM pg_catalog.pg_trigger t " in sql:
             return tuple(state["ri"])
         if "l.lanname," in sql and "FROM pg_catalog.pg_proc p" in sql:
@@ -324,7 +342,7 @@ def synthetic_catalog(monkeypatch):
                 facts += (state["argnames"],)
             if "p.proargmodes" in sql:
                 facts += (state["argmodes"],)
-            return ((*facts, "unchanged function source"),)
+            return ((*facts, state["bodies"].get(function, "unchanged function source")),)
         return ()
 
     monkeypatch.setattr(fresh.tokens, "_tuples", rows)
@@ -333,11 +351,11 @@ def synthetic_catalog(monkeypatch):
 
 def test_fingerprint_projects_qualified_child_and_parent_ri_semantics_without_generated_names(synthetic_catalog):
     fresh.catalog_fingerprint(object())
-    (ri_sql,) = (sql for sql in synthetic_catalog["queries"] if "FROM pg_catalog.pg_trigger t " in sql)
+    (ri_sql,) = (sql for sql in synthetic_catalog["queries"] if "t.tgtype,t.tgenabled" in sql)
     projection = ri_sql.split(" FROM pg_catalog.pg_trigger", 1)[0]
     assert "k.oid=t.tgconstraint AND k.contype='f'" in ri_sql
-    assert "cn.nspname='public' AND ch.relname=ANY(:names)" in ri_sql
-    assert "pn.nspname='public' AND pa.relname=ANY(:names)" in ri_sql
+    assert "(cn.nspname||'.'||ch.relname)=ANY(:qualified)" in ri_sql
+    assert "(pn.nspname||'.'||pa.relname)=ANY(:qualified)" in ri_sql
     for field in (
         "tn.nspname",
         "tr.relname",
@@ -387,3 +405,136 @@ def test_fingerprint_changes_with_function_interface_or_ri_enforcement(synthetic
         trigger[position] = value
         synthetic_catalog["ri"] = [tuple(trigger)]
     assert fresh.catalog_fingerprint(object()) != before
+
+
+@pytest.mark.parametrize(
+    "change", ["learning_column", "kernel_column", "kernel_outbox_body", "kernel_execute_acl", "academy_acl"]
+)
+def test_whole_owner_catalog_blindspots_change_fingerprint(synthetic_catalog, change):
+    before = fresh.catalog_fingerprint(object())
+    if change == "learning_column":
+        synthetic_catalog["columns"].append(("mod_learning", "courses", "unreviewed", "text", False))
+    elif change == "kernel_column":
+        synthetic_catalog["columns"].append(("public", "tenants", "unreviewed", "text", False))
+    elif change == "kernel_outbox_body":
+        synthetic_catalog["bodies"]["public.claim_outbox_batch"] = "tampered body"
+    elif change == "kernel_execute_acl":
+        signature = "public.claim_outbox_batch(text,integer,integer)"
+        synthetic_catalog["function_acl"][signature] = [("app_admin", "app_user", "EXECUTE", False)]
+    else:
+        synthetic_catalog["table_acl"].append(
+            ("public", "academy_erp_completion_checkpoints", "app_admin", "app_user", "SELECT", False)
+        )
+    assert fresh.catalog_fingerprint(object()) != before
+
+
+def test_catalog_serialization_version_and_all_function_signatures(synthetic_catalog):
+    packet = fresh._catalog_packet(object())
+    assert packet["serialization"] == (("academy-canonical-catalog-v2",),)
+    assert {row[0] for row in packet["owner_sources"]} == {"Kernel", "Learning", "Academy"}
+    assert len(packet["functions"]) == 7
+    assert {row[:2] for row in packet["relations"]} == set(fresh._canonical_relations())
+    assert any("pg_identify_object" in sql for sql in synthetic_catalog["queries"])
+    assert len(fresh.catalog_object_digests(object())) > 7
+
+
+def test_kernel_function_body_contracts_match_pinned_owner_sources(synthetic_catalog):
+    actual = {}
+    for filename in ("20260731_0011_outbox_relay_leasing.py", "20260731_0012_platform_outbox.py"):
+        tree = ast.parse((Path(kernel_versions()) / filename).read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            name = re.search(r"CREATE OR REPLACE FUNCTION public\.(\w+)", node.value)
+            body = re.search(r"AS \$fn\$(.*?)\$fn\$", node.value, re.S)
+            if name and body:
+                actual["public." + name.group(1)] = hashlib.sha256(body.group(1).encode()).hexdigest()
+    packet = fresh._catalog_packet(object())
+    assert actual == dict(packet["kernel_function_sources"])
+
+
+def test_catalog_column_permutation_preserves_fingerprint_and_object_digests(synthetic_catalog):
+    synthetic_catalog["columns"].extend(
+        [
+            ("mod_learning", "courses", "title", "text", False),
+            ("public", "tenants", "id", "uuid", True),
+        ]
+    )
+    before = fresh.catalog_fingerprint(object())
+    objects = fresh.catalog_object_digests(object())
+    synthetic_catalog["columns"].reverse()
+    synthetic_catalog["table_acl"].reverse()
+    synthetic_catalog["ri"].reverse()
+    assert fresh.catalog_fingerprint(object()) == before
+    assert fresh.catalog_object_digests(object()) == objects
+
+
+def test_every_category_orders_complete_rows_without_erasing_semantics(synthetic_catalog, monkeypatch):
+    categories = tuple(fresh._catalog_packet(object()))
+    rows = (
+        ("public", "same_table", "z", ("second", "first"), "  literal  "),
+        ("public", "same_table", "a", ("first", "second"), "literal"),
+    )
+    packet = {category: rows for category in categories}
+    monkeypatch.setattr(fresh, "_catalog_packet", lambda connection: packet)
+    before = fresh.catalog_fingerprint(object())
+    objects = fresh.catalog_object_digests(object())
+    diagnostic_bytes = json.dumps(objects).encode()
+    packet = {category: tuple(reversed(rows)) for category in reversed(categories)}
+    assert fresh.catalog_fingerprint(object()) == before
+    assert fresh.catalog_object_digests(object()) == objects
+    assert json.dumps(fresh.catalog_object_digests(object())).encode() == diagnostic_bytes
+    # Multiplicity, input/output argument order and literal whitespace are facts.
+    for changed in (
+        (*rows, rows[0]),
+        ((rows[0][0], rows[0][1], rows[0][2], tuple(reversed(rows[0][3])), rows[0][4]), rows[1]),
+        ((*rows[0][:-1], rows[0][-1].strip()), rows[1]),
+    ):
+        packet = {category: changed for category in categories}
+        assert fresh.catalog_fingerprint(object()) != before
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "pg_collation",
+        "pg_operator",
+        "pg_opclass",
+        "pg_opfamily",
+        "pg_conversion",
+        "pg_ts_config",
+        "pg_ts_dict",
+        "pg_ts_parser",
+        "pg_ts_template",
+        "pg_statistic_ext",
+        "pg_cast",
+        "pg_am",
+        "pg_transform",
+        "pg_event_trigger",
+        "pg_foreign_data_wrapper",
+        "pg_foreign_server",
+        "pg_user_mapping",
+        "pg_extension",
+    ],
+)
+@pytest.mark.parametrize("boundary", ["initial", "preimage", "terminal"])
+def test_unreferenced_undeclared_objects_refuse_before_capture_or_terminal_hash(
+    synthetic_catalog,
+    category,
+    boundary,
+):
+    from app.maintenance import erp_successor_catalog as successor
+
+    # This object has no incoming reference from the 72 canonical tables or
+    # seven functions; dependency closure alone cannot discover its presence.
+    synthetic_catalog["undeclared"] = (category,)
+    with pytest.raises(fresh.FreshProductRefused):
+        if boundary == "initial":
+            fresh._initial_empty(object())
+        elif boundary == "preimage":
+            successor.observe(object())
+        else:
+            fresh.catalog_fingerprint(object())
+    census = next(sql for sql in synthetic_catalog["queries"] if "SELECT 'pg_collation' WHERE EXISTS" in sql)
+    assert "n.nspname NOT IN ('pg_catalog','information_schema')" in census
+    assert "umoptions" not in census and "srvoptions" not in census and "fdwoptions" not in census

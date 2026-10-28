@@ -84,7 +84,7 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
     from app.models.admissions import Applicant
     from app.models.email_outbox import EmailOutbox
     from app.models.entrance_defaults import TenantEntranceDefaults
-    from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
+    from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint, ERPImportedCompletionKey
     from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
     from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
     from app.models.lab import LabConsoleActivity, LabInstance, LabOperation, LabTemplate
@@ -110,6 +110,7 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
             ReminderLog,
             ReminderPreference,
             ERPCompletionCheckpoint,
+            ERPImportedCompletionKey,
             AcademyAccountProfile,
             AcademyCredentialPolicy,
             FacilitatorNomination,

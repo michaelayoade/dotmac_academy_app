@@ -209,6 +209,7 @@ def test_assembly_successor_edges_and_learning_schema():
         ("a008_lab_console_activity", "a007_lab_template_access", None),
         ("a009_applicant_bank_version_pin", "a008_lab_console_activity", "lr_0010_question_bank_versions"),
         ("a010_facilitator_nominations", "a009_applicant_bank_version_pin", None),
+        ("a011_erp_progress_checkpoint", "a010_facilitator_nominations", None),
     ):
         successor = scripts.get_revision(revision)
         assert successor.down_revision == parent

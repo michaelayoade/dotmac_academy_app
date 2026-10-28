@@ -1,0 +1,389 @@
+"""Pure conservation/refusal tests; positive hosted catalog proof remains open."""
+
+import copy
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from app.maintenance import erp_progress_transition as transition
+from app.maintenance import erp_successor_catalog as catalog
+from app.maintenance.product_adoption import ProductAdoptionRefused
+
+
+def _packets():
+    before = {
+        cat: {}
+        for cat in (
+            "pg_class",
+            "pg_type",
+            "pg_proc",
+            "pg_constraint",
+            "pg_trigger",
+            "pg_rewrite",
+            "pg_policy",
+            "pg_attribute",
+            "pg_attrdef",
+            "pg_index",
+        )
+    }
+    before.update(global_=None)
+    before.pop("global_")
+    before["global"] = {"roles": (("app_admin", False),), "namespaces": (("public",),)}
+    before["dependencies"] = ()
+    before["pg_class"][100] = json.dumps(
+        {"relname": "lab_templates", "relnatts": 1, "relhastriggers": False, "relhasindex": False, "relowner": 10}
+    )
+    before["pg_attribute"][(100, 1)] = json.dumps({"attname": "id", "attnum": 1})
+    after = copy.deepcopy(before)
+    rel = json.loads(after["pg_class"][100])
+    rel["relnatts"] = 2
+    after["pg_class"][100] = json.dumps(rel)
+    after["pg_attribute"][(100, 2)] = json.dumps({"attname": "access", "attnum": 2})
+    after["pg_attrdef"][200] = json.dumps({"adrelid": 100, "adnum": 2})
+    return before, after
+
+
+def test_only_validated_column_addition_is_inverse_projected():
+    before, after = _packets()
+    appended = catalog._validate_new_raw(before, after, "a007_lab_template_access", {}, set())
+    assert appended == {(100, 2)}
+    catalog.conserve(before, after, stage="a007_lab_template_access", appended=appended)
+
+
+@pytest.mark.parametrize(
+    ("category", "raw"),
+    [
+        ("pg_proc", {"proname": "unexpected_function"}),
+        ("pg_policy", {"polname": "unexpected_policy", "polrelid": 100}),
+        ("pg_constraint", {"conname": "unexpected_constraint", "contype": "c"}),
+        ("pg_type", {"typname": "unexpected_type"}),
+        ("pg_class", {"relname": "unexpected_index", "relkind": "i"}),
+        ("pg_trigger", {"tgname": "unexpected_trigger", "tgrelid": 100}),
+        ("pg_rewrite", {"rulename": "unexpected_rule"}),
+    ],
+)
+def test_extra_objects_cannot_disappear_in_inverse_projection(category, raw):
+    before, after = _packets()
+    after[category][999] = json.dumps(raw)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._validate_new_raw(before, after, "a007_lab_template_access", {}, set())
+
+
+@pytest.mark.parametrize("change", ["owner", "dropped_oid", "old_attribute", "role", "namespace"])
+def test_previous_objects_and_authority_are_conserved(change):
+    before, after = _packets()
+    if change == "owner":
+        rel = json.loads(after["pg_class"][100])
+        rel["relowner"] = 999
+        after["pg_class"][100] = json.dumps(rel)
+    elif change == "dropped_oid":
+        after["pg_class"][999] = after["pg_class"].pop(100)
+    elif change == "old_attribute":
+        after["pg_attribute"][(100, 1)] = json.dumps({"attname": "wrong", "attnum": 1})
+    elif change == "role":
+        after["global"]["roles"] = (("app_admin", True),)
+    else:
+        after["global"]["namespaces"] = (("public",), ("unexpected",))
+    with pytest.raises(ProductAdoptionRefused):
+        catalog.conserve(before, after, stage="a007_lab_template_access", appended={(100, 2)})
+
+
+@pytest.mark.parametrize("default", ["'{}'::jsonb", "dangerous()", "'[]'::jsonb || '[1]'::jsonb"])
+def test_wrong_defaults_refuse_before_catalog_side_effects(default):
+    row = (2, "access", "jsonb", False, default, "", "", None, False, False, None, None, 0)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._validate_column(None, row, ("access", "jsonb", False, "'[]'::jsonb"), appended=True)
+
+
+def test_unissued_continuation_cannot_authorize_ddl():
+    db = SimpleNamespace(info={})
+    with pytest.raises(ProductAdoptionRefused):
+        transition._consume(db)
+    with pytest.raises(RuntimeError, match="privately issued"):
+        transition._Continuation()
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("late Alembic callback"), KeyboardInterrupt()])
+def test_runner_poison_covers_baseexception_and_disposes(monkeypatch, fault):
+    owner = object()
+    entry = object.__new__(transition._Continuation)
+    packet = {"observed": ()}
+    transition._Continuation.__init__(
+        entry, None, object(), (), (), (None, None, None, None, ((), ())), 1, owner, True, object(), (), 2, 3, packet
+    )
+    db = SimpleNamespace(info={transition._KEY: entry})
+    entry.connection = db
+    poisoned = []
+    monkeypatch.setattr(transition, "_verify_config", lambda *a: None)
+    monkeypatch.setattr(transition, "_prepare", lambda *a, **k: entry)
+    monkeypatch.setattr(transition, "_check", lambda *a, **k: None)
+    monkeypatch.setattr(transition, "_config", lambda *a: SimpleNamespace(attributes={"connection": db}))
+    monkeypatch.setattr(transition, "_poison", lambda connection, current: poisoned.append((connection, current)))
+    monkeypatch.setattr(transition.sa.event, "listen", lambda *a: None)
+    monkeypatch.setattr(transition.sa.event, "remove", lambda *a: None)
+    monkeypatch.setattr(catalog, "observe", lambda *a: packet)
+    monkeypatch.setattr(catalog, "row_evidence", lambda *a: ())
+
+    def callback(*a, **k):
+        raise fault
+
+    monkeypatch.setattr(transition.command, "upgrade", callback)
+    with pytest.raises(type(fault)):
+        transition._run(db, owner, historical=True)
+    assert poisoned == [(db, entry)]
+    assert entry.runner is None and not entry.packet
+    assert transition._KEY not in db.info
+
+
+def test_dependency_multiset_cannot_lose_one_identical_policy_edge():
+    before, after = _packets()
+    edge = (1, 2, 0, 3, 4, 0, "n")
+    before["dependencies"] = (edge, edge)
+    after["dependencies"] = (edge,)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog.conserve(before, after, stage="a007_lab_template_access", appended={(100, 2)})
+
+
+@pytest.mark.parametrize("mutation", ["learning_fact", "membership", "progress_marker"])
+def test_successful_late_callback_is_rechecked_after_final_version_write(monkeypatch, mutation):
+    """Mock only orchestration prerequisites; exercise the real final row gate."""
+    from uuid import uuid4
+
+    tenant, completion = uuid4(), uuid4()
+    owner = object()
+    packet = {"observed": ()}
+    state = {"rows": ("unchanged",), "membership": ((tenant, completion),), "markers_empty": True, "version": None}
+    entry = object.__new__(transition._Continuation)
+    transition._Continuation.__init__(
+        entry,
+        None,
+        object(),
+        (),
+        (),
+        (None, None, None, None, ((), ())),
+        1,
+        owner,
+        True,
+        object(),
+        ((tenant, completion, None),),
+        2,
+        3,
+        packet,
+    )
+    db = SimpleNamespace(info={transition._KEY: entry}, scalar=lambda statement: state["markers_empty"])
+    entry.connection = db
+    poisoned = []
+    monkeypatch.setattr(transition, "_verify_config", lambda *a: None)
+    monkeypatch.setattr(transition, "_prepare", lambda *a, **k: entry)
+    monkeypatch.setattr(transition, "_check", lambda *a, **k: None)
+    monkeypatch.setattr(transition, "_config", lambda *a: SimpleNamespace(attributes={"connection": db}))
+    monkeypatch.setattr(transition, "_poison", lambda connection, current: poisoned.append(current))
+    monkeypatch.setattr(transition.sa.event, "listen", lambda *a: None)
+    monkeypatch.setattr(transition.sa.event, "remove", lambda *a: None)
+    monkeypatch.setattr(catalog, "observe", lambda *a: packet)
+    monkeypatch.setattr(catalog, "row_evidence", lambda *a, **k: state["rows"])
+    monkeypatch.setattr(catalog, "grandfather_keys", lambda *a: ())
+    monkeypatch.setattr(catalog, "validate_stage", lambda *a, **k: None)
+    monkeypatch.setattr(transition.retained, "_stage_versions", lambda graph, target, **k: (target,))
+    monkeypatch.setattr(transition.retained, "_version_rows", lambda *a: (state["version"],))
+    monkeypatch.setattr(transition.history, "_query", lambda *a, **k: state["membership"])
+
+    def upgrade(config, target):
+        state["version"] = target
+        if target == transition._A011:
+            entry.consumed = entry.recorded = True
+            entry.row_packet = packet
+            entry.row_oracle = state["rows"]
+            # These simulate callbacks which return success after the migration's
+            # own conservation check; the final version row is already written.
+            if mutation == "learning_fact":
+                state["rows"] = ("changed",)
+            elif mutation == "membership":
+                state["membership"] = ()
+            else:
+                state["markers_empty"] = False
+
+    monkeypatch.setattr(transition.command, "upgrade", upgrade)
+    with pytest.raises(ProductAdoptionRefused):
+        transition._run(db, owner, historical=True)
+    assert state["version"] == transition._A011
+    assert poisoned == [entry]
+    assert transition._KEY not in db.info
+
+
+def test_fresh_a006_counter_alone_cannot_authorize_any_learned_catalog(monkeypatch):
+    from app.maintenance import fresh_product as fresh
+
+    owner = SimpleNamespace(prepared=True, next_stage=len(fresh._STAGES))
+    db = SimpleNamespace(info={})
+    monkeypatch.setattr(fresh, "_issued", lambda connection: owner)
+    monkeypatch.setattr(fresh, "_check", lambda *a: None)
+    monkeypatch.setattr(catalog, "observe", lambda *a: pytest.fail("must not learn unverified a006 catalog"))
+    with pytest.raises(ProductAdoptionRefused):
+        transition._prepare(db, owner, historical=False)
+
+
+@pytest.mark.parametrize(("field", "value"), [("procost", 0.01), ("prorows", 12345), ("protrftypes", [999])])
+def test_trigger_function_fixed_create_defaults_are_required(monkeypatch, field, value):
+    row = {
+        "oid": 123,
+        "owner": "app_admin",
+        "lanname": "plpgsql",
+        "prosecdef": False,
+        "provolatile": "v",
+        "proparallel": "u",
+        "proisstrict": False,
+        "proleakproof": False,
+        "prokind": "f",
+        "proconfig": ["search_path=pg_catalog"],
+        "result": "trigger",
+        "pronargdefaults": 0,
+        "probin": None,
+        "prosqlbody": None,
+        "prosupport": 0,
+        "provariadic": 0,
+        "prosrc": " BEGIN NEW.last_seen_at := pg_catalog.now(); RETURN NEW; END; ",
+        "procost": 100,
+        "prorows": 0,
+        "protrftypes": None,
+    }
+    row[field] = value
+    monkeypatch.setattr(catalog, "_dicts", lambda *a, **k: (row,))
+    db = SimpleNamespace(scalar=lambda *a, **k: 123)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._function(db, "a008_lab_console_activity")
+
+
+@pytest.mark.parametrize(
+    "target", ["a004_retained_learning_refs", "a005_erp_completion_checkpoint", "a006_lab_claim_lease"]
+)
+def test_fresh_successful_callback_learning_column_is_checked_before_ordinal_advances(monkeypatch, target):
+    """Keep the real inverse comparison; mock SQL/DDL prerequisites only."""
+    from app.maintenance import fresh_product as fresh
+    from app.maintenance import product_adoption as product
+
+    before, _ = _packets()
+    base = json.loads(before["pg_class"][100])
+    base["relname"] = "courses"
+    before["pg_class"][100] = json.dumps(base)
+    state = {"packet": before, "version": 0}
+    owner = SimpleNamespace(prepared=True, next_stage=0, poisoned=False, graph=())
+    root = object()
+    provenance = (None, None, None, None, ((), ()))
+    stage = object.__new__(transition._FreshStages)
+    transition._FreshStages.__init__(stage, owner, None, root, (), (), provenance, 1, {}, copy.deepcopy(before))
+    db = SimpleNamespace(info={transition._FRESH_KEY: stage})
+    stage.connection = db
+    monkeypatch.setattr(transition, "_check_fresh_stages", lambda *a: stage)
+    monkeypatch.setattr(fresh, "_check", lambda *a: None)
+    monkeypatch.setattr(fresh, "_versions", lambda *a: (state["version"],))
+    monkeypatch.setattr(fresh, "_cut", lambda graph, name, final: (fresh._STAGES.index(name) + int(final),))
+    monkeypatch.setattr(transition, "_config", lambda *a: SimpleNamespace(attributes={"connection": db}))
+    monkeypatch.setattr(transition, "_verify_config", lambda *a: None)
+    monkeypatch.setattr(transition, "_connection_preflight", lambda *a: root)
+    monkeypatch.setattr(transition.tokens, "_physical_context", lambda *a: ())
+    monkeypatch.setattr(transition, "_roles", lambda *a: ())
+    monkeypatch.setattr(product, "_provenance", lambda: provenance)
+    monkeypatch.setattr(transition.checkpoint, "_parent_keys", lambda *a: {})
+    monkeypatch.setattr(catalog, "observe", lambda *a: copy.deepcopy(state["packet"]))
+    monkeypatch.setattr(catalog, "row_evidence", lambda *a: ())
+
+    def validate(connection, prior, current, name, **kwargs):
+        catalog.conserve(prior, current, stage=name, appended=set())
+
+    monkeypatch.setattr(catalog, "validate_fresh_stage", validate)
+
+    def upgrade(config, name):
+        owner.next_stage += 1
+        state["version"] += 1
+        if name == target:
+            relation = json.loads(state["packet"]["pg_class"][100])
+            relation["relnatts"] += 1
+            state["packet"]["pg_class"][100] = json.dumps(relation)
+            state["packet"]["pg_attribute"][(100, 2)] = json.dumps({"attname": "unreviewed", "attnum": 2})
+
+    monkeypatch.setattr(transition.command, "upgrade", upgrade)
+    with pytest.raises(ProductAdoptionRefused):
+        transition._run_fresh_stages(db, owner)
+    assert stage.observed == fresh._STAGES.index(target)
+    assert owner.poisoned and stage.poisoned
+
+
+def test_checked_fresh_context_transfers_packet_and_detaches_registry(monkeypatch):
+    from app.maintenance import fresh_product as fresh
+
+    owner = SimpleNamespace(prepared=True, next_stage=3, graph=())
+    packet = {"catalog": "checked predecessor"}
+    stage = SimpleNamespace(observed=3, consumed=False, packet=packet)
+    connection = SimpleNamespace(info={transition._FRESH_KEY: stage})
+    monkeypatch.setattr(transition, "_check_fresh_stages", lambda *a: stage)
+    monkeypatch.setattr(fresh, "_versions", lambda *a: ("a006",))
+    monkeypatch.setattr(fresh, "_cut", lambda *a, **k: ("a006",))
+    assert transition._consume_fresh_stages(connection, owner) is packet
+    assert stage.consumed and stage.packet == {}
+    assert transition._FRESH_KEY not in connection.info
+
+
+def test_real_ordinary_config_cannot_switch_connection_or_locations():
+    from app.maintenance import product_adoption as product
+
+    # Genuine callers already ran the ordinary graph to a006, which binds the
+    # installed Learning prerequisite edges before capturing provenance.
+    transition.ordinary_migration_config()
+    db = object()
+    entry = SimpleNamespace(provenance=product._provenance())
+    cfg = transition._config(db, entry)
+    transition._verify_config(db, entry, cfg)
+    cfg.attributes["connection"] = object()
+    with pytest.raises(ProductAdoptionRefused):
+        transition._verify_config(db, entry, cfg)
+    cfg.attributes["connection"] = db
+    cfg.attributes["academy_migration_locations"] = (
+        *cfg.attributes["academy_migration_locations"],
+        cfg.attributes["academy_migration_locations"][0],
+    )
+    with pytest.raises(ProductAdoptionRefused):
+        transition._verify_config(db, entry, cfg)
+
+
+def test_safe_maintenance_diagnostic_follows_suppressed_context_without_values():
+    from app.maintenance import product_adoption as product
+
+    marker = "DO_NOT_DISCLOSE_SQL_OR_CREDENTIAL_VALUES"
+
+    def inner():
+        raise ValueError(marker)
+
+    def outer():
+        try:
+            inner()
+        except ValueError:
+            raise RuntimeError(marker) from None
+
+    # Bind only code-location metadata; no source formatter, exec or local read.
+    inner.__code__ = inner.__code__.replace(co_filename=product.__file__)
+    outer.__code__ = outer.__code__.replace(co_filename=product.__file__)
+    try:
+        outer()
+    except RuntimeError as error:
+        assert error.__suppress_context__
+        result = product._maintenance_refusal_locations(error)
+    assert marker not in result
+    assert "ValueError" not in result and "RuntimeError" not in result
+    assert str(product.Path(product.__file__).parent) not in result
+    assert result != "unavailable"
+    assert len(result.split(" > ")) <= 4
+    assert all(
+        part.startswith("product_adoption.py:") and part.rsplit(":", 1)[1].isdigit() for part in result.split(" > ")
+    )
+
+
+def test_safe_maintenance_diagnostic_bounds_cyclic_context_and_ignores_other_files():
+    from app.maintenance import product_adoption as product
+
+    try:
+        raise ValueError("never render this exception")
+    except ValueError as error:
+        error.__context__ = error
+        assert product._maintenance_refusal_locations(error) == "unavailable"

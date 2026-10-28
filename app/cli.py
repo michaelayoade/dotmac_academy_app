@@ -579,11 +579,13 @@ def _at_risk_sweep(args: argparse.Namespace) -> None:
 
 
 def _erp_training_sync(args: argparse.Namespace) -> None:
-    """Cross-tenant: push completed courses to dotmac_erp HR (training reports).
+    """Cross-tenant: push staff progress and completions to ERP with v2 events.
 
-    BYPASSRLS admin session; idempotent — only unsynced completions are pushed
-    and ERP dedups on the certificate ref, so re-runs are safe. Inert unless
-    ERP_WEBHOOK_URL is configured.
+    The existing offline BYPASSRLS admin session owns checkpoint updates.
+    Stable enrollment employee_ref supplies identity; accepted percentage and
+    raw completion ACK markers suppress acknowledged snapshots. Delivery stays
+    at least once across HTTP acceptance and a local rollback. Inert unless
+    ERP_WEBHOOK_URL is configured and the guarded ERP successor is installed.
     """
     from sqlalchemy import select
 
@@ -601,10 +603,10 @@ def _erp_training_sync(args: argparse.Namespace) -> None:
         f"unmatched={totals[erp_sync.UNMATCHED]} failed={totals[erp_sync.FAILED]}"
     )
     if totals[erp_sync.UNMATCHED]:
-        # Unmatched will not clear by retrying — the learner's Academy email
-        # matches no ERP employee. Say so where an operator will see it.
+        # Unmatched requires the enrollment's stable ERP employee_ref to be
+        # corrected; retries alone cannot repair the identity link.
         print(
-            f"NOTE: {totals[erp_sync.UNMATCHED]} completion(s) reached ERP but were not recorded "
+            f"NOTE: {totals[erp_sync.UNMATCHED]} training event(s) reached ERP but were not recorded "
             "(no matching employee). These stay unsynced until the identity link is fixed."
         )
 
@@ -1508,7 +1510,7 @@ def main() -> None:
     )
     ar.set_defaults(func=_at_risk_sweep)
 
-    ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
+    ets = sub.add_parser("erp-training-sync", help="Push staff training progress/completions using ERP v2")
     ets.set_defaults(func=_erp_training_sync)
 
     seb = sub.add_parser("set-entrance-bank", help="Designate a cohort's entrance-assessment bank")

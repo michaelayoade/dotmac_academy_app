@@ -12,7 +12,6 @@ import sqlalchemy as sa
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-from alembic import command
 from app.config import settings
 from app.maintenance import fresh_product as fresh
 from app.maintenance import product_adoption as product
@@ -68,7 +67,7 @@ def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connec
         product._run_lab_claim_lease_transition(connection, handle)
         cfg = ordinary_migration_config()
         cfg.attributes["connection"] = connection
-        command.upgrade(cfg, "heads")
+        product._run_erp_progress_transition(connection, handle)
         historical_digest = fresh.catalog_fingerprint(connection)
         historical_objects = fresh.catalog_object_digests(connection)
         historical_versions = fresh._versions(connection)

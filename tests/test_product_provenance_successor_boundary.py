@@ -18,10 +18,10 @@ def isolated_sources(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_exact_frozen62_and_assembly10_sources_are_accepted(isolated_sources):
+def test_exact_frozen62_and_assembly11_sources_are_accepted(isolated_sources):
     frozen, assembly, _, _, graph = product._provenance()
-    assert len(frozen) == 62 and len(assembly) == 10
-    assert "a010_facilitator_nominations" in graph[1]
+    assert len(frozen) == 62 and len(assembly) == 11
+    assert "a011_erp_progress_checkpoint" in graph[1]
 
 
 @pytest.mark.parametrize("drift", ["legacy_successor", "unknown_assembly", "missing_assembly", "tampered_assembly"])

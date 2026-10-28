@@ -270,21 +270,39 @@ def test_retained_internal_foreign_keys_and_deliberately_unconstrained_values():
         assert all(not table.c[name].foreign_keys for name in names)
 
 
-def test_checkpoint_has_only_raw_ack_and_canonical_completion_reference():
+def test_checkpoint_owns_erp_markers_and_references_canonical_completion():
     from dotmac_kernel.models import Tenant
     from dotmac_learning.models import CourseCompletion
 
     from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
 
     table = ERPCompletionCheckpoint.__table__
-    assert set(table.c.keys()) == {"tenant_id", "completion_id", "erp_synced_at"}
+    assert set(table.c.keys()) == {"tenant_id", "completion_id", "erp_synced_at", "erp_synced_pct"}
     assert table.c.erp_synced_at.nullable
+    assert table.c.erp_synced_pct.nullable
+    assert not {"erp_synced_at", "erp_synced_pct"} & set(CourseCompletion.__table__.c.keys())
     # tenant_id also leads the composite completion FK; pick the standalone
     # tenant object-FK by identity, not by set order.
     assert any(fk.column is Tenant.__table__.c.id for fk in table.c.tenant_id.foreign_keys)
     fk = next(fk for fk in table.foreign_key_constraints if len(fk.elements) == 2)
     assert [e.column for e in fk.elements] == [CourseCompletion.__table__.c.tenant_id, CourseCompletion.__table__.c.id]
     assert fk.ondelete == "CASCADE"
+
+
+def test_imported_membership_references_completion_independently_of_checkpoint():
+    from dotmac_kernel.models import Tenant
+    from dotmac_learning.models import CourseCompletion
+
+    from app.models.erp_completion_checkpoint import ERPImportedCompletionKey
+
+    table = ERPImportedCompletionKey.__table__
+    assert set(table.c.keys()) == {"tenant_id", "completion_id"}
+    assert set(table.primary_key.columns.keys()) == {"tenant_id", "completion_id"}
+    assert any(fk.column is Tenant.__table__.c.id for fk in table.c.tenant_id.foreign_keys)
+    relation = next(fk for fk in table.foreign_key_constraints if len(fk.elements) == 2)
+    assert [e.column for e in relation.elements] == [CourseCompletion.__table__.c.tenant_id, CourseCompletion.__table__.c.id]
+    assert relation.ondelete == "CASCADE"
+    assert all(fk.column.table.name != "academy_erp_completion_checkpoints" for fk in table.foreign_keys)
 
 
 def test_actual_installed_disabled_learning_is_in_inspection_graph():
@@ -303,6 +321,7 @@ def test_actual_installed_disabled_learning_is_in_inspection_graph():
     assert len(graph.metadata.tables) == len(graph.owners)
     assert graph.owners[("public", "tenants")] == "kernel"
     assert graph.owners[("public", "academy_erp_completion_checkpoints")] == "academy"
+    assert graph.owners[("public", "academy_erp_imported_completion_keys")] == "academy"
     assert all(
         fk.column.table.metadata is graph.metadata
         for table in graph.metadata.tables.values()
@@ -315,8 +334,8 @@ def test_identity_reference_copies_are_excluded_from_product_ownership():
     from app.models.identity_extensions import IdentityExtensionBase
 
     tables = product_owned_tables()
-    assert len(tables) == 18
-    assert len({physical_key(table) for table in tables}) == 18
+    assert len(tables) == 19
+    assert len({physical_key(table) for table in tables}) == 19
     assert "public.tenants" in IdentityExtensionBase.metadata.tables
     assert all(table.name not in {"tenants", "parties", "party_persons", "user_credentials"} for table in tables)
     assert {"academy_account_profiles", "academy_credential_policies", "account_tokens"} <= {
