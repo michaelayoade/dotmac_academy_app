@@ -26,17 +26,13 @@
 # that always deserves a human look before it is added here deliberately.
 17 app/services/lab_operations.py
 11 app/services/lab_lifecycle.py
-4 app/services/success_queue.py
 3 app/services/email_outbox.py
 2 app/services/facilitator_nominations.py
-2 app/services/completion.py
-2 app/services/reminders.py
-2 app/services/roster.py
-1 app/services/account_invitations.py
 1 app/services/admissions.py
-1 app/services/lifecycle.py
+1 app/services/canonical_lifecycle.py
+1 app/services/invitation_issuance.py
 1 app/services/onboarding.py
-1 app/services/scheduling.py
-1 app/services/tracks.py
+1 app/services/reminder_resend.py
+1 app/services/reminders.py
 1 app/web/instructor.py
-TOTAL 50
+TOTAL 40

@@ -59,7 +59,8 @@ RETAINED = {
     "admissions": ("Applicant",),
     "email_outbox": ("EmailOutbox",),
     "entrance_defaults": ("TenantEntranceDefaults",),
-    "lab": ("LabTemplate", "LabInstance", "LabOperation"),
+    "facilitator": ("FacilitatorNomination", "FacilitatorRequirement"),
+    "lab": ("LabTemplate", "LabInstance", "LabOperation", "LabConsoleActivity"),
     "notification": ("Notification",),
     "onboarding": ("OnboardingTask",),
     "platform_settings": ("PlatformSetting",),
@@ -89,6 +90,11 @@ HISTORICAL_RETAINED_TABLES = {
     "reminder_log",
     "reminder_preferences",
 }
+# Installed Learning tables with no counterpart in the historical (0061-era)
+# catalog inventoried by app/maintenance/learning_history._TABLES (27 specs).
+# Handled exactly like post-historical retained tables: owned today, absent
+# from the 47-partition.
+POST_HISTORICAL_LEARNING_TABLES = {"question_bank_versions"}
 
 
 def test_learning_facades_reexport_actual_owner_objects_without_mappings():
@@ -109,16 +115,26 @@ def test_learning_facades_reexport_actual_owner_objects_without_mappings():
 def test_historical_partition_and_new_candidates_are_distinct():
     from dotmac_learning.manifest import module
 
-    assert len(module.tables) == 27
+    assert POST_HISTORICAL_LEARNING_TABLES <= set(module.tables)
+    historical_learning = set(module.tables) - POST_HISTORICAL_LEARNING_TABLES
+    assert len(historical_learning) == 27
     assert len(HISTORICAL_KERNEL_TABLES) == 8
     assert len(HISTORICAL_RETAINED_TABLES) == 12
-    assert len(module.tables) + len(HISTORICAL_KERNEL_TABLES) + len(HISTORICAL_RETAINED_TABLES) == 47
+    assert len(historical_learning) + len(HISTORICAL_KERNEL_TABLES) + len(HISTORICAL_RETAINED_TABLES) == 47
     from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
     from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 
     assert ERPCompletionCheckpoint.__tablename__ not in HISTORICAL_RETAINED_TABLES
     assert AcademyAccountProfile.__tablename__ == "academy_account_profiles"
     assert AcademyCredentialPolicy.__tablename__ == "academy_credential_policies"
+    from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
+    from app.models.lab import LabConsoleActivity
+
+    # Post-historical retained tables (migrations 0063/0064), exactly like the
+    # ERP checkpoint precedent: owned today, absent from the 47-partition.
+    assert FacilitatorNomination.__tablename__ not in HISTORICAL_RETAINED_TABLES
+    assert FacilitatorRequirement.__tablename__ not in HISTORICAL_RETAINED_TABLES
+    assert LabConsoleActivity.__tablename__ not in HISTORICAL_RETAINED_TABLES
 
 
 def test_legacy_identity_mappings_and_constructor_defaults_are_retired():
@@ -147,10 +163,17 @@ def test_retained_cross_metadata_targets_and_actions():
         for name in classes:
             table = getattr(module, name).__table__
             if "tenant_id" in table.c:
-                fk = next(iter(table.c.tenant_id.foreign_keys))
-                assert fk.column is Tenant.__table__.c.id
-                assert fk.ondelete == "CASCADE"
-                tenant_fks += 1
+                # A retained tenant_id usually also leads composite FKs, so
+                # select the standalone tenant object-FK by identity rather
+                # than by set order. LabConsoleActivity has none (composite
+                # to its instance only) and therefore does not count.
+                tenant_fk = next(
+                    (fk for fk in table.c.tenant_id.foreign_keys if fk.column is Tenant.__table__.c.id),
+                    None,
+                )
+                if tenant_fk is not None:
+                    assert tenant_fk.ondelete == "CASCADE"
+                    tenant_fks += 1
             if table.name in {"notifications", "reminder_log", "reminder_preferences"}:
                 fks = {fk.name: fk for fk in table.foreign_key_constraints}
                 composite = next(fk for fk in fks.values() if len(fk.elements) == 2)
@@ -159,7 +182,7 @@ def test_retained_cross_metadata_targets_and_actions():
                     fk for fk in fks.values() if any(e.column is PartyPerson.__table__.c.party_id for e in fk.elements)
                 )
                 assert composite.ondelete == subtype.ondelete == "CASCADE"
-    assert tenant_fks == 10
+    assert tenant_fks == 12
     from app.models.admissions import Applicant
 
     constraints = {fk.name: fk for fk in Applicant.__table__.foreign_key_constraints}
@@ -172,6 +195,56 @@ def test_retained_cross_metadata_targets_and_actions():
     ]
     assert [e.column for e in bank.elements] == [QuestionBank.__table__.c.tenant_id, QuestionBank.__table__.c.id]
     assert cohort.ondelete is bank.ondelete is None
+
+    # Post-historical facilitator/activity composites, per migrations
+    # 0063/0064: nominee cascades with the party, the nominator does not;
+    # requirements cascade with their nomination; console activity cascades
+    # with its lab instance.
+    from typing import cast
+
+    import sqlalchemy as sa
+    from dotmac_learning.models import Course
+    from dotmac_learning.participation_models import Cohort, CourseOffering
+
+    from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
+    from app.models.lab import LabConsoleActivity, LabInstance
+
+    nomination_table = cast("sa.Table", FacilitatorNomination.__table__)
+    requirement_table = cast("sa.Table", FacilitatorRequirement.__table__)
+    activity_table = cast("sa.Table", LabConsoleActivity.__table__)
+    nomination_fks = {fk.name: fk for fk in nomination_table.foreign_key_constraints}
+    nominee = nomination_fks["fk_facilitator_nominations_person"]
+    assert [e.column for e in nominee.elements] == [Party.__table__.c.tenant_id, Party.__table__.c.id]
+    assert nominee.ondelete == "CASCADE"
+    nominee_subtype = nomination_fks["fk_facilitator_nominations_person_subtype"]
+    assert [e.column for e in nominee_subtype.elements] == [PartyPerson.__table__.c.party_id]
+    assert nominee_subtype.ondelete == "CASCADE"
+    nominator = nomination_fks["fk_facilitator_nominations_nominator"]
+    assert [e.column for e in nominator.elements] == [Party.__table__.c.tenant_id, Party.__table__.c.id]
+    assert nominator.ondelete is None
+    nom_cohort = nomination_fks["fk_facilitator_nominations_cohort"]
+    assert [e.column for e in nom_cohort.elements] == [Cohort.__table__.c.tenant_id, Cohort.__table__.c.id]
+    assert nom_cohort.ondelete == "CASCADE"
+    nom_offering = nomination_fks["fk_facilitator_nominations_offering"]
+    assert [e.column for e in nom_offering.elements] == [
+        CourseOffering.__table__.c.tenant_id,
+        CourseOffering.__table__.c.id,
+    ]
+    assert nom_offering.ondelete == "CASCADE"
+    requirement_fks = {fk.name: fk for fk in requirement_table.foreign_key_constraints}
+    req_nomination = requirement_fks["fk_facilitator_requirements_nomination"]
+    assert [e.column for e in req_nomination.elements] == [
+        FacilitatorNomination.__table__.c.tenant_id,
+        FacilitatorNomination.__table__.c.id,
+    ]
+    assert req_nomination.ondelete == "CASCADE"
+    req_course = requirement_fks["fk_facilitator_requirements_course"]
+    assert [e.column for e in req_course.elements] == [Course.__table__.c.tenant_id, Course.__table__.c.id]
+    assert req_course.ondelete is None
+    activity_fk = next(iter(activity_table.foreign_key_constraints))
+    assert activity_fk.name == "fk_lab_console_activity_instance"
+    assert [e.column for e in activity_fk.elements] == [LabInstance.__table__.c.tenant_id, LabInstance.__table__.c.id]
+    assert activity_fk.ondelete == "CASCADE"
 
 
 def test_retained_internal_foreign_keys_and_deliberately_unconstrained_values():
@@ -206,7 +279,9 @@ def test_checkpoint_has_only_raw_ack_and_canonical_completion_reference():
     table = ERPCompletionCheckpoint.__table__
     assert set(table.c.keys()) == {"tenant_id", "completion_id", "erp_synced_at"}
     assert table.c.erp_synced_at.nullable
-    assert next(iter(table.c.tenant_id.foreign_keys)).column is Tenant.__table__.c.id
+    # tenant_id also leads the composite completion FK; pick the standalone
+    # tenant object-FK by identity, not by set order.
+    assert any(fk.column is Tenant.__table__.c.id for fk in table.c.tenant_id.foreign_keys)
     fk = next(fk for fk in table.foreign_key_constraints if len(fk.elements) == 2)
     assert [e.column for e in fk.elements] == [CourseCompletion.__table__.c.tenant_id, CourseCompletion.__table__.c.id]
     assert fk.ondelete == "CASCADE"
@@ -224,7 +299,7 @@ def test_actual_installed_disabled_learning_is_in_inspection_graph():
     registry = ModuleRegistry((replace(module, enabled_by_default=False),))
     graph = inspect_canonical_models(registry, kernel_tables=kernels)
     assert not registry.enabled_codes()
-    assert len([owner for owner in graph.owners.values() if owner == "learning"]) == 27
+    assert len([owner for owner in graph.owners.values() if owner == "learning"]) == len(module.tables)
     assert len(graph.metadata.tables) == len(graph.owners)
     assert graph.owners[("public", "tenants")] == "kernel"
     assert graph.owners[("public", "academy_erp_completion_checkpoints")] == "academy"
@@ -240,8 +315,8 @@ def test_identity_reference_copies_are_excluded_from_product_ownership():
     from app.models.identity_extensions import IdentityExtensionBase
 
     tables = product_owned_tables()
-    assert len(tables) == 15
-    assert len({physical_key(table) for table in tables}) == 15
+    assert len(tables) == 18
+    assert len({physical_key(table) for table in tables}) == 18
     assert "public.tenants" in IdentityExtensionBase.metadata.tables
     assert all(table.name not in {"tenants", "parties", "party_persons", "user_credentials"} for table in tables)
     assert {"academy_account_profiles", "academy_credential_policies", "account_tokens"} <= {

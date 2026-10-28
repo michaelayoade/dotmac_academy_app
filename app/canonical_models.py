@@ -85,8 +85,9 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
     from app.models.email_outbox import EmailOutbox
     from app.models.entrance_defaults import TenantEntranceDefaults
     from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
+    from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
     from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
-    from app.models.lab import LabInstance, LabOperation, LabTemplate
+    from app.models.lab import LabConsoleActivity, LabInstance, LabOperation, LabTemplate
     from app.models.notification import Notification
     from app.models.onboarding import OnboardingTask
     from app.models.platform_settings import PlatformSetting
@@ -102,6 +103,7 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
             LabInstance,
             LabOperation,
             LabTemplate,
+            LabConsoleActivity,
             Notification,
             OnboardingTask,
             PlatformSetting,
@@ -110,6 +112,8 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
             ERPCompletionCheckpoint,
             AcademyAccountProfile,
             AcademyCredentialPolicy,
+            FacilitatorNomination,
+            FacilitatorRequirement,
         )
     )
 
