@@ -87,4 +87,13 @@ if context.is_offline_mode():
     raise ValueError("offline adoption is unsupported: actual catalog and identity history evidence is required")
 if getattr(config.cmd_opts, "autogenerate", False):
     raise ValueError("autogenerate unavailable: canonical owner metadata contains copied identity references")
+# Programmatic Alembic revision commands carry this signal on the genuine
+# EnvironmentContext, without CLI cmd_opts. The public API exposes those opts
+# through get_context() only after configure(). A dialect-only configuration
+# constructs no engine or connection; repeated configure() is supported, so
+# run_on_connection still configures the actual caller connection as before.
+context.configure(dialect_name="postgresql", target_metadata=target_metadata)
+revision_context = context.get_context().opts.get("revision_context")
+if revision_context is not None and revision_context.command_args.get("autogenerate"):
+    raise ValueError("autogenerate unavailable: canonical owner metadata contains copied identity references")
 run_migrations_online()

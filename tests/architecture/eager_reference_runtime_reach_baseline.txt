@@ -1,0 +1,9 @@
+# D1 product-bound runtime retirement at local120f07a plus main integration.
+# Measured in fresh child interpreters; historical reach and the disposition
+# are recorded in docs/2026-09-09-eager-reference-runtime-readiness-inventory.md.
+# Exact two-directional observations; never infer this from source grep alone.
+boot:direct=0:transitive=no
+api_deps:direct=0:transitive=no
+cli:direct=0:transitive=no
+web:direct=0:transitive=no
+scripts_tasks:direct=0:transitive=no
