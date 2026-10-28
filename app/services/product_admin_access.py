@@ -1,4 +1,6 @@
 """Purpose-specific product access over fresh canonical cookie identity and grants."""
+from typing import cast
+
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -41,7 +43,7 @@ def _require_bank_roles(
 ) -> AcademyCurrentAccount:
     tenant = require_tenant(request)
     policy = effective(db, require_store=True)
-    if not set(policy[key]).intersection(role_slugs(db, tenant.id, account.id)):
+    if not set(cast(tuple[str, ...], policy[key])).intersection(role_slugs(db, tenant.id, account.id)):
         raise HTTPException(status_code=403, detail="Forbidden")
     return account
 

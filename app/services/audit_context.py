@@ -13,6 +13,7 @@ from copy import deepcopy
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from html import escape
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import dotmac_learning as learning
@@ -22,9 +23,9 @@ from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant
 from dotmac_kernel.transactions import conflict_savepoint, conflict_savepoint_requires_rollback
 from dotmac_learning import TransactionChanged
 from fastapi import HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 from starlette.datastructures import Headers
 from starlette.requests import cookie_parser
 
@@ -47,6 +48,32 @@ from app.services.initial_identity_policy import initial_identity_policy
 from app.services.learning_policy import success_terms
 from app.services.security import decode_access_token, hash_token
 from app.services.web_auth import COOKIE
+
+if TYPE_CHECKING:
+    _PersistedValues = tuple[tuple[str, object], ...]
+    _AuditReceipt = tuple[AuditEvent, UUID, _PersistedValues]
+    _HumanAuditReceipt = tuple[AuditEvent, UUID, dict[str, object], datetime | None]
+    _SchedulingOutcome = tuple[
+        learning.SessionUpdate,
+        tuple[object, ...],
+        tuple[tuple[str, str | None, str | None], ...],
+        UUID | None,
+        _AuditReceipt | None,
+    ]
+    _SuccessOutcome = tuple[
+        learning.SuccessTransitionEffect | learning.SegmentMessageEffect, tuple[object, ...], UUID, _AuditReceipt
+    ]
+    _CreatedGrant = tuple[PartyRoleGrant | None, tuple[UUID, UUID, UUID, UUID, datetime, datetime]]
+    _CreatedPerson = tuple[store.NewPersonValues, Party, PartyPerson, AcademyAccountProfile, ApiPersonView]
+    _CreatedRole = tuple[Role, tuple[UUID, UUID, str, str, datetime, datetime]]
+    _DeletedPerson = tuple[UUID, datetime, _HumanAuditReceipt]
+    _IdentityModel = (
+        type[Party] | type[PartyPerson] | type[AcademyAccountProfile]
+        | type[AuthSession] | type[PartyRoleGrant] | type[UserCredential]
+    )
+    _SuccessDeliveryRecord = tuple[
+        UUID, str, Notification, UUID, _PersistedValues, EmailOutbox | None, UUID | None, _PersistedValues | None
+    ]
 
 
 class HumanOperationError(Exception):
@@ -150,6 +177,8 @@ class _SuccessDelivery:
         self._context = context
 
     def __call__(self, db, person, message, action_id):
+        html: str | None
+        created: bool | None
         context = self._context
         notification = outbox = record = None
         try:
@@ -265,9 +294,11 @@ class _SuccessDelivery:
             context._failed = True
             raise
         finally:
-            self = db = person = message = action_id = context = notification = outbox = record = r = key = html = (
-                created
-            ) = None
+            # Terminal casts preserve None clearing; these locals are never read again.
+            self = cast(_SuccessDelivery, None)
+            db = person = message = action_id = context = notification = outbox = record = r = None
+            key = cast(str, None)
+            html = created = None
 
 
 _ADMISSIONS_INTAKE = _Operation("web.applicant_intake", "web", frozenset({"admin"}))
@@ -312,6 +343,12 @@ def _admissions_values(resources):
 
 class _AdmissionState:
     """Exact issued human command, ordered trace and actual domain consequences."""
+
+    extended_access: bool
+    receipts: tuple[_AuditReceipt, ...]
+    _issued_receipts: tuple[_AuditReceipt, ...]
+    deliveries: tuple[tuple[str, bool], ...]
+    _issued_deliveries: tuple[tuple[str, bool], ...]
 
     def __init__(self, context):
         self.context = self._context = context
@@ -421,7 +458,7 @@ class _AdmissionState:
             raise ConflictError("Admission identity or intake changed; retry.")
 
     def _trace(self):
-        c, a, r = self.context, self.applicant, self.context.resources
+        c, a, r = self.context, cast(Applicant, self.applicant), self.context.resources
         if c.operation is _ADMISSIONS_INTAKE:
             return ("applicant.intake_assigned",)
         if c.operation is _ADMISSIONS_TRANSITION:
@@ -448,7 +485,8 @@ class _AdmissionState:
         )
 
     def expected_details(self, action):
-        c, a, r = self.context, self.applicant, self.context.resources
+        path: tuple[str, ...]
+        c, a, r = self.context, cast(Applicant, self.applicant), self.context.resources
         old = dict(self.start)
         reason, source = r.reason or "", "admin_api" if c.operation.transport == "api" else "admin_web"
         if action == "applicant.transition":
@@ -494,6 +532,7 @@ class _AdmissionState:
         return {"reason": reason, "source": "admin_web"}
 
     def issue(self, action, details):
+        row: AuditEvent | None
         self.require(executing=True)
         c = self.context
         try:
@@ -539,7 +578,10 @@ class _AdmissionState:
             c._failed = True
             raise
         finally:
-            row = expected = email = c = details = self = None
+            row = None
+            expected = cast(dict[str, object], None)
+            email = c = details = None
+            self = cast(_AdmissionState, None)
 
     def delivery(self, kind, queued):
         self.require(executing=True)
@@ -574,7 +616,7 @@ class _AdmissionState:
         ):
             predicates = [key == self.target_id]
             if model is not PartyPerson:
-                predicates.append(model.tenant_id == c.tenant_id)
+                predicates.append(cast(type[Party] | type[AcademyAccountProfile], model).tenant_id == c.tenant_id)
             row = c._row(model, *predicates)
             values.append(_persisted_values(row) if row is not None else None)
         return tuple(values)
@@ -650,7 +692,8 @@ class _AdmissionState:
             )
 
         finally:
-            self = c = tasks = outbox = enrollments = None
+            self = cast(_AdmissionState, None)
+            c = tasks = outbox = enrollments = None
 
     def execute(self):
         c = self.context
@@ -698,9 +741,17 @@ class _AdmissionState:
                 c._issued._failed = True
             raise
         finally:
-            self = c = result = kind = queued = digest = prefix = rows = None
+            self = cast(_AdmissionState, None)
+            c = result = None
+            kind = cast(str, None)
+            queued = cast(bool, None)
+            digest = None
+            prefix = cast(str, None)
+            rows = cast(list[EmailOutbox], None)
 
     def revalidate(self):
+        row: AuditEvent | None
+        values: _PersistedValues | None
         try:
             self.require()
             if self.executing:
@@ -723,7 +774,8 @@ class _AdmissionState:
                 raise HumanOperationError("admission ordered trace differs")
 
         finally:
-            self = expected = row = values = None
+            self = cast(_AdmissionState, None)
+            expected = row = values = None
 
     def clear(self):
         self.__dict__.clear()
@@ -749,6 +801,8 @@ class _SchedulingResources:
 
 
 def _scheduling_values(resources):
+    allowed: set[str] | None
+    values: list[tuple[str, type, str | None]] | None
     try:
         if (
             type(resources.entity_id) is not UUID
@@ -774,6 +828,7 @@ def _scheduling_values(resources):
 
 
 def _resource_values(resources):
+    values: list[str | None] | None
     identifiers = values = value = email = None
     try:
         if type(resources) is _AdmissionsResources:
@@ -821,6 +876,8 @@ def _operation_values(operation):
 
 
 def _request_digest(request, operation):
+    scheme: str | None
+    _: str | None
     raw = headers = None
     try:
         headers = Headers(scope=request.scope)
@@ -850,6 +907,16 @@ def _root(db, root):
 
 
 class _Context:
+    _scheduling_outcome: _SchedulingOutcome | None
+    _issued_scheduling_outcome: _SchedulingOutcome | None
+    _success_outcome: _SuccessOutcome | None
+    _issued_success_outcome: _SuccessOutcome | None
+    _created_grant: _CreatedGrant | None
+    _deleted_person: _DeletedPerson | None
+    _issued_deleted_person: _DeletedPerson | None
+    roles: frozenset[str]
+    _success_deliveries: tuple[_SuccessDeliveryRecord, ...]
+    _issued_success_deliveries: tuple[_SuccessDeliveryRecord, ...]
     def __init__(self, db, request, operation, resources, tenant_id, digest, candidate, claims):
         try:
             self._issued = self
@@ -888,7 +955,8 @@ class _Context:
             self.__dict__.clear()
             raise
         finally:
-            self = db = request = operation = resources = tenant_id = digest = candidate = claims = None
+            self = cast(_Context, None)
+            db = request = operation = resources = tenant_id = digest = candidate = claims = None
 
     def require(self):
         try:
@@ -929,13 +997,15 @@ class _Context:
                 self.__dict__.clear()
             raise
         finally:
-            self = issued = operation = None
+            self = cast(_Context, None)
+            issued = operation = None
 
     def _affected(self):
+        query: Select[tuple[UUID]] | None
         try:
             r = self.resources
             if self.operation in _ADMISSIONS_OPERATIONS:
-                return self._admission.affected
+                return cast(_AdmissionState, self._admission).affected
             query = select(Party.id).where(Party.tenant_id == self.tenant_id)
             if self.operation is _PERSON_CREATE:
                 query = query.where(Party.email == r.emails[0])
@@ -947,7 +1017,8 @@ class _Context:
                 return frozenset()
             return frozenset(self.db.scalars(query).all())
         finally:
-            self = r = query = None
+            self = cast(_Context, None)
+            r = query = None
 
     def _row(self, model, *predicates):
         try:
@@ -955,7 +1026,9 @@ class _Context:
                 select(model).where(*predicates).with_for_update().execution_options(populate_existing=True)
             ).first()
         finally:
-            self = model = predicates = None
+            self = cast(_Context, None)
+            model = None
+            predicates = cast(tuple[object, ...], None)
 
     def prove(self):
         try:
@@ -978,9 +1051,11 @@ class _Context:
             if self._admission is not None:
                 self._admission.prove()
         finally:
-            self = key = row = None
+            self = cast(_Context, None)
+            key = row = None
 
     def _refresh_authority(self):
+        by_id: dict[UUID, str] | None
         try:
             # All actor + affected Party locks precede subtype/profile/session/grants.
             for row in self.parties.values():
@@ -1059,9 +1134,9 @@ class _Context:
             if not self.operation.roles.intersection(self.roles):
                 raise _Denied(role=True)
         finally:
-            self = row = roles = grants = by_id = actor = person = profile = session = subject = tenant = expiry = (
-                target_id
-            ) = None
+            self = cast(_Context, None)
+            row = roles = grants = by_id = actor = person = profile = session = subject = tenant = expiry = None
+            target_id = None
 
     def revalidate(self):
         try:
@@ -1097,7 +1172,7 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = None
+            self = cast(_Context, None)
 
     @property
     def actor_is_admin(self):
@@ -1105,10 +1180,11 @@ class _Context:
             self.revalidate()
             return "admin" in self.roles
         finally:
-            self = None
+            self = cast(_Context, None)
 
     def audit(self, *, details=None):
         """Append only the action/resource fixed by the issuing factory."""
+        row: AuditEvent | None
         try:
             self.revalidate()
             if self.operation in _ADMISSIONS_OPERATIONS:
@@ -1157,7 +1233,10 @@ class _Context:
             self._failed = True  # Caught audit refusal still aborts boundary exit.
             raise
         finally:
-            self = details = op = resource = expected = row = email = target = None
+            self = cast(_Context, None)
+            details = op = resource = None
+            expected = cast(dict[str, object], None)
+            row = email = target = None
 
     def update_session(self, *args, **kwargs):
         """Execute the sole fixed Learning command; callers supply no completion claim."""
@@ -1255,9 +1334,10 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = args = kwargs = command = attribution = result = snapshot = receipt = row = expected = changes = (
-                email
-            ) = None
+            self = cast(_Context, None)
+            args = cast(tuple[object, ...], None)
+            kwargs = cast(dict[str, object], None)
+            command = attribution = result = snapshot = receipt = row = expected = changes = email = None
 
     def _check_scheduling_outcome(self):
         result = snapshot = changes = audit_id = receipt = persisted = row = issued_id = values = None
@@ -1267,7 +1347,7 @@ class _Context:
                 or self._scheduling_outcome is not self._issued_scheduling_outcome
             ):
                 raise HumanOperationError("scheduling outcome binding differs")
-            result, snapshot, changes, audit_id, receipt = self._scheduling_outcome
+            result, snapshot, changes, audit_id, receipt = cast('_SchedulingOutcome', self._scheduling_outcome)
             if (
                 not self._scheduling_started
                 or result.session.id != self.resources.entity_id
@@ -1286,7 +1366,7 @@ class _Context:
             if persisted is None or tuple(persisted) != snapshot:
                 raise HumanOperationError("scheduling persisted owner fact differs")
             if changes:
-                row, issued_id, values = receipt
+                row, issued_id, values = cast('_AuditReceipt', receipt)
                 self.db.refresh(row)
                 if (
                     row.id != issued_id
@@ -1300,7 +1380,8 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = result = snapshot = changes = audit_id = receipt = persisted = row = issued_id = values = None
+            self = cast(_Context, None)
+            result = snapshot = changes = audit_id = receipt = persisted = row = issued_id = values = None
 
     def _success_attribution(self):
         email = self.parties[self.actor_id].email
@@ -1394,7 +1475,10 @@ class _Context:
                 self._issued._failed = True
             raise
         finally:
-            self = args = kwargs = effect = attribution = snapshot = receipt = None
+            self = cast(_Context, None)
+            args = cast(tuple[object, ...], None)
+            kwargs = cast(dict[str, object], None)
+            effect = attribution = snapshot = receipt = None
 
     def message_success_segment(self, *args, **kwargs):
         effect = attribution = snapshot = receipt = terms = accounts = None
@@ -1492,7 +1576,10 @@ class _Context:
                 self._issued._failed = True
             raise
         finally:
-            self = args = kwargs = effect = attribution = snapshot = receipt = terms = accounts = r = None
+            self = cast(_Context, None)
+            args = cast(tuple[object, ...], None)
+            kwargs = cast(dict[str, object], None)
+            effect = attribution = snapshot = receipt = terms = accounts = r = None
 
     def _check_success_deliveries(self):
         if (
@@ -1512,13 +1599,15 @@ class _Context:
                 raise HumanOperationError("success persisted notification differs")
             if outbox is not None:
                 self.db.refresh(outbox)
-                if outbox.id != oid or any(getattr(outbox, key) != value for key, value in ovalues):
+                if outbox.id != oid or any(
+                    getattr(outbox, key) != value for key, value in cast('_PersistedValues', ovalues)
+                ):
                     raise HumanOperationError("success persisted outbox differs")
 
     def _check_success_outcome(self):
         if not self._success_started or self._success_outcome is not self._issued_success_outcome:
             raise HumanOperationError("success owner outcome binding differs")
-        effect, snapshot, audit_id, receipt = self._success_outcome
+        effect, snapshot, audit_id, receipt = cast('_SuccessOutcome', self._success_outcome)
         if effect.audit_event_id != audit_id:
             raise HumanOperationError("success owner receipt differs")
         if self.operation in _SUCCESS_TRANSITIONS:
@@ -1579,7 +1668,8 @@ class _Context:
                 or (self.expected_grant_id is not None and grant.id != self.expected_grant_id)
             ):
                 raise HumanOperationError("role grant audit outcome differs")
-            issued_row, expected = self._created_grant
+            grant = cast(PartyRoleGrant, grant)
+            issued_row, expected = cast('_CreatedGrant', self._created_grant)
             if (
                 grant is not issued_row
                 or expected[:4] != (self.expected_grant_id, self.tenant_id, resource.party_id, resource.role_id)
@@ -1589,7 +1679,10 @@ class _Context:
                 raise HumanOperationError("role grant persisted outcome differs")
             return grant.id
         finally:
-            self = resource = grant = issued_row = expected = target = None
+            self = cast(_Context, None)
+            resource = grant = issued_row = None
+            expected = cast(tuple[UUID, UUID, UUID, UUID, datetime, datetime], None)
+            target = None
 
     def _check_audits(self):
         try:
@@ -1612,12 +1705,17 @@ class _Context:
                 ):
                     raise HumanOperationError("canonical audit outcome differs")
         finally:
-            self = row = expected = issued_row = issued_id = issued_values = issued_created_at = None
+            self = cast(_Context, None)
+            row = expected = issued_row = issued_id = issued_values = issued_created_at = None
 
     def _check_created_person(self):
+        model: type[UserCredential] | type[AuthSession] | type[PartyRoleGrant] | None
+        issued_party: Party | None
+        issued_person: PartyPerson | None
+        issued_profile: AcademyAccountProfile | None
         party = person = profile = expected = result = None
         try:
-            expected, issued_party, issued_person, issued_profile, result = self._created_person
+            expected, issued_party, issued_person, issued_profile, result = cast("_CreatedPerson", self._created_person)
             self.db.refresh(issued_party)
             self.db.refresh(issued_person)
             self.db.refresh(issued_profile)
@@ -1656,9 +1754,8 @@ class _Context:
                 ):
                     raise HumanOperationError("person creation unexpectedly created account authority")
         finally:
-            self = party = person = profile = expected = result = issued_party = issued_person = issued_profile = (
-                model
-            ) = None
+            self = cast(_Context, None)
+            party = person = profile = expected = result = issued_party = issued_person = issued_profile = model = None
 
     def create_person(self):
         """Execute only this factory's immutable generated-person command."""
@@ -1688,8 +1785,8 @@ class _Context:
                 profile_status=policy.profile_status,
                 profile_avatar_path=None,
                 profile_prefs={},
-                created_at=self.now,
-                updated_at=self.now,
+                created_at=cast(datetime, self.now),
+                updated_at=cast(datetime, self.now),
             )
             try:
                 fact = store.create_person(self.db, values=values)
@@ -1702,7 +1799,7 @@ class _Context:
                 self.db.get(PartyPerson, values.id),
                 self.db.get(AcademyAccountProfile, values.id),
             )
-            result = ApiPersonView(values.id, values.email, values.first_name, values.last_name)
+            result = ApiPersonView(values.id, cast(str, values.email), values.first_name, values.last_name)
             if fact != store.PartyFact(
                 values.id, self.tenant_id, PartyType.person, values.email, values.display_name, values.is_active
             ):
@@ -1715,12 +1812,13 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = policy = values = result = party = person = profile = fact = first_name = last_name = None
+            self = cast(_Context, None)
+            policy = values = result = party = person = profile = fact = first_name = last_name = None
 
     def _check_created_role(self):
         row = expected = issued_row = None
         try:
-            issued_row, expected = self._created_role
+            issued_row, expected = cast("_CreatedRole", self._created_role)
             self.db.refresh(issued_row)
             row = self.db.get(Role, expected[0])
             if (
@@ -1730,7 +1828,8 @@ class _Context:
             ):
                 raise HumanOperationError("created role outcome differs")
         finally:
-            self = row = expected = issued_row = None
+            self = cast(_Context, None)
+            row = expected = issued_row = None
 
     def create_role(self):
         catalog = roles = result = row = None
@@ -1745,7 +1844,7 @@ class _Context:
                 raise HTTPException(status_code=409, detail="Role already exists")
             if self.db.get(Role, self.resources.entity_id) is not None:
                 raise HumanOperationError("generated role identifier is already occupied")
-            stamp = self.now
+            stamp = cast(datetime, self.now)
             try:
                 roles = store.provision_missing_roles(
                     self.db,
@@ -1772,9 +1871,12 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = catalog = roles = result = row = slug = name = stamp = None
+            self = cast(_Context, None)
+            catalog = roles = result = row = slug = name = None
+            stamp = cast(datetime, None)
 
     def grant_role(self):
+        generated_id: UUID | None
         target = role = grants = result = None
         try:
             self.revalidate()
@@ -1792,7 +1894,7 @@ class _Context:
             generated_id = uuid4()
             if self.db.get(PartyRoleGrant, generated_id) is not None:
                 raise HumanOperationError("generated grant identifier is already occupied")
-            stamp = self.now
+            stamp = cast(datetime, self.now)
             try:
                 result = store.ensure_grant(
                     self.db,
@@ -1818,7 +1920,10 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = target = role = grants = result = generated_id = stamp = row = None
+            self = cast(_Context, None)
+            target = role = grants = result = generated_id = None
+            stamp = cast(datetime, None)
+            row = None
 
     def delete_person(self):
         """Audit and delete the exact target; only this command issues its completion."""
@@ -1840,7 +1945,7 @@ class _Context:
             self.audit(details={"email": target.email})
             receipt = self._audit_receipts[0]
             self.revalidate()  # Fresh genuine predelete authority, after the audit write.
-            expiry = self.session.expires_at
+            expiry = cast(AuthSession, self.session).expires_at
             self._delete_authority = (
                 self.actor_id,
                 self.session_id,
@@ -1858,15 +1963,18 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = target = expiry = receipt = None
+            self = cast(_Context, None)
+            target = expiry = receipt = None
 
     def _check_deleted_person(self):
+        _model: _IdentityModel | None
+        key: InstrumentedAttribute[UUID] | None
         target_id = expiry = receipt = now = None
         try:
             self.require()
             if self.operation is not _PERSON_DELETE:
                 raise HumanOperationError("person deletion completion differs")
-            target_id, expiry, receipt = self._deleted_person
+            target_id, expiry, receipt = cast('_DeletedPerson', self._deleted_person)
             if (
                 self._deleted_person is not self._issued_deleted_person
                 or self._delete_authority
@@ -1910,7 +2018,8 @@ class _Context:
                     raise _Denied()
             self.require()
         finally:
-            self = target_id = expiry = receipt = now = _model = key = subject = tenant = jwt_expiry = None
+            self = cast(_Context, None)
+            target_id = expiry = receipt = now = _model = key = subject = tenant = jwt_expiry = None
 
     def complete(self):
         try:
@@ -1938,7 +2047,7 @@ class _Context:
             self._failed = True
             raise
         finally:
-            self = None
+            self = cast(_Context, None)
 
     def execute_admission(self, *args, **kwargs):
         try:
@@ -1950,7 +2059,7 @@ class _Context:
             ):
                 raise HumanOperationError("admission accepts no supplied execution or completion")
             self.require()
-            return self._admission.execute()
+            return cast(_AdmissionState, self._admission).execute()
         except BaseException:
             self._failed = True
             issued = getattr(self, "_issued", None)
@@ -1960,7 +2069,10 @@ class _Context:
                 self.__dict__.clear()
             raise
         finally:
-            self = args = kwargs = issued = None
+            self = cast(_Context, None)
+            args = cast(tuple[object, ...], None)
+            kwargs = cast(dict[str, object], None)
+            issued = None
 
     def clear(self):
         if self._admission is not None:
@@ -1970,6 +2082,8 @@ class _Context:
 
 @contextmanager
 def _human_operation(db, *, request, operation, resources):
+    scheme: str | None
+    _: str | None
     context = raw = digest = claims = candidate = payload = None
     root = db.get_transaction()
     try:
@@ -2061,6 +2175,7 @@ def assign_web_facilitator(db, *, request, cohort_id, person_id):
 
 
 def _normalized_emails(emails):
+    normalized: dict[str, None] | None
     normalized = raw = value = None
     try:
         normalized = {}
@@ -2164,6 +2279,7 @@ def update_web_session(db, *, request, session_id, supplied):
 
 
 def transition_web_success_entry(db, *, request, entry_id, action):
+    operations: dict[str, _Operation] | None
     try:
         operations = {"acknowledge": _SUCCESS_ACKNOWLEDGE, "assign": _SUCCESS_ASSIGN, "resolve": _SUCCESS_RESOLVE}
         if action not in operations:

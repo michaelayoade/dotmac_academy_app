@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -64,7 +65,7 @@ def grant_extra_attempt(
             reason=reason,
             granted_by=granted_by,
             extra_attempts=(
-                settings_store.effective(db, require_store=True)["learning_default_extra_attempts"]
+                cast(int, settings_store.effective(db, require_store=True)["learning_default_extra_attempts"])
                 if extra_attempts is None
                 else extra_attempts
             ),

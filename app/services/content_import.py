@@ -10,6 +10,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import dotmac_learning as learning
 import yaml
@@ -188,8 +189,10 @@ def import_manual(
         title=_course_display_title(title),
         discipline=discipline,
         source_ref=source_ref,
-        new_course_status=settings_store.effective(db, require_store=True)["learning_default_course_status"],
-        new_course_listed=settings_store.effective(db, require_store=True)["learning_default_course_listed"],
+        new_course_status=cast(str, settings_store.effective(db, require_store=True)["learning_default_course_status"]),
+        new_course_listed=cast(
+            bool, settings_store.effective(db, require_store=True)["learning_default_course_listed"]
+        ),
         new_course_completion_fraction=defaults.completion_fraction,
         new_course_certificate_auto_issue=defaults.certificate_auto_issue,
         new_course_certificate_validity_days=defaults.certificate_validity_days,

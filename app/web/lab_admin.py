@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -28,7 +32,7 @@ _ACTIVE_STATUSES = ("active", "provisioning", "resetting", "queued")
 def monitor(request: Request, db: Session = Depends(get_db)):
     """Cross-person monitor of live lab instances for the current tenant."""
     tenant = require_tenant(request)
-    rows = db.execute(
+    rows: Sequence[Row[tuple[UUID, str, str, UUID, datetime | None, UUID]]] | list[tuple[object, ...]] = db.execute(
         select(
             LabInstance.id,
             LabInstance.status,
@@ -41,12 +45,19 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         .where(LabInstance.status.in_(_ACTIVE_STATUSES))
         .order_by(LabInstance.last_active_at.desc().nullslast())
     ).all()
-    contacts = person_contacts(db, tenant_id=tenant.id, person_ids=[row.person_id for row in rows])
-    rows = [(*row[:5], contacts[row.person_id].email) for row in rows if row.person_id in contacts]
-    return templates.TemplateResponse(
-        request,
-        "labs/admin_monitor.html", {"request": request, "rows": rows}
+    contacts = person_contacts(
+        db,
+        tenant_id=tenant.id,
+        person_ids=[
+            row.person_id for row in cast("Sequence[Row[tuple[UUID, str, str, UUID, datetime | None, UUID]]]", rows)
+        ],
     )
+    rows = [
+        (*row[:5], contacts[row.person_id].email)
+        for row in cast("Sequence[Row[tuple[UUID, str, str, UUID, datetime | None, UUID]]]", rows)
+        if row.person_id in contacts
+    ]
+    return templates.TemplateResponse(request, "labs/admin_monitor.html", {"request": request, "rows": rows})
 
 
 @router.post("/scores/{submission_id}/override", name="lab_override")

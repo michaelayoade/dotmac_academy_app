@@ -13,6 +13,7 @@ it needs no per-activity plumbing.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -34,7 +35,7 @@ def at_risk_for_person(
 ) -> list[dict]:
     """Keep nudge presentation fields; Learning owns tenant/window risk decisions."""
     if behind_threshold is None:
-        behind_threshold = effective(db, require_store=True)["learning_behind_pace_fraction"]
+        behind_threshold = cast(float, effective(db, require_store=True)["learning_behind_pace_fraction"])
     rows = learning.at_risk_for_person(
         db, tenant_id=tenant_id, person_id=person_id, behind_threshold=behind_threshold, now=now
     )

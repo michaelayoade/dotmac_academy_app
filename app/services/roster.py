@@ -7,6 +7,7 @@ Request through that private boundary; hosted qualification remains owed.
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -59,7 +60,7 @@ def bulk_enroll(
         if human.tenant_id != tenant_id:
             raise HTTPException(status_code=403, detail="Forbidden")
         human.revalidate()
-        if not learning.cohort_exists(db, tenant_id=tenant_id, cohort_id=cohort_id):
+        if not learning.instructor_cohort_exists(db, tenant_id=tenant_id, cohort_id=cohort_id):
             raise NotFoundError("cohort not found for tenant")
         # One policy snapshot before any track/enrollment DML. Learning retains
         # its own cohort check, intentionally adding one scoped read.
@@ -135,4 +136,8 @@ def set_roster_state(
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
             return result
     finally:
-        db = request = tenant_id = cohort_id = person_id = state = human = result = actor_is_admin = None
+        db = cast(Session, None)
+        request = cast(Request, None)
+        tenant_id = cohort_id = person_id = cast(UUID, None)
+        state = cast(str, None)
+        human = result = actor_is_admin = None

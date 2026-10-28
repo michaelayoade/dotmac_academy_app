@@ -1,5 +1,8 @@
 """Production configuration fail-closed contracts."""
 
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings, validate_settings
 
 
@@ -50,12 +53,14 @@ def test_per_tenant_lab_limit_defaults_to_global_inheritance():
 
 
 def test_lab_capacity_limits_fail_closed_on_invalid_values():
-    assert "MAX_CONCURRENT_LABS must be positive" in validate_settings(
+    with pytest.raises(
+        ValidationError, match="max_concurrent_labs must be an integer between 1 and 2147483647"
+    ):
         _production_settings(max_concurrent_labs=0)
-    )
-    assert "MAX_CONCURRENT_LABS_PER_TENANT must be zero or positive" in validate_settings(
+    with pytest.raises(
+        ValidationError, match="max_concurrent_labs_per_tenant must be an integer between 0 and 2147483647"
+    ):
         _production_settings(max_concurrent_labs_per_tenant=-1)
-    )
 
 
 def test_lab_host_requires_a_dedicated_worker_dsn():

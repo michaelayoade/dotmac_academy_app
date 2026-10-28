@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import hmac
 from datetime import UTC, datetime
-from uuid import uuid4
+from typing import NoReturn, cast
+from uuid import UUID, uuid4
 
 from dotmac_kernel.audit import write_audit_event
 from dotmac_kernel.credential_lifecycle import (
+    CredentialAssignmentAuditEntryV1,
     CredentialAssignmentAuthorityEvidenceV1,
     CredentialAssignmentError,
     CredentialCreateAbsentFromProofV1,
     CredentialLifecycle,
     CredentialPolicyViolation,
+    CredentialResetPlanDigestV1,
+    CredentialResetReceiptV1,
     CredentialSnapshot,
     CredentialSubjectRef,
 )
@@ -28,7 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.account_token import AccountToken
-from app.models.identity_extensions import AcademyAccountProfile
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.credential_storage import create_absent as _create_absent_rows
 from app.services.exceptions import BadRequestError, ConflictError
 from app.services.identity import normalize_email
@@ -49,16 +53,16 @@ class _InvitationClaimPorts:
         self._digest = digest
         self.policy = policy
         self.clock = clock
-        self.party = None
-        self.person = None
-        self.profile = None
-        self.token = None
-        self.credential_id = uuid4()
-        self.command = None
-        self.evidence = None
-        self.credential = None
-        self.credential_policy = None
-        self._outcome = None
+        self.party: Party | None = None
+        self.person: PartyPerson | None = None
+        self.profile: AcademyAccountProfile | None = None
+        self.token: AccountToken | None = None
+        self.credential_id: UUID | None = uuid4()
+        self.command: CredentialCreateAbsentFromProofV1 | None = None
+        self.evidence: CredentialAssignmentAuthorityEvidenceV1 | None = None
+        self.credential: UserCredential | None = None
+        self.credential_policy: AcademyCredentialPolicy | None = None
+        self._outcome: CredentialSnapshot | None = None
         self._consumed = False
         self._audited = False
         self.refusal = None
@@ -70,7 +74,7 @@ class _InvitationClaimPorts:
         self.credential_id = None
         self._consumed = self._audited = False
 
-    def _deny(self, category="token"):
+    def _deny(self, category="token") -> NoReturn:
         self.refusal = category
         raise CredentialAssignmentError("invitation claim refused")
 
@@ -96,9 +100,9 @@ class _InvitationClaimPorts:
             or not hmac.compare_digest(self.token.token_hash, self._digest)
             or self.party.tenant_id != self.tenant_id
             or self.party.party_type != PartyType.person
-            or self.person.party_id != self.party.id
-            or self.profile.party_id != self.party.id
-            or self.profile.tenant_id != self.tenant_id
+            or cast(PartyPerson, self.person).party_id != self.party.id
+            or cast(AcademyAccountProfile, self.profile).party_id != self.party.id
+            or cast(AcademyAccountProfile, self.profile).tenant_id != self.tenant_id
         ):
             raise CredentialAssignmentError("consumed invitation binding differs")
         expected = CredentialCreateAbsentFromProofV1(
@@ -173,7 +177,7 @@ class _InvitationClaimPorts:
             select(UserCredential)
             .where(
                 UserCredential.tenant_id == self.tenant_id,
-                (UserCredential.party_id == self.party.id) | (UserCredential.id == self.credential_id),
+                (UserCredential.party_id == cast(Party, self.party).id) | (UserCredential.id == self.credential_id),
             )
             .order_by(UserCredential.id)
             .with_for_update()
@@ -193,10 +197,11 @@ class _InvitationClaimPorts:
             self._deny()
         if rows:
             self._deny("conflict")
-        self.token.used_at = now
+        cast(AccountToken, self.token).used_at = now
         self.db.flush()  # Genuine token is consumed BEFORE issuing evidence.
         self._consumed = True
-        self.evidence = CredentialAssignmentAuthorityEvidenceV1(command, "user", str(self.party.id), str(self.token.id))
+        self.evidence = CredentialAssignmentAuthorityEvidenceV1(command, "user", str(cast(Party, self.party).id),
+            str(cast(AccountToken, self.token).id))
         return self.evidence
 
     def lock_current(self, command):
@@ -208,7 +213,7 @@ class _InvitationClaimPorts:
 
     def validate(self, subject, secret):
         self._bound(self.command)
-        if subject is not self.command.target_subject:
+        if subject is not cast(CredentialCreateAbsentFromProofV1, self.command).target_subject:
             self._deny()
         try:
             self.policy.validate(subject, secret)
@@ -220,10 +225,10 @@ class _InvitationClaimPorts:
         if reset_required is not False:
             self._deny()
         now = self.clock()
-        self.party.email = normalize_email(self.party.email)
+        cast(Party, self.party).email = normalize_email(cast(Party, self.party).email)
         self.credential, self.credential_policy = _create_absent_rows(
             self.db, credential_id=self.credential_id, tenant_id=self.tenant_id,
-            party_id=self.party.id, email=self.party.email,
+            party_id=cast(Party, self.party).id, email=cast(Party, self.party).email,
             password_hash=password_hash, occurred_at=now,
         )
         self._outcome = self._snapshot(command)
@@ -235,14 +240,16 @@ class _InvitationClaimPorts:
         self._bound(command)
         self.db.refresh(self.credential, with_for_update=True)
         self.db.refresh(self.credential_policy, with_for_update=True)
-        credential, policy = self.credential, self.credential_policy
+        credential, policy = (
+            cast(UserCredential, self.credential), cast(AcademyCredentialPolicy, self.credential_policy)
+        )
         if (
             str(credential.id) != command.target_subject.credential_ref
             or credential.tenant_id != self.tenant_id
-            or credential.party_id != self.party.id
+            or credential.party_id != cast(Party, self.party).id
             or policy.tenant_id != self.tenant_id
             or policy.credential_id != credential.id
-            or policy.email != self.party.email
+            or policy.email != cast(Party, self.party).email
             or type(policy.lifecycle_version) is not int
             or policy.lifecycle_version != 0
             or policy.reset_required is not False
@@ -254,12 +261,12 @@ class _InvitationClaimPorts:
             command.target_subject,
             credential.password_hash,
             0,
-            is_active=self.party.is_active,
+            is_active=cast(Party, self.party).is_active,
             is_locked=False,
             reset_required=False,
         )
 
-    def record_assignment(self, entry):
+    def record_assignment(self, entry: CredentialAssignmentAuditEntryV1):
         self._bound(entry.command)
         if (
             self._audited
@@ -267,8 +274,8 @@ class _InvitationClaimPorts:
             or not self._consumed
             or entry.authority.command is not self.command
             or entry.authority.actor_kind != "user"
-            or entry.authority.actor_ref != str(self.party.id)
-            or entry.authority.authority_evidence_ref != str(self.token.id)
+            or entry.authority.actor_ref != str(cast(Party, self.party).id)
+            or entry.authority.authority_evidence_ref != str(cast(AccountToken, self.token).id)
             or entry.previous_credential_version is not None
             or type(entry.credential_version) is not int
             or entry.credential_version != 0
@@ -279,18 +286,18 @@ class _InvitationClaimPorts:
             self.db,
             tenant_id=self.tenant_id,
             actor_type="user",
-            actor_id=str(self.party.id),
-            actor_party_id=self.party.id,
+            actor_id=str(cast(Party, self.party).id),
+            actor_party_id=cast(Party, self.party).id,
             source_application=APPLICATION,
             action="credential.password.assigned",
             entity_type="user_credential",
-            entity_id=str(self.credential.id),
+            entity_id=str(cast(UserCredential, self.credential).id),
             occurred_at=entry.occurred_at,
             is_success=True,
             details={
                 "reason_code": PURPOSE,
-                "correlation_ref": str(self.token.id),
-                "authority_evidence_ref": str(self.token.id),
+                "correlation_ref": str(cast(AccountToken, self.token).id),
+                "authority_evidence_ref": str(cast(AccountToken, self.token).id),
                 "credential_version": 0,
             },
         )
@@ -300,11 +307,11 @@ class _InvitationClaimPorts:
             event.id is None
             or event.tenant_id != self.tenant_id
             or event.actor_type != "user"
-            or event.actor_id != str(self.party.id)
-            or event.actor_party_id != self.party.id
+            or event.actor_id != str(cast(Party, self.party).id)
+            or event.actor_party_id != cast(Party, self.party).id
             or event.action != "credential.password.assigned"
             or event.entity_type != "user_credential"
-            or event.entity_id != str(self.credential.id)
+            or event.entity_id != str(cast(UserCredential, self.credential).id)
         ):
             self._deny()
         self._audited = True
@@ -318,7 +325,7 @@ class _InvitationClaimPorts:
             select(AccountToken)
             .where(
                 AccountToken.tenant_id == self.tenant_id,
-                AccountToken.person_id == self.party.id,
+                AccountToken.person_id == cast(Party, self.party).id,
                 AccountToken.kind == "invite",
                 AccountToken.used_at.is_(None),
             )
@@ -333,6 +340,23 @@ class _InvitationClaimPorts:
 
     def replace_selected(self, *args, **kwargs):
         raise CredentialAssignmentError("replacement is outside invitation claim")
+
+    def lock_for_update(self, subject: CredentialSubjectRef) -> NoReturn:
+        raise CredentialAssignmentError("verification is outside invitation claim")
+
+    def create(self, subject: CredentialSubjectRef, *, password_hash: str, reset_required: bool) -> NoReturn:
+        raise CredentialAssignmentError("legacy creation is outside invitation claim")
+
+    def write_hash(
+        self, subject: CredentialSubjectRef, *, password_hash: str, credential_version: int, reset_required: bool
+    ) -> NoReturn:
+        raise CredentialAssignmentError("replacement is outside invitation claim")
+
+    def record_receipt(self, receipt: CredentialResetReceiptV1) -> NoReturn:
+        raise CredentialAssignmentError("recovery audit is outside invitation claim")
+
+    def find_receipt(self, plan_digest: CredentialResetPlanDigestV1) -> NoReturn:
+        raise CredentialAssignmentError("recovery audit is outside invitation claim")
 
     def load(self, *args):
         raise CredentialAssignmentError("verification is outside invitation claim")
@@ -370,7 +394,7 @@ def accept_invite(db: Session, *, tenant_id, raw: str, password: str, password_p
                 db, tenant_id=tenant_id, digest=hash_token(raw), policy=password_policy, clock=clock
             )
             command = ports.prepare()
-            party = ports.party
+            party = cast(Party, ports.party)
             owner = CredentialLifecycle(
                 store=ports,
                 sessions=ports,

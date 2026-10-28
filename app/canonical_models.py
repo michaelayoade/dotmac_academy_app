@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 import sqlalchemy as sa
 from dotmac_kernel import SUPPORTED_MODULES
@@ -94,7 +94,7 @@ def product_owned_tables() -> tuple[sa.Table, ...]:
     from app.models.reminder import ReminderLog, ReminderPreference
 
     return tuple(
-        model.__table__
+        cast(sa.Table, model.__table__)
         for model in (
             AccountToken,
             Applicant,
@@ -132,6 +132,7 @@ def declared_ownership(
     """
     if not isinstance(registry, ModuleRegistry):
         raise ModelOwnershipError("an actual installed ModuleRegistry is required")
+    table: sa.Table | None
     for table in kernel_tables:
         if table.metadata is not KernelBase.metadata or physical_key(table)[0] != "public":
             raise ModelOwnershipError(f"noncanonical Kernel table input: {physical_key(table)}")

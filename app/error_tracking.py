@@ -15,9 +15,13 @@ from __future__ import annotations
 import logging
 import math
 import re
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from sentry_sdk._types import Event, Hint
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,7 @@ def _project_event(event: dict, hint: dict) -> dict:
             projected[key] = value
     for key in ("timestamp", "start_timestamp"):
         value = event.get(key)
-        if type(value) in (int, float) and math.isfinite(value):
+        if type(value) in (int, float) and math.isfinite(cast(int | float, value)):
             projected[key] = value
         elif isinstance(value, str) and re.fullmatch(r"[0-9T:.+Z-]{10,40}", value):
             projected[key] = value
@@ -112,10 +116,12 @@ def init_error_tracking(*, server_name: str) -> bool:
         logger.warning("sentry-sdk not installed; error tracking disabled")
         return False
 
-    def project(event: dict, hint: dict) -> dict:
-        result = _project_event(event, hint)
+    def project(event: Event, hint: Hint) -> Event:
+        result = _project_event(cast("dict[str, object]", event), hint)
         result["server_name"] = server_name
-        return result
+        # The pinned SDK serializes before this callback and likewise types
+        # that serialized JSON payload as Event (client._prepare_event).
+        return cast("Event", result)
 
     try:
         sentry_sdk.init(

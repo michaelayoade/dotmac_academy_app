@@ -13,6 +13,8 @@ the transaction boundary — these helpers ``flush`` only.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from typing import cast
 
 from sqlalchemy import select, text
 from sqlalchemy.engine import Connection
@@ -408,7 +410,7 @@ class LabExecutionPolicyConflict(ValueError):
     """The observed override object changed; caller may retry a fresh request."""
 
 
-def _lab_values(stored: dict[str, object]) -> dict[str, object]:
+def _lab_values(stored: Mapping[str, object]) -> dict[str, object]:
     if any(key in stored for key in LAB_EXECUTION_POLICY_SHAPES):
         raise ValueError("split lab execution settings are unsupported")
     values = {key: validate_lab_execution_value(key, getattr(settings, key)) for key in LAB_EXECUTION_POLICY_SHAPES}
@@ -420,7 +422,9 @@ def _lab_values(stored: dict[str, object]) -> dict[str, object]:
     return values
 
 
-def _lab_proposal(db: Session, updates: dict[str, str | None], *, removed: str | None = None):
+def _lab_proposal(
+    db: Session, updates: dict[str, str | None], *, removed: str | None = None
+) -> dict[str, str | None]:
     observed = get_all(db)
     proposed = {key: value for key, value in observed.items() if key != removed}
     proposed.update(updates)
@@ -428,7 +432,7 @@ def _lab_proposal(db: Session, updates: dict[str, str | None], *, removed: str |
     return observed
 
 
-def _cas_lab_override(db: Session, observed: dict[str, object], *, value: str | None = None, remove: bool = False):
+def _cas_lab_override(db: Session, observed: Mapping[str, object], *, value: str | None = None, remove: bool = False):
     key = LAB_EXECUTION_OVERRIDE_KEY
     if key in observed:
         statement = (
@@ -561,7 +565,7 @@ def set_many(db: Session, values: dict[str, str | None]) -> None:
         if parsed < minimum:
             raise ValueError(f"{key} must be at least {minimum}")
     if LAB_EXECUTION_OVERRIDE_KEY in values:
-        _cas_lab_override(db, observed, value=values[LAB_EXECUTION_OVERRIDE_KEY])
+        _cas_lab_override(db, cast("dict[str, str | None]", observed), value=values[LAB_EXECUTION_OVERRIDE_KEY])
     for key, value in values.items():
         if key == LAB_EXECUTION_OVERRIDE_KEY:
             continue

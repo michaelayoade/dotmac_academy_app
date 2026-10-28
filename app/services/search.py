@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from dotmac_learning import SearchAuthority, search_learning
@@ -24,7 +25,7 @@ def search(
         person_id=person_id,
         q=q,
         authority=SearchAuthority(tenant_id, person_id, is_staff),
-        limit=effective(db, require_store=True)["learning_search_limit"],
+        limit=cast(int, effective(db, require_store=True)["learning_search_limit"]),
     )
     return {
         "courses": [{"slug": course.slug, "title": course.title} for course in results.courses],

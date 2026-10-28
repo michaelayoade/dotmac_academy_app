@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from dotmac_learning import InvitationEnrollmentInitialState
 from sqlalchemy.orm import Session
@@ -145,7 +146,7 @@ def invitation_issuance_policy(db: Session, *, purpose: str) -> InvitationIssuan
         token_hours=validate_invitation_purpose_policy_value(
             "invitation_token_hours", configured.invitation_token_hours
         ),
-        replace_outstanding=validate_invitation_purpose_policy_value(key, replace),
+        replace_outstanding=cast(bool, validate_invitation_purpose_policy_value(key, replace)),
         role_provisioning=MappingProxyType(
             validate_web_account_creation_role_provisioning(configured.web_account_creation_role_provisioning)
         ),
@@ -186,7 +187,7 @@ def invitation_acceptance_policy(db: Session) -> InvitationAcceptancePolicy:
 
     configured = effective(db, require_store=True)
     return InvitationAcceptancePolicy(
-        validate_invitation_purpose_policy_value(
+        cast(int, validate_invitation_purpose_policy_value(
             "invitation_password_min_length", configured.invitation_password_min_length
-        )
+        ))
     )

@@ -19,6 +19,7 @@ from uuid import UUID
 
 import dotmac_learning as learning
 import yaml
+from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -226,8 +227,8 @@ def draft_question_from_lines(
     weight: int,
 ) -> learning.DraftQuestionWrite:
     """Decode the editor form (one option/answer per line) into a write."""
-    options = [line for line in (part.strip() for part in options_text.splitlines()) if line]
-    correct = [line for line in (part.strip() for part in correct_text.splitlines()) if line]
+    options: list[JsonValue] = [line for line in (part.strip() for part in options_text.splitlines()) if line]
+    correct: list[JsonValue] = [line for line in (part.strip() for part in correct_text.splitlines()) if line]
     if type(weight) is not int or weight <= 0:
         raise BadRequestError("Question weight must be a positive whole number.")
     return learning.DraftQuestionWrite(

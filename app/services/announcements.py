@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -65,7 +66,7 @@ def for_person(
     limit: int | None = None,
 ) -> list[learning.AnnouncementFact]:
     if limit is None:
-        limit = effective(db, require_store=True)["learning_person_announcements_limit"]
+        limit = cast(int, effective(db, require_store=True)["learning_person_announcements_limit"])
     return list(learning.announcements_for_person(db, tenant_id=tenant_id, person_id=person_id, limit=limit))
 
 
@@ -76,7 +77,7 @@ def list_for_tenant(
     limit: int | None = None,
 ) -> list[learning.AnnouncementFact]:
     if limit is None:
-        limit = effective(db, require_store=True)["learning_tenant_announcements_limit"]
+        limit = cast(int, effective(db, require_store=True)["learning_tenant_announcements_limit"])
     return list(learning.list_announcements(db, tenant_id=tenant_id, limit=limit))
 
 

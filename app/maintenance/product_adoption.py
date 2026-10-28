@@ -12,7 +12,8 @@ import hashlib
 from dataclasses import dataclass, field, replace
 from importlib import metadata
 from pathlib import Path
-from weakref import WeakKeyDictionary, ref
+from typing import TYPE_CHECKING, cast
+from weakref import ReferenceType, WeakKeyDictionary, ref
 
 import dotmac_learning as learning
 import sqlalchemy as sa
@@ -32,6 +33,9 @@ from app.maintenance import retained_hosted_genesis as hosted
 from app.maintenance import retained_transition as transition
 from app.maintenance.identity_history import _connection_preflight
 from app.migration_graph import ordinary_migration_config
+
+if TYPE_CHECKING:
+    from app.maintenance.identity_history import AcademyIdentityHistoryDecoder
 
 
 class ProductAdoptionRefused(RuntimeError):
@@ -144,7 +148,7 @@ _RETAINED = (
 _NAMES = tuple(sorted((*history._SOURCE_NAMES, *_IDENTITY, *_RETAINED)))
 _LOCK_NAMES = tuple(sorted((*_NAMES, "alembic_version")))
 _STATE_KEY = object()
-_HANDLES = WeakKeyDictionary()
+_HANDLES: WeakKeyDictionary[_Capture, ReferenceType[_State]] = WeakKeyDictionary()
 
 
 class _Capture:
@@ -159,7 +163,7 @@ class _Capture:
 
 @dataclass(slots=True, weakref_slot=True, repr=False)
 class _State:
-    handle: object
+    handle: _Capture
     connection: object
     root: object
     xid: object
@@ -202,7 +206,7 @@ def _state_for(handle):
     pointer = _HANDLES.get(handle)
     state = None if pointer is None else pointer()
     _require(type(state) is _State and state.handle is handle)
-    return state
+    return cast(_State, state)
 
 
 def _check(connection, handle, phase):
@@ -280,10 +284,10 @@ def _inventory(directory, *, dynamic_dependencies=False):
                     if isinstance(target, ast.Name) and target.id in {"revision", "down_revision", "depends_on"}:
                         _require(target.id not in assigned)
                         try:
-                            assigned[target.id] = ast.literal_eval(node.value)
+                            assigned[target.id] = ast.literal_eval(cast(ast.AST, node.value))
                         except (ValueError, TypeError):
                             _require(dynamic_dependencies and target.id == "depends_on")
-                            assigned[target.id] = ("expression", ast.dump(node.value))
+                            assigned[target.id] = ("expression", ast.dump(cast(ast.AST, node.value)))
         if path.name == "__init__.py":
             _require(not assigned)
         else:
@@ -332,7 +336,7 @@ def _provenance():
                 parents = (parents,) if type(parents) is str else parents
                 _require(type(parents) is tuple and all(parent in revisions for parent in parents))
     # Legacy custody remains exactly frozen62; successors belong to the assembly.
-    referenced = set()
+    referenced: set[str] = set()
     for row in frozen:
         parents = dict(row[3]).get("down_revision")
         referenced.update((parents,) if type(parents) is str else parents or ())
@@ -501,7 +505,7 @@ def _capture_product_history(connection: Connection, bindings=None, *, _hosted_c
 
 @dataclass(slots=True, repr=False)
 class _IdentityVerification:
-    decoder: object = field(repr=False)
+    decoder: AcademyIdentityHistoryDecoder = field(repr=False)
     expected: object = field(repr=False)
     operation: object = field(repr=False)
     registry: object = field(repr=False)
@@ -520,6 +524,7 @@ def _register_identity_import(
         return  # Standalone comparison issues no product association.
     try:
         _require(type(state) is _State)
+        state = cast(_State, state)
         _check(connection, state.handle, "captured")
         from app.maintenance.identity_history import AcademyIdentityHistoryDecoder
 
@@ -539,7 +544,7 @@ def _register_identity_import(
         raise
 
 
-def _capture_identity_decoder(connection, decoder):
+def _capture_identity_decoder(connection, decoder: AcademyIdentityHistoryDecoder):
     state = connection.info.get(_STATE_KEY)
     if type(state) is not _State:
         return
@@ -563,9 +568,11 @@ def _complete_identity_import(connection, decoder, receipt):
         return
     try:
         _require(type(state) is _State)
+        state = cast(_State, state)
         _check(connection, state.handle, "captured")
         association = state.identity_verification
         _require(type(association) is _IdentityVerification and association.decoder is decoder)
+        association = cast(_IdentityVerification, association)
         _require(association.snapshot is decoder._snapshot and association.snapshot is not None)
         _require(association.receipt is None)
         association.receipt = receipt
@@ -771,9 +778,11 @@ def _consume_retained_transition(connection: Connection) -> transition._Retained
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State)
+        state = cast(_State, state)
         _check(connection, state.handle, "Learning sealed, retained adoption pending")
         pending = state.retained_transition
         _require(type(pending) is transition._RetainedTransition and not pending.consumed and pending.final is None)
+        pending = cast(transition._RetainedTransition, pending)
         _require(state.retained_runner is not None and pending.runner is state.retained_runner)
         _require(pending.handle is state.handle and pending.connection is connection)
         _require(
@@ -799,6 +808,7 @@ def _record_retained_transition(connection: Connection, entry: transition._Retai
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State and state.retained_transition is entry)
+        state = cast(_State, state)
         _check(connection, state.handle, "a004 executing")
         _require(state.retained_runner is not None and entry.runner is state.retained_runner)
         _require(entry.consumed and entry.final is None and entry.handle is state.handle)
@@ -908,9 +918,11 @@ def _consume_checkpoint_transition(connection: Connection) -> checkpoint._Checkp
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State)
+        state = cast(_State, state)
         _check(connection, state.handle, "retained adopted, checkpoint pending")
         pending = state.checkpoint_transition
         _require(type(pending) is checkpoint._CheckpointTransition and not pending.consumed and pending.final is None)
+        pending = cast(checkpoint._CheckpointTransition, pending)
         _require(state.checkpoint_runner is not None and pending.runner is state.checkpoint_runner)
         _require(pending.retained_entry is state.retained_transition)
         _require(pending.handle is state.handle and pending.connection is connection)
@@ -935,6 +947,7 @@ def _record_checkpoint_transition(connection: Connection, entry: checkpoint._Che
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State and state.checkpoint_transition is entry)
+        state = cast(_State, state)
         _check(connection, state.handle, "a005 executing")
         _require(state.checkpoint_runner is not None and entry.runner is state.checkpoint_runner)
         _require(entry.consumed and entry.final is None and entry.handle is state.handle)
@@ -1053,9 +1066,11 @@ def _consume_lab_claim_lease_transition(connection: Connection) -> lab_claim._La
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State)
+        state = cast(_State, state)
         _check(connection, state.handle, "checkpoint adopted, final admission pending")
         pending = state.lab_claim_transition
         _require(type(pending) is lab_claim._LabClaimLeaseTransition and not pending.consumed and pending.final is None)
+        pending = cast(lab_claim._LabClaimLeaseTransition, pending)
         _require(state.lab_claim_runner is not None and pending.runner is state.lab_claim_runner)
         _require(pending.checkpoint_entry is state.checkpoint_transition)
         _require(pending.handle is state.handle and pending.connection is connection)
@@ -1080,6 +1095,7 @@ def _record_lab_claim_lease_transition(connection: Connection, entry: lab_claim.
     try:
         state = connection.info.get(_STATE_KEY)
         _require(type(state) is _State and state.lab_claim_transition is entry)
+        state = cast(_State, state)
         _check(connection, state.handle, "a006 executing")
         _require(state.lab_claim_runner is not None and entry.runner is state.lab_claim_runner)
         _require(entry.consumed and entry.final is None and entry.handle is state.handle)

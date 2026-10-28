@@ -17,6 +17,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal, cast
 from uuid import UUID
 
 from dotmac_kernel.exceptions import NotFoundError
@@ -1130,12 +1131,15 @@ def _load_curriculum(args: argparse.Namespace) -> None:
                 declarations.append(
                     learning.PrerequisiteDeclaration(
                         course=course,
-                        requires=requires,
+                        requires=cast("tuple[str, ...]", requires),
                         conditions=tuple(
                             learning.PrerequisiteConditionDeclaration(**condition)
                             for condition in raw_conditions
                         ),
-                        composition=composition or defaults.prerequisite_default_composition,
+                        composition=cast(
+                            "Literal['all', 'any'] | None",
+                            composition or defaults.prerequisite_default_composition,
+                        ),
                     )
                 )
                 continue
@@ -1156,14 +1160,17 @@ def _load_curriculum(args: argparse.Namespace) -> None:
                             )
                             for slug in requires
                         ),
-                        composition=composition or defaults.prerequisite_default_composition,
+                        composition=cast(
+                            "Literal['all', 'any'] | None",
+                            composition or defaults.prerequisite_default_composition,
+                        ),
                     )
                 )
                 continue
             declarations.append(
                 learning.PrerequisiteDeclaration(
                     course=course,
-                    requires=requires,
+                    requires=cast("tuple[str, ...]", requires),
                     composition=composition,
                 )
             )

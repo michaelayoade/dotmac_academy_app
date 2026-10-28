@@ -7,11 +7,15 @@ product State may select a phase. Observed OIDs never select a target/spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, cast
 
 import sqlalchemy as sa
 
 from app.maintenance import learning_history as history
 from app.maintenance import retained_schema as schema
+
+if TYPE_CHECKING:
+    from app.maintenance.checkpoint_transition import _CheckpointTransition
 
 _A004 = "a004_retained_learning_refs"
 _LR7 = "lr_0007_enrollment_state_policy"
@@ -218,7 +222,7 @@ def _check_ri(connection, packet, *, final, keys):
         _require(row[3:8] == ("r", "app_admin", "p", False, False))
         _require(row[8] is (table != "platform_settings"))
     by_oid = {}
-    expected_columns = set()
+    expected_columns: set[tuple[str, str, str]] = set()
     for fk in fks:
         child, name, columns, namespace, parent, target, action = specs[(fk["child"], fk["name"])]
         child_oid, numbers = _attributes(connection, "public", child, columns)
@@ -372,6 +376,7 @@ def _check_ri(connection, packet, *, final, keys):
     for trigger in triggers:
         fk = by_oid.get(trigger["constraint_oid"])
         _require(fk is not None)
+        fk = cast(dict[str, object], fk)
         child = trigger["relation_oid"] == fk["child_oid"]
         side = "child" if child else "parent"
         function = (
@@ -510,7 +515,7 @@ def _stage_versions(graph, target, *, final):
     # independent installed branches remain selected at both stages.
     nodes = {revision: (down, depends) for revision, down, depends in graph}
     _require(target in nodes and _LR7 in nodes)
-    children = {revision: set() for revision in nodes}
+    children: dict[str, set[str]] = {revision: set() for revision in nodes}
     for revision, edges in nodes.items():
         for parent in _edges(edges):
             _require(parent in nodes)
@@ -667,7 +672,7 @@ def _lab_claim_projection(state, entry):
     _require(state.phase in ("a006 executing", "a006 recorded", "lab claim lease adopted, final admission pending"))
     checkpoint_entry = getattr(pending, "checkpoint_entry", None)
     _require(checkpoint_entry is not None and checkpoint_entry is getattr(state, "checkpoint_transition", None))
-    _require(checkpoint_entry.retained_entry is entry and pending.consumed)
+    _require(cast("_CheckpointTransition", checkpoint_entry).retained_entry is entry and pending.consumed)
     _require(pending.handle is state.handle and pending.connection is state.connection)
     _require(pending.root is state.root and pending.xid == state.xid)
     _require(pending.new_attnum == 21)

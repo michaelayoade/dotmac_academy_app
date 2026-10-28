@@ -10,6 +10,7 @@ exceptions for the router to translate. RLS scopes reads to the tenant.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -54,7 +55,7 @@ def create_session(
     notes: str | None = None,
 ) -> learning.ClassSessionFact:
     if session_type is None:
-        session_type = effective(db, require_store=True)["learning_default_session_type"]
+        session_type = cast(str, effective(db, require_store=True)["learning_default_session_type"])
     try:
         return learning.create_session(
             db,
@@ -145,8 +146,12 @@ def update_session(
                 change.field: {"from": change.from_value, "to": change.to_value} for change in result.changes
             }
     finally:
-        db = request = human = result = supplied = title = starts_at = ends_at = session_type = None
-        location = join_url = notes = status = tenant_id = session_id = None
+        db = cast(Session, None)
+        request = cast(Request, None)
+        human = result = supplied = title = starts_at = ends_at = session_type = None
+        location = join_url = notes = status = None
+        tenant_id = cast(UUID, None)
+        session_id = cast(UUID, None)
 
 
 def cancel_session(db: Session, *, tenant_id: UUID, session_id: UUID) -> learning.ClassSessionFact:

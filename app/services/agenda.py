@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -38,13 +39,13 @@ def upcoming_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, limit:
     now = datetime.now(UTC)
     policy = effective(db, require_store=True)
     if limit is None:
-        limit = policy["learning_agenda_limit"]
+        limit = cast(int, policy["learning_agenda_limit"])
     rows = learning.upcoming_agenda(
         db,
         tenant_id=tenant_id,
         person_id=person_id,
         limit=limit,
         now=now,
-        join_lead_minutes=policy["learning_join_lead_minutes"],
+        join_lead_minutes=cast(int, policy["learning_join_lead_minutes"]),
     )
     return [_item(row) for row in rows]

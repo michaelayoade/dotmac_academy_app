@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import cast
 from uuid import UUID
 
 from dotmac_learning import (
@@ -92,9 +93,9 @@ def submit_activity(
                 activity_id=activity.id,
                 answers=answers,
                 only_ext_ids=only_ext_ids,
-                missing_question_weight=settings_store.effective(db, require_store=True)[
+                missing_question_weight=cast(int, settings_store.effective(db, require_store=True)[
                     "learning_missing_question_weight"
-                ],
+                ]),
             ),
         )
     except AdmissionContention:

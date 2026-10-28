@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from html import escape
+from typing import cast
 from uuid import UUID
 
 from dotmac_kernel.audit import AuditEvent
@@ -60,7 +61,7 @@ def _count(db: Session, stmt) -> int:
     return int(db.scalar(stmt) or 0)
 
 
-def _name(person: ReportPerson) -> str:
+def _name(person: ReportPerson) -> str | None:
     return f"{person.first_name} {person.last_name}".strip() or person.email
 
 
@@ -78,7 +79,7 @@ def engagement_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dic
 def top_movers(db: Session, *, tenant_id: UUID, since: datetime, limit: int | None = None) -> list[dict]:
     """Render the owner's busiest learners in its existing rank order."""
     if limit is None:
-        limit = settings_store.effective(db, require_store=True)["learning_top_movers_limit"]
+        limit = cast(int, settings_store.effective(db, require_store=True)["learning_top_movers_limit"])
     movers = learning_top_movers(db, tenant_id=tenant_id, since=since, limit=limit)
     return [
         {
@@ -96,7 +97,7 @@ def top_movers(db: Session, *, tenant_id: UUID, since: datetime, limit: int | No
 def attention_list(db: Session, *, tenant_id: UUID, limit: int | None = None) -> dict:
     """Render open queue facts without re-deriving rules or severity."""
     if limit is None:
-        limit = settings_store.effective(db, require_store=True)["learning_attention_limit"]
+        limit = cast(int, settings_store.effective(db, require_store=True)["learning_attention_limit"])
     snapshot = learning_attention_list(db, tenant_id=tenant_id, limit=limit)
     return {
         "open_total": snapshot.open_total,
@@ -297,7 +298,7 @@ def _render(snapshot: dict) -> tuple[str, str]:
 def send_activity_report(db: Session, *, tenant_id: UUID, hours: int | None = None) -> int:
     """Queue the activity report for every Academy admin."""
     if hours is None:
-        hours = settings_store.effective(db, require_store=True)["learning_activity_report_hours"]
+        hours = cast(int, settings_store.effective(db, require_store=True)["learning_activity_report_hours"])
     since = datetime.now(UTC) - timedelta(hours=hours)
     snapshot = activity_snapshot(db, tenant_id=tenant_id, since=since)
     html, text = _render(snapshot)

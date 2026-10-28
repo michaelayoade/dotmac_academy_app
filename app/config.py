@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from types import MappingProxyType
-from typing import Annotated, ClassVar, Literal, cast
+from typing import Annotated, ClassVar, Literal, cast, overload
 
 from dotmac_kernel.config import Settings as KernelSettings
 from dotmac_kernel.config import validate_settings as validate_kernel_settings
@@ -70,6 +70,21 @@ def validate_lab_policy_integer(key: str, value: object, *, text: bool = True) -
     return value
 
 
+@overload
+def validate_lab_execution_value(
+    key: Literal[
+        "lab_command_timeout_seconds_by_action",
+        "lab_operation_lease_seconds_by_kind",
+        "lab_operation_max_attempts_by_kind",
+    ],
+    value: object,
+) -> dict[str, int]: ...
+
+
+@overload
+def validate_lab_execution_value(key: str, value: object) -> object: ...
+
+
 def validate_lab_execution_value(key: str, value: object) -> object:
     shape = LAB_EXECUTION_POLICY_SHAPES[key]
     if not shape:
@@ -109,7 +124,7 @@ def validate_lab_execution_relations(values: Mapping[str, object]) -> None:
     }
     if any(leases[kind] <= bound for kind, bound in bounds.items()):
         raise ValueError("lab lease must exceed configured command and cleanup waits")
-    if values["lab_operation_unknown_lease_seconds"] <= inspect + 2 * grace:
+    if cast(int, values["lab_operation_unknown_lease_seconds"]) <= inspect + 2 * grace:
         raise ValueError("unknown lab lease must exceed inspect and cleanup waits")
 
 
@@ -285,7 +300,7 @@ def validate_invitation_purpose_policy_value(key: str, value: object) -> int | f
     if type(value) not in (int, float):
         raise ValueError(message)
     try:
-        normalized = float(value)
+        normalized = float(cast(int | float, value))
         if not math.isfinite(normalized):
             raise ValueError(message)
         timedelta(hours=normalized)
@@ -339,13 +354,15 @@ def validate_onboarding_policy_value(key: str, value: object) -> object:
             value = json.loads(value)
         except (TypeError, ValueError):
             raise ValueError(message) from None
-    if type(value) not in (list, tuple) or len(value) != len(ONBOARDING_PROCEDURES):
+    if type(value) not in (list, tuple) or len(cast("list[object] | tuple[object, ...]", value)) != len(
+        ONBOARDING_PROCEDURES
+    ):
         raise ValueError(message)
     result = []
-    for item in value:
-        if type(item) not in (list, tuple) or len(item) != 2:
+    for item in cast("list[object] | tuple[object, ...]", value):
+        if type(item) not in (list, tuple) or len(cast("list[object] | tuple[object, ...]", item)) != 2:
             raise ValueError(message)
-        key_name, label = item
+        key_name, label = cast("list[object] | tuple[object, ...]", item)
         if type(key_name) is not str or key_name not in ONBOARDING_PROCEDURES:
             raise ValueError(message)
         if type(label) is not str or not label.strip() or len(label) > 200:
@@ -427,10 +444,10 @@ def validate_authentication_policy_value(key: str, value: object) -> int | float
         if type(value) is not int or value <= 0:
             raise ValueError(message)
         return value
-    if type(value) not in (int, float) or value < 0:
+    if type(value) not in (int, float) or cast(int | float, value) < 0:
         raise ValueError(message)
     try:
-        normalized = float(value)
+        normalized = float(cast(int | float, value))
         if not math.isfinite(normalized):
             raise ValueError(message)
         # Preserve native fractional-minute rounding. The representational
@@ -660,11 +677,12 @@ def validate_admin_home_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_lab_admin_access_roles(value: object) -> tuple[str, ...]:
@@ -677,11 +695,12 @@ def validate_lab_admin_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_reminders_admin_access_roles(value: object) -> tuple[str, ...]:
@@ -694,11 +713,12 @@ def validate_reminders_admin_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_teaching_access_roles(value: object) -> tuple[str, ...]:
@@ -711,11 +731,12 @@ def validate_teaching_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_catalog_staff_roles(value: object) -> tuple[str, ...]:
@@ -728,11 +749,12 @@ def validate_catalog_staff_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_gradebook_access_roles(value: object) -> tuple[str, ...]:
@@ -745,11 +767,12 @@ def validate_gradebook_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_settings_access_roles(value: object) -> tuple[str, ...]:
@@ -762,11 +785,12 @@ def validate_settings_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_reports_access_roles(value: object) -> tuple[str, ...]:
@@ -779,11 +803,12 @@ def validate_reports_access_roles(value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def _validate_bank_role_list(key: str, value: object) -> tuple[str, ...]:
@@ -796,11 +821,12 @@ def _validate_bank_role_list(key: str, value: object) -> tuple[str, ...]:
             raise ValueError(message) from None
     if type(value) not in (list, tuple):
         raise ValueError(message)
+    value = cast("list[object] | tuple[object, ...]", value)
     if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
         raise ValueError(message)
     if len(set(value)) != len(value):
         raise ValueError(message)
-    return tuple(value)
+    return tuple(cast("list[str] | tuple[str, ...]", value))
 
 
 def validate_bank_author_roles(value: object) -> tuple[str, ...]:
@@ -835,6 +861,7 @@ def validate_learning_policy_value(key: str, value: object) -> object:
                 raise ValueError(message) from None
         if type(value) not in (list, tuple):
             raise ValueError(message)
+        value = cast("list[object] | tuple[object, ...]", value)
         if any(type(slug) is not str or not slug or slug != slug.strip() for slug in value):
             raise ValueError(message)
         if len(set(value)) != len(value):
@@ -844,7 +871,7 @@ def validate_learning_policy_value(key: str, value: object) -> object:
 
             if not set(value) <= set(REASON_KINDS):
                 raise ValueError(message)
-        return tuple(value)
+        return tuple(cast("list[str] | tuple[str, ...]", value))
     if kind == "dict[str, str]":
         if isinstance(value, str):
 
@@ -952,8 +979,9 @@ def validate_learning_policy_value(key: str, value: object) -> object:
     if kind == "int":
         if type(value) is not int:
             raise ValueError(message)
-    elif type(value) not in (int, float) or not math.isfinite(value):
+    elif type(value) not in (int, float) or not math.isfinite(cast(int | float, value)):
         raise ValueError(message)
+    value = cast(int | float, value)
     if shape == "nonnegative" and value < 0:
         raise ValueError(message)
     if shape == "positive" and value <= 0:
@@ -1370,7 +1398,7 @@ class Settings(KernelSettings):
 
     # Product-owned role mapping; preserve historical invitation behavior by default.
     invitation_member_role_map: dict[str, InvitationMemberRole] = Field(
-        default_factory=lambda: {"admin": "instructor", "instructor": "instructor"}
+        default_factory=lambda: dict[str, InvitationMemberRole](admin="instructor", instructor="instructor")
     )
     invitation_default_member_role: InvitationMemberRole = "student"
 

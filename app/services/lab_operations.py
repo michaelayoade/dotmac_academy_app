@@ -1228,7 +1228,7 @@ def reconcile_stuck(db: Session, *, policy: LabExecutionPolicy) -> int:
     ).all()
     # Validate every locked claim before effects, and sample time AFTER locks.
     durations = {op.id: _claimed_duration(op) for op in claimed}
-    now = db.scalar(select(func.clock_timestamp()))
+    now = cast(datetime, db.scalar(select(func.clock_timestamp())))
     stuck = [
         op
         for op in claimed
@@ -1353,7 +1353,7 @@ def reclaim_previous_epoch(
     ).all()
     for op in matched:
         _claimed_duration(op)
-    now = db.scalar(select(func.clock_timestamp()))
+    now = cast(datetime, db.scalar(select(func.clock_timestamp())))
     for op in matched:
         instance = db.get(LabInstance, op.instance_id)
         old_epoch = op.claimed_epoch

@@ -1,6 +1,8 @@
 """Academy CLI compatibility facade over the sole Kernel bootstrap owner."""
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from dotmac_kernel.identity_provisioning import BootstrapTenantV1
@@ -45,7 +47,7 @@ def ensure_roles(db: Session, tenant_id: UUID):
     ).all())
     by_slug = {row.slug: row for row in existing}
     # Legacy TimestampMixin uses server now(): PostgreSQL transaction time.
-    now = db.scalar(select(func.transaction_timestamp()))
+    now = cast(datetime, db.scalar(select(func.transaction_timestamp())))
     missing = {slug:uuid4() for slug in configured if slug not in by_slug}
     expected_ids = {row.id for row in existing} | set(missing.values())
     provision_missing_roles(

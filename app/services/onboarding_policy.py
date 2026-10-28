@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from app.config import validate_onboarding_policy_value, validate_web_account_creation_role_provisioning
 from app.services.settings_store import effective
@@ -17,10 +18,11 @@ class OnboardingPolicy:
 def onboarding_policy(db):
     configured = effective(db, require_store=True)
     return OnboardingPolicy(
-        validate_onboarding_policy_value(
+        cast(str, validate_onboarding_policy_value(
             "onboarding_enrollment_global_role", configured.onboarding_enrollment_global_role
-        ),
-        validate_onboarding_policy_value("onboarding_task_catalog", configured.onboarding_task_catalog),
+        )),
+        cast(tuple[tuple[str, str], ...],
+             validate_onboarding_policy_value("onboarding_task_catalog", configured.onboarding_task_catalog)),
         MappingProxyType(
             validate_web_account_creation_role_provisioning(configured.web_account_creation_role_provisioning)
         ),

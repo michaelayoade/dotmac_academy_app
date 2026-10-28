@@ -6,6 +6,7 @@ Kernel savepoint owns command rollback, while the caller owns root commit.
 """
 from copy import deepcopy
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 from uuid import UUID
 
 from dotmac_kernel import identity_storage as storage
@@ -37,6 +38,35 @@ from app.services.reminder_resend_unit import (
 from app.services.security import hash_token
 from app.services.settings_store import effective
 from app.services.web_auth import COOKIE, require_web_user
+
+if TYPE_CHECKING:
+
+    class _ReminderOutbox(TypedDict):
+        tenant_id: UUID
+        idempotency_key: str
+        kind: str
+        recipient: str
+        subject: str
+        html_body: str
+        text_body: str
+        payload: dict[str, object]
+
+    class _ReminderAuditWrite(TypedDict):
+        tenant_id: UUID
+        actor_type: str
+        actor_id: str
+        actor_party_id: UUID
+        actor_label: str | None
+        source_application: str
+        action: str
+        entity_type: str
+        entity_id: str
+        occurred_at: datetime
+        is_success: bool
+        details: dict[str, object]
+
+    class _ReminderAuditReceipt(_ReminderAuditWrite):
+        created_at: NotRequired[datetime | None]
 
 
 def _authority(db, request, tenant_id, actor_id):
@@ -84,7 +114,7 @@ def resend_reminder(db: Session, *, request: Request, tenant_id: UUID, log_id: U
             ).with_for_update().execution_options(populate_existing=True)).first()
             db.scalars(select(AuthSession).where(
                 AuthSession.tenant_id == tenant_id, AuthSession.party_id == actor_id,
-                AuthSession.token_hash == hash_token(request.cookies.get(COOKIE)),
+                AuthSession.token_hash == hash_token(cast(str, request.cookies.get(COOKIE))),
             ).with_for_update().execution_options(populate_existing=True)).first()
             storage.lock_roles(db, tenant_id=tenant_id)
             storage.lock_grants(db, tenant_id=tenant_id, party_ids=(actor_id,))
@@ -120,7 +150,7 @@ def resend_reminder(db: Session, *, request: Request, tenant_id: UUID, log_id: U
             now = datetime.now(UTC)
             outbox_key = f"reminder_resend:{log.id}:{now.strftime('%Y%m%d%H%M%S')}"
             subject, html, text = _email_for(log.title, log.link, branding, base_url)
-            expected_outbox = dict(tenant_id=tenant_id, idempotency_key=outbox_key,
+            expected_outbox: _ReminderOutbox = dict(tenant_id=tenant_id, idempotency_key=outbox_key,
                 kind=f"reminder_{log.event_kind}", recipient=person.email, subject=subject,
                 html_body=html, text_body=text, payload={})
             unit.phase = "enqueue"
@@ -135,13 +165,13 @@ def resend_reminder(db: Session, *, request: Request, tenant_id: UUID, log_id: U
             if "updated_at" in expected_log:
                 expected_log["updated_at"] = log.updated_at = now
             _authority(db, request, tenant_id, actor_id)
-            expected_audit = dict(tenant_id=tenant_id, actor_type="user",
+            expected_audit: _ReminderAuditReceipt = dict(tenant_id=tenant_id, actor_type="user",
                 actor_id=str(actor_id), actor_party_id=actor_id,
                 actor_label=account.email if len(account.email) <= 160 else None,
                 source_application="dotmac_academy_app", action=REMINDER_RESEND_ACTION,
                 entity_type="reminder_log", entity_id=str(log.id), occurred_at=now,
                 is_success=True, details={"event_kind": log.event_kind})
-            audit = write_audit_event(db, **expected_audit)
+            audit = write_audit_event(db, **cast("_ReminderAuditWrite", expected_audit))
             unit.require()
             db.flush()
             unit.require()

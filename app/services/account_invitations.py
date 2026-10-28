@@ -37,7 +37,7 @@ class CohortAssignment:
 class InvitationAccountView:
     id: UUID
     tenant_id: UUID
-    email: str
+    email: str | None
     first_name: str
     last_name: str
     status: str

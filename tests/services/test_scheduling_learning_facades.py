@@ -175,7 +175,8 @@ def test_domain_translation_and_unexpected_failure_propagation(monkeypatch, oper
     else:
         values["session_id"] = uuid4()
     if operation == "create_session":
-        values.update(title="Class", starts_at=NOW)
+        values.update(title="Class", starts_at=NOW, session_type="live_class")
+        monkeypatch.setattr(scheduling, "creation_defaults", _creation_defaults)
     if operation == "set_delivery_mode":
         values["mode"] = "live"
     with pytest.raises(translated, match="owner detail") as caught:
@@ -253,9 +254,26 @@ def test_routes_forward_authenticated_tenant_without_new_session_lookup(monkeypa
     )
     if service_name == "set_delivery_mode":
         values["mode"] = "live"
+    if route_name == "cohort_timetable":
+        person_id = uuid4()
+        values["person"] = SimpleNamespace(id=person_id)
+
+        def cohort_access(actual_db, **scope):
+            assert actual_db is db
+            assert scope == {"tenant_id": tenant, "person_id": person_id, "cohort_id": cohort}
+            calls.append("access")
+
+        def effective(actual_db, *, require_store):
+            assert actual_db is db and require_store is True
+            return {"learning_default_session_type": "live_class"}
+
+        monkeypatch.setattr(instructor, "_cohort_access_or_403", cohort_access)
+        monkeypatch.setattr(instructor, "effective", effective)
     getattr(instructor, route_name)(**values)
     assert calls.count("tenant") == 1
     assert calls.count("service") == 1
+    if route_name == "cohort_timetable":
+        assert calls.count("access") == 1
 
 
 def test_genuine_update_missing_keeps_product_error(roster_actors):

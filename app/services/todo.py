@@ -7,12 +7,13 @@ used by Academy rendering. It is not a mutable Score ORM alias.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
 from sqlalchemy.orm import Session
 
-from app.services.learning_policy import todo_terms
+from app.services.learning_policy import feedback_reveal_terms, todo_terms
 from app.services.localtime import academy_zone
 from app.services.settings_store import effective
 
@@ -42,7 +43,8 @@ def timeline_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, now: d
         now=now,
         local_zone=academy_zone(),
         terms=terms,
-        join_lead_minutes=policy["learning_join_lead_minutes"],
+        feedback_terms=feedback_reveal_terms(db),
+        join_lead_minutes=cast(int, policy["learning_join_lead_minutes"]),
     )
     graded: list[dict] = [
         {

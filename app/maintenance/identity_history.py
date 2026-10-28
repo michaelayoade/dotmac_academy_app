@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict, cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -37,8 +38,9 @@ from dotmac_kernel.migrations.identity_history import (
 )
 from dotmac_kernel.modules import ModuleRegistry
 from dotmac_kernel.prerequisites import PrerequisiteBinding
+from psycopg import Connection as PsycopgConnection
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, RootTransaction
 from sqlalchemy.sql.elements import quoted_name
 
 from app.models.identity_extensions import (
@@ -56,13 +58,36 @@ _FAMILIES = (
     ("person_roles", HistoricalPersonRoleV1),
     ("audit_events", HistoricalAuditEventV1),
 )
-_ACCOUNT = AcademyAccountProfile.__table__
-_POLICY = AcademyCredentialPolicy.__table__
+_ACCOUNT = cast(sa.Table, AcademyAccountProfile.__table__)
+_POLICY = cast(sa.Table, AcademyCredentialPolicy.__table__)
 _TARGETS = (_ACCOUNT, _POLICY)
 _ASSEMBLY_VERSIONS = Path(__file__).resolve().parents[2] / "alembic/identity_assembly_versions"
 
 
-def _require(condition: bool) -> None:
+if TYPE_CHECKING:
+    _HistoricalRow = (
+        HistoricalTenantV1
+        | HistoricalTenantDomainV1
+        | HistoricalPersonV1
+        | HistoricalCredentialV1
+        | HistoricalSessionV1
+        | HistoricalRoleV1
+        | HistoricalPersonRoleV1
+        | HistoricalAuditEventV1
+    )
+
+    class _DecodedIdentityRows(TypedDict):
+        tenants: tuple[HistoricalTenantV1, ...]
+        tenant_domains: tuple[HistoricalTenantDomainV1, ...]
+        people: tuple[HistoricalPersonV1, ...]
+        user_credentials: tuple[HistoricalCredentialV1, ...]
+        auth_sessions: tuple[HistoricalSessionV1, ...]
+        roles: tuple[HistoricalRoleV1, ...]
+        person_roles: tuple[HistoricalPersonRoleV1, ...]
+        audit_events: tuple[HistoricalAuditEventV1, ...]
+
+
+def _require(condition: object) -> None:
     if not condition:
         raise IdentityHistoryImportRefused("Academy identity extension preflight refused")
 
@@ -83,13 +108,13 @@ def _projection_preflight(connection: Connection, table: sa.Table, values: dict[
     for column in table.c:
         value = values[column.name]
         if isinstance(column.type, sa.JSON):
-            _require(type(value) is _AcademyJsonbText and type(value.raw_json) is str)
+            _require(type(value) is _AcademyJsonbText and type(cast(_AcademyJsonbText, value).raw_json) is str)
             # PostgreSQL validates its own complete numeric domain; parsing via
             # Python float would round decimals or reject valid huge numerics.
             _require(
                 connection.scalar(
                     sa.text("SELECT jsonb_typeof(CAST(:raw AS JSONB))"),
-                    {"raw": value.raw_json},
+                    {"raw": cast(_AcademyJsonbText, value).raw_json},
                 )
                 is not None
             )
@@ -98,7 +123,7 @@ def _projection_preflight(connection: Connection, table: sa.Table, values: dict[
         if value is None:
             continue
         if isinstance(column.type, sa.String):
-            _require(type(value) is str and len(value) <= column.type.length)
+            _require(type(value) is str and len(value) <= cast(int, column.type.length))
         elif isinstance(column.type, sa.Uuid):
             _require(type(value) is UUID)
         elif isinstance(column.type, sa.Boolean):
@@ -162,9 +187,10 @@ class AcademyIdentityHistoryDecoder:
         _require(self._connection is None)
         self._connection = connection
         self._root = connection.get_transaction()
-        decoded = {}
-        accounts = []
-        policies = []
+        decoded: dict[str, tuple[_HistoricalRow, ...]] = {}
+        accounts: list[dict[str, object]] = []
+        policies: list[dict[str, object]] = []
+        rows: list[_HistoricalRow] | IdentityHistoryRowsV1
         for family, row_type in _FAMILIES:
             names = tuple(item.name for item in fields(row_type))
             extra = (
@@ -223,7 +249,7 @@ class AcademyIdentityHistoryDecoder:
         _require(len({(r["tenant_id"], r["email"]) for r in policies}) == len(policies))
         self._accounts = tuple(accounts)
         self._policies = tuple(policies)
-        rows = IdentityHistoryRowsV1(**decoded)
+        rows = IdentityHistoryRowsV1(**cast("_DecodedIdentityRows", decoded))
         self._snapshot = _IdentitySnapshot(
             rows,
             tuple(tuple(values.items()) for values in accounts),
@@ -238,17 +264,17 @@ class AcademyIdentityHistoryDecoder:
         return rows
 
 
-def _connection_preflight(connection: Connection) -> object:
+def _connection_preflight(connection: Connection) -> RootTransaction:
     root = connection.get_transaction()
     _require(not connection.closed and not connection.invalidated)
     _require(root is not None and root.is_active and not connection.in_nested_transaction())
     _require(connection.dialect.name == "postgresql" and connection.dialect.driver == "psycopg")
-    _require(connection.connection.driver_connection.autocommit is False)
+    _require(cast(PsycopgConnection, connection.connection.driver_connection).autocommit is False)
     _require(connection.engine.hide_parameters is True and connection.engine.echo is False)
     _require(not connection.engine.logger.isEnabledFor(logging.DEBUG))
     _require(connection.get_execution_options().get("isolation_level") != "AUTOCOMMIT")
     _require(connection.scalar(sa.text("SELECT current_user")) == "app_admin")
-    return root
+    return cast(RootTransaction, root)
 
 
 def _extension_catalog_preflight(connection: Connection) -> None:
@@ -480,7 +506,9 @@ def _verify_identity_import_data(
             for column in table.c:
                 value = values[column.name]
                 if isinstance(column.type, sa.JSON):
-                    expected_json = sa.cast(sa.bindparam(None, value.raw_json, type_=sa.Text), JSONB)
+                    expected_json = sa.cast(
+                        sa.bindparam(None, cast(_AcademyJsonbText, value).raw_json, type_=sa.Text), JSONB
+                    )
                     predicate = sa.cast(column, sa.Text).is_not_distinct_from(sa.cast(expected_json, sa.Text))
                 else:
                     predicate = column.is_not_distinct_from(sa.bindparam(None, value, type_=column.type))
@@ -561,7 +589,7 @@ def import_academy_identity_history(
                     }
                     connection.execute(
                         sa.insert(table).values(**insert_values),
-                        {"_academy_prefs_raw": prefs.raw_json},
+                        {"_academy_prefs_raw": cast(_AcademyJsonbText, prefs).raw_json},
                     )
                 else:
                     connection.execute(sa.insert(table).values(**values))

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime
+from typing import cast
 from urllib.parse import quote
 from uuid import UUID
 
@@ -481,7 +482,9 @@ def grade_and_record(
     from app.services.learning_policy import validity_terms
 
     terms = validity_terms(db)
-    missing_question_weight = settings_store.effective(db, require_store=True)["learning_missing_question_weight"]
+    missing_question_weight = cast(
+        int, settings_store.effective(db, require_store=True)["learning_missing_question_weight"]
+    )
     record_elapsed(db, applicant=applicant, now=now)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
     applicant.assessment_bank_id = bank_id
@@ -498,7 +501,7 @@ def grade_and_record(
     # sample_for is deterministic, so this reproduces the same paper.
     questions = sample_for(applicant, questions, questions_per_category(db))
 
-    q_dicts = [
+    q_dicts: list[learning.GradingQuestion] = [
         {"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight, "options": q.options}
         for q in questions
     ]

@@ -143,19 +143,19 @@ def refresh_pipeline_metrics(tenant_id: UUID) -> PipelineSnapshot | None:
 
             runtime = resolve_database_runtime()
             with runtime.readonly_session() as db, runtime.tenant_scope(db, tenant_id):
-                counts = dict(db.execute(
+                counts: dict[str, int] = dict(db.execute(
                     select(Applicant.status, func.count())
                     .where(Applicant.tenant_id == tenant_id).group_by(Applicant.status)
-                ).all())
-                labs = dict(db.execute(
+                ).tuples().all())
+                labs: dict[str, int] = dict(db.execute(
                     select(LabInstance.status, func.count())
                     .where(LabInstance.tenant_id == tenant_id).group_by(LabInstance.status)
-                ).all())
-                sittings = dict(db.execute(
+                ).tuples().all())
+                sittings: dict[bool | None, int] = dict(db.execute(
                     select(Applicant.assessment_valid, func.count())
                     .where(Applicant.tenant_id == tenant_id, Applicant.assessment_taken_at.is_not(None))
                     .group_by(Applicant.assessment_valid)
-                ).all())
+                ).tuples().all())
                 capacity = int(effective(db).max_concurrent_labs)
                 candidate = PipelineSnapshot(
                     applicants=tuple((status, int(counts.get(status, 0))) for status in APPLICANT_STATUSES),

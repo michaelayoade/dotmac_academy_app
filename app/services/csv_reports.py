@@ -10,9 +10,11 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
+from pydantic import JsonValue
 from sqlalchemy.orm import Session
 
 from app.services import insights
@@ -95,7 +97,7 @@ def queue_summary_csv(db: Session, *, tenant_id: UUID,
             f"{person.first_name} {person.last_name}".strip(), person.email,
             cohort_name or "", entry.reason_kind, entry.severity, entry.status,
             entry.detected_at.isoformat(), entry.recommended_action,
-            ";".join(f"{k}={v}" for k, v in sorted(entry.supporting_facts.items())),
+            ";".join(f"{k}={v}" for k, v in sorted(cast(dict[str, JsonValue], entry.supporting_facts).items())),
         ])
     return "success-queue.csv", _csv(rows)
 

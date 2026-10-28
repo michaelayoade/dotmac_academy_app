@@ -11,15 +11,19 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import NoReturn, cast
 from uuid import UUID, uuid4
 
 from dotmac_kernel.audit import write_audit_event
 from dotmac_kernel.credential_lifecycle import (
+    CredentialAssignmentAuditEntryV1,
     CredentialAssignmentAuthorityEvidenceV1,
     CredentialAssignmentError,
     CredentialCreateAbsentV1,
     CredentialLifecycle,
     CredentialPolicyViolation,
+    CredentialResetPlanDigestV1,
+    CredentialResetReceiptV1,
     CredentialSnapshot,
     CredentialSubjectRef,
 )
@@ -32,7 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_tenant
-from app.models.identity_extensions import AcademyAccountProfile
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.account_creation_policy import web_account_creation_policy
 from app.services.canonical_identity_store import (
     NewPersonValues,
@@ -43,7 +47,7 @@ from app.services.canonical_identity_store import (
 )
 from app.services.credential_storage import create_absent as _create_absent_rows
 from app.services.identity import normalize_email
-from app.services.initial_identity_policy import initial_identity_policy
+from app.services.initial_identity_policy import InitialIdentityPolicy, initial_identity_policy
 from app.services.security import hash_token
 from app.services.web_auth import COOKIE
 
@@ -82,21 +86,21 @@ class _WebAssignmentPorts:
         self.tenant_id = tenant_id
         self._digest = digest
         self.policy = policy
-        self._initial_identity_policy = None
-        self.actor = None
-        self.target = None
-        self.target_role = None
+        self._initial_identity_policy: InitialIdentityPolicy | None = None
+        self.actor: Party | None = None
+        self.target: Party | None = None
+        self.target_role: Role | None = None
         self._target_slug = None
         self._role_catalog = {}
         self.credential_id = None
-        self.command = None
-        self.evidence = None
+        self.command: CredentialCreateAbsentV1 | None = None
+        self.evidence: CredentialAssignmentAuthorityEvidenceV1 | None = None
         self._session = None
-        self._grant = None
-        self._credential = None
-        self._credential_policy = None
+        self._grant: PartyRoleGrant | None = None
+        self._credential: UserCredential | None = None
+        self._credential_policy: AcademyCredentialPolicy | None = None
         self._written = False
-        self._outcome = None
+        self._outcome: CredentialSnapshot | None = None
         self.refusal = None
 
     def clear(self):
@@ -134,7 +138,7 @@ class _WebAssignmentPorts:
         ):
             raise CredentialAssignmentError("web assignment context refused")
 
-    def _deny(self, category):
+    def _deny(self, category) -> NoReturn:
         self.refusal = category
         raise CredentialAssignmentError("web account creation refused")
 
@@ -167,7 +171,8 @@ class _WebAssignmentPorts:
             .with_for_update()
             .execution_options(populate_existing=True)
         ).first()
-        if self.actor is None or self.actor.tenant_id != self.tenant_id or self.actor.party_type != PartyType.person:
+        if (self.actor is None or self.actor.tenant_id != self.tenant_id
+                or self.actor.party_type != PartyType.person):
             self._deny("forbidden")
         person = self.db.scalars(
             select(PartyPerson)
@@ -322,7 +327,7 @@ class _WebAssignmentPorts:
             self.db,
             tenant_id=self.tenant_id,
             party_id=target_id,
-            role_id=self.target_role.id,
+            role_id=cast(Role, self.target_role).id,
             new_grant_id=uuid4(),
             created_at=now,
             updated_at=now,
@@ -332,7 +337,7 @@ class _WebAssignmentPorts:
             .where(
                 PartyRoleGrant.tenant_id == self.tenant_id,
                 PartyRoleGrant.party_id == target_id,
-                PartyRoleGrant.role_id == self.target_role.id,
+                PartyRoleGrant.role_id == cast(Role, self.target_role).id,
             )
             .with_for_update()
             .execution_options(populate_existing=True)
@@ -342,10 +347,10 @@ class _WebAssignmentPorts:
 
     def _new_command(self):
         return CredentialCreateAbsentV1(
-            CredentialSubjectRef(APPLICATION, "person", str(self.target.id), str(self.credential_id)),
+            CredentialSubjectRef(APPLICATION, "person", str(cast(Party, self.target).id), str(self.credential_id)),
             str(self.tenant_id),
             "web_account_creation",
-            (str(self.target_role.id),),
+            (str(cast(Role, self.target_role).id),),
             "web_account_creation",
             str(uuid4()),
         )
@@ -359,7 +364,9 @@ class _WebAssignmentPorts:
         if command != self._new_command_shape(command.correlation_ref):
             raise CredentialAssignmentError("web assignment envelope refused")
         self._verify_identity_and_grant()
-        self.evidence = CredentialAssignmentAuthorityEvidenceV1(command, "user", str(self.actor.id), str(uuid4()))
+        self.evidence = CredentialAssignmentAuthorityEvidenceV1(
+            command, "user", str(cast(Party, self.actor).id), str(uuid4())
+        )
         return self.evidence
 
     def _new_command_shape(self, correlation):
@@ -376,27 +383,30 @@ class _WebAssignmentPorts:
     def _verify_identity_and_grant(self):
         self.db.refresh(self.target, with_for_update=True)
         self.db.refresh(self.target_role, with_for_update=True)
-        if self.target_role.tenant_id != self.tenant_id or self.target_role.slug != self._target_slug:
+        if (cast(Role, self.target_role).tenant_id != self.tenant_id
+                or cast(Role, self.target_role).slug != self._target_slug):
             raise CredentialAssignmentError("web assignment target role changed")
         self.db.refresh(self._grant, with_for_update=True)
         grants = self.db.scalars(
             select(PartyRoleGrant)
-            .where(PartyRoleGrant.tenant_id == self.tenant_id, PartyRoleGrant.party_id == self.target.id)
+            .where(PartyRoleGrant.tenant_id == self.tenant_id, PartyRoleGrant.party_id == cast(Party, self.target).id)
             .order_by(PartyRoleGrant.role_id, PartyRoleGrant.id)
             .with_for_update()
             .execution_options(populate_existing=True)
         ).all()
-        if len(grants) != 1 or grants[0].id != self._grant.id or grants[0].role_id != self.target_role.id:
+        if (len(grants) != 1 or grants[0].id != cast(PartyRoleGrant, self._grant).id
+                or grants[0].role_id != cast(Role, self.target_role).id):
             raise CredentialAssignmentError("web assignment exact role outcome differs")
         person = self.db.scalars(
             select(PartyPerson)
-            .where(PartyPerson.party_id == self.target.id)
+            .where(PartyPerson.party_id == cast(Party, self.target).id)
             .with_for_update()
             .execution_options(populate_existing=True)
         ).first()
         profile = self.db.scalars(
             select(AcademyAccountProfile)
-            .where(AcademyAccountProfile.tenant_id == self.tenant_id, AcademyAccountProfile.party_id == self.target.id)
+            .where(AcademyAccountProfile.tenant_id == self.tenant_id,
+                   AcademyAccountProfile.party_id == cast(Party, self.target).id)
             .with_for_update()
             .execution_options(populate_existing=True)
         ).first()
@@ -409,12 +419,12 @@ class _WebAssignmentPorts:
         ):
             raise CredentialAssignmentError("web assignment complete account missing")
         if (
-            self.target.tenant_id != self.tenant_id
-            or self.target.party_type != PartyType.person
-            or self.target.is_active is not self._initial_identity_policy.is_active
-            or self._grant.tenant_id != self.tenant_id
-            or self._grant.party_id != self.target.id
-            or self._grant.role_id != self.target_role.id
+            cast(Party, self.target).tenant_id != self.tenant_id
+            or cast(Party, self.target).party_type != PartyType.person
+            or cast(Party, self.target).is_active is not self._initial_identity_policy.is_active
+            or cast(PartyRoleGrant, self._grant).tenant_id != self.tenant_id
+            or cast(PartyRoleGrant, self._grant).party_id != cast(Party, self.target).id
+            or cast(PartyRoleGrant, self._grant).role_id != cast(Role, self.target_role).id
         ):
             raise CredentialAssignmentError("web assignment target changed")
 
@@ -426,7 +436,7 @@ class _WebAssignmentPorts:
             select(UserCredential)
             .where(
                 UserCredential.tenant_id == self.tenant_id,
-                (UserCredential.id == self.credential_id) | (UserCredential.party_id == self.target.id),
+                (UserCredential.id == self.credential_id) | (UserCredential.party_id == cast(Party, self.target).id),
             )
             .order_by(UserCredential.id)
             .with_for_update()
@@ -438,7 +448,7 @@ class _WebAssignmentPorts:
 
     def validate(self, subject, secret):
         self._bound(self.command)
-        if subject is not self.command.target_subject:
+        if subject is not cast(CredentialCreateAbsentV1, self.command).target_subject:
             raise CredentialAssignmentError("web assignment policy subject refused")
         try:
             self.policy.validate(subject, secret)
@@ -453,7 +463,7 @@ class _WebAssignmentPorts:
         now = datetime.now(UTC)
         self._credential, self._credential_policy = _create_absent_rows(
             self.db, credential_id=self.credential_id, tenant_id=self.tenant_id,
-            party_id=self.target.id, email=self.target.email,
+            party_id=cast(Party, self.target).id, email=cast(Party, self.target).email,
             password_hash=password_hash, occurred_at=now,
         )
         self._written = True
@@ -474,10 +484,10 @@ class _WebAssignmentPorts:
         if (
             credential.id != self.credential_id
             or credential.tenant_id != self.tenant_id
-            or credential.party_id != self.target.id
+            or credential.party_id != cast(Party, self.target).id
             or policy.credential_id != credential.id
             or policy.tenant_id != self.tenant_id
-            or policy.email != self.target.email
+            or policy.email != cast(Party, self.target).email
             or type(policy.lifecycle_version) is not int
             or policy.lifecycle_version != 0
             or policy.reset_required is not False
@@ -489,7 +499,7 @@ class _WebAssignmentPorts:
             command.target_subject,
             credential.password_hash,
             policy.lifecycle_version,
-            is_active=self.target.is_active,
+            is_active=cast(Party, self.target).is_active,
             is_locked=False,
             reset_required=policy.reset_required,
         )
@@ -497,7 +507,7 @@ class _WebAssignmentPorts:
     def replace_selected(self, command, *, password_hash, credential_version, reset_required):
         raise CredentialAssignmentError("replacement is outside web account creation")
 
-    def record_assignment(self, entry):
+    def record_assignment(self, entry: CredentialAssignmentAuditEntryV1):
         try:
             self._bound(entry.command)
             if (
@@ -505,7 +515,7 @@ class _WebAssignmentPorts:
                 or entry.authority is not self.evidence
                 or entry.authority.command is not self.command
                 or entry.authority.actor_kind != "user"
-                or entry.authority.actor_ref != str(self.actor.id)
+                or entry.authority.actor_ref != str(cast(Party, self.actor).id)
                 or entry.previous_credential_version is not None
                 or type(entry.credential_version) is not int
                 or entry.credential_version != 0
@@ -518,8 +528,8 @@ class _WebAssignmentPorts:
                 self.db,
                 tenant_id=self.tenant_id,
                 actor_type="user",
-                actor_id=str(self.actor.id),
-                actor_party_id=self.actor.id,
+                actor_id=str(cast(Party, self.actor).id),
+                actor_party_id=cast(Party, self.actor).id,
                 source_application=APPLICATION,
                 action="credential.password.assigned",
                 entity_type="user_credential",
@@ -529,7 +539,9 @@ class _WebAssignmentPorts:
                 details={
                     "reason_code": entry.command.reason_code,
                     "correlation_ref": entry.command.correlation_ref,
-                    "authority_evidence_ref": self.evidence.authority_evidence_ref,
+                    "authority_evidence_ref": (
+                        self.evidence.authority_evidence_ref
+                    ),
                     "credential_version": entry.credential_version,
                 },
             )
@@ -540,8 +552,8 @@ class _WebAssignmentPorts:
                 or event.tenant_id != self.tenant_id
                 or event.action != "credential.password.assigned"
                 or event.actor_type != "user"
-                or event.actor_id != str(self.actor.id)
-                or event.actor_party_id != self.actor.id
+                or event.actor_id != str(cast(Party, self.actor).id)
+                or event.actor_party_id != cast(Party, self.actor).id
                 or event.entity_type != "user_credential"
                 or event.entity_id != str(self.credential_id)
             ):
@@ -551,6 +563,23 @@ class _WebAssignmentPorts:
             self.clear()
 
     # Old owner ports cannot accidentally implement recovery/session effects.
+    def lock_for_update(self, subject: CredentialSubjectRef) -> NoReturn:
+        raise CredentialAssignmentError("verification is outside web account creation")
+
+    def create(self, subject: CredentialSubjectRef, *, password_hash: str, reset_required: bool) -> NoReturn:
+        raise CredentialAssignmentError("legacy creation is outside web account creation")
+
+    def write_hash(
+        self, subject: CredentialSubjectRef, *, password_hash: str, credential_version: int, reset_required: bool
+    ) -> NoReturn:
+        raise CredentialAssignmentError("replacement is outside web account creation")
+
+    def record_receipt(self, receipt: CredentialResetReceiptV1) -> NoReturn:
+        raise CredentialAssignmentError("recovery audit is outside web account creation")
+
+    def find_receipt(self, plan_digest: CredentialResetPlanDigestV1) -> NoReturn:
+        raise CredentialAssignmentError("recovery audit is outside web account creation")
+
     def load(self, subject):
         raise CredentialAssignmentError("verification is outside web account creation")
 
@@ -589,7 +618,7 @@ def create_web_user(
             del raw
             ports.prove_actor_and_role(role)
             command = ports.create_identity(email=email, first_name=first_name, last_name=last_name)
-            view = AcademyAccountView(ports.target.id)
+            view = AcademyAccountView(cast(Party, ports.target).id)
             owner = CredentialLifecycle(
                 store=ports,
                 sessions=ports,

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from html import escape
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -55,6 +56,9 @@ from app.services.security import hash_token
 from app.services.web_auth import require_web_user
 from app.web.responses import hx_redirect
 from app.web.templating import templates
+
+if TYPE_CHECKING:
+    from dotmac_learning.references import CourseFact
 
 router = APIRouter(prefix="/admin/users", dependencies=[Depends(require_tenant)])
 
@@ -194,7 +198,7 @@ def users_invite(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
 
     cohorts = []
-    courses_by_cohort = {}
+    courses_by_cohort: dict[UUID, list[CourseFact]] = {}
     tracks_by_cohort = {}
     selected_cohort_ids = [raw for raw in [*cohort_ids, cohort_id] if raw]
     selected_track_ids = [raw for raw in [*track_ids, track_id] if raw]

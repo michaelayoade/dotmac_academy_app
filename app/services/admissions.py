@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, date, datetime
+from typing import cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -35,8 +36,12 @@ def _legacy_write_audit_event(*args, **kwargs):
     if kwargs.pop("actor_person_id", None) is not None:
         raise BadRequestError("legacy assessment origin cannot assert a human actor")
     return write_audit_event(
-        *args, **kwargs, actor_type="system", actor_id="assessment_policy",
-        actor_party_id=None, source_application="dotmac_academy_app",
+        *args,
+        **kwargs,
+        actor_type="system",
+        actor_id="assessment_policy",
+        actor_party_id=None,
+        source_application="dotmac_academy_app",
     )
 
 
@@ -558,7 +563,8 @@ def _resend_applicant_invitation_locked(db, *, context):
         return applicant
 
     finally:
-        raw = db = context = state = applicant = command = None
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
 
 
 def _extend_applicant_access_locked(db, *, context):
@@ -689,7 +695,8 @@ def _apply_admin_review_action_locked(db, *, context):
         )
 
     finally:
-        raw = db = context = state = applicant = command = None
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
 
 
 class _LegacyTransitionOrigin:
@@ -721,16 +728,16 @@ def _write_transition_audit(origin, db, **kwargs):
     origin._check_bearer()
     if (
         kwargs["tenant_id"] != origin.tenant_id
-        or kwargs["entity_id"] != str(origin.applicant.id)
+        or kwargs["entity_id"] != str(cast(Applicant, origin.applicant).id)
         or kwargs["action"] != "applicant.transition"
         or kwargs["entity_type"] != "applicant"
         or kwargs["actor_person_id"] is not None
-        or origin.applicant.status != "enrolled"
+        or cast(Applicant, origin.applicant).status != "enrolled"
         or kwargs["details"]
         != {"from_status": "onboarding", "to_status": "enrolled", "reason": "", "source": "onboarding"}
     ):
         raise BadRequestError("invalid onboarding transition")
-    origin._audit(kwargs["action"], kwargs["entity_type"], origin.applicant.id, kwargs["details"])
+    origin._audit(kwargs["action"], kwargs["entity_type"], cast(Applicant, origin.applicant).id, kwargs["details"])
 
 
 def transition_applicant(
@@ -964,6 +971,7 @@ def _enroll_locked(db, *, applicant, cohort_id, context=None, actor_person_id=No
     person = store.find_party_exact_email(db, tenant_id=applicant.tenant_id, email=applicant.email)
     created = person is None
     if not created:
+        person = cast("store.PartyFact", person)
         subtype = store.lock_person(db, tenant_id=applicant.tenant_id, party_id=person.id)
         profile = store.lock_profile(db, tenant_id=applicant.tenant_id, party_id=person.id)
         if person.party_type != PartyType.person or subtype is None or profile is None:
@@ -991,6 +999,7 @@ def _enroll_locked(db, *, applicant, cohort_id, context=None, actor_person_id=No
                 updated_at=now,
             ),
         )
+    person = cast("store.PartyFact", person)
     subtype = store.lock_person(db, tenant_id=applicant.tenant_id, party_id=person.id)
     profile = store.lock_profile(db, tenant_id=applicant.tenant_id, party_id=person.id)
     if person.party_type != PartyType.person or subtype is None or profile is None:
@@ -1045,7 +1054,8 @@ def enroll_applicant(db: Session, *, request, applicant_id: UUID, cohort_id: UUI
         return enroll_api_applicant(db, request=request, applicant_id=applicant_id, cohort_id=cohort_id)
 
     finally:
-        db = request = None
+        db = cast(Session, None)
+        request = None
 
 
 def _write_human_event(context, db, **kwargs):
@@ -1099,7 +1109,8 @@ def _execute_human_admission(context):
         return result
 
     finally:
-        raw = db = context = state = applicant = command = None
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
 
 
 def assign_web_applicant_intake(db, *, request, applicant_id, cohort_id, track_id, reason=None):

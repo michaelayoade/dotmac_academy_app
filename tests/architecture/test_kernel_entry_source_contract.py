@@ -40,7 +40,12 @@ def test_rehearsal_has_no_stamp_or_production_activation_import():
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 assert node.func.attr not in {"stamp", "commit", "create_all"}
             if isinstance(node, ast.ImportFrom):
-                assert not (node.module or "").startswith("app.")
+                if (node.module or "").startswith("app."):
+                    # The route-free owner graph builder supplies complete
+                    # migration locations; it grants no adoption/commit power.
+                    assert path == FIXTURE / "rehearsal.py"
+                    assert node.module == "app.migration_graph"
+                    assert [(item.name, item.asname) for item in node.names] == [("ordinary_migration_config", None)]
 
 
 def test_fixture_environment_uses_only_the_injected_connection():

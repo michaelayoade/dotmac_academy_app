@@ -16,6 +16,7 @@ from uuid import UUID
 import dotmac_learning as learning
 from dotmac_learning import BankDocumentHeader, BankFact
 from dotmac_learning import decoded_doc_from_db as _decoded_doc_from_db
+from pydantic import JsonValue
 from sqlalchemy.orm import Session
 
 from app.services import settings_store
@@ -31,7 +32,7 @@ class BankDocumentConversionError(ValueError):
     """A decoded YAML bank cannot form a Learning ``BankDocument``."""
 
 
-def _json_scalar(value: object) -> object:
+def _json_scalar(value: object) -> JsonValue:
     """Normalize one decoded YAML scalar to a JSON value (dates → ISO text)."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value

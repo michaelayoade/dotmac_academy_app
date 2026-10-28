@@ -8,7 +8,9 @@ The caller owns the root transaction and token delivery. No external I/O occurs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 from dotmac_kernel.credential_lifecycle import CredentialLifecycleError
@@ -16,7 +18,7 @@ from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyType, Use
 from dotmac_kernel.transactions import conflict_savepoint, conflict_savepoint_requires_rollback
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.models.account_token import AccountToken
 from app.models.identity_extensions import AcademyAccountProfile
@@ -54,13 +56,13 @@ def _lock_account(db: Session, *, tenant_id: UUID, party_id: UUID) -> tuple[Part
     return party, profile
 
 
-def _require_recovered_root(db: Session, root) -> None:
+def _require_recovered_root(db: Session, root: SessionTransaction | None) -> None:
     # Translate only after the public savepoint restored the same caller root.
     if (
         not db.is_active
         or root is None
         or db.get_transaction() is not root
-        or conflict_savepoint_requires_rollback(db, expected_root=root)
+        or conflict_savepoint_requires_rollback(db, expected_root=cast(SessionTransaction, root))
     ):
         raise CredentialLifecycleError("canonical lifecycle requires caller transaction rollback") from None
 
@@ -145,7 +147,7 @@ def set_account_status(
             if account is None:
                 raise BadRequestError("person not found")
             party, profile = account
-            sessions = []
+            sessions: Sequence[AuthSession] = []
             if status == "suspended":
                 sessions = db.scalars(
                     select(AuthSession)

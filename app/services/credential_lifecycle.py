@@ -15,7 +15,7 @@ from __future__ import annotations
 import hmac
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, TypeGuard, cast
 from uuid import UUID
 
 from dotmac_kernel.audit import write_audit_event
@@ -36,6 +36,7 @@ from dotmac_kernel.credential_lifecycle import (
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyType, UserCredential
 from dotmac_kernel.transactions import conflict_savepoint, conflict_savepoint_requires_rollback
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -160,7 +161,7 @@ class _ResetPorts:
             .execution_options(populate_existing=True)
         ).first()
 
-    def _valid(self, token: AccountToken | None) -> bool:
+    def _valid(self, token: AccountToken | None) -> TypeGuard[AccountToken]:
         return bool(
             token is not None
             and self.party is not None
@@ -196,7 +197,9 @@ class _ResetPorts:
         credentials = list(
             self.db.scalars(
                 select(UserCredential)
-                .where(UserCredential.tenant_id == self.tenant_id, UserCredential.party_id == self.party.id)
+                .where(
+                    UserCredential.tenant_id == self.tenant_id, UserCredential.party_id == cast(Party, self.party).id
+                )
                 .with_for_update()
                 .execution_options(populate_existing=True)
             ).all()
@@ -219,8 +222,8 @@ class _ResetPorts:
             raise CredentialCohortDrift("every credential needs persisted Academy policy")
         # Preserve the original unordered credential selector/fallback, moving
         # the compatible email alias to its actual product-owned policy table.
-        canonical = normalize_email(self.party.email)
-        self.party.email = canonical
+        canonical = normalize_email(cast(Party, self.party).email)
+        cast(Party, self.party).email = canonical
         selected = next(
             (row for row in credentials if normalize_email(by_id[row.id].email) == canonical), credentials[0]
         )
@@ -245,7 +248,7 @@ class _ResetPorts:
             subject=subject,
             password_hash=credential.password_hash,
             credential_version=policy.lifecycle_version,
-            is_active=self.party.is_active,
+            is_active=cast(Party, self.party).is_active,
             is_locked=policy.locked_until is not None and policy.locked_until > self.now,
             reset_required=policy.reset_required,
         )
@@ -258,7 +261,7 @@ class _ResetPorts:
         self.db.refresh(policy, with_for_update=True)
         if (
             credential.tenant_id != self.tenant_id
-            or credential.party_id != self.party.id
+            or credential.party_id != cast(Party, self.party).id
             or policy.tenant_id != self.tenant_id
         ):
             raise CredentialCohortDrift("credential binding drifted")
@@ -280,7 +283,7 @@ class _ResetPorts:
             .values(lifecycle_version=credential_version, reset_required=False, updated_at=self.now)
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount != 1:
+        if cast(CursorResult[tuple[object, ...]], result).rowcount != 1:
             raise CredentialCohortDrift("credential lifecycle CAS refused")
         credential.password_hash = password_hash
         self.db.flush()
@@ -303,7 +306,7 @@ class _ResetPorts:
                 select(AuthSession)
                 .where(
                     AuthSession.tenant_id == self.tenant_id,
-                    AuthSession.party_id == self.party.id,
+                    AuthSession.party_id == cast(Party, self.party).id,
                     AuthSession.revoked_at.is_(None),
                 )
                 .with_for_update()
@@ -316,7 +319,7 @@ class _ResetPorts:
         event = self._audit(
             "credential.sessions.revoked",
             "party",
-            str(self.party.id),
+            str(cast(Party, self.party).id),
             completed_at,
             {"reason_code": reason_code, "recovery_ref": correlation_ref, "revoked_session_count": len(sessions)},
         )
@@ -332,8 +335,8 @@ class _ResetPorts:
             self.db,
             tenant_id=self.tenant_id,
             actor_type="user",
-            actor_id=str(self.party.id),
-            actor_party_id=self.party.id,
+            actor_id=str(cast(Party, self.party).id),
+            actor_party_id=cast(Party, self.party).id,
             source_application=APPLICATION,
             action=action,
             entity_type=entity_type,
@@ -363,7 +366,7 @@ class _ResetPorts:
             select(AccountToken)
             .where(
                 AccountToken.tenant_id == self.tenant_id,
-                AccountToken.person_id == self.party.id,
+                AccountToken.person_id == cast(Party, self.party).id,
                 AccountToken.kind == "password_reset",
                 AccountToken.used_at.is_(None),
             )

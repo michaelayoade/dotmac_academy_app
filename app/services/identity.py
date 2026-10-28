@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 
-def normalize_email(email: str) -> str:
+def normalize_email(email: str | None) -> str:
     """Return the canonical representation used for account identity."""
     return (email or "").strip().lower()
 

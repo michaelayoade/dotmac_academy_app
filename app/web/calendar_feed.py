@@ -8,6 +8,7 @@ from absent without a valid token).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -34,7 +35,7 @@ def calendar_feed(
         return JSONResponse(status_code=404, content={"detail": "Not Found"}, headers=private)
     events = ical_service.events_for_person(db, tenant_id=tenant.id, person_id=person_id, now=now)
     policy = effective(db, require_store=True)
-    body = ical_service.render_feed(events, calname=policy["branding_name"], now=now)
+    body = ical_service.render_feed(events, calname=cast(str, policy["branding_name"]), now=now)
     return Response(
         content=body,
         media_type="text/calendar; charset=utf-8",

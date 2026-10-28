@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
@@ -62,7 +63,9 @@ def create_role(
     try:
         return operations.create_role(db, request=request, slug=payload.slug, name=payload.name)
     finally:
-        payload = request = db = None
+        payload = cast(RoleCreate, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
         del tenant, actor
 
 
@@ -77,7 +80,9 @@ def grant_role(
     try:
         operations.grant_role(db, request=request, person_id=payload.person_id, role_id=payload.role_id)
     finally:
-        payload = request = db = None
+        payload = cast(RoleGrantRequest, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
         del tenant, actor
 
 

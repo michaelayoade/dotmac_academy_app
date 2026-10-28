@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 import dotmac_learning as learning
@@ -31,9 +32,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_tenant
 from app.invitation_declarations import INVITATION_COMPLETED_ACTION
 from app.models.account_token import AccountToken
+from app.models.admissions import Applicant
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.account_invitations import CohortAssignment, InvitationAccountView, _invite_locked
 from app.services.canonical_identity_store import (
+    GrantFact,
     NewPersonValues,
     RoleFact,
     create_person,
@@ -42,8 +45,8 @@ from app.services.canonical_identity_store import (
 )
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.services.identity import normalize_email
-from app.services.initial_identity_policy import initial_identity_policy
-from app.services.invitation_policy import invitation_issuance_policy
+from app.services.initial_identity_policy import InitialIdentityPolicy, initial_identity_policy
+from app.services.invitation_policy import InvitationIssuancePolicy, invitation_issuance_policy
 from app.services.security import hash_token
 from app.services.web_auth import COOKIE
 
@@ -143,13 +146,13 @@ class _Context:
         self.party_rows = {}
         self.person_rows = {}
         self.profile_rows = {}
-        self.actor_roles = frozenset()
+        self.actor_roles: frozenset[str] = frozenset()
         self.roles = {}
         self.grants = []
         self.expected_target_grants = {}
         self.session = None
-        self.target = None
-        self.target_id = None
+        self.target: Party | None = None
+        self.target_id: UUID | None = None
         self.credentials = []
         self.credential_policies = {}
         self.invites = []
@@ -157,12 +160,12 @@ class _Context:
         self.initial_target = None
         self.token_row = self.token_digest = self.issued_at = self.expected_expiry = None
         self.initial_credentials = {}
-        self.now = None
-        self.policy = None
-        self._initial_identity_policy = None
+        self.now: datetime | None = None
+        self.policy: InvitationIssuancePolicy | None = None
+        self._initial_identity_policy: InitialIdentityPolicy | None = None
         self.expected_email = None
         self.expected_aliases = {}
-        self.correlation = str(uuid4())
+        self.correlation: str | None = str(uuid4())
 
     def require(self, command=None):
         if (
@@ -276,11 +279,11 @@ class _Context:
             self._check_target()
             self.expected_target_grants = {row.id: row.role_id for row in self.grants if row.party_id == self.target_id}
             self.initial_target = self._target_state()
-            self.expected_email = self.target.email
+            self.expected_email = cast(Party, self.target).email
             self.expected_aliases = {row.credential_id: row.email for row in self.credential_policies.values()}
         if not (self.command.purpose in {"resend", "strict"} and self.credentials):
             self.policy = invitation_issuance_policy(self.db, purpose="human")
-            self.policy.deadline(self.now, ttl_hours=self.command.ttl_hours)
+            cast(InvitationIssuancePolicy, self.policy).deadline(self.now, ttl_hours=self.command.ttl_hours)
         if self.command.purpose == "admin" and self.command.role not in {"student", "instructor", "admin"}:
             raise BadRequestError("Invalid role")
         if self.command.purpose == "cohort" and self.command.role != "student":
@@ -397,8 +400,8 @@ class _Context:
     def _target_state(self):
         person, profile = self.person_rows[self.target_id], self.profile_rows[self.target_id]
         return (
-            self.target.display_name,
-            self.target.is_active,
+            cast(Party, self.target).display_name,
+            cast(Party, self.target).is_active,
             person.first_name,
             person.last_name,
             profile.status,
@@ -474,8 +477,8 @@ class _Context:
                 profile_status=self._initial_identity_policy.profile_status,
                 profile_avatar_path=None,
                 profile_prefs={},
-                created_at=self.now,
-                updated_at=self.now,
+                created_at=cast(datetime, self.now),
+                updated_at=cast(datetime, self.now),
             ),
         )
         # Re-resolve real rows in this Session; returned facts confer no authority.
@@ -513,8 +516,8 @@ class _Context:
 
     def synchronize_aliases(self):
         self.require()
-        canonical = normalize_email(self.target.email)
-        self.target.email = canonical
+        canonical = normalize_email(cast(Party, self.target).email)
+        cast(Party, self.target).email = canonical
         if self.credentials:
             # Preserve native unordered compatible-alias/fallback selection.
             ordered = self.db.scalars(
@@ -538,17 +541,18 @@ class _Context:
         self.require()
         # Additive provisioning from existing settings; preserve custom rows and names.
         missing_role_ids = {
-            slug: uuid4() for slug in sorted(self.policy.role_provisioning) if slug not in self.roles
+            slug: uuid4()
+            for slug in sorted(cast(InvitationIssuancePolicy, self.policy).role_provisioning) if slug not in self.roles
         }
         role_ids = tuple(row.id for row in self.roles.values()) + tuple(missing_role_ids.values())
         provision_missing_roles(
             self.db,
             tenant_id=self.tenant_id,
             catalog=tuple(RoleFact(row.id, row.tenant_id, row.slug, row.name) for row in self.roles.values()),
-            configured_names=self.policy.role_provisioning,
+            configured_names=cast(InvitationIssuancePolicy, self.policy).role_provisioning,
             missing_role_ids=missing_role_ids,
-            created_at=self.now,
-            updated_at=self.now,
+            created_at=cast(datetime, self.now),
+            updated_at=cast(datetime, self.now),
         )
         self.roles = {
             row.slug: row
@@ -564,14 +568,14 @@ class _Context:
             raise BadRequestError(f"invalid role: {role}")
         # UI closure is separate from strict generic existing-custom-role support.
         if self.command.purpose in {"admin", "cohort"}:
-            admitted = self.policy.role_admission.get(role, ())
+            admitted = cast(InvitationIssuancePolicy, self.policy).role_admission.get(role, ())
             if not self.actor_roles.intersection(admitted):
                 raise _Denied("role")
         role_id = self.roles[role].id
         ensure_grant(
             self.db,
             tenant_id=self.tenant_id,
-            party_id=self.target_id,
+            party_id=cast(UUID, self.target_id),
             role_id=role_id,
             new_grant_id=None,
             created_at=None,
@@ -621,13 +625,13 @@ class _Context:
         self._check_target()
         person, profile = self.person_rows[self.target_id], self.profile_rows[self.target_id]
         return InvitationAccountView(
-            self.target_id,
+            cast(UUID, self.target_id),
             self.tenant_id,
-            self.target.email,
+            cast(Party, self.target).email,
             person.first_name,
             person.last_name,
             profile.status,
-            self.target.is_active,
+            cast(Party, self.target).is_active,
         )
 
     def audit(self, result):
@@ -650,7 +654,7 @@ class _Context:
             self.db.refresh(self.credential_policies[credential_id], with_for_update=True)
             if self.credential_policies[credential_id].email != alias:
                 raise InvitationIssuanceError("invitation alias outcome differs")
-        if self.target.email != self.expected_email:
+        if cast(Party, self.target).email != self.expected_email:
             raise InvitationIssuanceError("invitation email outcome differs")
         if self._credential_state() != self.initial_credentials:
             raise InvitationIssuanceError("invitation changed credential security state")
@@ -686,7 +690,8 @@ class _Context:
                 used, expiry, digest = self.initial_invites[row.id]
                 expected_used = (
                     self.issued_at
-                    if self.token_row is not None and self.policy.replace_outstanding and used is None
+                    if (self.token_row is not None
+                        and cast(InvitationIssuancePolicy, self.policy).replace_outstanding and used is None)
                     else used
                 )
                 if (row.used_at, row.expires_at, row.token_hash) != (expected_used, expiry, digest):
@@ -887,17 +892,18 @@ class _OnboardingContext:
         self.root = db.get_transaction()
         self.tenant_id, self.digest, self.key = tenant_id, digest, key
         self.evidence = self._issued_evidence = None
-        self.applicant = None
+        self.applicant: Applicant | None = None
         self.tasks = []
-        self.target_id = None
+        self.target_id: UUID | None = None
         self.identity = None
         self.role_state = self.credential_ids = None
-        self.policy = None
+        self.original_roles: tuple[tuple[RoleFact, ...], tuple[GrantFact, ...]]
+        self.policy: InvitationIssuancePolicy | None = None
         self.invites = []
         self.initial_invites = {}
         self.token_row = self.token_digest = self.issued_at = self.expected_expiry = None
         self.audits = []
-        self.now = None
+        self.now: datetime | None = None
 
     def require(self):
         if (
@@ -971,7 +977,7 @@ class _OnboardingContext:
                 task.status, task.completed_at = "done", self.now
         self.db.flush()
         self.task_state = self._task_state()
-        a = self.applicant
+        a = cast(Applicant, self.applicant)
         self.expected_status = a.status
         if a.status != "onboarding" or a.cohort_id is None:
             return OnboardingCompletion(a, False, None)
@@ -997,8 +1003,8 @@ class _OnboardingContext:
             catalog=catalog,
             configured_names=self.onboarding_policy.role_provisioning,
             missing_role_ids={slug: uuid4() for slug in self.onboarding_policy.role_provisioning},
-            created_at=self.now,
-            updated_at=self.now,
+            created_at=cast(datetime, self.now),
+            updated_at=cast(datetime, self.now),
         )
         role = next((row for row in catalog if row.slug == self.onboarding_policy.global_role), None)
         if role is None:
@@ -1006,11 +1012,11 @@ class _OnboardingContext:
         grant = store.ensure_grant(
             self.db,
             tenant_id=self.tenant_id,
-            party_id=self.target_id,
+            party_id=cast(UUID, self.target_id),
             role_id=role.id,
             new_grant_id=uuid4(),
-            created_at=self.now,
-            updated_at=self.now,
+            created_at=cast(datetime, self.now),
+            updated_at=cast(datetime, self.now),
         )
         self.role_state = self._roles()
         if (
@@ -1019,7 +1025,9 @@ class _OnboardingContext:
             or set(self.role_state[1]) != {*self.original_roles[1], grant}
         ):
             raise InvitationIssuanceError("onboarding changed unrelated roles or grants")
-        self.credential_ids = store.credential_member_ids(self.db, tenant_id=self.tenant_id, party_id=self.target_id)
+        self.credential_ids = store.credential_member_ids(
+            self.db, tenant_id=self.tenant_id, party_id=cast(UUID, self.target_id)
+        )
         self.invites = list(
             self.db.scalars(
                 select(AccountToken)
@@ -1059,7 +1067,7 @@ class _OnboardingContext:
     def _identity_state(self):
         from app.services import canonical_identity_store as store
 
-        party = store.lock_parties(self.db, tenant_id=self.tenant_id, party_ids=(self.target_id,))
+        party = store.lock_parties(self.db, tenant_id=self.tenant_id, party_ids=(cast(UUID, self.target_id),))
         custom_fields = (
             self.db.scalars(
                 select(Party)
@@ -1072,8 +1080,8 @@ class _OnboardingContext:
         )
         return (
             party,
-            store.lock_person(self.db, tenant_id=self.tenant_id, party_id=self.target_id),
-            store.lock_profile(self.db, tenant_id=self.tenant_id, party_id=self.target_id),
+            store.lock_person(self.db, tenant_id=self.tenant_id, party_id=cast(UUID, self.target_id)),
+            store.lock_profile(self.db, tenant_id=self.tenant_id, party_id=cast(UUID, self.target_id)),
             deepcopy(custom_fields),
         )
 
@@ -1082,7 +1090,7 @@ class _OnboardingContext:
 
         return (
             store.lock_roles(self.db, tenant_id=self.tenant_id),
-            store.lock_grants(self.db, tenant_id=self.tenant_id, party_ids=(self.target_id,)),
+            store.lock_grants(self.db, tenant_id=self.tenant_id, party_ids=(cast(UUID, self.target_id),)),
         )
 
     def _audit(self, action, entity_type, entity_id, details):
@@ -1123,13 +1131,13 @@ class _OnboardingContext:
         self.db.refresh(self.applicant, with_for_update=True)
         self._check_bearer()
         self.tasks = onboarding._lock_tasks(self.db, tenant_id=self.tenant_id, applicant_id=self.applicant_id)
-        if self._task_state() != self.task_state or self.applicant.status != self.expected_status:
+        if self._task_state() != self.task_state or cast(Applicant, self.applicant).status != self.expected_status:
             raise InvitationIssuanceError("onboarding task or applicant state changed")
         if self.target_id is not None:
             if self._identity_state() != self.identity or self._roles() != self.role_state:
                 raise InvitationIssuanceError("onboarding identity or grant state changed")
             if (
-                store.credential_member_ids(self.db, tenant_id=self.tenant_id, party_id=self.target_id)
+                store.credential_member_ids(self.db, tenant_id=self.tenant_id, party_id=cast(UUID, self.target_id))
                 != self.credential_ids
             ):
                 raise InvitationIssuanceError("onboarding credential membership changed")
@@ -1156,7 +1164,8 @@ class _OnboardingContext:
                     used, expiry, digest = self.initial_invites[row.id]
                     expected = (
                         self.issued_at
-                        if self.token_row is not None and self.policy.replace_outstanding and used is None
+                        if (self.token_row is not None
+                        and cast(InvitationIssuancePolicy, self.policy).replace_outstanding and used is None)
                         else used,
                         expiry,
                         digest,

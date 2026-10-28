@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from dotmac_learning import (
@@ -18,6 +18,7 @@ from dotmac_learning import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import JsonValue
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -481,7 +482,7 @@ def activity(
         # is not worked around here.
         existing = get_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
         if existing is not None:
-            only_ext_ids = list(existing.question_ext_ids)
+            only_ext_ids = list(cast("list[str]", existing.question_ext_ids))
             pinned_version_id = existing.bank_version_id
         else:
             version_id, all_ext_ids = bank_authoring.activity_ext_ids(
@@ -496,7 +497,7 @@ def activity(
                 count=act.question_count,
                 bank_version_id=version_id,
             )
-            only_ext_ids = list(attempt.question_ext_ids)
+            only_ext_ids = list(cast("list[str]", attempt.question_ext_ids))
             pinned_version_id = attempt.bank_version_id if attempt.bank_version_id is not None else version_id
     _version_id, questions = bank_authoring.activity_sitting(
         db,
@@ -537,7 +538,7 @@ async def submit(
     attempt_pin = act.bank_version_id
     if act.question_count is not None:
         attempt = get_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
-        only_ext_ids = list(attempt.question_ext_ids) if attempt is not None else []
+        only_ext_ids = list(cast("list[str]", attempt.question_ext_ids)) if attempt is not None else []
         if attempt is not None and attempt.bank_version_id is not None:
             attempt_pin = attempt.bank_version_id
     qs = questions_for(
@@ -549,7 +550,7 @@ async def submit(
         tenant_id=tenant.id,
         person_id=person.id,
         activity=act,
-        answers=answers,
+        answers=cast("dict[str, JsonValue]", answers),
         only_ext_ids=only_ext_ids,
     )
     if act.question_count is not None:

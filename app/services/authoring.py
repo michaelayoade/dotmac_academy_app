@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from html import escape as _html_escape
 from html.parser import HTMLParser
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, cast
 from uuid import UUID
 
 import dotmac_learning as learning
@@ -397,7 +397,7 @@ def create_course(
                 certificate_validity_days=defaults.certificate_validity_days,
                 prerequisite_composition=defaults.prerequisite_default_composition,
                 listed=(
-                    settings_store.effective(db, require_store=True)["learning_default_course_listed"]
+                    cast(bool, settings_store.effective(db, require_store=True)["learning_default_course_listed"])
                     if listed is None
                     else listed
                 ),

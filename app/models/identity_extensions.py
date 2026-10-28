@@ -6,6 +6,7 @@ does not register models or activate runtime readers.
 """
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -19,7 +20,7 @@ class IdentityExtensionBase(DeclarativeBase):
 
 
 for _model in (Tenant, Party, PartyPerson, UserCredential):
-    _model.__table__.to_metadata(IdentityExtensionBase.metadata, schema="public")
+    cast(sa.Table, _model.__table__).to_metadata(IdentityExtensionBase.metadata, schema="public")
 
 
 class AcademyAccountProfile(IdentityExtensionBase):

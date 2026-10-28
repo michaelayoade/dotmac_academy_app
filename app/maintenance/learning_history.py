@@ -1558,7 +1558,7 @@ def _encoded_rows(snapshot, acks):
 
 
 def _incoming_shape(connection, catalogs, oids):
-    expected = {name: [] for name in _SOURCE_NAMES}
+    expected: dict[str, list[tuple[object, ...]]] = {name: [] for name in _SOURCE_NAMES}
     for spec in _TABLES:
         for (source, parent, target, delete), constraint_name in zip(
             spec.foreign_keys, _FOREIGN_KEY_NAMES[spec.name], strict=True

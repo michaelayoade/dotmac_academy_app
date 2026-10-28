@@ -9,6 +9,7 @@ a replacement, and never the session cookie (roadmap P1 item 10).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -49,7 +50,7 @@ def mint_feed_token(db: Session, *, tenant_id: UUID, person_id: UUID, now: datet
             person_id=person_id,
             kind=ICAL_TOKEN_KIND,
             token_hash=hash_token(raw),
-            expires_at=now + timedelta(days=policy["ical_feed_token_ttl_days"]),
+            expires_at=now + timedelta(days=cast(int, policy["ical_feed_token_ttl_days"])),
         )
     )
     db.flush()

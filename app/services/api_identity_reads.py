@@ -15,7 +15,7 @@ from app.models.identity_extensions import AcademyAccountProfile
 @dataclass(frozen=True, slots=True)
 class ApiPersonView:
     id: UUID
-    email: str
+    email: str | None
     first_name: str
     last_name: str
 
@@ -218,7 +218,7 @@ def contact_selection(tenant_id):
 def person_contacts(db, *, tenant_id, person_ids):
     """Bounded, tenant/id-filtered batches; preserve inactive/no-profile contacts."""
     ids = tuple(dict.fromkeys(person_ids))
-    result = {}
+    result: dict[UUID, ApiPersonView] = {}
     for offset in range(0, len(ids), 500):
         rows = db.execute(contact_selection(tenant_id).where(Party.id.in_(ids[offset:offset + 500]))).all()
         result.update((row.id, ApiPersonView(row.id, row.email, row.first_name, row.last_name)) for row in rows)

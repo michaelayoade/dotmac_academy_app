@@ -24,7 +24,7 @@ def enqueue_email(
     tenant_id: UUID,
     idempotency_key: str,
     kind: str,
-    recipient: str,
+    recipient: str | None,
     subject: str,
     html_body: str,
     text_body: str | None = None,

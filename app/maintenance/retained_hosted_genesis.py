@@ -24,14 +24,16 @@ import sys
 import tempfile
 import time
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import sqlalchemy as sa
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine, RootTransaction
 from sqlalchemy.pool import NullPool
 
 _FIELDS = (
@@ -64,8 +66,9 @@ def _need(condition: bool) -> None:
         raise HostedGenesisRefused("Academy hosted disposable resource refused")
 
 
-def _data(settings: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
+def _data(settings: object) -> tuple[tuple[str, object], ...]:
     _need(type(settings) is dict and set(settings) == {_PREFIX + k for k in _FIELDS})
+    settings = cast(dict[str, object], settings)
     pairs = tuple((k, settings[_PREFIX + k]) for k in _FIELDS)
     values = dict(pairs)
     _need(type(values["target_database"]) is str and bool(_ID.fullmatch(values["target_database"])))
@@ -104,7 +107,7 @@ def declaration_from_settings(settings: Mapping[str, object]) -> HostedGenesisDe
     purposes = tuple((p, _data(settings[p])) for p in _PURPOSES)
     _need(len({dict(v)["target_database"] for _, v in purposes}) == 3)
     _need(all(dict(v)["service_image"] == image for _, v in purposes))
-    return HostedGenesisDeclaration(image, platform, purposes)
+    return HostedGenesisDeclaration(cast(str, image), cast(str, platform), purposes)
 
 
 class _Handle:
@@ -117,7 +120,7 @@ class _Handle:
         raise TypeError("Hosted contexts are not serializable")
 
 
-_ISSUED: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_ISSUED: weakref.WeakKeyDictionary[_Handle, _Owner] = weakref.WeakKeyDictionary()
 
 
 def _private_directory(path: Path) -> tuple[int, int]:
@@ -140,7 +143,7 @@ def _private_file(path: Path, expected: bytes) -> tuple[int, int]:
 
 
 class _Owner:
-    def __init__(self, declaration: HostedGenesisDeclaration, purpose: str):
+    def __init__(self, declaration: HostedGenesisDeclaration, purpose: str) -> None:
         # Reconstruct even exact-type dataclasses: frozen is not validation.
         _need(type(declaration) is HostedGenesisDeclaration and purpose in _PURPOSES)
         rebuilt = declaration_from_settings(
@@ -169,27 +172,30 @@ class _Owner:
         )
         docker = shutil.which("docker")
         _need(docker is not None and Path(docker).is_absolute())
-        self.docker = str(Path(docker).resolve(strict=True))
+        self.docker = str(Path(cast(str, docker)).resolve(strict=True))
         self.declaration = rebuilt
         self.expected = MappingProxyType(dict(dict(rebuilt.purposes)[purpose]))
         self.poisoned = False
         self.pid = os.getpid()
-        self.container = None
+        # Resources remain optional for partial-setup cleanup. Phase-method
+        # casts reflect setup, then replay/coordinator acquisition, then bind_root;
+        # the existing identity/continuity checks still enforce that sequence.
+        self.container: str | None = None
         self.name = "academy-genesis-" + secrets.token_hex(16)
-        self.home = None
-        self.engine = None
-        self.control_engine = None
-        self.control = None
-        self.connection = None
-        self.root = None
-        self.xid = None
-        self.watch = None
-        self.backends = {}
+        self.home: Path | None = None
+        self.engine: Engine | None = None
+        self.control_engine: Engine | None = None
+        self.control: Connection | None = None
+        self.connection: Connection | None = None
+        self.root: RootTransaction | None = None
+        self.xid: str | None = None
+        self.watch: int | None = None
+        self.backends: dict[int, datetime] = {}
         self.logs = b""
-        self.events = ()
+        self.events: tuple[()] | tuple[tuple[bytes, ...], tuple[bytes, ...]] = ()
         self.sealed = False
         self.replayed = False
-        self.root_listeners = []
+        self.root_listeners: list[tuple[Connection, str, Callable[..., None]]] = []
 
     def command(self, *argv: str, limit: int = 65536) -> bytes:
         result = subprocess.run(  # noqa: S603 - fixed Docker argv; no shell, environment dump or stderr
@@ -212,7 +218,7 @@ class _Owner:
             "{{json .HostConfig.Privileged}} {{json .HostConfig.ReadonlyRootfs}} "
             "{{json .NetworkSettings.Networks}}"
         )
-        raw = self.command("inspect", "--format", template, self.container).decode("ascii")
+        raw = self.command("inspect", "--format", template, cast(str, self.container)).decode("ascii")
         decoder = json.JSONDecoder()
         facts = []
         while raw.strip():
@@ -368,7 +374,7 @@ class _Owner:
         _need(
             all(
                 line.split()[:3]
-                == [b"connect", self.identity[14]["none"]["NetworkID"].encode(), self.container.encode()]
+                == [b"connect", self.identity[14]["none"]["NetworkID"].encode(), cast(str, self.container).encode()]
                 for line in self.events[1]
             )
         )
@@ -393,27 +399,27 @@ class _Owner:
         for _, pairs in self.declaration.purposes:
             database = dict(pairs)["target_database"]
             self.control.exec_driver_sql(f'ALTER DATABASE "{database}" OWNER TO app_admin')
-            engine = self._engine(database)
+            engine = self._engine(cast(str, database))
             try:
                 with self._connect(engine).execution_options(isolation_level="AUTOCOMMIT") as bootstrap:
                     bootstrap.exec_driver_sql("GRANT ALL ON SCHEMA public TO app_admin")
             finally:
                 engine.dispose()
-        self.engine = self._engine(self.expected["target_database"])
+        self.engine = self._engine(cast(str, self.expected["target_database"]))
         self._live()
 
-    def _engine(self, database):
+    def _engine(self, database: str) -> Engine:
         # No DSN is accepted or returned, no runtime role can authenticate.
         url = sa.URL.create("postgresql+psycopg", username="postgres", password=self.secret.decode(), database=database)
         return sa.create_engine(
             url,
-            connect_args={"host": str(self.home / "socket"), "connect_timeout": 5},
+            connect_args={"host": str(cast(Path, self.home) / "socket"), "connect_timeout": 5},
             poolclass=NullPool,
             hide_parameters=True,
             echo=False,
         )
 
-    def _connect(self, engine):
+    def _connect(self, engine: Engine) -> Connection:
         connection = engine.connect()
         try:
             pid, started = connection.execute(
@@ -431,7 +437,7 @@ class _Owner:
 
     def _server_logs(self):
         result = subprocess.run(  # noqa: S603 - bounded owner-only server diagnostics, never emitted
-            (self.docker, "logs", self.container),
+            (self.docker, "logs", cast(str, self.container)),
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -440,7 +446,7 @@ class _Owner:
         _need(len(result.stdout) <= 1048576)
         return result.stdout
 
-    def _events(self):
+    def _events(self) -> tuple[tuple[bytes, ...], tuple[bytes, ...]]:
         # Docker retains only 256 historical events. Initial create/start are
         # mandatory sentinels: eviction/loss can never reset our baseline.
         # Container filtering does NOT match network Actor.Attributes.container;
@@ -459,12 +465,12 @@ class _Owner:
             "--until",
             end,
             "--filter",
-            "container=" + self.container,
+            "container=" + cast(str, self.container),
             "--format",
             projected,
         )
         network_projection = (
-            '{{if eq (index .Actor.Attributes "container") "' + self.container + '"}}'
+            '{{if eq (index .Actor.Attributes "container") "' + cast(str, self.container) + '"}}'
             '{{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "container"}} {{.TimeNano}}{{end}}'
         )
         networks = self.command(
@@ -485,7 +491,7 @@ class _Owner:
             action, network_id, container_id, timestamp = fields
             _need(re.fullmatch(rb"[a-z_]+", action) is not None)
             _need(re.fullmatch(rb"[a-f0-9]{64}", network_id) is not None)
-            _need(container_id == self.container.encode("ascii"))
+            _need(container_id == cast(str, self.container).encode("ascii"))
             _need(timestamp.isdigit() and int(timestamp) > 0)
         return (
             tuple(line for line in containers.splitlines() if line.strip()),
@@ -501,10 +507,10 @@ class _Owner:
         self.watch = fd
         mask = 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800
         for path in (
-            self.home,
-            self.home / "control",
-            self.home / "socket",
-            self.home / "data",
+            cast(Path, self.home),
+            cast(Path, self.home) / "control",
+            cast(Path, self.home) / "socket",
+            cast(Path, self.home) / "data",
             self.hba,
             self.password,
             *(p for p, _ in self.configuration),
@@ -513,20 +519,20 @@ class _Owner:
 
     def _live(self):
         _need(not self.poisoned and os.getpid() == self.pid)
-        _need(not select.select([self.watch], [], [], 0)[0])
+        _need(not select.select([cast(int, self.watch)], [], [], 0)[0])
         _need(self.inspect() == self.identity)
         _need(all(not path.is_symlink() and path.read_bytes() == data for path, data in self.configuration))
-        _need(_private_directory(self.home) == self.home_identity)
+        _need(_private_directory(cast(Path, self.home)) == self.home_identity)
         for name, identity in self.dirs.items():
-            _need(_private_directory(self.home / name) == identity)
+            _need(_private_directory(cast(Path, self.home) / name) == identity)
         _need((_private_file(self.hba, _HBA.encode()), _private_file(self.password, self.secret)) == self.file_ids)
-        socket = (self.home / "socket/.s.PGSQL.5432").lstat()
+        socket = (cast(Path, self.home) / "socket/.s.PGSQL.5432").lstat()
         _need(stat.S_ISSOCK(socket.st_mode) and socket.st_uid == os.getuid() and stat.S_IMODE(socket.st_mode) == 0o700)
         _need((socket.st_dev, socket.st_ino) == self.socket_identity)
         _need(self._events() == self.events)
         logs = self._server_logs()
         _need(logs.startswith(self.logs))
-        authentications = {}
+        authentications: dict[tuple[int, bytes], int] = {}
         for line in logs[len(self.logs) :].splitlines():
             # Failed authentication is unexpected access too. Logs never leave
             # the owner and statements are disabled at PostgreSQL itself.
@@ -534,28 +540,39 @@ class _Owner:
                 match = re.match(rb"([0-9]+) ", line)
                 _need(match is not None and int(match[1]) in self.backends)
                 kind = b"authorized" if b"connection authorized:" in line else b"authenticated"
-                key = (int(match[1]), kind)
+                key = (int(cast(re.Match[bytes], match)[1]), kind)
                 authentications[key] = authentications.get(key, 0) + 1
                 _need(authentications[key] == 1)
             _need(b"FATAL:" not in line and b"PANIC:" not in line)
         # Keep original prefix so disappearance/truncation cannot reset audit.
         _need(
-            self.control.scalar(sa.text("SELECT system_identifier::text FROM pg_catalog.pg_control_system()"))
+            cast(Connection, self.control).scalar(
+                sa.text("SELECT system_identifier::text FROM pg_catalog.pg_control_system()")
+            )
             == self.system
         )
-        _need(self.control.scalar(sa.text("SELECT pg_catalog.pg_postmaster_start_time()")) == self.postmaster)
-        rows = self.control.execute(
-            sa.text("SELECT pid,backend_start FROM pg_catalog.pg_stat_activity WHERE backend_type='client backend'")
-        ).all()
+        _need(
+            cast(Connection, self.control).scalar(sa.text("SELECT pg_catalog.pg_postmaster_start_time()"))
+            == self.postmaster
+        )
+        rows = (
+            cast(Connection, self.control)
+            .execute(
+                sa.text("SELECT pid,backend_start FROM pg_catalog.pg_stat_activity WHERE backend_type='client backend'")
+            )
+            .all()
+        )
         _need(all(self.backends.get(pid) == started for pid, started in rows))
-        _need(self.control.scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_prepared_xacts")) == 0)
-        _need(self.control.scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_replication_slots")) == 0)
-        _need(self.control.scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_subscription")) == 0)
+        _need(cast(Connection, self.control).scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_prepared_xacts")) == 0)
+        _need(
+            cast(Connection, self.control).scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_replication_slots")) == 0
+        )
+        _need(cast(Connection, self.control).scalar(sa.text("SELECT count(*) FROM pg_catalog.pg_subscription")) == 0)
         # pg_roles masks every password as ********, including absent ones.
         # Only the owned privileged control channel may inspect this boolean;
         # password material never leaves PostgreSQL.
         _need(
-            self.control.scalar(
+            cast(Connection, self.control).scalar(
                 sa.text(
                     "SELECT count(*) FROM pg_catalog.pg_authid "
                     "WHERE rolname = ANY(:roles) AND rolpassword IS NOT NULL"
@@ -564,13 +581,17 @@ class _Owner:
             )
             == 0
         )
-        _need(self.control.scalar(sa.text("SELECT current_setting('listen_addresses')")) == "")
-        rules = self.control.execute(
-            sa.text(
-                "SELECT type,database,user_name,address,auth_method,error "
-                "FROM pg_catalog.pg_hba_file_rules ORDER BY rule_number"
+        _need(cast(Connection, self.control).scalar(sa.text("SELECT current_setting('listen_addresses')")) == "")
+        rules = (
+            cast(Connection, self.control)
+            .execute(
+                sa.text(
+                    "SELECT type,database,user_name,address,auth_method,error "
+                    "FROM pg_catalog.pg_hba_file_rules ORDER BY rule_number"
+                )
             )
-        ).all()
+            .all()
+        )
         _need(
             tuple(tuple(r) for r in rules)
             == (
@@ -579,14 +600,14 @@ class _Owner:
                 ("host", ["all"], ["all"], "all", "reject", None),
             )
         )
-        _need(not select.select([self.watch], [], [], 0)[0])
+        _need(not select.select([cast(int, self.watch)], [], [], 0)[0])
 
     @contextmanager
-    def replay_connection(self):
+    def replay_connection(self) -> Iterator[Connection]:
         _need(not self.sealed and self.connection is None)
         try:
             self._live()
-            with self._connect(self.engine) as connection:
+            with self._connect(cast(Engine, self.engine)) as connection:
                 connection.exec_driver_sql("SET ROLE app_admin")
                 connection.commit()  # bootstrap only: never the coordinator root
                 yield connection
@@ -598,12 +619,12 @@ class _Owner:
             raise
 
     @contextmanager
-    def coordinator_connection(self):
+    def coordinator_connection(self) -> Iterator[Connection]:
         _need(not self.sealed and self.connection is None and self.replayed)
         self.sealed = True
         try:
             self._live()
-            self.connection = self._connect(self.engine)
+            self.connection = self._connect(cast(Engine, self.engine))
             self.connection.exec_driver_sql("SET ROLE app_admin")
             self.connection.commit()  # before caller can begin its sole root
             yield self.connection
@@ -644,13 +665,21 @@ class _Owner:
                 sa.text("SELECT pg_catalog.set_config('application_name',:challenge,true)"), {"challenge": challenge}
             )
             pid = connection.scalar(sa.text("SELECT pg_catalog.pg_backend_pid()"))
-            observed = self.control.execute(
-                sa.text(
-                    "SELECT datname,application_name,backend_xid::text FROM pg_catalog.pg_stat_activity WHERE pid=:pid"
-                ),
-                {"pid": pid},
-            ).one()
-            _need(tuple(observed) == (self.expected["target_database"], challenge, str(int(self.xid) % (2**32))))
+            observed = (
+                cast(Connection, self.control)
+                .execute(
+                    sa.text(
+                        "SELECT datname,application_name,backend_xid::text "
+                        "FROM pg_catalog.pg_stat_activity WHERE pid=:pid"
+                    ),
+                    {"pid": pid},
+                )
+                .one()
+            )
+            _need(
+                tuple(observed)
+                == (self.expected["target_database"], challenge, str(int(cast(str, self.xid)) % (2**32)))
+            )
             self.backend = pid
             self.challenge = challenge
             handle = object.__new__(_Handle)
@@ -661,10 +690,14 @@ class _Owner:
             self.poisoned = True
             raise
 
-    def verify(self, connection, bindings):
+    def verify(self, connection: Connection, bindings: Mapping[str, object] | tuple[tuple[str, object], ...]) -> None:
         try:
             self._live()
-            _need(connection is self.connection and connection.get_transaction() is self.root and self.root.is_active)
+            _need(
+                connection is self.connection
+                and connection.get_transaction() is self.root
+                and cast(RootTransaction, self.root).is_active
+            )
             _need(not connection.closed and not connection.invalidated and connection.get_nested_transaction() is None)
             _need(dict(bindings) == self.expected)
             result = connection.execute(
@@ -686,13 +719,21 @@ class _Owner:
                     self.challenge,
                 )
             )
-            observed = self.control.execute(
-                sa.text(
-                    "SELECT datname,application_name,backend_xid::text FROM pg_catalog.pg_stat_activity WHERE pid=:pid"
-                ),
-                {"pid": self.backend},
-            ).one()
-            _need(tuple(observed) == (self.expected["target_database"], self.challenge, str(int(self.xid) % (2**32))))
+            observed = (
+                cast(Connection, self.control)
+                .execute(
+                    sa.text(
+                        "SELECT datname,application_name,backend_xid::text "
+                        "FROM pg_catalog.pg_stat_activity WHERE pid=:pid"
+                    ),
+                    {"pid": self.backend},
+                )
+                .one()
+            )
+            _need(
+                tuple(observed)
+                == (self.expected["target_database"], self.challenge, str(int(cast(str, self.xid)) % (2**32)))
+            )
         except BaseException as error:
             self.poisoned = True
             if not isinstance(error, Exception):

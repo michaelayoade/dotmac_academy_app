@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
-from dotmac_kernel.credential_lifecycle import CredentialAssignmentError, CredentialPolicyViolation, CredentialSnapshot
+from dotmac_kernel.credential_lifecycle import (
+    CredentialAssignmentError,
+    CredentialCreateAbsentV1,
+    CredentialPolicyViolation,
+    CredentialSnapshot,
+)
 from dotmac_kernel.identity_provisioning import BootstrapPolicyV1, BootstrapRoleV1
 from dotmac_kernel.identity_storage import NewPersonValues
 from sqlalchemy import select, text
@@ -267,7 +273,7 @@ class _Operation:
         self._person = values
         return values
 
-    def create_person(self, db, *, values):
+    def create_person(self, db, *, values: NewPersonValues):
         if values is not self._person or db.connection() is not self._connection:
             raise CredentialAssignmentError("bootstrap product person binding refused")
         create_person(db, values=AcademyPersonValues(
@@ -312,7 +318,7 @@ class _Operation:
             or command.target_subject.principal_kind != 'person'):
             raise CredentialAssignmentError("bootstrap product credential subject refused")
 
-    def observe_credential(self, connection, command):
+    def observe_credential(self, connection, command: CredentialCreateAbsentV1):
         self._bind_subject(command)
         if connection is not self._connection or command is not self._credential_command:
             raise CredentialAssignmentError("bootstrap product credential observation refused")
@@ -323,19 +329,25 @@ class _Operation:
                    p.email,p.failed_login_attempts,p.locked_until,p.lifecycle_version,p.reset_required
             FROM public.user_credentials c LEFT JOIN public.academy_credential_policies p ON p.credential_id=c.id
             WHERE c.party_id=:party OR c.id=:credential ORDER BY c.id
-        """), {'party': self._person.id,'credential': UUID(command.target_subject.credential_ref)}).mappings().all()
+        """), {
+            'party': cast(NewPersonValues, self._person).id,
+            'credential': UUID(command.target_subject.credential_ref),
+        }).mappings().all()
         if len(rows) != 1:
             raise CredentialAssignmentError("bootstrap product credential cohort differs")
         row = rows[0]
-        if (row['id'] != UUID(command.target_subject.credential_ref) or row['tenant_id'] != self._person.tenant_id
-            or row['party_id'] != self._person.id or row['credential_id'] != row['id']
-            or row['policy_tenant'] != self._person.tenant_id or row['email'] != self._person.email
+        if (row['id'] != UUID(command.target_subject.credential_ref)
+            or row['tenant_id'] != cast(NewPersonValues, self._person).tenant_id
+            or row['party_id'] != cast(NewPersonValues, self._person).id or row['credential_id'] != row['id']
+            or row['policy_tenant'] != cast(NewPersonValues, self._person).tenant_id
+            or row['email'] != cast(NewPersonValues, self._person).email
             or row['failed_login_attempts'] != 0 or row['locked_until'] is not None
             or type(row['lifecycle_version']) is not int or row['lifecycle_version'] != 0
             or row['reset_required'] is not False):
             raise CredentialAssignmentError("bootstrap product credential policy differs")
         return CredentialSnapshot(command.target_subject,row['password_hash'],0,
-                                  is_active=self._person.is_active,is_locked=False,reset_required=False)
+                                  is_active=cast(NewPersonValues, self._person).is_active,
+                                  is_locked=False,reset_required=False)
 
     def revalidate(self, connection):
         if (connection is not self._connection or _composition(connection) != self._configured

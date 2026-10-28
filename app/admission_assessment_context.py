@@ -13,11 +13,13 @@ import hmac
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from dotmac_kernel.audit import AuditEvent, write_audit_event
 from dotmac_kernel.transactions import (
+    ConflictSavepointState,
     claim_conflict_savepoint_commit,
     conflict_savepoint,
     conflict_savepoint_requires_rollback,
@@ -26,7 +28,7 @@ from dotmac_kernel.transactions import (
 from dotmac_learning import TransactionChanged
 from fastapi import Request
 from sqlalchemy import event, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.api.deps import require_tenant
 from app.models.admissions import Applicant
@@ -58,7 +60,14 @@ class AssessmentSubmission:
 
 # Neither Session.info nor a supplied context object establishes authority.
 # Root-end cleanup also releases Request, answer, digest and ORM references.
-_ROOTS: WeakKeyDictionary = WeakKeyDictionary()
+_ROOTS: WeakKeyDictionary[Session, list[_AssessmentContext]] = WeakKeyDictionary()
+
+# Heterogeneous mapped-column snapshots retain each column's actual value.
+_Snapshot = tuple[tuple[str, object], ...]
+_PinnedRow = (
+    Applicant | AuditEvent | Cohort | Track | CohortTrack | TenantEntranceDefaults
+    | QuestionBank | Question | OnboardingTask | EmailOutbox
+)
 _POLICY_KEYS = (
     "learning_missing_question_weight",
     "learning_exam_seconds_per_question",
@@ -87,26 +96,26 @@ class _AssessmentContext:
         self.root = self._root = db.get_transaction()
         self.connection = db.connection()
         self.physical = self.connection.connection.dbapi_connection
-        self.savepoint = current_conflict_savepoint(db).savepoint
+        self.savepoint = cast(ConflictSavepointState, current_conflict_savepoint(db)).savepoint
         self.tenant_id = self._tenant_id = tenant_id
         self.digest = digest
         self.form = form
         self.base_url = str(request.base_url).rstrip("/")
-        self.applicant = None
+        self.applicant: Applicant | None = None
         self.failed = False
         self.executing = False
         self.finished = False
         self.ended = False
-        self.pins = ()
-        self.pin = None
-        self.bank_version_id = None
-        self.inputs = ()
-        self.receipts = ()
-        self.path = ()
+        self.pins: tuple[tuple[_PinnedRow, _Snapshot], ...] = ()
+        self.pin: UUID | None = None
+        self.bank_version_id: UUID | None = None
+        self.inputs: tuple[tuple[_PinnedRow, _Snapshot], ...] = ()
+        self.receipts: tuple[tuple[AuditEvent, _Snapshot], ...] = ()
+        self.path: tuple[str, ...] = ()
         self.reason = ""
-        self.result = None
-        self.answers = None
-        self.policy = None
+        self.result: _Snapshot | None = None
+        self.answers: dict[str, list[str]] | None = None
+        self.policy: _Snapshot | None = None
 
     def require(self):
         try:
@@ -174,11 +183,11 @@ class _AssessmentContext:
             *self._question_conditions()
         )).all()))
         if (ids != self.question_ids or self._policy() != self.policy
-                or entrance_exam.resolve_bank_id(self.db, applicant=self.applicant) != self.bank_id
-                or entrance_exam.time_limit_minutes(self.db, applicant=self.applicant) != self.limit):
+                or entrance_exam.resolve_bank_id(self.db, applicant=cast(Applicant, self.applicant)) != self.bank_id
+                or entrance_exam.time_limit_minutes(self.db, applicant=cast(Applicant, self.applicant)) != self.limit):
             raise AssessmentSubmissionError("assessment paper or policy changed")
         self.require()  # Policy/row reads may have blocked.
-        a = self.applicant
+        a = cast(Applicant, self.applicant)
         if (
             a.tenant_id != self.tenant_id
             or a.id != self.applicant_id
@@ -214,7 +223,7 @@ class _AssessmentContext:
         self.reset_count = a.assessment_reset_count
         self.intake = (a.cohort_id, a.track_id)
         self.start = _values(a)
-        locked = []
+        locked: list[_PinnedRow] = []
         # Existing intake and default rows own their original policy; no new
         # placement, default, or bank is manufactured by this boundary.
         for model, conditions in (
@@ -279,7 +288,7 @@ class _AssessmentContext:
                 raise AssessmentSubmissionError("assessment grade facts changed")
 
     def _derive_path(self):
-        a = self.applicant
+        a = cast(Applicant, self.applicant)
         cohort = self.db.get(Cohort, a.cohort_id) if a.cohort_id else None
         threshold = cohort.auto_accept_threshold if cohort is not None else None
         below_action = cohort.auto_accept_below_action if cohort is not None else "waitlisted"
@@ -291,7 +300,7 @@ class _AssessmentContext:
             below_action=below_action,
         )
         self.reason = (
-            below_threshold_reason(a.assessment_score, threshold)
+            below_threshold_reason(cast(float, a.assessment_score), cast(float, threshold))
             if self.path == ("waitlisted",)
             else ""
         )
@@ -299,7 +308,7 @@ class _AssessmentContext:
     def _check_tasks(self):
         rows = self._tasks()
         prior = {dict(values)["key"]: dict(values) for values in self.prior_tasks.values()}
-        catalog = dict(self.policy)["onboarding_task_catalog"]
+        catalog = cast(tuple[tuple[str, str], ...], dict(cast(_Snapshot, self.policy))["onboarding_task_catalog"])
         expected_keys = set(prior) | ({key for key, _ in catalog} if self.path[-1:] == ("onboarding",) else set())
         if {row.key for row in rows} != expected_keys:
             raise AssessmentSubmissionError("assessment onboarding task inventory differs")
@@ -323,7 +332,7 @@ class _AssessmentContext:
                 raise AssessmentSubmissionError("assessment new task state differs")
 
     def _check_policy_result(self, raw):
-        a = self.applicant
+        a = cast(Applicant, self.applicant)
         if self.path == ("screened", "accepted", "onboarding"):
             cohort = self.db.get(Cohort, a.cohort_id)
             notes = (f"auto-accepted: entrance score {a.assessment_score:.0%} "
@@ -347,7 +356,7 @@ class _AssessmentContext:
             if kwargs != dict(tenant_id=self.tenant_id, actor_person_id=None, action="applicant.transition",
                               entity_type="applicant", entity_id=str(self.applicant_id), details=details):
                 raise AssessmentSubmissionError("assessment audit command differs")
-            if self.applicant.status != self.path[index]:
+            if cast(Applicant, self.applicant).status != self.path[index]:
                 raise AssessmentSubmissionError("assessment transition result differs")
             self._check_inputs()
             expected = dict(tenant_id=self.tenant_id, actor_type="system", actor_id="assessment_policy",
@@ -375,7 +384,7 @@ class _AssessmentContext:
         try:
             self._check_inputs()
             self.executing = True
-            a = self.applicant
+            a = cast(Applicant, self.applicant)
             selected = entrance_exam.sample_for(a, self.questions, entrance_exam.questions_per_category(self.db))
             self.answers = dict(a.assessment_answers or {})
             for q in selected:
@@ -544,7 +553,7 @@ async def submit_applicant_assessment(db, *, request):
         raise AssessmentSubmissionError("actual Request and Session required")
     form = await request.form()
     raw = str(form.get("token") or "")
-    digest = hash_token(raw)
+    digest: str | None = hash_token(raw)
     raw = None
     try:
         with conflict_savepoint(db):
@@ -568,7 +577,7 @@ async def submit_applicant_assessment(db, *, request):
             # Successful helper rollback removed all operation effects. Release
             # its guard so the caller may still commit its earlier flushed work.
             if (db.get_transaction() is root and db.is_active
-                    and not conflict_savepoint_requires_rollback(db, expected_root=root)):
+                    and not conflict_savepoint_requires_rollback(db, expected_root=cast(SessionTransaction, root))):
                 _ROOTS[db].remove(context)
                 if not _ROOTS[db]:
                     del _ROOTS[db]

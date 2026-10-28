@@ -107,7 +107,7 @@ def _fragment_lab_rows(connection, state):
 def _state_cohorts(raw):
     identifier = _LAB_COLUMNS.index("id")
     state_at = _LAB_COLUMNS.index("state")
-    cohorts = {state: frozenset() for state in _STATES}
+    cohorts: dict[str, frozenset[object]] = {state: frozenset() for state in _STATES}
     for row in raw:
         _require(row[state_at] in cohorts)
         cohorts[row[state_at]] |= {row[identifier]}

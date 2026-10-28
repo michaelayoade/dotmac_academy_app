@@ -55,6 +55,8 @@ class _Unsupported:
     emit = _refuse
     consume = _refuse
     record_event = _refuse
+    record_receipt = _refuse
+    find_receipt = _refuse
     validate = _refuse
 
 

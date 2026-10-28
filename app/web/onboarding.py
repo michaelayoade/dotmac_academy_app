@@ -13,6 +13,8 @@ header CSRF shim; each POST answers with a redirect back to the checklist.
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -60,7 +62,9 @@ def _finish_task_and_maybe_enroll(request: Request, db: Session, token: str, key
         if result.enrolled_now:
             base = str(request.base_url).rstrip("/")
             setup_url = f"{base}/accept-invite?token={result.invite_raw}" if result.invite_raw else None
-            applicant_email.send_enrollment_welcome(db, applicant=result.applicant, setup_url=setup_url)
+            applicant_email.send_enrollment_welcome(
+                db, applicant=cast(Applicant, result.applicant), setup_url=setup_url
+            )
     return _redirect(request, token)
 
 

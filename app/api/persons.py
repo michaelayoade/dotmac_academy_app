@@ -11,6 +11,7 @@ because RLS filters it out before the row reaches the application.
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -57,7 +58,9 @@ def create_person(
             db, request=request, email=str(payload.email), first_name=payload.first_name, last_name=payload.last_name
         )
     finally:
-        payload = request = db = None
+        payload = cast(PersonCreate, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
         del tenant, actor
 
 
@@ -94,5 +97,7 @@ def delete_person(
     try:
         operations.delete_person(db, request=request, person_id=person_id)
     finally:
-        person_id = request = db = None
+        person_id = cast(UUID, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
         del tenant, actor

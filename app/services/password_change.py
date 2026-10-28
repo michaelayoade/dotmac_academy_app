@@ -13,6 +13,7 @@ import hmac
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol, cast
 from uuid import uuid4
 
 from dotmac_kernel.audit import write_audit_event
@@ -54,6 +55,10 @@ class PasswordChangeResult:
     @property
     def ok(self) -> bool:
         return self.code == "changed"
+
+
+class _PasswordChangeRefusal(Protocol):
+    code: str
 
 
 class _Unauthenticated(Exception):
@@ -155,7 +160,11 @@ class _ChangePorts:
 
     def _authority(self, authority):
         self._bound()
-        if authority is not self.authority or self.authority is None or authority.command is not self.command:
+        if (
+            authority is not self.authority
+            or self.authority is None
+            or cast(CredentialAuthenticatedAccountPasswordChangeAuthorityV1, authority).command is not self.command
+        ):
             raise _error()
 
     def _valid_self(self, now, *, revoked=False):
@@ -274,7 +283,7 @@ class _ChangePorts:
         self.selected_subject = next(iter(self.members), None)
         self.initial = {subject: self._snapshot(subject) for subject in self.members}
         self.expected_aliases = {subject: rows[1].email for subject, rows in self.members.items()}
-        self.expected_email = self.party.email
+        self.expected_email = cast(Party, self.party).email
         self.authority = CredentialAuthenticatedAccountPasswordChangeAuthorityV1(
             command, "user", str(self.party_id), str(self.session_id), self.selected_subject
         )
@@ -282,14 +291,14 @@ class _ChangePorts:
 
     def _principal_state(self):
         return (
-            self.party.party_type,
-            self.party.is_active,
-            self.party.display_name,
-            self.person.first_name,
-            self.person.last_name,
-            self.profile.status,
-            self.profile.avatar_path,
-            deepcopy(self.profile.prefs),
+            cast(Party, self.party).party_type,
+            cast(Party, self.party).is_active,
+            cast(Party, self.party).display_name,
+            cast(PartyPerson, self.person).first_name,
+            cast(PartyPerson, self.person).last_name,
+            cast(AcademyAccountProfile, self.profile).status,
+            cast(AcademyAccountProfile, self.profile).avatar_path,
+            deepcopy(cast(AcademyAccountProfile, self.profile).prefs),
         )
 
     def _snapshot(self, subject):
@@ -309,7 +318,7 @@ class _ChangePorts:
             subject,
             credential.password_hash,
             policy.lifecycle_version,
-            is_active=self.party.is_active,
+            is_active=cast(Party, self.party).is_active,
             is_locked=policy.locked_until is not None and policy.locked_until > self.snapshot_at,
             reset_required=policy.reset_required,
         )
@@ -359,7 +368,7 @@ class _ChangePorts:
         self._authority(authority)
         if self.aliases_synced:
             raise _error()
-        canonical = normalize_email(self.party.email)
+        canonical = normalize_email(cast(Party, self.party).email)
         selected = next(
             (
                 subject
@@ -368,7 +377,7 @@ class _ChangePorts:
             ),
             next(iter(self.members)),
         )
-        self.party.email = canonical
+        cast(Party, self.party).email = canonical
         policy = self.members[selected][1]
         if policy.email != canonical:
             policy.email = canonical
@@ -536,7 +545,7 @@ class _ChangePorts:
         # pre-write unrevoked-cookie predicate or a fresh login eligibility rule.
         if (
             not self._valid_self(self.now, revoked=True)
-            or self.party.email != self.expected_email
+            or cast(Party, self.party).email != self.expected_email
             or self._principal_state() != self.principal_state
         ):
             raise _error()
@@ -629,7 +638,8 @@ class _ChangePorts:
 
     def clear_context(self):
         self.policy.clear()
-        self._bound_session = self.root = self.digest = self.authority = self.command = None
+        self._bound_session = self.root = self.digest = self.authority = None
+        self.command = cast(CredentialAuthenticatedAccountPasswordChangeV1, None)
         self.party = self.person = self.profile = self.session = None
         self.members = self.initial = self.written = self.expected_aliases = {}
         self._written_hashes = {}
@@ -646,7 +656,7 @@ class _ChangePorts:
     def _unsupported(self, *args, **kwargs):
         raise _error()
 
-    load = create = request_revocation = emit = consume = record_event = _unsupported
+    load = create = request_revocation = emit = consume = record_event = record_receipt = find_receipt = _unsupported
 
 
 def change_password(
@@ -686,7 +696,7 @@ def change_password(
                 recovery=ports,
                 audit=ports,
                 policy=ports.policy,
-                clock=lambda: ports.now,
+                clock=lambda: cast(datetime, ports.now),
             )
             owner.change_authenticated_account_password(ports.command, current_password, new_password, account=ports)
             db.flush()
@@ -696,7 +706,9 @@ def change_password(
         if isinstance(exc, _Unauthenticated) or (ports is not None and ports.forbidden):
             raise HTTPException(status_code=303, headers={"Location": "/login"}) from None
         if type(exc) is CredentialAuthenticatedAccountPasswordChangeRefused:
-            return PasswordChangeResult(exc.code, ports.policy.minimum if ports is not None else None)
+            return PasswordChangeResult(
+                cast(_PasswordChangeRefusal, exc).code, ports.policy.minimum if ports is not None else None
+            )
         raise CredentialAuthenticatedAccountPasswordChangeError("password change failed; no change was saved") from None
     finally:
         if ports is not None:

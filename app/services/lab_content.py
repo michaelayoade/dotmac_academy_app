@@ -336,7 +336,7 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             if "pass_threshold" in spec.limits
             else lab_settings()["learning_lab_pass_threshold"]
         )
-        pass_threshold = float(threshold)
+        pass_threshold = float(cast(float | int | str, threshold))
 
         template = db.scalars(
             select(LabTemplate)
