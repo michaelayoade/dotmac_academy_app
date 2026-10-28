@@ -12,8 +12,8 @@ from uuid import UUID, uuid4
 import pytest
 from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.audit_actions import active_audit_actions
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import event, select, text, update
 from starlette.requests import Request
@@ -46,7 +46,7 @@ def api_admin(current_account, app_client):
         a.admin.flush()
     a.admin.add(PartyRoleGrant(tenant_id=a.tid, party_id=a.pid, role_id=role.id))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     a.client = client_for(app_client, a.tenant.slug)
     a.headers = {"Authorization": f"Bearer {a.token}"}
@@ -325,7 +325,7 @@ def test_fault_each_core_audit_delete_stage_caught_outer_commit_preserves_prior_
     assert fired and a.db.get_transaction() is root
     assert a.db.scalar(text("SELECT current_setting('app.current_tenant')")) == str(a.tid)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Role, a.admin_role_id).name == "Unrelated prior work"
     assert a.db.get(Party, pid) is not None
     assert a.db.scalar(select(Party.id).where(Party.tenant_id == a.tid, Party.email == email)) is None
@@ -355,7 +355,7 @@ def test_created_person_exact_private_outcome_cannot_be_swapped(api_admin, tampe
                 store.delete_person(a.db, tenant_id=a.tid, party_id=result.id)
                 store.create_person(a.db, values=replace(values, id=uuid4()))
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(select(Party.id).where(Party.email == email)) is None
 
 
@@ -387,7 +387,7 @@ def test_delete_command_failure_cannot_commit_audit_or_partial_delete(api_admin,
     with pytest.raises(boundary.HumanOperationError):
         commands.delete_person(a.db, request=_request(a), person_id=pid)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, pid) is not None and a.db.get(Party, other) is not None
     assert a.db.scalar(select(AuditEvent.id).where(AuditEvent.action == "person.delete")) is None
 
@@ -410,7 +410,7 @@ def test_delete_same_uuid_reinsertion_and_copied_context_refuse(api_admin):
             )
             a.db.flush()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, pid) is not None
     with pytest.raises(boundary.HumanOperationError):
         with boundary.delete_api_person(a.db, request=_request(a), person_id=pid) as context:
@@ -456,7 +456,7 @@ def test_late_exact_or_index_collision_rolls_back_without_late_adoption(api_admi
     assert caught.value.status_code == 409 and caught.value.detail == "Email already registered"
     assert calls == 1
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     rows = a.db.scalars(select(Party).where(Party.email.in_((email, email.upper())))).all()
     assert len(rows) == 1 and rows[0].id == collided[0] and rows[0].display_name == "Target Person"
     assert a.db.scalar(select(AuditEvent.id).where(AuditEvent.action == "person.create")) is None
@@ -487,7 +487,7 @@ def test_natural_secondary_lock_wait_refuses_fresh_actor_changes(api_admin, rest
 
     def contender():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             ready.set()
             with pytest.raises(HTTPException) as caught:
@@ -499,7 +499,7 @@ def test_natural_secondary_lock_wait_refuses_fresh_actor_changes(api_admin, rest
         future = pool.submit(contender)
         assert ready.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             if restriction == "profile":
                 row.status = "suspended"
@@ -549,7 +549,7 @@ def test_actual_settings_initial_policy_snapshot_variants(api_admin, field, valu
             with pytest.raises(boundary.HumanOperationError):
                 commands.create_person(a.db, request=_request(a), email=email, first_name="A", last_name="B")
             a.db.commit()
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             assert a.db.scalar(select(Party.id).where(Party.email == email)) is None
     finally:
         a.db.commit()
@@ -798,7 +798,7 @@ def test_fixed_audit_receipt_uuid_tamper_latches_rollback(api_admin, operation):
             with pytest.raises(boundary.HumanOperationError):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, pid) is not None
     assert a.db.scalar(select(AuditEvent.id).where(AuditEvent.tenant_id == a.tid)) is None
 
@@ -825,7 +825,7 @@ def test_no_fixed_command_handoff_cannot_complete_by_manually_appending_audit(ap
             # Creation cannot audit without its actual generated outcome; deletion
             # cannot complete merely because a caller wrote the expected audit.
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, pid) is not None
     assert a.db.scalar(select(AuditEvent.id).where(AuditEvent.tenant_id == a.tid)) is None
 
@@ -896,7 +896,7 @@ def test_raw_matching_grant_without_fixed_command_never_reaches_audit_writer(api
                 context.audit()
     assert writer_calls == [] and a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Role, a.admin_role_id).name == "Unrelated grant prior work"
     assert a.db.scalar(select(PartyRoleGrant.id).where(PartyRoleGrant.party_id == pid)) is None
     assert a.db.scalar(select(AuditEvent.id).where(AuditEvent.tenant_id == a.tid)) is None
@@ -923,7 +923,7 @@ def test_genuine_grant_completion_requires_surviving_target_academy_inventory(ap
                 context.revalidate()
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Role, a.admin_role_id).name == "Unrelated inventory prior work"
     assert a.db.get(Party, pid).party_type == PartyType.person
     assert a.db.get(Party, pid).is_active is False

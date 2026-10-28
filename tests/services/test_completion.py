@@ -17,10 +17,10 @@ from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.learning_event import LearningEvent
-from app.models.person import Person
 from app.services import attempts
 from app.services.assessment import submit_activity
 from app.services.completion import recompute_completion
+from tests.conftest import make_person_party
 
 
 def _course_with_two_activities(db, tid):
@@ -36,7 +36,6 @@ def _course_with_two_activities(db, tid):
     db.flush()
     return c, a1, a2
 
-
 def _pass(db, tid, person, activity, frac=1.0):
     sub = Submission(tenant_id=tid, activity_id=activity.id, person_id=person.id,
                      answers={}, attempt_no=1)
@@ -46,10 +45,9 @@ def _pass(db, tid, person, activity, frac=1.0):
                  fraction=frac, passed=frac >= activity.pass_threshold, per_item=[], source="auto"))
     db.flush()
 
-
 def test_partial_then_full_completion(admin_session, tenant_a):
     tid = tenant_a.id
-    p = Person(tenant_id=tid, email="c@a.edu", first_name="C", last_name="X")
+    p = make_person_party(admin_session, tenant_id=tid, email="c@a.edu", first_name="C", last_name="X")
     admin_session.add(p)
     admin_session.flush()
     c, a1, a2 = _course_with_two_activities(admin_session, tid)
@@ -80,11 +78,10 @@ def test_partial_then_full_completion(admin_session, tenant_a):
     assert n == 1
     admin_session.rollback()
 
-
 def test_submit_activity_updates_completion(admin_session, tenant_a):
     """Slice 2c: grading a submission recomputes the completion record."""
     tid = tenant_a.id
-    p = Person(tenant_id=tid, email="d@a.edu", first_name="D", last_name="X")
+    p = make_person_party(admin_session, tenant_id=tid, email="d@a.edu", first_name="D", last_name="X")
     admin_session.add(p)
     admin_session.flush()
     c = Course(tenant_id=tid, slug="solo", title="Solo", discipline="networking",
@@ -112,13 +109,12 @@ def test_submit_activity_updates_completion(admin_session, tenant_a):
     assert rec.pct == 1.0
     admin_session.rollback()
 
-
 def test_concurrent_first_recomputes_create_one_completion_and_certificate(
     admin_engine, admin_session, tenant_a
 ):
     """First-creation serialization also covers callers without a Person lock."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="race@a.edu", first_name="Race", last_name="Learner")
+    person = make_person_party(admin_session, tenant_id=tid, email="race@a.edu", first_name="Race", last_name="Learner")
     admin_session.add(person)
     admin_session.flush()
     course, first, last = _course_with_two_activities(admin_session, tid)
@@ -156,9 +152,8 @@ def test_concurrent_first_recomputes_create_one_completion_and_certificate(
         tenant_id=tid, person_id=person_id, course_id=course_id, kind="certificate_earned"
     ).count() == 1
 
-
 def _learner_with_open_quiz(db, tid):
-    person = Person(tenant_id=tid, email="mixed@a.edu", first_name="Mixed", last_name="Learner")
+    person = make_person_party(db, tenant_id=tid, email="mixed@a.edu", first_name="Mixed", last_name="Learner")
     db.add(person)
     course, quiz, last = _course_with_two_activities(db, tid)
     bank = QuestionBank(tenant_id=tid, course_id=course.id, chapter_number=1, kind="chapter", version=1)
@@ -177,7 +172,6 @@ def _learner_with_open_quiz(db, tid):
     db.add(attempt)
     db.flush()
     return person, course, quiz, last, attempt
-
 
 # Retired in C1 with app/services/completion_aggregate.py: test_admission_and_certificate_writers_preserve_fk_consequences_without_deadlock
 # monkeypatched ensure_locked_completion/lock_existing_completion, which Learning

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import pytest
+from dotmac_kernel.models import PartyRoleGrant
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.course import Course
-from app.models.person import Person
 from app.models.platform_settings import PlatformSetting
-from app.models.rbac import PersonRole
 from app.services import email as email_mod
 from app.services.bootstrap import ensure_roles
 from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
 from app.services.settings_store import set_many
+from tests.conftest import make_person_credential, make_person_party
 
 
 @pytest.fixture(autouse=True)
@@ -31,32 +30,27 @@ def _clean_platform_settings(admin_session):
     admin_session.query(PlatformSetting).delete()
     admin_session.commit()
 
-
 def _seed_login(app_client, admin_session, tenant, email, role_slug):
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Ad", last_name="Min")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Ad", last_name="Min")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                       password_hash=hash_password("password1"))
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return h
 
-
 def test_student_forbidden(app_client, admin_session, tenant_a):
     h = _seed_login(app_client, admin_session, tenant_a, "stu@a.edu", "student")
     assert app_client.get("/admin/settings", headers=h).status_code == 403
 
-
 def test_instructor_forbidden(app_client, admin_session, tenant_a):
     h = _seed_login(app_client, admin_session, tenant_a, "ins@a.edu", "instructor")
     assert app_client.get("/admin/settings", headers=h).status_code == 403
-
 
 def test_admin_get_ok_password_not_echoed(app_client, admin_session, tenant_a):
     set_many(admin_session, {"smtp_password": "s3cr3t-stored"})
@@ -65,7 +59,6 @@ def test_admin_get_ok_password_not_echoed(app_client, admin_session, tenant_a):
     r = app_client.get("/admin/settings", headers=h)
     assert r.status_code == 200
     assert "s3cr3t-stored" not in r.text
-
 
 def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
@@ -82,7 +75,6 @@ def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
     again = app_client.get("/admin/settings", headers=h)
     assert "Renamed Academy" in again.text
 
-
 def test_admin_post_blank_password_keeps_existing(app_client, admin_session, tenant_a):
     set_many(admin_session, {"smtp_password": "keep-me", "smtp_host": "h.example"})
     admin_session.commit()
@@ -98,7 +90,6 @@ def test_admin_post_blank_password_keeps_existing(app_client, admin_session, ten
     )
     row = admin_session.get(PlatformSetting, "smtp_password")
     assert row is not None and row.value == "keep-me"
-
 
 def test_admin_post_rejects_negative_per_tenant_lab_limit(
     app_client, admin_session, tenant_a
@@ -123,7 +114,6 @@ def test_admin_post_rejects_negative_per_tenant_lab_limit(
         is None
     )
 
-
 def test_test_email_invokes_send_email(app_client, admin_session, tenant_a, monkeypatch):
     set_many(admin_session, {"smtp_host": "smtp.example"})
     admin_session.commit()
@@ -145,7 +135,6 @@ def test_test_email_invokes_send_email(app_client, admin_session, tenant_a, monk
     assert len(calls) == 1
     assert "Test email sent" in r.text
 
-
 def test_test_email_unconfigured_message(app_client, admin_session, tenant_a):
     # No smtp_host stored, and env default is empty in the test config.
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
@@ -154,7 +143,6 @@ def test_test_email_unconfigured_message(app_client, admin_session, tenant_a):
     r = app_client.post("/admin/settings/test-email", headers={**h, "x-csrf-token": csrf})
     assert r.status_code == 200
     assert "SMTP is not configured" in r.text
-
 
 def test_email_auto_on_pass_toggle_off_skips_send(admin_session, tenant_a, monkeypatch):
     """Wiring: with email_auto_on_pass=false, notify_score_if_first_pass skips."""
@@ -171,7 +159,7 @@ def test_email_auto_on_pass_toggle_off_skips_send(admin_session, tenant_a, monke
                    title="Ch1", pass_threshold=0.6)
     admin_session.add(act)
     admin_session.flush()
-    p = Person(tenant_id=tenant_a.id, email="learner@stu.edu", first_name="L", last_name="N")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="learner@stu.edu", first_name="L", last_name="N")
     admin_session.add(p)
     admin_session.flush()
     sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id, answers={},

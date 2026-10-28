@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_learning.models import Course
 from dotmac_learning.participation_models import Cohort, CohortTrack, CourseOffering, Enrollment, Track
 from sqlalchemy import delete, select, text
@@ -343,9 +344,8 @@ def test_resend_credential_present_and_strict_conflict_have_zero_mutations(issue
             pass
     root = a.db.get_transaction()
     a.db.commit()
-    from dotmac_kernel.db import set_tenant
 
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert root is not None and _state(a) == before
 
 
@@ -392,7 +392,6 @@ def test_token_can_be_consumed_by_real_canonical_claim_owner_without_issuer_hash
 
 @pytest.mark.parametrize("stage", ["learning", "audit", "enqueue"])
 def test_learning_audit_enqueue_failure_caught_outer_commit_restores_all_families(issuer, monkeypatch, stage):
-    from dotmac_kernel.db import set_tenant
 
     a = issuer
     cohort = _cohort(a.db, a.tid)
@@ -441,7 +440,7 @@ def test_learning_audit_enqueue_failure_caught_outer_commit_restores_all_familie
                 raise RuntimeError("injected enqueue failure")
     assert a.db.get_transaction() is root and a.db.is_active
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _state(a) == before
 
 
@@ -531,7 +530,6 @@ def test_actual_cookie_and_request_tenant_refuse_without_any_mutations(issuer, t
 def test_private_exact_context_cannot_be_copied_or_reused_across_root(issuer, attack):
     from dataclasses import replace
 
-    from dotmac_kernel.db import set_tenant
 
     a = issuer
     target = _person(a.db, tenant_id=a.tid, email="context@a.edu", first_name="Context", last_name="Target")
@@ -543,7 +541,7 @@ def test_private_exact_context_cannot_be_copied_or_reused_across_root(issuer, at
             context.command = replace(context.command)
         else:
             a.db.commit()
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
         with pytest.raises(issuance.InvitationIssuanceError):
             context.require()
     finally:
@@ -552,7 +550,6 @@ def test_private_exact_context_cannot_be_copied_or_reused_across_root(issuer, at
 
 
 def test_credential_membership_drift_before_token_issue_is_refused_and_rolled_back(issuer, monkeypatch):
-    from dotmac_kernel.db import set_tenant
 
     a = issuer
     target = _person(a.db, tenant_id=a.tid, email="membership@a.edu", first_name="Member", last_name="Target")
@@ -574,13 +571,12 @@ def test_credential_membership_drift_before_token_issue_is_refused_and_rolled_ba
     with pytest.raises(issuance.InvitationIssuanceError):
         _run(a, email=target.email, first_name="Ignored", last_name="Ignored", role="student")
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _state(a) == before
 
 
 @pytest.mark.parametrize("restriction", ["valid", "revocation", "expiry", "role", "status", "inactive"])
 def test_missing_resend_target_is_disclosed_only_after_fresh_actor_authorization(issuer, restriction):
-    from dotmac_kernel.db import set_tenant
     from fastapi import HTTPException
 
     from app.services.exceptions import NotFoundError
@@ -602,7 +598,7 @@ def test_missing_resend_target_is_disclosed_only_after_fresh_actor_authorization
         else:
             session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     before = _state(a)
     root = a.db.get_transaction()
     expected = NotFoundError if restriction == "valid" else HTTPException
@@ -617,7 +613,7 @@ def test_missing_resend_target_is_disclosed_only_after_fresh_actor_authorization
             assert caught.value.headers == {"Location": "/login"}
     assert a.db.is_active and a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _state(a) == before
 
 
@@ -669,7 +665,6 @@ def test_initial_policy_does_not_rewrite_reused_account(issuer, monkeypatch):
 
 @pytest.mark.parametrize("field", ["is_active", "status"])
 def test_new_invitation_state_tamper_rolls_back_after_caught_error(issuer, monkeypatch, field):
-    from dotmac_kernel.db import set_tenant
 
     a = issuer
     monkeypatch.setattr(settings_store.settings, "account_initial_is_active", False)
@@ -692,7 +687,7 @@ def test_new_invitation_state_tamper_rolls_back_after_caught_error(issuer, monke
         _run(a, email=email, first_name="Tamper", last_name="State", role="student")
     assert contexts and all(context._initial_identity_policy is None for context in contexts)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalars(select(Party).where(Party.email == email)).first() is None
     assert a.admin.scalars(select(Party).where(Party.email == email)).first() is None
 
@@ -717,7 +712,6 @@ def test_invitation_settings_change_after_creation_preserves_pin_and_next_reads_
 
 @pytest.mark.parametrize("restriction", ["inactive", "suspended", "revoked", "expired", "role"])
 def test_inactive_initial_policy_keeps_invitation_actor_checks(issuer, monkeypatch, restriction):
-    from dotmac_kernel.db import set_tenant
     from fastapi import HTTPException
 
     a = issuer
@@ -737,7 +731,7 @@ def test_inactive_initial_policy_keeps_invitation_actor_checks(issuer, monkeypat
         else:
             session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     before = _state(a)
     with pytest.raises(HTTPException):
         with issuance.invite_web_account(

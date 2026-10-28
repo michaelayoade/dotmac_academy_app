@@ -15,7 +15,7 @@ from app.config import settings
 from app.models.admissions import Applicant
 from app.models.email_outbox import EmailOutbox
 from app.services.localtime import to_local
-from tests.conftest import client_for
+from tests.conftest import client_for, make_person_party
 from tests.test_apply_assessment import _cohort_with_exam
 
 
@@ -33,7 +33,6 @@ def _apply(app_client, tenant, cohort, track, email):
     token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
     return a, token
 
-
 def _start(client, token):
     csrf = client.cookies.get("csrf_token", "")
     return client.post(
@@ -42,7 +41,6 @@ def _start(client, token):
         headers={"x-csrf-token": csrf},
         follow_redirects=True,
     )
-
 
 def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_session):
     cohort, track = _cohort_with_exam(admin_session, tenant_a)
@@ -68,7 +66,6 @@ def test_intro_screen_shown_and_clock_not_started(app_client, tenant_a, admin_se
     assert "Pick A" in again.text
     assert "Before you begin" not in again.text
 
-
 def test_exam_invite_shows_full_local_expiry_timestamp(app_client, tenant_a, admin_session):
     cohort, track = _cohort_with_exam(admin_session, tenant_a)
     _apply(app_client, tenant_a, cohort, track, "deadline-email@a.ex")
@@ -90,7 +87,6 @@ def test_exam_invite_shows_full_local_expiry_timestamp(app_client, tenant_a, adm
     )
     assert f"Your assessment link is valid until {expected}." in invitation.html_body
     assert f"Your assessment link is valid until {expected}." in invitation.text_body
-
 
 def test_expired_deadline_blocks_autosave_and_submission(app_client, tenant_a, admin_session):
     cohort, track = _cohort_with_exam(admin_session, tenant_a)
@@ -125,7 +121,6 @@ def test_expired_deadline_blocks_autosave_and_submission(app_client, tenant_a, a
     assert applicant.assessment_answers == {"q2": ["B"]}
     assert applicant.assessment_taken_at is None
 
-
 def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch):
     import app.services.applicant_email as ae
 
@@ -159,7 +154,6 @@ def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch
     assert applicant.status == "waitlisted"  # 0.5 valid, below 0.9
     assert sent == ["waitlist"]
 
-
 def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session, monkeypatch):
     import app.services.applicant_email as ae
 
@@ -189,11 +183,9 @@ def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session
     assert applicant.assessment_valid is False
     assert sent == ["received"]
 
-
 def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, monkeypatch):
     from app.models.completion import CourseCompletion
     from app.models.course import Course
-    from app.models.person import Person
     from app.services import completion as completion_svc
     from app.services import email_outbox as outbox_svc
     from app.services.email import EmailResult
@@ -207,7 +199,7 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
         source_ref="x",
         version=1,
     )
-    person = Person(tenant_id=tenant_a.id, email="grad@a.ex", first_name="Gra", last_name="Duate")
+    person = make_person_party(admin_session, tenant_id=tenant_a.id, email="grad@a.ex", first_name="Gra", last_name="Duate")
     admin_session.add_all([course, person])
     admin_session.commit()
     rec = CourseCompletion(

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select, update
 
 from app.models.email_outbox import EmailOutbox
@@ -181,6 +182,5 @@ def test_normal_owner_commit_and_same_root_idempotent_resend(current_account, mo
     assert a.admin.scalar(select(EmailOutbox.id).where(EmailOutbox.tenant_id == a.tid,
         EmailOutbox.idempotency_key == key)) is not None
     # A new caller transaction is free of stale guards and participant pins.
-    from dotmac_kernel.db import set_tenant
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     a.db.commit()

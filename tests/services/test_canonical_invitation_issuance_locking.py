@@ -13,8 +13,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import DBAPIError
@@ -73,7 +73,7 @@ def test_later_principal_wait_already_holds_all_earlier_existing_party_locks(iss
         follower = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             with pytest.raises(DBAPIError) as caught:
                 with a.db.begin_nested():
@@ -135,7 +135,7 @@ def test_reciprocal_actor_target_invitations_share_uuid_order_without_deadlock(i
         follower = pool.submit(writer, other, a.email, False)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()
@@ -194,7 +194,7 @@ def test_postwait_live_actor_cookie_status_role_and_actual_clock_are_revalidated
         follower = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             if restriction == "expiry":
                 deadline = monotonic() + 10
@@ -265,7 +265,7 @@ def test_actual_claim_and_human_resend_refresh_complete_membership_after_wait(is
         follower = pool.submit(work, "resend" if first == "claim" else "claim", False)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()

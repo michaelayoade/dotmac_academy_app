@@ -6,8 +6,8 @@ from threading import Event
 from time import monotonic, sleep
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
@@ -33,7 +33,7 @@ def _wait_for_lock(observer, pid):
 
 def _bind(session, tenant_id):
     assert session.scalar(text("SELECT current_user")) == "app_user"
-    set_tenant(session, tenant_id)
+    resolve_database_runtime().set_tenant(session, tenant_id)
 
 
 @pytest.mark.parametrize("restriction", ["revocation", "status", "expiry"])
@@ -87,7 +87,7 @@ def test_postwait_authority_revalidation_refuses_after_principal_writer(current_
         follower = pool.submit(profile_writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()
@@ -130,7 +130,7 @@ def test_natural_subtype_wait_already_holds_party_first(current_account):
         follower = pool.submit(profile_writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             # Follower is blocked by subtype, and already owns Party. NOWAIT
             # refusal from a third app_user connection proves natural ordering.

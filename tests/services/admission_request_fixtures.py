@@ -3,8 +3,8 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import PartyRoleGrant, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 from starlette.requests import Request
 
@@ -20,7 +20,7 @@ def admission_admin_request(db, tenant, *, transport="api"):
     No commit or rollback; callers retain their existing fixture transaction.
     The returned Request conveys a real cookie HMAC or the same real signed JWT.
     """
-    set_tenant(db, tenant.id)
+    resolve_database_runtime().set_tenant(db, tenant.id)
     person = _person(
         db, tenant_id=tenant.id, email=f"admission-admin-{uuid4().hex}@a.edu", first_name="Admission", last_name="Admin"
     )

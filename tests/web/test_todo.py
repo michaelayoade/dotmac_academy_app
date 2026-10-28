@@ -5,31 +5,26 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.models.assessment import Activity
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.services.security import hash_password
 from app.services.todo import timeline_for_person
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _learner(admin_session, tenant, email="todo-stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="To", last_name="Do")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="To", last_name="Do")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
     admin_session.commit()
     return p
 
-
 def _login(app_client, email="todo-stu@a.edu"):
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
-
 
 def _course_setup(admin_session, tenant, person, *, due_offsets_hours):
     """Cohort + course + active offering + one dated activity per offset."""
@@ -56,12 +51,10 @@ def _course_setup(admin_session, tenant, person, *, due_offsets_hours):
     admin_session.commit()
     return cohort, course, off, acts
 
-
 def test_todo_requires_login(app_client, tenant_a):
     r = app_client.get("/todo", headers=H, follow_redirects=False)
     assert r.status_code in (302, 303)
     assert "/login" in r.headers.get("location", "")
-
 
 def test_timeline_sections_deadlines_correctly(app_client, admin_session, tenant_a):
     p = _learner(admin_session, tenant_a)
@@ -74,7 +67,6 @@ def test_timeline_sections_deadlines_correctly(app_client, admin_session, tenant
     assert "Deadline act 1" in titles(t["due_today"]) + titles(t["next_7"])
     assert titles(t["next_30"]) == ["Deadline act 2"]
 
-
 def test_todo_page_renders_sections(app_client, admin_session, tenant_a):
     p = _learner(admin_session, tenant_a)
     _course_setup(admin_session, tenant_a, p, due_offsets_hours=[-2])
@@ -83,7 +75,6 @@ def test_todo_page_renders_sections(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert "Overdue" in r.text and "Deadline act 0" in r.text
     assert "Calendar export" in r.text
-
 
 def test_feed_token_mint_and_rotate(app_client, admin_session, tenant_a):
     _learner(admin_session, tenant_a)
@@ -107,11 +98,9 @@ def test_feed_token_mint_and_rotate(app_client, admin_session, tenant_a):
     assert app_client.get(f"/calendar.ics?token={token1}", headers=H).status_code == 404
     assert app_client.get(f"/calendar.ics?token={token2}", headers=H).status_code == 200
 
-
 def test_feed_rejects_missing_or_bogus_token(app_client, tenant_a):
     assert app_client.get("/calendar.ics", headers=H).status_code == 404
     assert app_client.get("/calendar.ics?token=" + "0" * 64, headers=H).status_code == 404
-
 
 def test_feed_contains_session_vevent(app_client, admin_session, tenant_a):
     from app.models.class_session import ClassSession

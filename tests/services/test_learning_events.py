@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party
 
 from app.models.course import Course
 from app.models.learning_event import (
@@ -21,18 +22,16 @@ from app.models.learning_event import (
     KIND_WORK_GRADED,
     LearningEvent,
 )
-from app.models.person import Person
 from app.services import insights, learning_events
+from tests.conftest import make_person_party
 
 pytestmark = pytest.mark.usefixtures("tenant_a")
 
-
 def _person(db, tid, email="ledger@a.edu"):
-    p = Person(tenant_id=tid, email=email, first_name="Led", last_name="Ger")
+    p = make_person_party(db, tenant_id=tid, email=email, first_name="Led", last_name="Ger")
     db.add(p)
     db.flush()
     return p
-
 
 def _course(db, tid, slug="ledger-course"):
     c = Course(
@@ -47,7 +46,6 @@ def _course(db, tid, slug="ledger-course"):
     db.add(c)
     db.flush()
     return c
-
 
 def _auto_activity(db, tid, email="auto@a.edu", slug="ledger-auto"):
     """Auto-graded activity + person + a correct answer set."""
@@ -87,7 +85,6 @@ def _auto_activity(db, tid, email="auto@a.edu", slug="ledger-auto"):
     db.add(activity)
     db.flush()
     return activity, person, {"q1": ["A"]}
-
 
 def test_once_per_subject_and_daily_dedupe(admin_session, tenant_a):
     tid = tenant_a.id
@@ -136,7 +133,6 @@ def test_once_per_subject_and_daily_dedupe(admin_session, tenant_a):
     assert v1 is not None and v2 is None and v3 is not None
     admin_session.commit()
 
-
 def test_emit_never_breaks_host_flow(admin_session, tenant_a):
     p = _person(admin_session, tenant_a.id, email="emit@a.edu")
     # Unknown kind raises inside record; emit must swallow it and keep the
@@ -144,16 +140,14 @@ def test_emit_never_breaks_host_flow(admin_session, tenant_a):
     learning_events.emit(admin_session, tenant_id=tenant_a.id, person_id=p.id, kind="not_a_real_kind")
     p.first_name = "Still"
     admin_session.flush()  # would raise if the transaction were poisoned
-    assert admin_session.get(Person, p.id).first_name == "Still"
+    assert admin_session.get(Party, p.id).first_name == "Still"
     admin_session.commit()
-
 
 def test_record_rejects_unknown_kind(admin_session, tenant_a):
     p = _person(admin_session, tenant_a.id, email="kind@a.edu")
     with pytest.raises(ValueError):
         learning_events.record(admin_session, tenant_id=tenant_a.id, person_id=p.id, kind="bogus")
     admin_session.rollback()
-
 
 def test_submit_activity_emits_submission_and_grade(admin_session, tenant_a):
     """The assessment owner's commit point writes both observation kinds."""
@@ -164,7 +158,6 @@ def test_submit_activity_emits_submission_and_grade(admin_session, tenant_a):
     kinds = {e.kind for e in admin_session.query(LearningEvent).filter(LearningEvent.person_id == person.id).all()}
     assert KIND_SUBMISSION_MADE in kinds and KIND_WORK_GRADED in kinds
     admin_session.commit()
-
 
 def test_open_attempt_emits_started_once_per_attempt(admin_session, tenant_a):
     from app.services.attempts import open_or_create_attempt
@@ -185,7 +178,6 @@ def test_open_attempt_emits_started_once_per_attempt(admin_session, tenant_a):
     )
     assert count == 1
     admin_session.commit()
-
 
 def test_weekly_buckets_math(admin_session, tenant_a):
     tid = tenant_a.id
@@ -210,7 +202,6 @@ def test_weekly_buckets_math(admin_session, tenant_a):
     assert buckets[-1]["count"] == 3  # 0-1 weeks ago
     assert buckets[-2]["count"] == 1  # 1-2 weeks ago
     admin_session.commit()
-
 
 def test_active_person_ids_window(admin_session, tenant_a):
     tid = tenant_a.id
@@ -242,7 +233,6 @@ def test_active_person_ids_window(admin_session, tenant_a):
     assert got == {active.id}
     admin_session.commit()
 
-
 def test_learner_activity_projection_shape(admin_session, tenant_a):
     tid = tenant_a.id
     p = _person(admin_session, tid, email="proj@a.edu")
@@ -252,7 +242,6 @@ def test_learner_activity_projection_shape(admin_session, tenant_a):
     assert "Start" in out["recommendation"]
     assert len(out["weekly"]) == 8
     admin_session.commit()
-
 
 def test_weekly_bucket_adapter_resolves_omitted_window_and_preserves_explicit_zero(monkeypatch):
     from types import SimpleNamespace

@@ -8,6 +8,7 @@ from io import BytesIO
 
 import pytest
 from dotmac_kernel.models import AuthSession, Party, PartyPerson
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import text, update
 
@@ -230,9 +231,8 @@ def test_caught_failure_then_outer_commit_has_zero_partial_database_change(
             )
     assert a.db.get_transaction() is root and a.db.is_active
     a.db.commit()
-    from dotmac_kernel.db import set_tenant
 
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     after = _current_person(a.db, a.tid, a.token)
     assert (after.first_name, after.last_name, after.avatar_path, after.prefs) == (
         before.first_name,

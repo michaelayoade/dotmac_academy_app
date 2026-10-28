@@ -4,23 +4,19 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import make_person_credential, make_person_party
+
 
 def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
     # Seed a Person + UserCredential for tenant_a directly.
-    from app.models.auth import UserCredential
-    from app.models.person import Person
+
     from app.services.security import hash_password
 
-    p = Person(tenant_id=tenant_a.id, email="s@alpha.edu", first_name="Sam", last_name="Lee")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="s@alpha.edu", first_name="Sam", last_name="Lee")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant_a.id,
-            person_id=p.id,
-            email="s@alpha.edu",
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="s@alpha.edu", password_hash=hash_password("password1"))
     )
     admin_session.commit()
 
@@ -43,30 +39,18 @@ def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
     )
     assert r.status_code == 303 and "session" in r.cookies
 
-
 def test_login_canonicalizes_email_and_ignores_credential_email_drift(
     app_client,
     admin_session,
     tenant_a,
 ):
-    from app.models.auth import UserCredential
-    from app.models.person import Person
+
     from app.services.security import hash_password
 
-    person = Person(
-        tenant_id=tenant_a.id,
-        email="Mixed.Case@Alpha.EDU ",
-        first_name="Mixed",
-        last_name="Case",
-    )
+    person = make_person_party(admin_session, tenant_id=tenant_a.id, email="Mixed.Case@Alpha.EDU ", first_name="Mixed", last_name="Case")
     admin_session.add(person)
     admin_session.flush()
-    credential = UserCredential(
-        tenant_id=tenant_a.id,
-        person_id=person.id,
-        email="stale-login@alpha.edu",
-        password_hash=hash_password("password1"),
-    )
+    credential = make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=person.id, email="stale-login@alpha.edu", password_hash=hash_password("password1"))
     admin_session.add(credential)
     admin_session.commit()
 
@@ -83,23 +67,16 @@ def test_login_canonicalizes_email_and_ignores_credential_email_drift(
     assert person.email == "mixed.case@alpha.edu"
     assert credential.email == person.email
 
-
 def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a):
     """Logout must mark the AuthSession revoked; replaying the old cookie is rejected."""
-    from app.models.auth import UserCredential
-    from app.models.person import Person
+
     from app.services.security import hash_password
 
-    p = Person(tenant_id=tenant_a.id, email="x@alpha.edu", first_name="X", last_name="Y")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="x@alpha.edu", first_name="X", last_name="Y")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant_a.id,
-            person_id=p.id,
-            email="x@alpha.edu",
-            password_hash=hash_password("pw1234"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="x@alpha.edu", password_hash=hash_password("pw1234"))
     )
     admin_session.commit()
 
@@ -136,23 +113,16 @@ def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a)
     )
     assert r.status_code in (302, 303), "Revoked session must not authenticate"
 
-
 def test_cross_tenant_cookie_rejected(app_client, admin_session, tenant_a, tenant_b):
     """A session cookie minted for tenant_a must not authenticate on tenant_b."""
-    from app.models.auth import UserCredential
-    from app.models.person import Person
+
     from app.services.security import hash_password
 
-    p = Person(tenant_id=tenant_a.id, email="q@alpha.edu", first_name="Q", last_name="Z")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="q@alpha.edu", first_name="Q", last_name="Z")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant_a.id,
-            person_id=p.id,
-            email="q@alpha.edu",
-            password_hash=hash_password("pw5678"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="q@alpha.edu", password_hash=hash_password("pw5678"))
     )
     admin_session.commit()
 

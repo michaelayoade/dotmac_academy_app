@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant, PartyType, Role
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, event, select, text, update
 from sqlalchemy.orm import sessionmaker
@@ -40,7 +40,7 @@ def human(current_account):
         a.admin.flush()
     a.admin.add(PartyRoleGrant(tenant_id=a.tid, party_id=a.pid, role_id=role.id))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     a.role_id = role.id
     return a
 
@@ -91,7 +91,7 @@ def admin_human(human):
     a.admin.flush()
     a.grant_role_ids = tuple(row.id for row in grant_roles)
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     return a
 
 
@@ -131,7 +131,7 @@ def test_independent_scalar_resource_snapshot_refuses_frozen_dto_tamper_before_d
             finally:
                 event.remove(a.db.get_bind(), "before_cursor_execute", capture)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).display_name == "Sign In"
     assert (
         a.db.scalar(
@@ -172,7 +172,7 @@ def test_same_request_credential_mutation_latches_even_when_restored_and_caught(
             with pytest.raises(boundary.HumanOperationError):
                 context.require()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).display_name == "Sign In"
     assert context.__dict__ == {}
 
@@ -185,7 +185,7 @@ def test_preexisting_grant_cannot_manufacture_new_audit_event(admin_human):
             with pytest.raises(boundary.HumanOperationError):
                 context.audit()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(select(text("count(*)")).select_from(AuditEvent)) == before
 
 
@@ -206,7 +206,7 @@ def test_audited_new_grant_must_survive_with_exact_row_identity(admin_human, cha
             with pytest.raises(boundary.HumanOperationError):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert (
         a.db.scalar(
             select(PartyRoleGrant.id).where(PartyRoleGrant.party_id == a.pid, PartyRoleGrant.role_id == role_id)
@@ -239,7 +239,7 @@ def test_api_jwt_expiry_after_real_party_wait_is_independent_of_session_expiry(a
 
     def leader():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalars(select(Party).where(Party.tenant_id == a.tid, Party.id == a.pid).with_for_update()).one()
             locked.set()
             assert release.wait(10)
@@ -247,7 +247,7 @@ def test_api_jwt_expiry_after_real_party_wait_is_independent_of_session_expiry(a
 
     def follower():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
@@ -262,7 +262,7 @@ def test_api_jwt_expiry_after_real_party_wait_is_independent_of_session_expiry(a
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()
@@ -288,7 +288,7 @@ def test_actual_multi_target_party_locks_precede_authority_in_sorted_order(human
     expected = sorted([a.pid, *(row.id for row in targets)])
     emails = [row.email for row in reversed(targets)] + [a.email]
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     observed = []
 
     def capture(conn, cursor, statement, parameters, context, executemany):
@@ -390,7 +390,7 @@ def test_credential_refusal_retained_own_helper_frames_clear_request_and_raw_ali
     )
     assert context.__dict__ == {}
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).display_name == "Sign In"
 
 
@@ -480,7 +480,7 @@ def test_audit_failure_clears_own_command_aliases_without_mutating_shared_expect
                 caught.value, {"audit": ["details", "op", "resource", "expected", "row", "email"]}
             )
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert (
         a.db.scalar(
             select(PartyRoleGrant.id).where(PartyRoleGrant.party_id == a.pid, PartyRoleGrant.role_id == role_id)
@@ -492,11 +492,11 @@ def test_audit_failure_clears_own_command_aliases_without_mutating_shared_expect
 def test_wrong_tenant_session_scope_and_real_request_refuse_before_operation(human, tenant_b):
     a = human
     a.db.rollback()
-    set_tenant(a.db, tenant_b.id)
+    resolve_database_runtime().set_tenant(a.db, tenant_b.id)
     with pytest.raises(boundary.HumanOperationError), _roster(a):
         pytest.fail("cross-tenant caller Session authorized operation")
     a.db.commit()
-    set_tenant(a.db, tenant_b.id)
+    resolve_database_runtime().set_tenant(a.db, tenant_b.id)
     wrong_request = _request(tenant_b, a.token)
     with pytest.raises(HTTPException) as caught, _roster(a, wrong_request):
         pytest.fail("cross-tenant exact token authorized operation")
@@ -529,7 +529,7 @@ def test_current_database_authority_refuses_stale_identity_map(human, restrictio
     else:
         a.admin.execute(delete(PartyRoleGrant).where(PartyRoleGrant.party_id == a.pid))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     with pytest.raises(HTTPException) as caught, _roster(a):
         pytest.fail("stale account became authority")
     assert caught.value.status_code == (403 if restriction == "role_loss" else 303)
@@ -542,7 +542,7 @@ def test_web_hmac_session_does_not_decode_jwt_but_api_does(human):
     a.db.rollback()
     a.admin.execute(update(AuthSession).where(AuthSession.id == a.session_id).values(token_hash=hash_token(opaque)))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     with _roster(a, _request(a.tenant, opaque)) as context:
         assert context.actor_id == a.pid
     with pytest.raises(HTTPException) as caught:
@@ -574,7 +574,7 @@ def test_actual_party_lock_wait_rechecks_authority_and_samples_clock_after_wait(
 
     def leader():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalars(select(Party).where(Party.tenant_id == a.tid, Party.id == a.pid).with_for_update()).one()
             locked.set()
             assert release.wait(10)
@@ -592,7 +592,7 @@ def test_actual_party_lock_wait_rechecks_authority_and_samples_clock_after_wait(
 
     def follower():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
@@ -609,7 +609,7 @@ def test_actual_party_lock_wait_rechecks_authority_and_samples_clock_after_wait(
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()
@@ -644,7 +644,7 @@ def test_private_binding_refusal_is_fatal_even_when_caught_inside_boundary(human
             with pytest.raises(boundary.HumanOperationError):
                 context.require()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).email == original_email
     assert context.__dict__ == {}
 
@@ -684,7 +684,7 @@ def test_existing_domain_guard_shape_survives_whole_operation_rollback_and_outer
             raise failure
     assert caught.value is failure
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).display_name == "Sign In"
 
 
@@ -705,7 +705,7 @@ def test_fixed_api_audit_actual_actor_label_bound_and_caught_failure_rollback(hu
     email = "a" * (email_length - 6) + "@a.edu"
     a.admin.execute(update(Party).where(Party.id == a.pid).values(email=email))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     with boundary.grant_api_role(a.db, request=_api_request(a), person_id=a.pid, role_id=first_role) as context:
         context.grant_role()
         event = context.audits[0][0]
@@ -725,7 +725,7 @@ def test_fixed_api_audit_actual_actor_label_bound_and_caught_failure_rollback(hu
             with pytest.raises(RuntimeError):
                 context.grant_role()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Party, a.pid).display_name == "Sign In"
     assert (
         a.db.scalar(

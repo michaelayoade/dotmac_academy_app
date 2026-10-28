@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyPerson
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
@@ -66,7 +66,7 @@ def test_waiting_password_change_refuses_after_actual_principal_writer_commits(c
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()
@@ -107,7 +107,7 @@ def test_natural_subtype_wait_proves_password_writer_acquires_party_first(curren
         second = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             with pytest.raises(DBAPIError) as caught:
                 with a.db.begin_nested():
@@ -161,7 +161,7 @@ def test_cookie_expiry_during_real_party_lock_wait_uses_postwait_actual_clock(cu
         second = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             deadline = monotonic() + 10
             while datetime.now(UTC) <= expiry:

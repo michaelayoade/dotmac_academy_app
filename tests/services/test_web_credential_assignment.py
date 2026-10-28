@@ -14,6 +14,7 @@ from dotmac_kernel.credential_lifecycle import (
     CredentialAssignmentError,
     CredentialSnapshot,
 )
+from dotmac_kernel.session_runtime import resolve_database_runtime
 
 from app.services import credential_assignment as service
 
@@ -195,7 +196,6 @@ def canonical_web_account(request):
     """
     import os
 
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role
     from sqlalchemy import inspect, select, text
     from starlette.requests import Request
@@ -241,7 +241,7 @@ def canonical_web_account(request):
     }
     for table, names in expected_fks.items():
         assert names.issubset({fk["name"] for fk in inspector.get_foreign_keys(table, schema="public")})
-    set_tenant(db, tenant.id)
+    resolve_database_runtime().set_tenant(db, tenant.id)
     policy = service.web_account_creation_policy(db)
     # The hosted default-policy lane must exercise the actual strict factory.
     assert dict(policy.role_admission) == {
@@ -503,7 +503,6 @@ def test_canonical_refreshed_authority_refuses_stale_state(canonical_web_account
 @pytest.mark.parametrize("step", ["party", "person", "profile", "grant", "credential", "policy", "audit"])
 def test_canonical_failure_after_each_flushed_component_rolls_back(canonical_web_account, step):
     from dotmac_kernel.audit import AuditEvent
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, UserCredential
     from sqlalchemy import event, select, text
 
@@ -539,7 +538,7 @@ def test_canonical_failure_after_each_flushed_component_rolls_back(canonical_web
     account.db.commit()
     # The savepoint restores the transaction-local tenant before boundary commit.
     # Rebind a new root only after checking the recovered transaction earlier.
-    set_tenant(account.db, account.tenant.id)
+    resolve_database_runtime().set_tenant(account.db, account.tenant.id)
     assert account.db.scalars(select(Party).where(Party.email == email)).first() is None
     assert account.admin.scalars(select(Party).where(Party.email == email)).first() is None
     assert account.db.execute(text("SELECT current_setting('app.current_tenant')")).scalar_one() == str(
@@ -556,7 +555,6 @@ def test_canonical_two_connection_principal_first_serialization(canonical_web_ac
     Party-first protocol. Adoption additionally must run these races against
     the real converted users_role/revoke_session/set_account_status paths.
     """
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.exceptions import ForbiddenError
     from dotmac_kernel.models import Party, PartyRoleGrant
     from sqlalchemy import delete, select, text
@@ -608,7 +606,7 @@ def test_canonical_two_connection_principal_first_serialization(canonical_web_ac
         lock_principal()
         change_authority()
         account.admin.commit()
-        set_tenant(account.db, tenant_id)
+        resolve_database_runtime().set_tenant(account.db, tenant_id)
         assert account.db.get(Party, view.id) is not None
 
 
@@ -791,7 +789,6 @@ def test_canonical_normalized_email_race_one_complete_account(canonical_web_acco
     from threading import Event, Thread
     from time import monotonic, sleep
 
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.exceptions import BadRequestError
     from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, UserCredential
     from sqlalchemy import select, text
@@ -811,7 +808,7 @@ def test_canonical_normalized_email_race_one_complete_account(canonical_web_acco
         # not a second production Session owner or a SQLite substitute.
         with Session(bind=account.db.get_bind()) as second:
             try:
-                set_tenant(second, tenant_id)
+                resolve_database_runtime().set_tenant(second, tenant_id)
                 pids.append(second.execute(text("SELECT pg_backend_pid()")).scalar_one())
                 ready.set()
                 service.create_web_user(
@@ -892,7 +889,6 @@ def test_configured_initial_state_creates_real_credential_but_denies_login(
 def test_initial_state_tamper_refuses_and_caught_outer_commit_keeps_no_account(
     canonical_web_account, monkeypatch, stage, field
 ):
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.models import Party
     from sqlalchemy import select
 
@@ -921,7 +917,7 @@ def test_initial_state_tamper_refuses_and_caught_outer_commit_keeps_no_account(
         _create_canonical(a, email=email)
     assert seen and all(ports._initial_identity_policy is None for ports in seen)
     a.db.commit()
-    set_tenant(a.db, a.tenant.id)
+    resolve_database_runtime().set_tenant(a.db, a.tenant.id)
     assert a.db.scalars(select(Party).where(Party.email == email)).first() is None
     assert a.admin.scalars(select(Party).where(Party.email == email)).first() is None
 
@@ -955,7 +951,6 @@ def test_midoperation_settings_change_keeps_pinned_state_next_operation_reads_ne
 def test_inactive_target_policy_never_weakens_actor_authority(canonical_web_account, monkeypatch, restriction):
     from datetime import timedelta
 
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.exceptions import ForbiddenError
     from dotmac_kernel.models import PartyRoleGrant
     from sqlalchemy import delete
@@ -977,7 +972,7 @@ def test_inactive_target_policy_never_weakens_actor_authority(canonical_web_acco
     else:
         a.admin.execute(delete(PartyRoleGrant).where(PartyRoleGrant.party_id == a.actor.id))
     a.admin.commit()
-    set_tenant(a.db, a.tenant.id)
+    resolve_database_runtime().set_tenant(a.db, a.tenant.id)
     with pytest.raises(ForbiddenError):
         _create_canonical(a)
 

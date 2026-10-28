@@ -3,51 +3,42 @@
 
 from __future__ import annotations
 
+from dotmac_kernel.models import PartyRoleGrant
+
 from app.models.assessment import Activity, Question, QuestionBank
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.models.prerequisite import CoursePrerequisite
-from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _login(app_client, admin_session, tenant, email="cat_web_stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Cat", last_name="Web")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Cat", last_name="Web")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _login_staff(app_client, admin_session, tenant, role="instructor", email="cat_web_ins@a.edu"):
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Staff", last_name="User")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Staff", last_name="User")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id))
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _seed_course(admin_session, tenant, slug, title="Course"):
     c = Course(
@@ -74,7 +65,6 @@ def _seed_course(admin_session, tenant, slug, title="Course"):
     admin_session.flush()
     return c
 
-
 def _enroll(admin_session, tenant, person, course):
     coh = Cohort(tenant_id=tenant.id, name="Coh", discipline="networking", status="active")
     admin_session.add(coh)
@@ -88,12 +78,10 @@ def _enroll(admin_session, tenant, person, course):
     )
     admin_session.commit()
 
-
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
-
 
 # ── /courses list ──────────────────────────────────────────────────────────────
 
@@ -109,7 +97,6 @@ def test_courses_list_shows_my_courses(app_client, admin_session, tenant_a):
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_courses_list_excludes_non_enrolled(app_client, admin_session, tenant_a):
     """Non-enrolled courses do not appear in My courses."""
     _login(app_client, admin_session, tenant_a, "cat_list2@a.edu")
@@ -121,7 +108,6 @@ def test_courses_list_excludes_non_enrolled(app_client, admin_session, tenant_a)
         assert "Not Enrolled Course" not in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_courses_list_staff_sees_all_courses(app_client, admin_session, tenant_a):
     """Instructor/admin sees both 'My courses' and 'All courses' section."""
@@ -136,7 +122,6 @@ def test_courses_list_staff_sees_all_courses(app_client, admin_session, tenant_a
         assert "All Courses Entry" in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_enrolled_instructor_sees_course_in_learning_workspace(
     app_client, admin_session, tenant_a
@@ -165,7 +150,6 @@ def test_enrolled_instructor_sees_course_in_learning_workspace(
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_courses_list_student_no_all_courses_section(app_client, admin_session, tenant_a):
     """Student does not see the 'All courses' section."""
     _login(app_client, admin_session, tenant_a, "cat_list_noall@a.edu")
@@ -177,7 +161,6 @@ def test_courses_list_student_no_all_courses_section(app_client, admin_session, 
         assert "All courses" not in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 # ── /courses/{slug} landing ────────────────────────────────────────────────────
 
@@ -193,14 +176,12 @@ def test_course_landing_enrolled_student_200(app_client, admin_session, tenant_a
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_course_landing_unknown_slug_404(app_client, admin_session, tenant_a):
     """Unknown course slug returns 404."""
     _login(app_client, admin_session, tenant_a, "cat_land_404@a.edu")
     admin_session.commit()
     r = app_client.get("/courses/no-such-slug", headers=H)
     assert r.status_code == 404
-
 
 def test_course_landing_non_enrolled_student_403(app_client, admin_session, tenant_a):
     """Non-enrolled student gets 403 on course landing."""
@@ -213,7 +194,6 @@ def test_course_landing_non_enrolled_student_403(app_client, admin_session, tena
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_course_landing_staff_bypass_no_enrollment(app_client, admin_session, tenant_a):
     """Instructor can view course landing even without enrollment."""
     _login_staff(app_client, admin_session, tenant_a, role="instructor", email="cat_land_ins@a.edu")
@@ -225,7 +205,6 @@ def test_course_landing_staff_bypass_no_enrollment(app_client, admin_session, te
         assert "Staff View Course" in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_course_landing_shows_parts(app_client, admin_session, tenant_a):
     """Course landing renders Part labels from Chapter.part."""
@@ -242,7 +221,6 @@ def test_course_landing_shows_parts(app_client, admin_session, tenant_a):
         assert "Part II" in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_course_landing_locked_banner_when_prereq_unmet(app_client, admin_session, tenant_a):
     """Enrolled student with unmet prerequisites sees the locked banner."""
@@ -271,7 +249,6 @@ def test_course_landing_locked_banner_when_prereq_unmet(app_client, admin_sessio
         assert "Prerequisite" in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_courses_nav_item_present(app_client, admin_session, tenant_a):
     """The learn sidebar contains a Courses nav link."""

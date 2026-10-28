@@ -302,6 +302,101 @@ def make_canonical_account(
     return party
 
 
+def make_person_party(
+    db: Session,
+    *,
+    tenant_id,
+    email: str,
+    first_name: str,
+    last_name: str,
+    status: str = "active",
+    prefs=None,
+    avatar_path: str | None = None,
+):
+    """Canonical stand-in for a retired ``Person`` row in test fixtures.
+
+    Creates the Party + PartyPerson subtype + AcademyAccountProfile triple
+    (the composed owners of the legacy person's email/names and of its
+    status/prefs/avatar columns) and returns the Party, whose ``id`` is the
+    ``person_id`` every Learning/retained table now references. No credential
+    or role grant is created — add those explicitly (see
+    ``make_person_credential`` / ``PartyRoleGrant``) or use
+    ``make_canonical_account`` for a full login-capable account. Caller owns
+    commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import Party, PartyPerson, PartyType
+
+    from app.models.identity_extensions import AcademyAccountProfile
+
+    now = datetime.now(UTC)
+    party = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}".strip(),
+        email=email,
+        is_active=True,
+    )
+    db.add(party)
+    db.flush()
+    db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id,
+            party_id=party.id,
+            status=status,
+            avatar_path=avatar_path,
+            prefs={} if prefs is None else prefs,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.flush()
+    return party
+
+
+def make_person_credential(
+    db: Session,
+    *,
+    tenant_id,
+    party_id,
+    email: str,
+    password_hash: str,
+):
+    """Canonical stand-in for a legacy ``UserCredential(person_id=, email=)`` row.
+
+    The kernel credential carries ``party_id`` only; the login email and
+    lockout/reset bookkeeping live on AcademyCredentialPolicy. Returns the
+    credential. Caller owns commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import UserCredential
+
+    from app.models.identity_extensions import AcademyCredentialPolicy
+
+    now = datetime.now(UTC)
+    credential = UserCredential(tenant_id=tenant_id, party_id=party_id, password_hash=password_hash)
+    db.add(credential)
+    db.flush()
+    db.add(
+        AcademyCredentialPolicy(
+            tenant_id=tenant_id,
+            credential_id=credential.id,
+            email=email,
+            failed_login_attempts=0,
+            locked_until=None,
+            lifecycle_version=0,
+            reset_required=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.flush()
+    return credential
+
+
 @pytest.fixture
 def api_actor(admin_session):
     """Create a real tenant account and return its authenticated API context."""

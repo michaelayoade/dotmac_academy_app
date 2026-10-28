@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from tests.conftest import make_person_credential, make_person_party
+
 
 def _cohort(admin_session, tenant, name="Stranded"):
     from app.models.cohort import Cohort
@@ -16,12 +18,10 @@ def _cohort(admin_session, tenant, name="Stranded"):
     admin_session.commit()
     return c
 
-
 def _enrolled(admin_session, tenant, cohort, email, *, role="student", status="active"):
     from app.models.cohort import Enrollment
-    from app.models.person import Person
 
-    p = Person(tenant_id=tenant.id, email=email, first_name="En", last_name="Rolled", status="active")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="En", last_name="Rolled", status="active")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
@@ -32,21 +32,13 @@ def _enrolled(admin_session, tenant, cohort, email, *, role="student", status="a
     admin_session.commit()
     return p
 
-
 def _give_password(admin_session, tenant, person):
-    from app.models.auth import UserCredential
     from app.services.security import hash_password
 
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=person.id,
-            email=person.email,
-            password_hash=hash_password("correct horse battery staple"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=person.id, email=person.email, password_hash=hash_password("correct horse battery staple"))
     )
     admin_session.commit()
-
 
 def _give_session(admin_session, tenant, person):
     from app.models.auth import AuthSession
@@ -61,7 +53,6 @@ def _give_session(admin_session, tenant, person):
     )
     admin_session.commit()
 
-
 def test_stranded_excludes_anyone_who_can_or_did_log_in(app_client, tenant_a, admin_session):
     from app.services.reengagement import stranded_learners
 
@@ -75,7 +66,6 @@ def test_stranded_excludes_anyone_who_can_or_did_log_in(app_client, tenant_a, ad
     emails = {p.email for p in stranded_learners(admin_session, tenant_id=tenant_a.id)}
     assert emails == {"stranded@a.ex"}
 
-
 def test_stranded_ignores_instructors_and_dropped_enrolments(app_client, tenant_a, admin_session):
     from app.services.reengagement import stranded_learners
 
@@ -86,7 +76,6 @@ def test_stranded_ignores_instructors_and_dropped_enrolments(app_client, tenant_
 
     found = stranded_learners(admin_session, tenant_id=tenant_a.id)
     assert [p.id for p in found] == [keep.id]
-
 
 def test_reinvite_queues_one_activation_email_each(app_client, tenant_a, admin_session):
     from sqlalchemy import select
@@ -124,7 +113,6 @@ def test_reinvite_queues_one_activation_email_each(app_client, tenant_a, admin_s
     )
     assert len(tokens) == 2
     assert all(t.used_at is None and t.expires_at > datetime.now(UTC) for t in tokens)
-
 
 def test_reinvite_scoped_to_one_cohort(app_client, tenant_a, admin_session):
     from app.services.reengagement import reinvite_stranded

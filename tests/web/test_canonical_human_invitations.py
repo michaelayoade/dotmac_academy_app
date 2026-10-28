@@ -1,8 +1,8 @@
 """Genuine canonical human HTTP surfaces; authored NOT RUN, fixture gates apply."""
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 
 from app.models.account_token import AccountToken
@@ -64,7 +64,7 @@ def test_enqueue_false_is_ordinary_response_not_domain_rollback(issuer_client, m
         _set_actor_role(a, "instructor")
         cohort = _cohort(a.db, a.tid)
         a.db.commit()
-        set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
         monkeypatch.setattr(instructor, "enqueue_email", lambda *args, **kwargs: False)
         path, data = (
             f"/instructor/cohorts/{cohort.id}/invite",

@@ -10,8 +10,8 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.services.agenda import upcoming_for_person
+from tests.conftest import make_person_party
 
 
 def _seed_course(db, tid, slug, title="Course"):
@@ -22,7 +22,6 @@ def _seed_course(db, tid, slug, title="Course"):
     db.add(c)
     db.flush()
     return c
-
 
 def _seed_activity(db, tid, course_id, title="Act"):
     bank = QuestionBank(tenant_id=tid, course_id=course_id, chapter_number=1, kind="chapter", version=1)
@@ -40,7 +39,6 @@ def _seed_activity(db, tid, course_id, title="Act"):
     db.flush()
     return act
 
-
 def _enroll_with_offering(db, tid, person_id, course_id, *, starts_at=None, ends_at=None):
     coh = Cohort(tenant_id=tid, name="Coh", discipline="networking", status="active")
     db.add(coh)
@@ -55,11 +53,10 @@ def _enroll_with_offering(db, tid, person_id, course_id, *, starts_at=None, ends
     db.flush()
     return coh, off
 
-
 def test_future_due_at_appears(admin_session, tenant_a):
     """A pacing due_at in the future on an accessible course appears in the agenda."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="ag_due@a.edu", first_name="A", last_name="G")
+    person = make_person_party(admin_session, tenant_id=tid, email="ag_due@a.edu", first_name="A", last_name="G")
     admin_session.add(person)
     admin_session.flush()
 
@@ -79,11 +76,10 @@ def test_future_due_at_appears(admin_session, tenant_a):
 
     assert "Quiz 1" in titles
 
-
 def test_past_items_excluded(admin_session, tenant_a):
     """A pacing due_at in the past must not appear."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="ag_past@a.edu", first_name="A", last_name="P")
+    person = make_person_party(admin_session, tenant_id=tid, email="ag_past@a.edu", first_name="A", last_name="P")
     admin_session.add(person)
     admin_session.flush()
 
@@ -103,12 +99,11 @@ def test_past_items_excluded(admin_session, tenant_a):
 
     assert "Old Quiz" not in titles
 
-
 def test_non_accessible_course_excluded(admin_session, tenant_a):
     """Activity due_at from a course the person is NOT enrolled in is excluded."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="ag_noac@a.edu", first_name="A", last_name="N")
-    other = Person(tenant_id=tid, email="ag_noac2@a.edu", first_name="B", last_name="N")
+    person = make_person_party(admin_session, tenant_id=tid, email="ag_noac@a.edu", first_name="A", last_name="N")
+    other = make_person_party(admin_session, tenant_id=tid, email="ag_noac2@a.edu", first_name="B", last_name="N")
     admin_session.add(person)
     admin_session.add(other)
     admin_session.flush()
@@ -133,11 +128,10 @@ def test_non_accessible_course_excluded(admin_session, tenant_a):
 
     assert "Secret Quiz" not in titles
 
-
 def test_ordering_chronological(admin_session, tenant_a):
     """Multiple future items are returned in chronological order."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="ag_ord@a.edu", first_name="A", last_name="O")
+    person = make_person_party(admin_session, tenant_id=tid, email="ag_ord@a.edu", first_name="A", last_name="O")
     admin_session.add(person)
     admin_session.flush()
 
@@ -162,11 +156,10 @@ def test_ordering_chronological(admin_session, tenant_a):
 
     assert titles.index("Quiz Early") < titles.index("Quiz Late")
 
-
 def test_offering_window_events_appear(admin_session, tenant_a):
     """Future starts_at and ends_at on an offering appear as agenda items."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="ag_win@a.edu", first_name="A", last_name="W")
+    person = make_person_party(admin_session, tenant_id=tid, email="ag_win@a.edu", first_name="A", last_name="W")
     admin_session.add(person)
     admin_session.flush()
 

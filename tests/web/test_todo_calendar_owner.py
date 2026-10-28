@@ -6,7 +6,7 @@ Hosted installed assembly and physical Learning/Party FK transition required.
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_learning.delivery_models import ClassSession, OfferingActivity
 from dotmac_learning.models import Activity
 from dotmac_learning.participation_models import CourseOffering
@@ -97,7 +97,7 @@ def test_real_timeline_buckets_sessions_uid_policy_and_other_account(calendar_ac
     a.db.flush()
     assert ical.resolve_feed_token(a.db, tenant_id=a.tid, raw=raw) is None
     a.db.rollback()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
 
 
 def test_todo_and_bookmark_missing_session_use_real_guard(calendar_account):

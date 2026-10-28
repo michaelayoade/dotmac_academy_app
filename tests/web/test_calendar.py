@@ -6,31 +6,25 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.models.assessment import Activity, Question, QuestionBank
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _login(app_client, admin_session, tenant, email="cal_stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Cal", last_name="Stu")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Cal", last_name="Stu")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _seed_course(admin_session, tenant, slug, title="Course"):
     c = Course(
@@ -40,7 +34,6 @@ def _seed_course(admin_session, tenant, slug, title="Course"):
     admin_session.add(c)
     admin_session.flush()
     return c
-
 
 def _seed_activity(admin_session, tenant, course_id, title="Act"):
     bank = QuestionBank(tenant_id=tenant.id, course_id=course_id, chapter_number=1, kind="chapter", version=1)
@@ -58,7 +51,6 @@ def _seed_activity(admin_session, tenant, course_id, title="Act"):
     admin_session.flush()
     return act
 
-
 def _enroll_with_offering(admin_session, tenant, person_id, course_id):
     coh = Cohort(tenant_id=tenant.id, name="Coh", discipline="networking", status="active")
     admin_session.add(coh)
@@ -74,12 +66,10 @@ def _enroll_with_offering(admin_session, tenant, person_id, course_id):
     admin_session.flush()
     return off
 
-
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
-
 
 def test_calendar_requires_auth(app_client, admin_session, tenant_a):
     """Unauthenticated request to /calendar is redirected to login."""
@@ -87,14 +77,12 @@ def test_calendar_requires_auth(app_client, admin_session, tenant_a):
     r = app_client.get("/calendar", headers=H, follow_redirects=False)
     assert r.status_code in (302, 303, 307)
 
-
 def test_calendar_empty_for_no_events(app_client, admin_session, tenant_a):
     """Authenticated user with no upcoming events sees empty state."""
     _login(app_client, admin_session, tenant_a, "cal_empty@a.edu")
     r = app_client.get("/calendar", headers=H)
     assert r.status_code == 200
     assert "No upcoming events" in r.text
-
 
 def test_calendar_shows_future_due_at(app_client, admin_session, tenant_a):
     """A future activity due_at in an accessible course appears in /calendar."""
@@ -116,11 +104,10 @@ def test_calendar_shows_future_due_at(app_client, admin_session, tenant_a):
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_calendar_excludes_non_accessible(app_client, admin_session, tenant_a):
     """Activity due_at for a course the person is NOT enrolled in is excluded."""
     person = _login(app_client, admin_session, tenant_a, "cal_noac@a.edu")
-    other = Person(tenant_id=tenant_a.id, email="cal_noac2@a.edu", first_name="O", last_name="T")
+    other = make_person_party(admin_session, tenant_id=tenant_a.id, email="cal_noac2@a.edu", first_name="O", last_name="T")
     admin_session.add(other)
     admin_session.flush()
 
@@ -142,7 +129,6 @@ def test_calendar_excludes_non_accessible(app_client, admin_session, tenant_a):
         assert "Secret Quiz" not in r.text
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_calendar_nav_item_present(app_client, admin_session, tenant_a):
     """The learn sidebar contains a Calendar nav link."""

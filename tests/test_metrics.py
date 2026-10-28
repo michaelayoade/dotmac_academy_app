@@ -199,3 +199,52 @@ def test_genuine_pipeline_query_budget_tenant_scope_readonly_and_context_failure
     with pytest.raises(DBAPIError) as error, runtime.readonly_session() as db, runtime.tenant_scope(db, tenant_a.id):
         db.execute(text("UPDATE applicants SET status = status WHERE tenant_id = :tenant"), {"tenant": tenant_a.id})
     assert getattr(error.value.orig, "sqlstate", None) == "25006"
+
+
+_MULTIPROC_WORKER = """
+import sys
+from app import metrics
+metrics.LAB_HOST_UP.set(float(sys.argv[1]))
+"""
+
+
+def _collect_multiproc(tmp_path):
+    from prometheus_client import CollectorRegistry, multiprocess
+
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry, path=str(tmp_path))
+    return {(s.name, tuple(sorted(s.labels.items()))): s.value for fam in registry.collect() for s in fam.samples}
+
+
+def test_pipeline_counts_never_come_from_worker_files_across_processes(tmp_path):
+    """Composed equivalent of MAIN's mostrecent DB-gauge test (#183).
+
+    Pipeline families are deliberately absent from the process/mmap registry:
+    no worker can write ``academy_lab_instances`` into the multiproc files, so
+    a stale worker cannot pin the series. The only cross-process value is the
+    probe gauge (``max``: one reaching worker is enough). The queued count is
+    rendered per request from the caller's snapshot, exactly as supplied.
+    """
+    import os
+    import subprocess
+    import sys
+
+    import app.metrics as metrics
+
+    env = {**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(tmp_path)}
+    for host_up in ("1", "0"):
+        subprocess.run([sys.executable, "-c", _MULTIPROC_WORKER, host_up], env=env, check=True)  # noqa: S603
+
+    got = _collect_multiproc(tmp_path)
+    assert got[("academy_lab_host_up", ())] == 1.0
+    assert not any(name == "academy_lab_instances" for name, _ in got)
+
+    snapshot = metrics.PipelineSnapshot(
+        applicants=(("applied", 1),),
+        labs=(("queued", 3), ("active", 1)),
+        valid=0,
+        invalid=0,
+        capacity=4,
+    )
+    payload, _ = metrics.render(snapshot=snapshot)
+    assert b'academy_lab_instances{status="queued"} 3.0' in payload

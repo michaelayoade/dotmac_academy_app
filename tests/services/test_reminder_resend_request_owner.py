@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyRoleGrant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
@@ -129,7 +129,7 @@ def test_real_party_wait_then_grant_revocation_refuses_whole_command(current_acc
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()

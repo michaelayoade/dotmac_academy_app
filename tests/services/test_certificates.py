@@ -9,25 +9,23 @@ import pytest
 from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.person import Person
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.exceptions import ConflictError
+from tests.conftest import make_person_party
 
 
 def _person_course(db, tid):
-    p = Person(tenant_id=tid, email="cert@a.edu", first_name="Cert", last_name="Holder")
+    p = make_person_party(db, tenant_id=tid, email="cert@a.edu", first_name="Cert", last_name="Holder")
     c = Course(tenant_id=tid, slug="net", title="Networking", discipline="networking",
                source_ref="x", version=1)
     db.add_all([p, c])
     db.flush()
     return p, c
 
-
 def _complete(db, tid, p, c):
     db.add(CourseCompletion(tenant_id=tid, person_id=p.id, course_id=c.id,
                             status="completed", pct=1.0, completed_at=datetime.now(UTC)))
     db.flush()
-
 
 def test_issue_requires_completion(admin_session, tenant_a):
     p, c = _person_course(admin_session, tenant_a.id)
@@ -38,7 +36,6 @@ def test_issue_requires_completion(admin_session, tenant_a):
         tenant_id=tenant_a.id, person_id=p.id, course_id=c.id
     ).count() == 0
     admin_session.rollback()
-
 
 def test_issue_is_idempotent(admin_session, tenant_a):
     p, c = _person_course(admin_session, tenant_a.id)
@@ -56,14 +53,12 @@ def test_issue_is_idempotent(admin_session, tenant_a):
     assert n == 1
     admin_session.rollback()
 
-
 def test_render_pdf_bytes(admin_session, tenant_a):
     pdf = render_certificate_pdf(recipient_name="Ada Lovelace", course_title="Networking 101",
                                  serial="CERT-ABC123", issued_at=datetime(2026, 6, 27, tzinfo=UTC))
     assert isinstance(pdf, bytes | bytearray)
     assert bytes(pdf[:5]) == b"%PDF-"
     assert len(pdf) > 500
-
 
 # Retired in C1 with app/services/completion_aggregate.py: test_concurrent_issuers_recheck_certificate_after_completion_lock
 # monkeypatched ensure_locked_completion/lock_existing_completion, which Learning

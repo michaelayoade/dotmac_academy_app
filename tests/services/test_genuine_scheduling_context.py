@@ -13,8 +13,8 @@ from uuid import UUID, uuid4
 import dotmac_learning as learning
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, PartyRoleGrant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import InvalidRequestError
@@ -161,7 +161,7 @@ def test_caught_private_command_refusals_poison_outer_commit_and_preserve_prior_
                 object.__setattr__(target, key, old)
     assert context.__dict__ == {} and a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before"
     assert a.db.get(Cohort, cid).name == "Unrelated prior work" and _events(a.db, sid) == []
 
@@ -207,7 +207,7 @@ def test_result_and_exact_persisted_audit_mutation_latch_even_when_caught(roster
             with pytest.raises((boundary.HumanOperationError, InvalidRequestError)):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
 
 
@@ -245,7 +245,7 @@ def test_failure_after_actual_public_owner_rolls_back_audit_and_fact(roster_acto
         assert caught.value is same and caught.value.__suppress_context__ is True
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
     assert a.db.get(Cohort, cid).name == "Prior work"
     assert (
@@ -301,7 +301,7 @@ def test_actual_owner_row_wait_revalidates_authority_and_rolls_back_completion(r
 
     def holder():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalar(select(ClassSession).where(ClassSession.id == sid).with_for_update())
             locked.set()
             assert release.wait(10)
@@ -309,7 +309,7 @@ def test_actual_owner_row_wait_revalidates_authority_and_rolls_back_completion(r
 
     def follower():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             db.get(Cohort, cid).name = "Prior wait work"
             started.set()
@@ -324,7 +324,7 @@ def test_actual_owner_row_wait_revalidates_authority_and_rolls_back_completion(r
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             if failure == "expiry":
                 Event().wait(2.1)
@@ -343,7 +343,7 @@ def test_invalid_update_caught_outer_commit_does_not_keep_partial_title(roster_a
     with pytest.raises(BadRequestError, match="ends_at must be after starts_at"):
         _invoke(actors, sid, title="After", ends_at=NOW - timedelta(hours=1))
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
 
 
@@ -358,7 +358,7 @@ def test_supplied_execution_or_completion_is_refused_and_poisoned(roster_actors,
             with pytest.raises(boundary.HumanOperationError):
                 context.update_session()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
 
 
@@ -447,7 +447,7 @@ def test_owned_failure_frames_clear_request_context_and_command_aliases(roster_a
         pending.extend(value for value in (error.__cause__, error.__context__) if value is not None)
     assert "_human_operation" in owned and owned.count("update_session") == 2
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
 
 

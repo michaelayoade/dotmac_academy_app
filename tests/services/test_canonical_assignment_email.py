@@ -17,6 +17,7 @@ import pytest
 from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.exceptions import BadRequestError
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_kernel.transactions import conflict_savepoint_requires_rollback
 from sqlalchemy import select, text
 
@@ -33,7 +34,6 @@ def canonical_email_account(request):
     """
     import os
 
-    from dotmac_kernel.db import set_tenant
     from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role
     from sqlalchemy import inspect, select, text
     from starlette.requests import Request
@@ -79,7 +79,7 @@ def canonical_email_account(request):
     }
     for table, names in expected_fks.items():
         assert names.issubset({fk["name"] for fk in inspector.get_foreign_keys(table, schema="public")})
-    set_tenant(db, tenant.id)
+    resolve_database_runtime().set_tenant(db, tenant.id)
     policy = service.web_account_creation_policy(db)
     # The hosted default-policy lane must exercise the actual strict factory.
     assert dict(policy.role_admission) == {

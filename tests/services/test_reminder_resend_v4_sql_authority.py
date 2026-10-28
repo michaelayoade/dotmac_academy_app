@@ -14,8 +14,8 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, Role
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import DDL, Integer, bindparam, event, inspect, literal_column, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.sql.elements import ReleaseSavepointClause, RollbackToSavepointClause, SavepointClause
@@ -443,8 +443,7 @@ def _assert_native_flush_rollback(a, row, evidence, lid):
     assert not inspect(row).deleted
     _refused_effects(a, lid)  # Caller explicitly rolls back; separate admin readback.
     assert a.db.is_active and not a.db.in_transaction()
-    from dotmac_kernel.db import set_tenant
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT 1")) == 1  # Same caller Session recovers normally.
     a.db.rollback()
 
@@ -497,9 +496,8 @@ def test_benign_pending_authority_changes_survive_native_logical_commit(current_
     _allow(a)
     lid = _log(a)
     a.db.commit()
-    from dotmac_kernel.db import set_tenant
     context = a.db.begin()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     _invoke(a, lid)
     if field == "name":
         row = a.db.get(PartyPerson, a.pid)
@@ -875,7 +873,7 @@ def _assert_selected_abort(a, evidence, caught, target, sqlstate, *, skip=False)
 def _native_caller_reuse(a):
     a.db.rollback()
     assert a.db.is_active and not a.db.in_transaction()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT 1")) == 1
     a.db.rollback()
 
@@ -889,7 +887,7 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(current_ac
     lid, conflict = _log(a), _log(a)
     a.db.commit()
     context = a.db.begin()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     _invoke(a, lid)
     _actual_effects(a, lid)
@@ -1016,7 +1014,7 @@ def test_genuine_native_containing_savepoint_abort_preserves_outer_receipt(curre
     # A new real resend must remain admissible on the same shared dialect
     # after the original unit and the observation have both been retired.
     fresh = _log(a)
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.connection().dialect is dialect
     _invoke(a, fresh)
     _actual_effects(a, fresh)
@@ -1197,7 +1195,7 @@ def test_internal_flush_registration_lifecycle_and_later_patch(current_account):
         assert unit.ended and not unit.internal_aborts and unit.native_abort is None
         assert unit.frame is None and unit.db is None and a.db.commit is later
         _observe(a, lid, "sent", 1)
-        set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
         a.db.commit()
         assert calls == [True, True]
     finally:
@@ -1289,8 +1287,8 @@ def test_independent_session_internal_flush_abort_leaves_other_unit_guarded(curr
         b = SimpleNamespace(db=other, admin=a.admin, pid=actor.pid, tid=tenant_b.id,
             tenant=tenant_b, token=actor.request.cookies["session"])
         second = _log(b)
-        set_tenant(a.db, a.tid)
-        set_tenant(other, tenant_b.id)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(other, tenant_b.id)
         _invoke(a, lid)
         _invoke(b, second)
         first_unit, other_unit = _unit(a.db), _unit(other)

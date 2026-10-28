@@ -10,6 +10,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.conftest import make_person_party
+
 
 def _mk_applicant(admin_session, tenant, email, **kw):
     from app.models.admissions import Applicant
@@ -25,7 +27,6 @@ def _mk_applicant(admin_session, tenant, email, **kw):
     admin_session.add(a)
     admin_session.commit()
     return a
-
 
 def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
     from app.models.rbac import AuditEvent
@@ -104,7 +105,6 @@ def test_snapshot_counts_window_activity(app_client, tenant_a, admin_session):
     # ...but the pipeline totals are still the current state.
     assert old["pipeline"]["applied"] == 1
 
-
 def test_admin_recipients_only_active_admins(app_client, tenant_a, admin_session):
     from app.services.admin_reports import admin_recipients
     from tests.conftest import make_canonical_account as create_user
@@ -133,17 +133,14 @@ def test_admin_recipients_only_active_admins(app_client, tenant_a, admin_session
     assert "boss@a.ex" in emails
     assert "teach@a.ex" not in emails
 
-
 # ---------------------------------------------------------------------------
 # Learner-side reporting (engagement, top movers, attention list)
 # ---------------------------------------------------------------------------
 
-
 def _mk_learner(admin_session, tenant, cohort, email, *, first="Lea", last="Rner", role="student"):
     from app.models.cohort import Enrollment
-    from app.models.person import Person
 
-    person = Person(tenant_id=tenant.id, email=email, first_name=first, last_name=last, status="active")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name=first, last_name=last, status="active")
     admin_session.add(person)
     admin_session.flush()
     admin_session.add(
@@ -158,7 +155,6 @@ def _mk_learner(admin_session, tenant, cohort, email, *, first="Lea", last="Rner
     admin_session.commit()
     return person
 
-
 def _mk_cohort(admin_session, tenant, name="Report Cohort"):
     from app.models.cohort import Cohort
 
@@ -166,7 +162,6 @@ def _mk_cohort(admin_session, tenant, name="Report Cohort"):
     admin_session.add(cohort)
     admin_session.commit()
     return cohort
-
 
 def _mk_events(admin_session, tenant, person, *, kind, n, occurred_at):
     from app.models.learning_event import LearningEvent
@@ -184,7 +179,6 @@ def _mk_events(admin_session, tenant, person, *, kind, n, occurred_at):
         ]
     )
     admin_session.commit()
-
 
 def test_engagement_counts_roster_students_only(app_client, tenant_a, admin_session):
     from app.services.admin_reports import engagement_snapshot
@@ -206,7 +200,6 @@ def test_engagement_counts_roster_students_only(app_client, tenant_a, admin_sess
     assert eng["ever_active"] == 2  # busy + stale
     assert eng["active_in_window"] == 1  # only busy
     assert eng["never_started"] == 1  # silent
-
 
 def test_top_movers_ranked_with_submission_counts(app_client, tenant_a, admin_session):
     from app.services.admin_reports import top_movers
@@ -230,7 +223,6 @@ def test_top_movers_ranked_with_submission_counts(app_client, tenant_a, admin_se
     assert movers[0]["submissions"] == 2
     assert movers[0]["cohort"] == "Movers"
     assert movers[1]["submissions"] == 0
-
 
 def test_attention_list_reads_open_success_queue(app_client, tenant_a, admin_session):
     from app.models.success_queue import STATUS_RESOLVED, SuccessQueueEntry
@@ -286,7 +278,6 @@ def test_attention_list_reads_open_success_queue(app_client, tenant_a, admin_ses
     assert att["top"][0]["days_inactive"] == 30
     assert att["top"][0]["never_active"] is True
 
-
 def test_report_body_carries_learner_sections_and_escapes_names(app_client, tenant_a, admin_session):
     from app.models.success_queue import SuccessQueueEntry
     from app.services.admin_reports import _render, activity_snapshot
@@ -319,7 +310,6 @@ def test_report_body_carries_learner_sections_and_escapes_names(app_client, tena
     assert "&lt;b&gt;Evil" in html
     assert "inactive 14d" in text
 
-
 # Adapter boundary cases use detached public facts, with no database execution.
 def test_engagement_adapter_preserves_scope_and_exact_container(monkeypatch):
     from dotmac_learning import EngagementSnapshot
@@ -341,7 +331,6 @@ def test_engagement_adapter_preserves_scope_and_exact_container(monkeypatch):
         "never_started": 1,
     }
     assert calls == [(db, {"tenant_id": tenant_id, "since": since})]
-
 
 def test_top_movers_uses_configured_limit_and_preserves_owner_order(monkeypatch):
     from dotmac_learning import ReportPerson, TopMover
@@ -375,7 +364,6 @@ def test_top_movers_uses_configured_limit_and_preserves_owner_order(monkeypatch)
         {"name": "Run Ner", "email": "runner@a.ex", "cohort": "", "events": 4, "submissions": 0, "avg_score": None},
     ]
     assert calls == [(db, {"tenant_id": tenant_id, "since": since, "limit": 2})]
-
 
 def test_attention_adapter_keeps_labels_unknown_reasons_and_totals(monkeypatch):
     from dotmac_learning import AttentionLearner, AttentionReasonCount, AttentionSnapshot, ReportPerson
@@ -431,7 +419,6 @@ def test_attention_adapter_keeps_labels_unknown_reasons_and_totals(monkeypatch):
     }
     assert calls == [(db, {"tenant_id": tenant_id, "limit": 2})]
 
-
 @pytest.mark.parametrize("name", ["top_movers", "attention_list"])
 @pytest.mark.parametrize("limit", [0, 3])
 def test_explicit_report_limits_bypass_default_store(monkeypatch, name, limit):
@@ -467,7 +454,6 @@ def test_explicit_report_limits_bypass_default_store(monkeypatch, name, limit):
         }
     )
 
-
 @pytest.mark.parametrize("name", ["top_movers", "attention_list"])
 @pytest.mark.parametrize("failure", ["missing", "unavailable"])
 def test_omitted_report_limits_refuse_policy_failure_before_owner_read(monkeypatch, name, failure):
@@ -491,7 +477,6 @@ def test_omitted_report_limits_refuse_policy_failure_before_owner_read(monkeypat
         scope["since"] = datetime.now(UTC)
     with pytest.raises(RuntimeError if failure == "unavailable" else KeyError):
         getattr(admin_reports, name)(db, **scope)
-
 
 def test_activity_snapshot_delegates_learning_counts_with_same_scope(monkeypatch):
     from dotmac_learning import ActivityWindowCounts
@@ -537,7 +522,6 @@ def test_activity_snapshot_delegates_learning_counts_with_same_scope(monkeypatch
     assert snap["top_movers"] is movers
     assert snap["attention"] is attention
     assert snap["pipeline"] == {}
-
 
 @pytest.mark.parametrize("hours", [None, 0, -3])
 def test_send_report_resolves_only_omitted_hours_and_preserves_outbox_boundary(monkeypatch, hours):
@@ -601,7 +585,6 @@ def test_send_report_resolves_only_omitted_hours_and_preserves_outbox_boundary(m
         )
     ]
 
-
 def test_send_report_refuses_policy_failure_before_snapshot_or_delivery(monkeypatch):
     from app.services import admin_reports
 
@@ -616,7 +599,6 @@ def test_send_report_refuses_policy_failure_before_snapshot_or_delivery(monkeypa
     monkeypatch.setattr(admin_reports, "enqueue_email", unexpected)
     with pytest.raises(RuntimeError, match="policy store unavailable"):
         admin_reports.send_activity_report(object(), tenant_id=uuid4())
-
 
 @pytest.mark.parametrize(
     "name,key",

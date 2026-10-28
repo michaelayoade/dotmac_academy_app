@@ -9,7 +9,7 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import sessionmaker
 
@@ -77,7 +77,7 @@ def test_scalar_token_read_observes_remote_invalidation_and_rotation_rollback(ca
     a = calendar_account
     raw = ical.mint_feed_token(a.db, tenant_id=a.tid, person_id=a.pid)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     retained = a.db.scalars(select(AccountToken).where(AccountToken.token_hash == hash_token(raw))).one()
     assert retained.used_at is None
     a.admin.execute(update(AccountToken).where(AccountToken.id == retained.id).values(used_at=datetime.now(UTC)))
@@ -90,7 +90,7 @@ def test_scalar_token_read_observes_remote_invalidation_and_rotation_rollback(ca
     replacement = ical.mint_feed_token(a.db, tenant_id=a.tid, person_id=a.pid)
     assert ical.resolve_feed_token(a.db, tenant_id=a.tid, raw=raw) is None
     a.db.rollback()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert ical.resolve_feed_token(a.db, tenant_id=a.tid, raw=raw) == a.pid
     assert ical.resolve_feed_token(a.db, tenant_id=a.tid, raw=replacement) is None
 
@@ -124,7 +124,7 @@ def test_concurrent_rotations_wait_on_actual_person_and_only_last_survives(calen
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()

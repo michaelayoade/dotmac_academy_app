@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from dotmac_kernel.models import Party, UserCredential
 from dotmac_learning import InvitationEnrollmentInitialState
-from dotmac_learning.models import Enrollment
+from dotmac_learning.participation_models import Enrollment
 from sqlalchemy import func, select
 
 from app.models.account_token import AccountToken

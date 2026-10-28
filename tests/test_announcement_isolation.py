@@ -12,13 +12,12 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from app.models.person import Person
 from app.services import announcements as ann_svc
+from tests.conftest import make_person_party
 
 
 def _admin_set_tenant(db, tenant_id):
     db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant_id)})
-
 
 @pytest.fixture(scope="module")
 def app_user_engine():
@@ -28,7 +27,6 @@ def app_user_engine():
     engine = create_engine(url, future=True)
     yield engine
     engine.dispose()
-
 
 @pytest.fixture
 def app_user_session(app_user_engine):
@@ -40,15 +38,13 @@ def app_user_session(app_user_engine):
     finally:
         db.close()
 
-
 def _make_person(db, tenant):
     pid = uuid4()
-    p = Person(tenant_id=tenant.id, email=f"{pid}@iso.ann", first_name="I", last_name="S")
+    p = make_person_party(db, tenant_id=tenant.id, email=f"{pid}@iso.ann", first_name="I", last_name="S")
     p.id = pid
     db.add(p)
     db.flush()
     return p
-
 
 def test_tenant_b_cannot_see_tenant_a_announcement(
     admin_session, app_user_session, tenant_a, tenant_b
@@ -84,7 +80,6 @@ def test_tenant_b_cannot_see_tenant_a_announcement(
         app_user_session, tenant_id=tenant_b.id, person_id=person_b.id
     )
     assert not any(a.id == ann.id for a in items_fp)
-
 
 def test_tenant_a_announcement_visible_within_tenant_a(
     admin_session, app_user_session, tenant_a

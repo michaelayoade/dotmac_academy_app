@@ -11,8 +11,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyType
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select, update
 
 from app.config import Settings
@@ -124,7 +124,7 @@ def test_notify_many_and_producer_write_share_caller_rollback(current_account):
     assert own[0].body == "rollback body" and own[0].link == "/account" and own[0].read_at is None
     assert a.admin.scalars(select(Notification).where(Notification.title == title)).all() == []
     a.db.rollback()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     a.admin.expire_all()
     assert a.admin.scalars(select(Notification).where(Notification.title == title)).all() == []
     assert a.db.get(AcademyAccountProfile, a.pid).prefs == original

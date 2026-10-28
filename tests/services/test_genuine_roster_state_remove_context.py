@@ -17,8 +17,8 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import sessionmaker
@@ -103,7 +103,7 @@ def test_live_instructor_cannot_change_nonstudent_enrollment_state(roster_actors
         _invoke(actors, operation, cid, state="invalid")
     assert caught.value.status_code == 403 and caught.value.detail == "Forbidden"
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Enrollment, eid).status == "active"
 
 
@@ -140,7 +140,7 @@ def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
 
     def holder():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalar(select(Party).where(Party.id == actor.pid).with_for_update())
             if change == "revocation":
                 db.execute(
@@ -172,7 +172,7 @@ def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
 
     def follower():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
@@ -186,7 +186,7 @@ def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             if change == "expiry":
                 Event().wait(1.1)  # Natural session expiry while genuinely blocked.
@@ -238,7 +238,7 @@ def test_failure_after_actual_owner_caught_outer_commit_restores_operation_prese
         _invoke(actors, operation, cid, admin=True)
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Cohort, cid).name == "Unrelated prior work"
     assert a.db.get(Enrollment, eid).status == "active"
     assert a.db.get(AuthSession, actors.admin.session_id).revoked_at is None
@@ -275,7 +275,7 @@ def test_typed_learning_transaction_guard_same_instance_after_real_savepoint_rol
     assert caught.value is failure and caught.value.__suppress_context__ is True
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Enrollment, eid).status == "active"
 
 
@@ -288,7 +288,7 @@ def test_issued_context_binding_tamper_latches_even_when_caught_and_restored(ros
         a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid, state="dropped"
     )
     with sessionmaker(bind=a.db.get_bind(), autoflush=False)() as other:
-        set_tenant(other, a.tid)
+        resolve_database_runtime().set_tenant(other, a.tid)
         with pytest.raises(boundary.HumanOperationError):
             with issued as context:
                 if field in {"cohort", "person", "state"}:
@@ -315,7 +315,7 @@ def test_issued_context_binding_tamper_latches_even_when_caught_and_restored(ros
                     context.revalidate()
         assert context.__dict__ == {}
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Enrollment, eid).status == "active"
 
 
@@ -400,7 +400,7 @@ def test_same_request_cookie_mutation_refuses_and_latches_even_after_restore(ros
             with pytest.raises(boundary.HumanOperationError):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(Enrollment, eid).status == "active"
 
 
@@ -489,7 +489,7 @@ def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_own
 
     def holder():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalar(select(Enrollment).where(Enrollment.id == eid).with_for_update())
             locked.set()
             assert release.wait(10)
@@ -497,7 +497,7 @@ def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_own
 
     def follower():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             db.get(Cohort, cid).name = "Prior work survives owner wait"
             started.set()
@@ -512,7 +512,7 @@ def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_own
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             assert calls == [True]
             Event().wait(2.1)

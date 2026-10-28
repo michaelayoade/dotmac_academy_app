@@ -14,6 +14,7 @@ from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.credential_lifecycle import CredentialAssignmentAuditEntryV1, CredentialAssignmentError
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, UserCredential
 from dotmac_kernel.security import verify_password
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import inspect, select, text
 
 from app.models.account_token import AccountToken
@@ -41,9 +42,8 @@ def invitation_account(request):
         fk["referred_table"] == "parties" and fk["constrained_columns"] == ["tenant_id", "person_id"] for fk in fks
     )
     assert not any(fk["referred_table"] == "people" for fk in fks), "legacy token FK remains unresolved"
-    from dotmac_kernel.db import set_tenant
 
-    set_tenant(db, tenant.id)
+    resolve_database_runtime().set_tenant(db, tenant.id)
     party = Party(
         id=uuid4(),
         tenant_id=tenant.id,
@@ -186,9 +186,8 @@ def test_audit_failure_caught_outer_commit_has_zero_claim_effects(invitation_acc
     assert db.is_active and db.get_transaction() is root
     assert db.execute(text("SELECT 1")).scalar_one() == 1
     db.commit()  # The product fixture must support a genuine caller commit.
-    from dotmac_kernel.db import set_tenant
 
-    set_tenant(db, tid)  # Caller commit cleared SET LOCAL RLS tenant context.
+    resolve_database_runtime().set_tenant(db, tid)  # Caller commit cleared SET LOCAL RLS tenant context.
     readback_root = db.get_transaction()
     tokens = db.scalars(
         select(AccountToken)

@@ -4,31 +4,29 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from app.models.auth import UserCredential
+from dotmac_kernel.models import PartyRoleGrant
+
 from app.models.class_session import ClassSession
 from app.models.cohort import Cohort, Enrollment
-from app.models.person import Person
 from app.services.agenda import upcoming_for_person
 from app.services.scheduling import join_is_open
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _learner(admin_session, tenant, email="tt-stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Tt", last_name="Stu")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Tt", last_name="Stu")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(tenant_id=tenant.id, person_id=p.id, email=email, password_hash=hash_password("password1"))
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     return p
 
-
 def _login(app_client, email="tt-stu@a.edu"):
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
-
 
 def _cohort_with_session(admin_session, tenant, person=None, *, name="TZ Cohort", starts_in_hours=2.0, join_url=None):
     c = Cohort(tenant_id=tenant.id, name=name, discipline="fiber", status="active", delivery_mode="blended")
@@ -55,12 +53,10 @@ def _cohort_with_session(admin_session, tenant, person=None, *, name="TZ Cohort"
     admin_session.refresh(s)
     return c, s
 
-
 def test_timetable_requires_login(app_client, tenant_a):
     r = app_client.get("/timetable", headers=H, follow_redirects=False)
     assert r.status_code in (302, 303)
     assert "/login" in r.headers.get("location", "")
-
 
 def test_timetable_lists_only_my_cohort_sessions(app_client, admin_session, tenant_a):
     p = _learner(admin_session, tenant_a)
@@ -74,7 +70,6 @@ def test_timetable_lists_only_my_cohort_sessions(app_client, admin_session, tena
     # Timezone label is derived from the configured academy zone (Africa/Lagos → WAT).
     assert "WAT" in r.text
 
-
 def test_session_detail_own_and_foreign(app_client, admin_session, tenant_a):
     p = _learner(admin_session, tenant_a, email="tt-det@a.edu")
     _c, mine = _cohort_with_session(admin_session, tenant_a, p, name="DetMine", join_url="https://meet.example/x")
@@ -86,7 +81,6 @@ def test_session_detail_own_and_foreign(app_client, admin_session, tenant_a):
     r = app_client.get(f"/timetable/sessions/{other.id}", headers=H)
     assert r.status_code == 404
 
-
 def test_agenda_session_links_to_detail_not_bare_timetable(admin_session, tenant_a):
     p = _learner(admin_session, tenant_a, email="tt-ag@a.edu")
     _c, s = _cohort_with_session(admin_session, tenant_a, p, name="AgCo")
@@ -94,7 +88,6 @@ def test_agenda_session_links_to_detail_not_bare_timetable(admin_session, tenant
     sess = [i for i in items if i["kind"] == "session"]
     assert sess and sess[0]["link"] == f"/timetable/sessions/{s.id}"
     assert all(i.get("link") != "/timetable" for i in items)
-
 
 def test_join_window_rules(admin_session, tenant_a):
     p = _learner(admin_session, tenant_a, email="tt-join@a.edu")
@@ -114,16 +107,14 @@ def test_join_window_rules(admin_session, tenant_a):
     soon.ends_at = now + timedelta(minutes=50)
     assert join_is_open(soon, now=now, lead_minutes=60) is True
 
-
 def test_instructor_input_stored_as_utc_from_lagos(app_client, admin_session, tenant_a):
     from sqlalchemy import select
 
-    from app.models.rbac import PersonRole
     from app.services.bootstrap import ensure_roles
 
     roles = ensure_roles(admin_session, tenant_a.id)
     p = _learner(admin_session, tenant_a, email="tt-inst@a.edu")
-    admin_session.add(PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["instructor"].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant_a.id, party_id=p.id, role_id=roles["instructor"].id))
     c = Cohort(tenant_id=tenant_a.id, name="TZ Input", discipline="fiber", status="active", delivery_mode="self_paced")
     admin_session.add(c)
     admin_session.commit()

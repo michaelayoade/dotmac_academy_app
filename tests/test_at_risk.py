@@ -7,11 +7,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 
 from app.services import at_risk
+from tests.conftest import make_person_party
 
 
 def _now():
     return datetime.now(UTC)
-
 
 def _setup(admin_session, tenant, *, starts, ends, pct, status="in_progress"):
     """A student enrolled in a cohort running one course, with a completion pct."""
@@ -19,7 +19,6 @@ def _setup(admin_session, tenant, *, starts, ends, pct, status="in_progress"):
     from app.models.completion import CourseCompletion
     from app.models.course import Course
     from app.models.offering import CourseOffering
-    from app.models.person import Person
 
     admin_session.rollback()
     import uuid
@@ -29,7 +28,7 @@ def _setup(admin_session, tenant, *, starts, ends, pct, status="in_progress"):
     course = Course(
         tenant_id=tenant.id, title=f"Fiber {suffix}", slug=f"fiber-{suffix}", discipline="fiber", source_ref="x"
     )
-    person = Person(tenant_id=tenant.id, email=f"s{suffix}@a.ex", first_name="S", last_name="T")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=f"s{suffix}@a.ex", first_name="S", last_name="T")
     admin_session.add_all([cohort, course, person])
     admin_session.flush()
     admin_session.add_all(
@@ -51,12 +50,10 @@ def _setup(admin_session, tenant, *, starts, ends, pct, status="in_progress"):
     admin_session.commit()
     return person, course
 
-
 def test_overdue_flagged(admin_session, tenant_a):
     p, _ = _setup(admin_session, tenant_a, starts=_now() - timedelta(days=30), ends=_now() - timedelta(days=1), pct=0.4)
     items = at_risk.at_risk_for_person(admin_session, tenant_id=tenant_a.id, person_id=p.id)
     assert len(items) == 1 and items[0]["reason"] == "overdue"
-
 
 def test_behind_flagged(admin_session, tenant_a):
     # window 80% elapsed, only 10% done -> behind
@@ -64,12 +61,10 @@ def test_behind_flagged(admin_session, tenant_a):
     items = at_risk.at_risk_for_person(admin_session, tenant_id=tenant_a.id, person_id=p.id)
     assert len(items) == 1 and items[0]["reason"] == "behind"
 
-
 def test_on_track_not_flagged(admin_session, tenant_a):
     # window 50% elapsed, 60% done -> ahead of pace
     p, _ = _setup(admin_session, tenant_a, starts=_now() - timedelta(days=5), ends=_now() + timedelta(days=5), pct=0.6)
     assert at_risk.at_risk_for_person(admin_session, tenant_id=tenant_a.id, person_id=p.id) == []
-
 
 def test_completed_not_flagged(admin_session, tenant_a):
     p, _ = _setup(
@@ -81,7 +76,6 @@ def test_completed_not_flagged(admin_session, tenant_a):
         status="completed",
     )
     assert at_risk.at_risk_for_person(admin_session, tenant_id=tenant_a.id, person_id=p.id) == []
-
 
 def test_notify_and_dedup(admin_session, tenant_a):
     from app.models.notification import Notification

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import text
 
 from app.models.assessment import Question, QuestionBank
@@ -90,7 +90,7 @@ def test_a_transaction_local_scope_does_not_survive_a_commit(admin_session, app_
     """
     course, bank = _seed_bank(admin_session, tenant_a)
     try:
-        set_tenant(app_user_session, tenant_a.id, transaction_local=True)
+        resolve_database_runtime().set_tenant(app_user_session, tenant_a.id, transaction_local=True)
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
         app_user_session.commit()
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 0
@@ -103,7 +103,7 @@ def test_a_session_level_scope_survives_a_commit(admin_session, app_user_session
     """What the CLI needs, and what it now asks for."""
     course, bank = _seed_bank(admin_session, tenant_a)
     try:
-        set_tenant(app_user_session, tenant_a.id, transaction_local=False)
+        resolve_database_runtime().set_tenant(app_user_session, tenant_a.id, transaction_local=False)
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
         app_user_session.commit()
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
@@ -119,7 +119,7 @@ def test_set_tenant_makes_the_rows_visible(admin_session, app_user_session, tena
     """The fix: same session, same query, scope applied."""
     course, bank = _seed_bank(admin_session, tenant_a)
     try:
-        set_tenant(app_user_session, tenant_a.id)
+        resolve_database_runtime().set_tenant(app_user_session, tenant_a.id)
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 1
         assert app_user_session.query(Course).filter(Course.id == course.id).count() == 1
     finally:
@@ -137,7 +137,7 @@ def test_set_tenant_does_not_widen_beyond_the_tenant(admin_session, app_user_ses
     """
     course, bank = _seed_bank(admin_session, tenant_a)
     try:
-        set_tenant(app_user_session, tenant_b.id)
+        resolve_database_runtime().set_tenant(app_user_session, tenant_b.id)
         assert app_user_session.query(QuestionBank).filter(QuestionBank.id == bank.id).count() == 0
     finally:
         app_user_session.execute(text("RESET app.current_tenant"))

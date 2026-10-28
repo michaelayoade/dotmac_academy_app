@@ -8,26 +8,22 @@ from sqlalchemy import text
 
 from app.models.notification import Notification
 from app.services import notifications as notif_svc
+from tests.conftest import make_person_party
 
 
 def _set_tenant(db, tenant_id):
     db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant_id)})
-
 
 @pytest.fixture
 def db_session(admin_session):
     """Admin session used for service tests (RLS bypassed)."""
     return admin_session
 
-
 def test_notify_creates_row(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     person_id = uuid4()
 
-    from app.models.person import Person
-
-    p = Person(tenant_id=tenant_a.id, email=f"{person_id}@test.com",
-               first_name="A", last_name="B")
+    p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="A", last_name="B")
     p.id = person_id
     db_session.add(p)
     db_session.flush()
@@ -53,14 +49,11 @@ def test_notify_creates_row(db_session, tenant_a):
     assert n.link == "/courses/test"
     assert n.read_at is None
 
-
 def test_unread_count(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     person_id = uuid4()
 
-    from app.models.person import Person
-    p = Person(tenant_id=tenant_a.id, email=f"{person_id}@test.com",
-               first_name="C", last_name="D")
+    p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="C", last_name="D")
     p.id = person_id
     db_session.add(p)
     db_session.flush()
@@ -75,14 +68,11 @@ def test_unread_count(db_session, tenant_a):
 
     assert notif_svc.unread_count(db_session, tenant_id=tenant_a.id, person_id=person_id) == 2
 
-
 def test_mark_all_read_zeroes_count(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     person_id = uuid4()
 
-    from app.models.person import Person
-    p = Person(tenant_id=tenant_a.id, email=f"{person_id}@test.com",
-               first_name="E", last_name="F")
+    p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="E", last_name="F")
     p.id = person_id
     db_session.add(p)
     db_session.flush()
@@ -100,7 +90,6 @@ def test_mark_all_read_zeroes_count(db_session, tenant_a):
 
     assert notif_svc.unread_count(db_session, tenant_id=tenant_a.id, person_id=person_id) == 0
 
-
 def test_recent_ordering(db_session, tenant_a):
     """recent() returns newest first."""
     from datetime import UTC, datetime
@@ -108,9 +97,7 @@ def test_recent_ordering(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     person_id = uuid4()
 
-    from app.models.person import Person
-    p = Person(tenant_id=tenant_a.id, email=f"{person_id}@test.com",
-               first_name="G", last_name="H")
+    p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="G", last_name="H")
     p.id = person_id
     db_session.add(p)
     db_session.flush()
@@ -131,15 +118,12 @@ def test_recent_ordering(db_session, tenant_a):
     titles = [n.title for n in items]
     assert titles.index("Second") < titles.index("First")
 
-
 def test_notify_many(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
 
-    from app.models.person import Person
     ids = [uuid4(), uuid4()]
     for pid in ids:
-        p = Person(tenant_id=tenant_a.id, email=f"{pid}@test.com",
-                   first_name="X", last_name="Y")
+        p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{pid}@test.com", first_name="X", last_name="Y")
         p.id = pid
         db_session.add(p)
     db_session.flush()

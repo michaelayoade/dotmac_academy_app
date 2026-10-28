@@ -12,9 +12,9 @@ from sqlalchemy import select
 
 from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
-
 
 def _seed_courses(admin_session, tid):
     listed = Course(
@@ -40,13 +40,11 @@ def _seed_courses(admin_session, tid):
     admin_session.add_all([listed, unlisted_internal, listed_mgmt, unlisted_mgmt, draft_listed])
     admin_session.commit()
 
-
 def test_anonymous_root_renders_landing_not_login_redirect(app_client, admin_session, tenant_a):
     _seed_courses(admin_session, tenant_a.id)
     r = app_client.get("/", headers=H, follow_redirects=False)
     assert r.status_code == 200
     assert "Browse the courses" in r.text
-
 
 def test_public_courses_shows_only_listed_published(app_client, admin_session, tenant_a):
     _seed_courses(admin_session, tenant_a.id)
@@ -63,7 +61,6 @@ def test_public_courses_shows_only_listed_published(app_client, admin_session, t
     assert "Enrolment" not in r.text
     assert "enrolment" not in r.text
 
-
 def test_management_enrollment_form_renders_management_courses(app_client, admin_session, tenant_a):
     _seed_courses(admin_session, tenant_a.id)
     r = app_client.get("/management-enrollment", headers=H)
@@ -71,7 +68,6 @@ def test_management_enrollment_form_renders_management_courses(app_client, admin
     assert 'hx-post="/management-enrollment"' in r.text
     assert "Leading a Team" in r.text
     assert "Fiber Basics" not in r.text
-
 
 def test_management_enrollment_post_queues_inquiry(app_client, admin_session, tenant_a):
     r = app_client.post(
@@ -100,19 +96,15 @@ def test_management_enrollment_post_queues_inquiry(app_client, admin_session, te
     assert row.payload["learner_type"] == "Team"
     assert "Need seats for supervisors." in row.text_body
 
-
 def test_signed_in_root_still_learn_home(app_client, admin_session, tenant_a):
-    from app.models.auth import UserCredential
-    from app.models.person import Person
+
     from app.services.security import hash_password
 
     _seed_courses(admin_session, tenant_a.id)
-    p = Person(tenant_id=tenant_a.id, email="pl@alpha.edu", first_name="Pat", last_name="Lu")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="pl@alpha.edu", first_name="Pat", last_name="Lu")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant_a.id, person_id=p.id,
-                                     email="pl@alpha.edu",
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="pl@alpha.edu", password_hash=hash_password("password1")))
     admin_session.commit()
 
     app_client.get("/login", headers=H)

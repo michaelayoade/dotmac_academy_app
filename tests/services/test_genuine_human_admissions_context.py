@@ -16,8 +16,8 @@ from uuid import UUID, uuid4
 import dotmac_learning as learning
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import InvalidRequestError
@@ -85,7 +85,7 @@ def admission_case(roster_actors):
     )
     a.admin.add(applicant)
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     return SimpleNamespace(
         actors=actors,
@@ -352,7 +352,7 @@ def test_private_refusals_are_sticky_and_caught_outer_commit_preserves_prior_wor
                     context.execute_admission(**{fault: None})
     assert context.__dict__ == {} and c.a.db.get_transaction() is root
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before and c.a.db.get(Cohort, c.cohort_id).name == "Prior work"
 
 
@@ -393,7 +393,7 @@ def test_actual_late_domain_audit_and_outbox_failures_roll_back_whole_trace(admi
     if stage == "transaction":
         assert caught.value is same
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before and c.a.db.get(Cohort, c.cohort_id).name == "Prior work"
 
 
@@ -455,7 +455,7 @@ def test_actual_persisted_result_receipts_tasks_outbox_and_trace_tamper_poisoned
             with pytest.raises((boundary.HumanOperationError, InvalidRequestError)):
                 context.revalidate()
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
 
 
@@ -556,7 +556,7 @@ def test_natural_applicant_row_wait_samples_auth_clock_after_wait_and_rolls_back
 
     def holder():
         with sessions() as db:
-            set_tenant(db, c.a.tid)
+            resolve_database_runtime().set_tenant(db, c.a.tid)
             db.scalar(select(Applicant).where(Applicant.id == c.id).with_for_update())
             locked.set()
             assert release.wait(10)
@@ -564,7 +564,7 @@ def test_natural_applicant_row_wait_samples_auth_clock_after_wait_and_rolls_back
 
     def follower():
         with sessions() as db:
-            set_tenant(db, c.a.tid)
+            resolve_database_runtime().set_tenant(db, c.a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
@@ -578,7 +578,7 @@ def test_natural_applicant_row_wait_samples_auth_clock_after_wait_and_rolls_back
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(c.a.db, c.a.tid)
+            resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
             _wait_for_lock(c.a.db, backend[0])
             if loss == "expiry":
                 Event().wait(2.1)
@@ -605,7 +605,7 @@ def test_request_tenant_cannot_mutate_an_existing_other_tenant_applicant(admissi
     with pytest.raises(NotFoundError):
         admissions.transition_api_applicant(c.a.db, request=c.api, applicant_id=other.id, to_status="screened")
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     c.a.admin.refresh(other)
     assert other.status == before and _events(c) == []
 
@@ -638,7 +638,7 @@ def test_natural_party_row_wait_rejects_changed_exact_email_membership(admission
         else None
     )
     c.a.admin.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     before = _snapshot(c)
     c.a.db.commit()
     sessions = sessionmaker(bind=c.a.db.get_bind(), autoflush=False)
@@ -647,7 +647,7 @@ def test_natural_party_row_wait_rejects_changed_exact_email_membership(admission
 
     def holder():
         with sessions() as db:
-            set_tenant(db, c.a.tid)
+            resolve_database_runtime().set_tenant(db, c.a.tid)
             row = db.scalar(
                 select(Party).where(Party.id == (person.id if person else c.actors.admin.pid)).with_for_update()
             )
@@ -661,7 +661,7 @@ def test_natural_party_row_wait_rejects_changed_exact_email_membership(admission
 
     def follower():
         with sessions() as db:
-            set_tenant(db, c.a.tid)
+            resolve_database_runtime().set_tenant(db, c.a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(ConflictError):
@@ -674,7 +674,7 @@ def test_natural_party_row_wait_rejects_changed_exact_email_membership(admission
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(c.a.db, c.a.tid)
+            resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
             _wait_for_lock(c.a.db, backend[0])
         finally:
             release.set()
@@ -712,7 +712,7 @@ def test_failure_after_actual_learning_enrollment_rolls_back_new_identity_and_en
         assert caught.value is same
     assert c.a.db.get_transaction() is root
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before and set(c.a.db.scalars(select(Party.id)).all()) == parties
     assert c.a.db.get(Cohort, c.cohort_id).name == "Prior enrollment work"
     assert c.a.db.scalars(select(Enrollment).where(Enrollment.cohort_id == c.cohort_id)).all() == []

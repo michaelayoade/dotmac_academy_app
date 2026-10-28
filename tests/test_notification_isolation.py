@@ -12,13 +12,12 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from app.models.person import Person
 from app.services import notifications as notif_svc
+from tests.conftest import make_person_party
 
 
 def _admin_set_tenant(db, tenant_id):
     db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant_id)})
-
 
 @pytest.fixture(scope="module")
 def app_user_engine():
@@ -28,7 +27,6 @@ def app_user_engine():
     engine = create_engine(url, future=True)
     yield engine
     engine.dispose()
-
 
 @pytest.fixture
 def app_user_session(app_user_engine):
@@ -40,15 +38,13 @@ def app_user_session(app_user_engine):
     finally:
         db.close()
 
-
 def _make_person(admin_session, tenant):
     pid = uuid4()
-    p = Person(tenant_id=tenant.id, email=f"{pid}@iso.test", first_name="I", last_name="S")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=f"{pid}@iso.test", first_name="I", last_name="S")
     p.id = pid
     admin_session.add(p)
     admin_session.flush()
     return p
-
 
 def test_person_b_cannot_see_person_a_notification(admin_session, app_user_session, tenant_a):
     """Person B querying via app_user (RLS) cannot see Person A's notification."""
@@ -73,7 +69,6 @@ def test_person_b_cannot_see_person_a_notification(admin_session, app_user_sessi
     items = notif_svc.recent(app_user_session, tenant_id=tenant_a.id, person_id=person_b.id)
     titles = [n.title for n in items]
     assert "Person A's private notification" not in titles
-
 
 def test_tenant_b_cannot_see_tenant_a_notification(
     admin_session, app_user_session, tenant_a, tenant_b

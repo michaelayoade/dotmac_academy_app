@@ -7,32 +7,25 @@ import uuid
 import pytest
 
 from app.models.assessment import Activity, Question, QuestionBank
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _login(app_client, admin_session, tenant):
-    p = Person(tenant_id=tenant.id, email="s@a.edu", first_name="S", last_name="L")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email="s@a.edu", first_name="S", last_name="L")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email="s@a.edu",
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="s@a.edu", password_hash=hash_password("password1"))
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     # First request has no cookies → CSRF middleware skips the check (empty cookie jar).
     app_client.post("/login", headers=h, data={"email": "s@a.edu", "password": "password1"})
     return p, h
-
 
 def test_take_test_flow(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a)
@@ -124,7 +117,6 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
     assert "Passed" in r.text
     assert "Because A" in r.text
 
-
 def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
     _login(app_client, admin_session, tenant_a)
     h = {"Host": "alpha.localhost"}
@@ -169,7 +161,6 @@ def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
     r2 = app_client.get("/courses/foundation/chapters/999", headers=h)
     assert r2.status_code == 404
 
-
 def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
     """The Learn home lists every course the student is enrolled in (by discipline)."""
     from app.models.cohort import Cohort, Enrollment
@@ -212,7 +203,6 @@ def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
         # leaves no residue in the shared test DB.
         admin_session.query(Course).filter(Course.tenant_id == tenant_a.id).delete()
         admin_session.commit()
-
 
 def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a)
@@ -277,11 +267,9 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
         admin_session.query(Course).filter(Course.tenant_id == tenant_a.id, Course.slug == slug).delete()
         admin_session.commit()
 
-
 # ---------------------------------------------------------------------------
 # Subtopic progress is server state, not browser state
 # ---------------------------------------------------------------------------
-
 
 def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
     """A course the learner may study, with one chapter and one activity."""
@@ -340,7 +328,6 @@ def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
     admin_session.commit()
     return c
 
-
 def test_subtopic_progress_survives_a_new_browser_session(app_client, admin_session, tenant_a):
     """The bug this replaced: progress lived in window.localStorage, so a learner
     who switched device found the chapter's activities re-locked with nothing on
@@ -372,7 +359,6 @@ def test_subtopic_progress_survives_a_new_browser_session(app_client, admin_sess
     assert "chapter-activity-link" in r2.text
     assert 'class="chapter-activity-link btn-ghost justify-between gap-3 action-disabled"' not in r2.text
 
-
 def test_unknown_subtopic_slug_is_rejected(app_client, admin_session, tenant_a):
     """The slug is content-derived and arrives from the client, so it is checked
     against the chapter's real headings rather than stored on trust."""
@@ -383,7 +369,6 @@ def test_unknown_subtopic_slug_is_rejected(app_client, admin_session, tenant_a):
     hh = {**h, "x-csrf-token": app_client.cookies.get("csrf_token") or ""}
     r = app_client.post("/courses/subtopics2/chapters/1/subtopics/not-a-heading/complete", headers=hh)
     assert r.status_code == 404
-
 
 def test_subtopic_progress_requires_course_access(app_client, admin_session, tenant_a):
     """Without the entitlement gate a learner could write progress — and feed the
@@ -410,7 +395,6 @@ def test_subtopic_progress_requires_course_access(app_client, admin_session, ten
     hh = {**h, "x-csrf-token": app_client.cookies.get("csrf_token") or ""}
     r = app_client.post("/courses/notmine/chapters/1/subtopics/alpha/complete", headers=hh)
     assert r.status_code == 403
-
 
 @pytest.fixture
 def chapter_owner_route(monkeypatch):
@@ -451,7 +435,6 @@ def chapter_owner_route(monkeypatch):
         render=render,
         emit=emit,
     )
-
 
 @pytest.mark.parametrize(
     "done,event_status", [(True, "recorded"), (True, "suppressed"), (True, "failed"), (False, None)]
@@ -497,7 +480,6 @@ def test_chapter_toggle_delegates_one_scoped_owner_command_and_renders_outcome(
     warnings = [record.getMessage() for record in caplog.records if record.name == case.learn.reading_progress.__name__]
     assert warnings == (["learning-event emission failed (chapter_completed)"] if event_status == "failed" else [])
 
-
 @pytest.mark.parametrize("route", ["chapter", "chapter_complete"])
 def test_chapter_owner_access_denial_precedes_progress_or_render(chapter_owner_route, monkeypatch, route):
     from unittest.mock import Mock
@@ -519,7 +501,6 @@ def test_chapter_owner_access_denial_precedes_progress_or_render(chapter_owner_r
     writer.assert_not_called()
     case.emit.assert_not_called()
     case.render.assert_not_called()
-
 
 @pytest.mark.parametrize("route", ["chapter", "chapter_complete"])
 @pytest.mark.parametrize("missing", ["course", "chapter"])
@@ -546,7 +527,6 @@ def test_chapter_owner_missing_reference_keeps_404_before_progress(chapter_owner
     writer.assert_not_called()
     case.emit.assert_not_called()
     case.render.assert_not_called()
-
 
 @pytest.mark.parametrize("current_done", [False, True])
 def test_chapter_get_keeps_sidebar_batch_and_later_current_flag_observations(
@@ -591,7 +571,6 @@ def test_chapter_get_keeps_sidebar_batch_and_later_current_flag_observations(
     case.db.scalar.assert_called_once()
     case.db.execute.assert_not_called()
     assert [item.kwargs["kind"] for item in case.emit.call_args_list] == ["course_viewed", "chapter_viewed"]
-
 
 def test_chapter_toggle_required_owner_failure_propagates_without_render(chapter_owner_route, monkeypatch):
     from unittest.mock import Mock

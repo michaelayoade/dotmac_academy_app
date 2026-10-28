@@ -9,7 +9,9 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.models import Party, PartyRoleGrant, PartyType, Role
-from dotmac_learning.models import Chapter, Cohort, Course, CourseOffering, Enrollment
+from dotmac_learning.curriculum_models import Chapter
+from dotmac_learning.models import Course
+from dotmac_learning.participation_models import Cohort, CourseOffering, Enrollment
 from sqlalchemy import update
 from starlette.requests import Request
 

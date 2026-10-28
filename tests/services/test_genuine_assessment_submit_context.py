@@ -13,7 +13,7 @@ from uuid import UUID
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_learning import TransactionChanged
 from sqlalchemy import select, update
 from starlette.requests import Request
@@ -59,7 +59,7 @@ def assessment_case(admission_case):
     token = entrance_exam.issue_token(c.a.admin, applicant=row)
     c.a.admin.get(Cohort, c.cohort_id).auto_accept_threshold = .7
     c.a.admin.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     return SimpleNamespace(a=c.a, original=c, id=c.id, cohort_id=c.cohort_id, token=token)
 
 
@@ -107,7 +107,7 @@ def test_real_answers_derive_zero_one_three_system_trace(assessment_case, fracti
     assert all(type(e.id) is UUID and e.actor_type == "system" and e.actor_party_id is None for e in events)
     assert all(e.actor_id == "assessment_policy" and e.details["source"] == "assessment_policy" for e in events)
     c.a.db.commit()  # Genuine late completion guard participates in actual commit.
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _submit(c, answers=answers).disposition == "already_completed"
     assert len(_audit(c)) == len(path)
 
@@ -170,7 +170,7 @@ def test_actual_producer_failures_roll_back_result_and_keep_prior_work(assessmen
     with pytest.raises(boundary.AssessmentSubmissionError):
         _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _effects(c) == before
     assert c.a.db.get(Cohort, c.cohort_id).name == "Prior work"
 
@@ -202,7 +202,7 @@ def test_late_tamper_sticks_through_caught_commit_denial(assessment_case, fault)
     with pytest.raises(boundary.AssessmentSubmissionError):
         c.a.db.commit()
     c.a.db.rollback()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
     assert _audit(c) == []
 
@@ -229,7 +229,7 @@ def test_transaction_failure_and_original_nonexception_identity(assessment_case,
     if kind != "commit":
         assert caught.value is same
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
     assert _audit(c) == []
 
@@ -258,7 +258,7 @@ def test_partial_result_content_is_held_without_erasure(assessment_case, field, 
     with pytest.raises(boundary.AssessmentSubmissionError, match="partial assessment"):
         _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     row = c.a.db.get(Applicant, c.id)
     assert getattr(row, field) == value
     assert row.assessment_taken_at is None and row.assessment_result_version == 0
@@ -320,7 +320,7 @@ def test_actual_blocking_wait_refreshes_policy_bearer_version_and_clock(assessme
 
     def holder():
         with SessionLocal() as session:
-            set_tenant(session, c.a.tid)
+            resolve_database_runtime().set_tenant(session, c.a.tid)
             model = Cohort if change == "policy" else Applicant
             key = c.cohort_id if change == "policy" else c.id
             row = session.scalars(select(model).where(model.id == key).with_for_update()).one()
@@ -339,7 +339,7 @@ def test_actual_blocking_wait_refreshes_policy_bearer_version_and_clock(assessme
 
     def writer():
         with SessionLocal() as session:
-            set_tenant(session, c.a.tid)
+            resolve_database_runtime().set_tenant(session, c.a.tid)
             backend.append(session.scalar(text("SELECT pg_backend_pid()")))
             # Genuine stale ORM identity exists before actual FOR UPDATE wait.
             session.get(Applicant, c.id)
@@ -360,7 +360,7 @@ def test_actual_blocking_wait_refreshes_policy_bearer_version_and_clock(assessme
         follower = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(c.a.db, c.a.tid)
+            resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
             _wait_for_lock(c.a.db, backend[0])
         finally:
             release.set()
@@ -397,14 +397,14 @@ def test_actual_session_root_replacement_is_typed_and_has_no_result(assessment_c
     def replaced(*args, **kwargs):
         result = actual(*args, **kwargs)
         c.a.db.rollback()
-        set_tenant(c.a.db, c.a.tid)
+        resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
         return result
 
     monkeypatch.setattr(applicant_email, "send_onboarding_invite", replaced)
     with pytest.raises(TransactionChanged):
         _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
     c.a.db.rollback()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
     assert _audit(c) == []
 
@@ -428,7 +428,7 @@ def test_actual_settings_change_after_return_denies_caller_commit(assessment_cas
         with pytest.raises(boundary.AssessmentSubmissionError, match="policy"):
             c.a.db.commit()
         c.a.db.rollback()
-        set_tenant(c.a.db, c.a.tid)
+        resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
         assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
         assert _audit(c) == []
     finally:

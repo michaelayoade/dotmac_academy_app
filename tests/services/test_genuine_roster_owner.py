@@ -10,8 +10,8 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import sessionmaker
@@ -52,7 +52,7 @@ def _cohort(a):
     cohort = Cohort(tenant_id=a.tid, name="Genuine roster", discipline="networking", status="active")
     a.admin.add(cohort)
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     return cohort.id
 
 
@@ -142,7 +142,7 @@ def test_fatal_failure_rolls_back_even_when_caught_then_outer_commit(roster_acto
     with pytest.raises(error):
         _bulk(actors, cid, admin=True)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(select(Enrollment.id).where(Enrollment.cohort_id == cid)) is None
     assert a.db.get(AuthSession, actors.admin.session_id).revoked_at is None
     assert a.db.scalar(select(PartyRoleGrant.id).where(PartyRoleGrant.party_id == actors.admin.pid,
@@ -168,7 +168,7 @@ def test_actual_owner_never_called_after_real_party_lock_wait_and_authority_loss
 
     def holder():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalars(select(Party).where(Party.id == actors.instructor.pid).with_for_update()).one()
             if change == "revocation":
                 db.execute(update(AuthSession).where(AuthSession.id == actors.instructor.session_id).values(revoked_at=datetime.now(UTC)))
@@ -182,7 +182,7 @@ def test_actual_owner_never_called_after_real_party_lock_wait_and_authority_loss
     def follower():
         with sessions() as db:
             assert db.scalar(text("SELECT current_user")) == "app_user"
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
@@ -196,7 +196,7 @@ def test_actual_owner_never_called_after_real_party_lock_wait_and_authority_loss
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import monotonic
 
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
@@ -70,7 +70,7 @@ def test_rotation_waits_on_party_before_subtype_while_canonical_writer_completes
             assert ready.wait(10)
             second = pool.submit(rotation)
             assert started.wait(10)
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             deadline = monotonic() + 10
             while True:
                 # Observe lock custody only: no statement text, parameters,

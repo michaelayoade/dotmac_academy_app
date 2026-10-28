@@ -9,31 +9,27 @@ per-course query, the near-flat delta assertion fails.
 
 from __future__ import annotations
 
-import dotmac_kernel.db as app_db
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import event
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _login(app_client, admin_session, tenant, email):
-    person = Person(tenant_id=tenant.id, email=email, first_name="Q", last_name="Count")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Q", last_name="Count")
     admin_session.add(person)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=person.id, email=email,
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=person.id, email=email, password_hash=hash_password("password1")))
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return person
-
 
 def _seed_courses(admin_session, tid, person_id, n, prefix="qc"):
     for i in range(n):
@@ -65,21 +61,19 @@ def _seed_courses(admin_session, tid, person_id, n, prefix="qc"):
                                     fraction=0.8, passed=True, per_item=[], source="auto"))
     admin_session.commit()
 
-
 def _count_queries(app_client, path):
     counter = {"n": 0}
 
     def _before(conn, cursor, statement, params, context, executemany):
         counter["n"] += 1
 
-    event.listen(app_db.engine, "before_cursor_execute", _before)
+    event.listen(resolve_database_runtime().engine, "before_cursor_execute", _before)
     try:
         r = app_client.get(path, headers=H)
         assert r.status_code == 200
     finally:
-        event.remove(app_db.engine, "before_cursor_execute", _before)
+        event.remove(resolve_database_runtime().engine, "before_cursor_execute", _before)
     return counter["n"]
-
 
 def test_dashboard_queries_do_not_scale_with_courses(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a, "qc-dash@a.edu")
@@ -90,7 +84,6 @@ def test_dashboard_queries_do_not_scale_with_courses(app_client, admin_session, 
     # headroom for auth/tenant/nav queries that are constant per request.
     assert n_home < 40, f"/ used {n_home} queries at 6 courses"
     assert n_prog < 40, f"/progress used {n_prog} queries at 6 courses"
-
 
 def test_dashboard_query_delta_is_near_flat(app_client, admin_session, tenant_a):
     """Adding 3 courses must not add a per-course batch of queries."""

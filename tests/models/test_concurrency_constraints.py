@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models.assessment import Activity, Submission
 from app.models.attempt import ActivityAttempt
 from app.models.course import Course
-from app.models.person import Person
+from tests.conftest import make_person_party
 
 
 def _activity_and_person(db, tenant_id):
@@ -22,12 +22,7 @@ def _activity_and_person(db, tenant_id):
         source_ref="test",
         version=1,
     )
-    person = Person(
-        tenant_id=tenant_id,
-        email="race@example.com",
-        first_name="Race",
-        last_name="Guard",
-    )
+    person = make_person_party(db, tenant_id=tenant_id, email="race@example.com", first_name="Race", last_name="Guard")
     db.add_all([course, person])
     db.flush()
     activity = Activity(
@@ -41,7 +36,6 @@ def _activity_and_person(db, tenant_id):
     db.add(activity)
     db.commit()
     return activity, person
-
 
 def test_attempt_number_is_unique_per_learner_activity(admin_session, tenant_a):
     activity, person = _activity_and_person(admin_session, tenant_a.id)
@@ -66,7 +60,6 @@ def test_attempt_number_is_unique_per_learner_activity(admin_session, tenant_a):
     with pytest.raises(IntegrityError):
         admin_session.flush()
     admin_session.rollback()
-
 
 def test_only_one_randomized_attempt_may_remain_open(admin_session, tenant_a):
     activity, person = _activity_and_person(admin_session, tenant_a.id)

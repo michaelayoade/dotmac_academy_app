@@ -9,6 +9,7 @@ import pytest
 from app.services import scheduling
 from app.services.agenda import upcoming_for_person
 from app.services.exceptions import BadRequestError
+from tests.conftest import make_person_party
 
 
 def _cohort(admin_session, tenant, name="Live cohort", mode="self_paced"):
@@ -21,10 +22,8 @@ def _cohort(admin_session, tenant, name="Live cohort", mode="self_paced"):
     admin_session.refresh(c)
     return c
 
-
 def _soon(**kw):
     return datetime.now(UTC) + timedelta(**kw)
-
 
 def test_create_session_and_timetable(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
@@ -55,7 +54,6 @@ def test_create_session_and_timetable(admin_session, tenant_a):
     admin_session.refresh(cohort)
     assert cohort.delivery_mode == "blended"
 
-
 def test_validation(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
     with pytest.raises(BadRequestError):
@@ -77,7 +75,6 @@ def test_validation(admin_session, tenant_a):
             ends_at=_soon(hours=1),
         )
 
-
 def test_delivery_mode_and_cancel(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
     scheduling.set_delivery_mode(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, mode="live")
@@ -93,14 +90,12 @@ def test_delivery_mode_and_cancel(admin_session, tenant_a):
     s = scheduling.get_session(admin_session, tenant_id=tenant_a.id, session_id=s.id)
     assert s.status == "cancelled"
 
-
 def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
     from app.models.cohort import Enrollment
-    from app.models.person import Person
 
     cohort = _cohort(admin_session, tenant_a)
     admin_session.rollback()
-    p = Person(tenant_id=tenant_a.id, email="learner@a.ex", first_name="L", last_name="R")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="learner@a.ex", first_name="L", last_name="R")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
@@ -126,7 +121,6 @@ def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
         i["title"] == "Live class" and i["link"].startswith("/timetable/sessions/") and i["join_url"] == "https://meet"
         for i in sessions
     )
-
 
 def test_session_isolated_between_tenants(admin_session, tenant_a, tenant_b):
     from sqlalchemy import select as sa_select

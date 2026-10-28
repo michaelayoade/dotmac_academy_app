@@ -18,19 +18,16 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.email_outbox import EmailOutbox
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services import learner_digest
 from app.services.assessment import submit_activity
+from tests.conftest import make_person_party
 
 
 def _learner(db, tenant, email, *, first="Ada", prefs=None):
-    p = Person(
-        tenant_id=tenant.id, email=email, first_name=first, last_name="Lovelace", status="active", prefs=prefs or {}
-    )
+    p = make_person_party(db, tenant_id=tenant.id, email=email, first_name=first, last_name="Lovelace", status="active", prefs=prefs or {})
     db.add(p)
     db.flush()
     return p
-
 
 def _live_course(db, tenant, person, *, slug, title="Network Foundation", activities=2):
     """A course the learner can actually study, with N passable activities."""
@@ -98,7 +95,6 @@ def _live_course(db, tenant, person, *, slug, title="Network Foundation", activi
     db.commit()
     return course, acts
 
-
 def test_digest_reports_the_week_and_what_is_next(admin_session, tenant_a):
     now = datetime.now(UTC)
     person = _learner(admin_session, tenant_a, "ada@a.edu")
@@ -124,7 +120,6 @@ def test_digest_reports_the_week_and_what_is_next(admin_session, tenant_a):
     assert line["pct"] == 50
     assert line["next"] == "Chapter 2 test"  # the unpassed one
 
-
 def test_a_quiet_week_is_said_plainly_not_congratulated(admin_session, tenant_a):
     """An email that praises inactivity teaches people to ignore it."""
     now = datetime.now(UTC)
@@ -143,7 +138,6 @@ def test_a_quiet_week_is_said_plainly_not_congratulated(admin_session, tenant_a)
     assert digest is not None  # a quiet week is exactly when it's worth sending
     assert "haven't studied this week" in digest["headline"]
 
-
 def test_no_live_course_means_no_digest(admin_session, tenant_a):
     """Chasing someone with nothing to study is the inactivity nudge's job."""
     now = datetime.now(UTC)
@@ -159,7 +153,6 @@ def test_no_live_course_means_no_digest(admin_session, tenant_a):
     )
     admin_session.rollback()
     assert digest is None
-
 
 def test_send_is_idempotent_within_an_iso_week(admin_session, tenant_a):
     """A retried or double-scheduled job must not double-send."""
@@ -184,7 +177,6 @@ def test_send_is_idempotent_within_an_iso_week(admin_session, tenant_a):
     assert second["queued"] == 0
     assert len(mails) == 1
 
-
 def test_opt_out_is_honoured(admin_session, tenant_a):
     person = _learner(admin_session, tenant_a, "optout@a.edu", prefs={learner_digest.OPTOUT_KIND: False})
     _live_course(admin_session, tenant_a, person, slug="ld-optout")
@@ -195,7 +187,6 @@ def test_opt_out_is_honoured(admin_session, tenant_a):
     admin_session.rollback()
     assert counts["queued"] == 0
     assert counts["skipped_optout"] == 1
-
 
 def test_instructors_do_not_receive_the_learner_digest(admin_session, tenant_a):
     person = _learner(admin_session, tenant_a, "teacher@a.edu")
@@ -223,7 +214,6 @@ def test_instructors_do_not_receive_the_learner_digest(admin_session, tenant_a):
     admin_session.rollback()
     assert counts["queued"] == 0
 
-
 def test_rendered_bodies_link_to_the_resume_point_and_escape_titles(admin_session, tenant_a):
     now = datetime.now(UTC)
     person = _learner(admin_session, tenant_a, "render@a.edu")
@@ -245,7 +235,6 @@ def test_rendered_bodies_link_to_the_resume_point_and_escape_titles(admin_sessio
     assert "<b>Nasty</b>" not in html
     assert "&lt;b&gt;Nasty" in html
     assert "Account → Notifications" in text  # every send says how to stop it
-
 
 @pytest.mark.parametrize("counts", [(0, 0, 0), (3, 7, 2)])
 def test_week_activity_delegates_scope_and_returns_a_fresh_legacy_mapping(monkeypatch, counts):
@@ -274,7 +263,6 @@ def test_week_activity_delegates_scope_and_returns_a_fresh_legacy_mapping(monkey
         assert actual_person is person_id
         assert actual_since is since
 
-
 def test_week_activity_propagates_owner_failure(monkeypatch):
     failure = RuntimeError("window read failed")
 
@@ -285,7 +273,6 @@ def test_week_activity_propagates_owner_failure(monkeypatch):
     with pytest.raises(RuntimeError) as caught:
         learner_digest.week_activity(object(), tenant_id=uuid4(), person_id=uuid4(), since=datetime.now(UTC))
     assert caught.value is failure
-
 
 def test_build_and_render_consume_the_delegated_window_without_changing_payload(monkeypatch):
     db = object()

@@ -6,9 +6,9 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyRoleGrant, Role
-from dotmac_learning.models import Cohort, CohortTrack, Enrollment, Track
+from dotmac_kernel.session_runtime import resolve_database_runtime
+from dotmac_learning.participation_models import Cohort, CohortTrack, Enrollment, Track
 from sqlalchemy import select, text
 
 from app.models.account_token import AccountToken
@@ -53,7 +53,7 @@ def onboarding_case(current_account):
     for task in onboarding.list_tasks(a.admin, tenant_id=a.tid, applicant_id=row.id):
         onboarding.set_task_status(a.admin, task_id=task.id, status="done")
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     return SimpleNamespace(a=a, id=row.id, raw=raw, email=row.email, cohort_id=cohort.id, track_id=track.id)
 
@@ -289,7 +289,7 @@ def test_each_stage_failure_caught_then_outer_commit_preserves_zero_effects(onbo
         _finish(c, enqueue=enqueue)
     assert caught.value is failure and c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
     assert c.a.db.scalar(text("SELECT current_setting('app.current_tenant')")) == str(c.a.tid)
 
@@ -316,7 +316,7 @@ def test_copied_and_cross_root_context_cannot_select_system_transition(onboardin
                 admissions._transition_onboarding_enrollment(copy(context))
         # Leave this test-owned context uncleared until the attack completes.
         db.commit()
-        set_tenant(db, c.a.tid)
+        resolve_database_runtime().set_tenant(db, c.a.tid)
         root_b = db.get_transaction()
         assert root_a is not root_b and root_b is not None and root_b.is_active
         assert not root_a.is_active and context.root is root_a
@@ -356,7 +356,7 @@ def test_live_context_refuses_actual_foreign_session_and_root(onboarding_case):
             assert context.prove()
             root_a, evidence = db.get_transaction(), context.evidence
             with SessionLocal() as foreign:
-                set_tenant(foreign, c.a.tid)
+                resolve_database_runtime().set_tenant(foreign, c.a.tid)
                 root_b = foreign.get_transaction()
                 assert foreign is not db and root_b is not root_a
                 assert foreign.is_active and root_b is not None and root_b.is_active
@@ -549,7 +549,7 @@ def test_failure_after_every_owned_flush_recovers_then_outer_commit(onboarding_c
         _finish(c, enqueue=enqueue)
     assert seen >= occurrence and c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
 
 
@@ -590,7 +590,7 @@ def test_exact_email_miss_does_not_silently_become_normalized_reuse(onboarding_c
         _finish(c)
     assert c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
     assert c.a.db.get(Party, existing.id).email == c.email.upper()
 
@@ -637,7 +637,8 @@ def test_catalog_changes_apply_only_to_new_rows_and_ordered_admin_list(onboardin
 @pytest.mark.parametrize("role,status", [("student", "active"), ("instructor", "dropped")])
 @pytest.mark.parametrize("entry", ["bearer", "explicit"])
 def test_actual_admission_state_and_public_reader_interpretation(onboarding_case, role, status, entry):
-    from dotmac_learning.models import Course, CourseOffering, TrackCourse
+    from dotmac_learning.models import Course
+    from dotmac_learning.participation_models import CourseOffering, TrackCourse
 
     from app.services import settings_store
 
@@ -716,7 +717,7 @@ def test_policy_refusal_after_task_write_caught_outer_commit_has_zero_effects(on
         _finish(c)
     assert c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
 
 
@@ -791,7 +792,7 @@ def test_automatic_existing_guard_precedes_malformed_admission_policy(onboarding
         _finish(c)
     assert c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
 
 
@@ -816,7 +817,7 @@ def test_automatic_valid_guards_malformed_admission_policy_precedes_identity_and
         _finish(c)
     assert c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before
 
 
@@ -866,5 +867,5 @@ def test_later_automatic_policy_refusal_rolls_back_owned_effects_after_actual_ad
     assert len(calls) == 1
     assert c.a.db.get_transaction() is root and c.a.db.is_active
     c.a.db.commit()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert _snapshot(c) == before

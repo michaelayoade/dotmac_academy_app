@@ -9,31 +9,29 @@ Proves the shell wiring is internally consistent:
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole
+from dotmac_kernel.models import PartyRoleGrant
+
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 from app.web.nav import areas_for_roles
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _seed_login(app_client, admin_session, tenant, email, role_slug):
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Nav", last_name="User")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Nav", last_name="User")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                       password_hash=hash_password("password1"))
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id)
+        PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role_slug].id)
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return h
-
 
 def test_admin_every_sidebar_link_resolves(app_client, admin_session, tenant_a):
     """No nav link dead-ends for an admin (who can see every area)."""
@@ -45,14 +43,12 @@ def test_admin_every_sidebar_link_resolves(app_client, admin_session, tenant_a):
                 f"{area['key']} sidebar link {item['path']} -> {r.status_code}"
             )
 
-
 def test_brand_links_to_first_permitted_area_home(app_client, admin_session, tenant_a):
     h = _seed_login(app_client, admin_session, tenant_a, "brand@a.edu", "admin")
     r = app_client.get("/progress", headers=h)
     assert r.status_code == 200
     first_home = areas_for_roles(is_instructor=True, is_admin=True)[0]["home"]
     assert f'href="{first_home}"' in r.text
-
 
 def test_student_shell_has_no_teaching_or_admin_links(app_client, admin_session, tenant_a):
     h = _seed_login(app_client, admin_session, tenant_a, "stud@a.edu", "student")

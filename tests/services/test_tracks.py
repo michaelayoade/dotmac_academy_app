@@ -12,7 +12,6 @@ from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.models.track import CohortTrack, Track, TrackCourse
 from app.services import tracks as track_svc
 from app.services.entitlements import accessible_course_ids
@@ -24,6 +23,7 @@ from app.services.tracks import (
     list_cohort_tracks,
     reorder_track_courses,
 )
+from tests.conftest import make_person_party
 
 
 def _course(db, tenant, slug, title):
@@ -40,10 +40,9 @@ def _course(db, tenant, slug, title):
     db.flush()
     return course
 
-
 def test_track_assignment_restricts_access_within_cohort(admin_session, tenant_a):
     cohort = Cohort(tenant_id=tenant_a.id, name="July Intake", discipline="networking", status="active")
-    learner = Person(tenant_id=tenant_a.id, email="track-learner@a.edu", first_name="Track", last_name="Learner")
+    learner = make_person_party(admin_session, tenant_id=tenant_a.id, email="track-learner@a.edu", first_name="Track", last_name="Learner")
     course_a = _course(admin_session, tenant_a, "fiber-a", "Fiber A")
     course_b = _course(admin_session, tenant_a, "fiber-b", "Fiber B")
     admin_session.add_all([cohort, learner])
@@ -78,10 +77,9 @@ def test_track_assignment_restricts_access_within_cohort(admin_session, tenant_a
     ).all()
     assert track_b.id != track_a.id
 
-
 def test_null_track_enrollment_keeps_existing_cohort_wide_access(admin_session, tenant_a):
     cohort = Cohort(tenant_id=tenant_a.id, name="Legacy Intake", discipline="networking", status="active")
-    learner = Person(tenant_id=tenant_a.id, email="legacy-learner@a.edu", first_name="Legacy", last_name="Learner")
+    learner = make_person_party(admin_session, tenant_id=tenant_a.id, email="legacy-learner@a.edu", first_name="Legacy", last_name="Learner")
     course_a = _course(admin_session, tenant_a, "legacy-a", "Legacy A")
     course_b = _course(admin_session, tenant_a, "legacy-b", "Legacy B")
     admin_session.add_all([cohort, learner])
@@ -105,7 +103,6 @@ def test_null_track_enrollment_keeps_existing_cohort_wide_access(admin_session, 
 
     assert ids == {course_a.id, course_b.id}
 
-
 def test_create_cohort_track_links_courses_and_offerings(admin_session, tenant_a):
     cohort = Cohort(tenant_id=tenant_a.id, name="Build Intake", discipline="networking", status="active")
     course = _course(admin_session, tenant_a, "build-course", "Build Course")
@@ -126,7 +123,6 @@ def test_create_cohort_track_links_courses_and_offerings(admin_session, tenant_a
     assert (
         admin_session.scalars(select(CourseOffering).where(CourseOffering.course_id == course.id)).first() is not None
     )
-
 
 def test_create_cohort_track_orders_courses_by_explicit_position(admin_session, tenant_a):
     """1a: a position hint controls order_index; ties break by submission
@@ -154,7 +150,6 @@ def test_create_cohort_track_orders_courses_by_explicit_position(admin_session, 
     ).all()
     assert [row.course_id for row in rows] == [course_b.id, course_a.id, course_c.id]
     assert [row.order_index for row in rows] == [1, 2, 3]  # dense, never the raw client value
-
 
 def test_add_courses_to_cohort_track_orders_new_courses_by_position(admin_session, tenant_a):
     """1a: add-courses to an existing track also honors position hints for the
@@ -186,7 +181,6 @@ def test_add_courses_to_cohort_track_orders_new_courses_by_position(admin_sessio
     assert [row.course_id for row in rows] == [first.id, new_b.id, new_a.id]
     assert [row.order_index for row in rows] == [1, 2, 3]
 
-
 def test_reorder_track_courses_reassigns_dense_order(admin_session, tenant_a):
     """1b: an admin/instructor can reorder an EXISTING track's courses, not
     just at creation."""
@@ -215,7 +209,6 @@ def test_reorder_track_courses_reassigns_dense_order(admin_session, tenant_a):
     assert [row.course_id for row in rows] == [course_b.id, course_a.id]
     assert [row.order_index for row in rows] == [1, 2]
 
-
 def test_reorder_track_courses_rejects_a_course_not_in_the_track(admin_session, tenant_a):
     """1b: reorder validates the given id set matches current membership
     exactly — a course that isn't a track member is rejected."""
@@ -235,7 +228,6 @@ def test_reorder_track_courses_rejects_a_course_not_in_the_track(admin_session, 
     with pytest.raises(BadRequestError):
         # A subset (missing course_a) is also rejected — must match exactly.
         reorder_track_courses(admin_session, tenant_id=tenant_a.id, track_id=track.id, ordered_course_ids=[])
-
 
 def test_reorder_track_courses_rejects_duplicate_ids(admin_session, tenant_a):
     cohort = Cohort(tenant_id=tenant_a.id, name="Reorder Dup", discipline="networking", status="active")
@@ -260,13 +252,11 @@ def test_reorder_track_courses_rejects_duplicate_ids(admin_session, tenant_a):
             ordered_course_ids=[course_a.id, course_a.id],
         )
 
-
 def test_reorder_track_courses_unknown_track_raises_not_found(admin_session, tenant_a):
     from uuid import uuid4
 
     with pytest.raises(NotFoundError):
         reorder_track_courses(admin_session, tenant_id=tenant_a.id, track_id=uuid4(), ordered_course_ids=[])
-
 
 def test_list_cohort_tracks_flags_zero_activity_courses_live(admin_session, tenant_a):
     """1c: a zero-Activity course is flagged as a warning, computed live at
@@ -300,13 +290,12 @@ def test_list_cohort_tracks_flags_zero_activity_courses_live(admin_session, tena
     item = next(row for row in rows if row["track"].id == track.id)
     assert item["zero_activity_course_ids"] == {without_activity.id}
 
-
 def test_clear_enrollment_track_nulls_track_id_without_fabricating_completion(admin_session, tenant_a):
     """1d: recovery from a stuck track nulls Enrollment.track_id — it must
     NOT fabricate a CourseCompletion (that would trigger real certificate
     issuance for a course the learner never actually finished)."""
     cohort = Cohort(tenant_id=tenant_a.id, name="Clear Intake", discipline="networking", status="active")
-    learner = Person(tenant_id=tenant_a.id, email="clear-learner@a.edu", first_name="Clear", last_name="Learner")
+    learner = make_person_party(admin_session, tenant_id=tenant_a.id, email="clear-learner@a.edu", first_name="Clear", last_name="Learner")
     course = _course(admin_session, tenant_a, "clear-course", "Clear Course")
     admin_session.add_all([cohort, learner])
     admin_session.flush()
@@ -336,16 +325,14 @@ def test_clear_enrollment_track_nulls_track_id_without_fabricating_completion(ad
     ids = accessible_course_ids(admin_session, tenant_id=tenant_a.id, person_id=learner.id)
     assert course.id in ids
 
-
 def test_clear_enrollment_track_raises_not_found_for_missing_enrollment(admin_session, tenant_a):
     cohort = Cohort(tenant_id=tenant_a.id, name="Clear Missing", discipline="networking", status="active")
-    learner = Person(tenant_id=tenant_a.id, email="clear-missing@a.edu", first_name="Clear", last_name="Missing")
+    learner = make_person_party(admin_session, tenant_id=tenant_a.id, email="clear-missing@a.edu", first_name="Clear", last_name="Missing")
     admin_session.add_all([cohort, learner])
     admin_session.commit()
 
     with pytest.raises(NotFoundError):
         clear_enrollment_track(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, person_id=learner.id)
-
 
 @pytest.mark.parametrize(
     ("writer", "command_type"),
@@ -442,7 +429,6 @@ def test_track_writer_public_boundary(monkeypatch, writer, command_type):
         assert captured[0].course_ids == (second, first, second)
         assert captured[0].positions == {first: 7, second: 7}
 
-
 @pytest.mark.parametrize("writer", ["create_cohort_track", "add_courses_to_cohort_track", "reorder_track_courses"])
 @pytest.mark.parametrize(
     ("source_type", "target_type"),
@@ -499,7 +485,6 @@ def test_track_writer_error_boundary(monkeypatch, writer, source_type, target_ty
     else:
         assert caught.value.__cause__ is error
 
-
 def test_track_writer_validation_priority(admin_session, tenant_a):
     """Hosted DB canary; existing legacy fixtures still require canonical adoption."""
     missing_cohort, missing_track, course_id = (uuid4() for _ in range(3))
@@ -526,7 +511,6 @@ def test_track_writer_validation_priority(admin_session, tenant_a):
             track_id=missing_track,
             ordered_course_ids=[course_id, course_id],
         )
-
 
 def test_track_writer_duplicate_idempotence_and_caller_transaction(admin_session, tenant_a):
     """Hosted DB canary, pending canonical fixture adoption; never a mock DB proof."""
@@ -577,7 +561,6 @@ def test_track_writer_duplicate_idempotence_and_caller_transaction(admin_session
     admin_session.rollback()
     assert admin_session.scalar(select(Track).where(Track.id == track.id)) is None
 
-
 def _track_read_facts(tenant_id, cohort_id):
     """Real public value constructors; this helper performs no database work."""
     now = datetime.now(UTC)
@@ -622,7 +605,6 @@ def _track_read_facts(tenant_id, cohort_id):
         zero_activity_course_ids=frozenset({courses[0].id}),
     )
 
-
 def test_list_cohort_tracks_public_read_boundary(monkeypatch):
     """Only container adaptation; domain ordering/status/warnings stay with Learning."""
     db = object()
@@ -663,7 +645,6 @@ def test_list_cohort_tracks_public_read_boundary(monkeypatch):
     assert len(item.courses) == 2
     assert item.zero_activity_course_ids == frozenset({item.courses[0].id})
 
-
 def test_tracks_for_cohorts_public_read_boundary(monkeypatch):
     db = object()
     tenant_id, cohort_id, empty_cohort_id = uuid4(), uuid4(), uuid4()
@@ -692,7 +673,6 @@ def test_tracks_for_cohorts_public_read_boundary(monkeypatch):
     assert owner_rows[cohort_id] == (second, first)
     assert cohort_ids == [cohort_id, empty_cohort_id, cohort_id]
 
-
 @pytest.mark.parametrize("reader", ["list_cohort_tracks", "tracks_for_cohorts"])
 def test_track_read_empty_boundary(monkeypatch, reader):
     db = object()
@@ -710,7 +690,6 @@ def test_track_read_empty_boundary(monkeypatch, reader):
     assert calls == [(db, kwargs)]
     assert calls[0][0] is db
     assert result == ([] if reader == "list_cohort_tracks" else {})
-
 
 @pytest.mark.parametrize(
     ("reader", "source_type", "target_type"),
@@ -740,7 +719,6 @@ def test_track_read_error_boundary(monkeypatch, reader, source_type, target_type
         assert caught.value is error
     else:
         assert caught.value.__cause__ is error
-
 
 @pytest.mark.parametrize(
     "operation",
@@ -814,7 +792,6 @@ def test_track_lifecycle_public_boundary(monkeypatch, operation):
     else:
         assert result is None
 
-
 @pytest.mark.parametrize(
     "operation",
     ["cohort_track_or_404", "ensure_track_offerings", "assign_enrollment_track", "clear_enrollment_track"],
@@ -859,7 +836,6 @@ def test_track_lifecycle_error_boundary(monkeypatch, operation, source_type, tar
     else:
         assert caught.value is error
 
-
 @pytest.mark.parametrize("operation", ["ensure_track_offerings", "assign_enrollment_track", "clear_enrollment_track"])
 def test_track_lifecycle_requires_existing_root(admin_session, tenant_a, operation):
     """Hosted real-Session canary: refuse before any query can autobegin a root."""
@@ -875,12 +851,11 @@ def test_track_lifecycle_requires_existing_root(admin_session, tenant_a, operati
         getattr(track_svc, operation)(admin_session, **kwargs)
     assert admin_session.get_transaction() is None
 
-
 @pytest.mark.parametrize("operation", ["ensure_track_offerings", "assign_enrollment_track", "clear_enrollment_track"])
 def test_track_lifecycle_preserves_caller_root_and_savepoint(admin_session, tenant_a, operation):
     """Hosted DB canary; canonical installed-model fixture adoption remains required."""
     cohort = Cohort(tenant_id=tenant_a.id, name="Lifecycle Intake", discipline="networking", status="active")
-    learner = Person(tenant_id=tenant_a.id, email="lifecycle-learner@a.edu", first_name="Track", last_name="Lifecycle")
+    learner = make_person_party(admin_session, tenant_id=tenant_a.id, email="lifecycle-learner@a.edu", first_name="Track", last_name="Lifecycle")
     course = _course(admin_session, tenant_a, "lifecycle-course", "Lifecycle Course")
     admin_session.add_all([cohort, learner])
     admin_session.flush()

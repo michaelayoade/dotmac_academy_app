@@ -13,8 +13,8 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, Role
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_kernel.transactions import conflict_savepoint
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -152,7 +152,7 @@ def test_any_credential_alias_suppresses_absence_without_reading_material(curren
     alias = f"different-alias-{uuid4().hex}@example.test"
     policy.email = alias
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert alias != a.email
     store.lock_parties(a.db, tenant_id=a.tid, party_ids=(a.pid,))
     profile = a.db.get(AcademyAccountProfile, a.pid)
@@ -227,7 +227,7 @@ def test_reverse_input_party_locks_wait_in_shared_uuid_order(current_account):
 
     def leader():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             facts = store.lock_parties(db, tenant_id=a.tid, party_ids=(target.id, a.pid, a.pid))
             assert [fact.id for fact in facts] == expected
             locked.set()
@@ -236,7 +236,7 @@ def test_reverse_input_party_locks_wait_in_shared_uuid_order(current_account):
 
     def follower():
         with factory() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             facts = store.lock_parties(db, tenant_id=a.tid, party_ids=(a.pid, target.id))
@@ -249,7 +249,7 @@ def test_reverse_input_party_locks_wait_in_shared_uuid_order(current_account):
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
         finally:
             release.set()

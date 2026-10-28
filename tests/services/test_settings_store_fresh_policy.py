@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import delete, inspect, select, text, update
 from sqlalchemy.orm import sessionmaker
 
@@ -62,7 +62,7 @@ def test_strong_stale_policy_object_cannot_hide_committed_change_at_precommit(fr
     with pytest.raises(boundary.AssessmentSubmissionError):
         c.a.db.commit()
     c.a.db.rollback()
-    set_tenant(c.a.db, c.a.tid)
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
     assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
     assert _audit(c) == []
 
@@ -132,7 +132,7 @@ def test_real_lock_wait_then_committed_policy_uses_fresh_stored_columns(fresh_po
 
     def writer():
         with UserSession() as session:
-            set_tenant(session, c.a.tid)
+            resolve_database_runtime().set_tenant(session, c.a.tid)
             held = session.get(PlatformSetting, _KEY)
             assert held.value == "0"
             backend.append(session.scalar(text("SELECT pg_backend_pid()")))
@@ -153,7 +153,7 @@ def test_real_lock_wait_then_committed_policy_uses_fresh_stored_columns(fresh_po
         follower = pool.submit(writer)
         assert started.wait(10)
         try:
-            set_tenant(c.a.db, c.a.tid)
+            resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
             _wait_for_lock(c.a.db, backend[0])
         finally:
             release.set()

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
@@ -43,11 +43,11 @@ def create_roster_actor(a, role_slug):
         a.admin.flush()
     a.admin.add(PartyRoleGrant(tenant_id=a.tid, party_id=person.id, role_id=role.id))
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     login = sign_in(a.db, tenant_id=a.tid, email=person.email, password="chosen-password9")
     assert login is not None
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     return SimpleNamespace(request=_request(a.tenant, login.session_token), pid=person.id,
                            email=person.email, session_id=login.session_id, role_id=role.id)
 

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from dotmac_kernel.models import Tenant, UserCredential
 from dotmac_kernel.security import verify_password
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
@@ -197,8 +198,7 @@ def test_actual_outbox_flush_failure_recovers_same_root_and_caught_outer_commit(
     assert len(_tokens(db, tid, pid)) == 1  # Preserve issued proof / best-effort delivery semantics.
     assert db.scalar(select(EmailOutbox.id).where(EmailOutbox.idempotency_key == failed_key)) is None
     db.commit()  # Caller deliberately catches the enqueue failure and commits.
-    from dotmac_kernel.db import set_tenant
 
-    set_tenant(db, tid)
+    resolve_database_runtime().set_tenant(db, tid)
     assert len(_tokens(db, tid, pid)) == 1
     assert db.scalar(select(EmailOutbox.id).where(EmailOutbox.idempotency_key == failed_key)) is None

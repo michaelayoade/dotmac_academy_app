@@ -19,15 +19,15 @@ from app.models.email_outbox import EmailOutbox
 from app.models.notification import Notification
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.models.reminder import ReminderLog
 from app.services import reminders
 from app.services.audit import list_events
 from app.services.localtime import academy_zone
+from tests.conftest import make_person_party
 
 
 def _seed(admin_session, tenant, *, email="rem@a.edu", due_offsets_hours=(), session_offsets_hours=()):
-    person = Person(tenant_id=tenant.id, email=email, first_name="Re", last_name="Mind")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Re", last_name="Mind")
     admin_session.add(person)
     cohort = Cohort(tenant_id=tenant.id, name=f"Rem Cohort {email}", discipline="fiber", status="active")
     admin_session.add(cohort)
@@ -57,7 +57,6 @@ def _seed(admin_session, tenant, *, email="rem@a.edu", due_offsets_hours=(), ses
     admin_session.commit()
     return person, cohort, course, off
 
-
 def _log_rows(db, tenant, person):
     return db.scalars(
         select(ReminderLog)
@@ -65,10 +64,8 @@ def _log_rows(db, tenant, person):
         .where(ReminderLog.person_id == person.id)
     ).all()
 
-
 def _outbox_rows(db, tenant):
     return db.scalars(select(EmailOutbox).where(EmailOutbox.tenant_id == tenant.id)).all()
-
 
 def test_sweep_is_idempotent(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="idem@a.edu", due_offsets_hours=(20,))
@@ -81,7 +78,6 @@ def test_sweep_is_idempotent(admin_session, tenant_a):
     assert len(keys) == len(set(keys))
     assert len([k for k in keys if k.startswith("due_24h:")]) == 1
 
-
 def test_event_boundaries_due_and_sessions(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="bound@a.edu",
                        due_offsets_hours=(-3, 20, 60), session_offsets_hours=(0.5, 20))
@@ -91,7 +87,6 @@ def test_event_boundaries_due_and_sessions(admin_session, tenant_a):
     assert {"overdue", "due_24h", "due_72h", "session_1h", "session_24h",
             "course_assigned", "course_starting"} - kinds == {"course_starting"}
     # course_starting requires a future offering window; none set here.
-
 
 def test_optout_suppresses_both_channels(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="optout@a.edu", due_offsets_hours=(20,))
@@ -108,7 +103,6 @@ def test_optout_suppresses_both_channels(admin_session, tenant_a):
         select(Notification).where(Notification.tenant_id == tenant_a.id)
         .where(Notification.person_id == person.id)).all()
     assert notes == []
-
 
 def test_daily_digest_batches_into_one_email(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="digest@a.edu", due_offsets_hours=(20, 60))
@@ -136,7 +130,6 @@ def test_daily_digest_batches_into_one_email(admin_session, tenant_a):
     assert len(digest_emails) == 1
     assert "Rem act 0" in digest_emails[0].html_body and "Rem act 1" in digest_emails[0].html_body
 
-
 def test_quiet_hours_defer_then_flush(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="quiet@a.edu", due_offsets_hours=(20,))
     hour_now = datetime.now(UTC).astimezone(academy_zone()).hour
@@ -158,7 +151,6 @@ def test_quiet_hours_defer_then_flush(admin_session, tenant_a):
     assert all(r.status == "sent" for r in rows)
     assert len(_outbox_rows(admin_session, tenant_a)) == before + 1
 
-
 def test_resend_requeues_and_audits(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="resend@a.edu", due_offsets_hours=(20,))
     reminders.sweep(admin_session, tenant_id=tenant_a.id)
@@ -172,11 +164,9 @@ def test_resend_requeues_and_audits(admin_session, tenant_a):
     events = list_events(admin_session, tenant_id=tenant_a.id, action="reminder.resend")
     assert events and str(log.id) in (events[0].entity_id or "")
 
-
 # ---------------------------------------------------------------------------
 # Inactivity nudges escalate, then stop
 # ---------------------------------------------------------------------------
-
 
 def _backdate_enrolment(admin_session, tenant, person, *, days):
     """Make the learner look dormant since `days` ago with no ledger activity."""
@@ -188,12 +178,10 @@ def _backdate_enrolment(admin_session, tenant, person, *, days):
     )
     admin_session.commit()
 
-
 def _inactivity_keys(db, tenant, person):
     return sorted(
         r.occurrence_key for r in _log_rows(db, tenant, person) if r.event_kind == "inactivity"
     )
-
 
 def test_inactivity_nudge_repeats_once_per_window(admin_session, tenant_a):
     """Regression: the occurrence key was the bare anchor date, which never moves
@@ -213,7 +201,6 @@ def test_inactivity_nudge_repeats_once_per_window(admin_session, tenant_a):
     assert len(set(keys)) == 3  # distinct occurrences, not one repeated
     assert all(":w" in k for k in keys)
 
-
 def test_inactivity_nudge_fires_once_within_a_single_window(admin_session, tenant_a):
     """Escalation must not become a nudge per sweep — the timer runs every 5 min."""
     person, *_ = _seed(admin_session, tenant_a, email="inact-same@a.edu")
@@ -225,7 +212,6 @@ def test_inactivity_nudge_fires_once_within_a_single_window(admin_session, tenan
     admin_session.commit()
 
     assert len(_inactivity_keys(admin_session, tenant_a, person)) == 1
-
 
 def test_inactivity_nudges_stop_at_the_cap(admin_session, tenant_a):
     """Bounded on purpose: a learner who has ignored four is telling us something."""
@@ -240,7 +226,6 @@ def test_inactivity_nudges_stop_at_the_cap(admin_session, tenant_a):
     keys = _inactivity_keys(admin_session, tenant_a, person)
     assert len(keys) == reminders.DEFAULT_INACTIVITY_MAX_NUDGES
 
-
 def test_long_dormant_learner_is_still_reachable(admin_session, tenant_a):
     """The cap counts nudges already sent for the spell, not the window number.
     A learner dormant since before this change has a high window number but few
@@ -252,7 +237,6 @@ def test_long_dormant_learner_is_still_reachable(admin_session, tenant_a):
     admin_session.commit()
 
     assert len(_inactivity_keys(admin_session, tenant_a, person)) == 1
-
 
 def test_final_inactivity_nudge_says_it_is_the_last(admin_session, tenant_a):
     """Silence after the cap should read as a decision, not as losing interest."""
@@ -270,7 +254,6 @@ def test_final_inactivity_nudge_says_it_is_the_last(admin_session, tenant_a):
     assert len(titles) == reminders.DEFAULT_INACTIVITY_MAX_NUDGES
     assert sum("Last reminder" in t for t in titles) == 1
     assert "Last reminder" in titles[-1]
-
 
 def test_active_learner_draws_no_inactivity_nudge(admin_session, tenant_a):
     person, *_ = _seed(admin_session, tenant_a, email="inact-active@a.edu")

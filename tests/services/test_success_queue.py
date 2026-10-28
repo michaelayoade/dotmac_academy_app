@@ -6,8 +6,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 
 from app.models.assessment import Activity, Score, Submission
@@ -153,7 +153,7 @@ def test_transitions_are_audited(roster_actors):
     person, *_ = _seed(admin_session, tenant_a, email="trans@a.edu")
     success_queue.sweep(admin_session, tenant_id=tenant_a.id)
     admin_session.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     admin_session = a.db
     (entry,) = _entries(admin_session, tenant_a, person, REASON_INACTIVITY)
 
@@ -164,7 +164,7 @@ def test_transitions_are_audited(roster_actors):
         admin_session, tenant_id=tenant_a.id, entry_id=entry.id, action="resolve", request=actor.request
     )
     admin_session.commit()
-    set_tenant(admin_session, a.tid)
+    resolve_database_runtime().set_tenant(admin_session, a.tid)
     assert entry.status == STATUS_RESOLVED
     assert entry.resolved_by == actor.pid
     actions = [e.action for e in list_events(admin_session, tenant_id=tenant_a.id, limit=20)]
@@ -190,7 +190,7 @@ def test_message_segment_enqueues_outbox_and_audits(roster_actors):
     a = roster_actors.account
     admin_session, tenant_a, actor = a.admin, a.tenant, roster_actors.instructor
     person, cohort, *_ = _seed(admin_session, tenant_a, email="msg@a.edu", enrolled_days_ago=15)
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     admin_session = a.db
     result = success_queue.message_segment(
         admin_session,
@@ -202,7 +202,7 @@ def test_message_segment_enqueues_outbox_and_audits(roster_actors):
         request=actor.request,
     )
     admin_session.commit()
-    set_tenant(admin_session, a.tid)
+    resolve_database_runtime().set_tenant(admin_session, a.tid)
     assert result["recipients"] == 1
     rows = admin_session.scalars(
         select(EmailOutbox).where(EmailOutbox.tenant_id == tenant_a.id).where(EmailOutbox.kind == "segment_message")

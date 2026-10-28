@@ -5,45 +5,38 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from dotmac_kernel.models import PartyRoleGrant
 from sqlalchemy import select
 
 from app.models.assessment import Question, QuestionBank
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
-from app.models.person import Person
-from app.models.rbac import AuditEvent, PersonRole
+from app.models.rbac import AuditEvent
 from app.models.track import CohortTrack, Track
 from app.services import admissions
 from app.services.bootstrap import ensure_roles
 from app.services.entrance_exam import set_academy_defaults
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
     roles = ensure_roles(admin_session, tenant.id)
-    person = Person(tenant_id=tenant.id, email=email, first_name="Seed", last_name="User")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Seed", last_name="User")
     admin_session.add(person)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=person.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=person.id, email=email, password_hash=hash_password("password1"))
     )
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles[role_slug].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=person.id, role_id=roles[role_slug].id))
     admin_session.commit()
     return person
-
 
 def _login(app_client, email):
     headers = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=headers, data={"email": email, "password": "password1"})
     return headers
-
 
 def _intake(admin_session, tenant):
     cohort = Cohort(
@@ -71,7 +64,6 @@ def _intake(admin_session, tenant):
     admin_session.commit()
     return cohort, track
 
-
 def test_admin_can_view_applications_page(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "apps-admin@a.edu", "admin")
     admissions.submit_application(
@@ -91,7 +83,6 @@ def test_admin_can_view_applications_page(app_client, admin_session, tenant_a):
     assert "Applications" in response.text
     assert "candidate@a.edu" in response.text
     assert "Applicant pipeline" in response.text
-
 
 def test_admin_can_search_applications_by_applicant_name(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "apps-search-admin@a.edu", "admin")
@@ -120,7 +111,6 @@ def test_admin_can_search_applications_by_applicant_name(app_client, admin_sessi
     assert "amina@a.edu" in response.text
     assert "bala@a.edu" not in response.text
     assert 'value="amina"' in response.text
-
 
 def test_admin_can_filter_applications_by_applied_date_range(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "apps-date-admin@a.edu", "admin")
@@ -162,7 +152,6 @@ def test_admin_can_filter_applications_by_applied_date_range(app_client, admin_s
     assert 'value="2026-02-01"' in response.text
     assert 'value="2026-02-28"' in response.text
 
-
 def test_reversed_application_date_range_shows_validation_message(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "apps-reversed-date-admin@a.edu", "admin")
     admissions.submit_application(
@@ -186,14 +175,12 @@ def test_reversed_application_date_range_shows_validation_message(app_client, ad
     assert 'value="2026-07-28"' in response.text
     assert 'value="2026-07-27"' in response.text
 
-
 def test_student_cannot_view_applications_page(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "apps-student@a.edu", "student")
 
     response = app_client.get("/admin/applications", headers=_login(app_client, "apps-student@a.edu"))
 
     assert response.status_code == 403
-
 
 def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
     app_client,
@@ -278,8 +265,6 @@ def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
     ).one()
     assert invitation.recipient == applicant.email
 
-
-
 def _entrance_config(admin_session, tenant):
     course = Course(
         tenant_id=tenant.id,
@@ -314,7 +299,6 @@ def _entrance_config(admin_session, tenant):
     )
     admin_session.flush()
     return bank
-
 
 def test_admin_resends_invitation_extends_deadline_and_audits(app_client, admin_session, tenant_a):
     actor = _seed_user(admin_session, tenant_a, "resend-admin@a.edu", "admin")
@@ -358,8 +342,6 @@ def test_admin_resends_invitation_extends_deadline_and_audits(app_client, admin_
     assert event.actor_person_id == actor.id
     assert event.details["extended_access"] is True
 
-
-
 def test_resend_invitation_without_extension_preserves_active_deadline(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "resend-noextend-admin@a.edu", "admin")
     _entrance_config(admin_session, tenant_a)
@@ -397,7 +379,6 @@ def test_resend_invitation_without_extension_preserves_active_deadline(app_clien
     ).one()
     assert event.details["extended_access"] is False
 
-
 def test_admin_extends_access_without_resetting_completed_work(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "extend-admin@a.edu", "admin")
     _entrance_config(admin_session, tenant_a)
@@ -432,7 +413,6 @@ def test_admin_extends_access_without_resetting_completed_work(app_client, admin
     assert admin_session.scalars(
         select(AuditEvent).where(AuditEvent.entity_id == str(applicant.id)).where(AuditEvent.action == "applicant.access_extended")
     ).one()
-
 
 def test_application_export_optional_invitation_columns_and_filters(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "export-admin@a.edu", "admin")
@@ -485,7 +465,6 @@ def test_application_export_optional_invitation_columns_and_filters(app_client, 
     assert "sent" in body
     assert other.id
 
-
 def test_application_export_cannot_be_captured_by_applicant_detail_route():
     source = Path("app/web/applications.py").read_text()
     export_route = '@router.get("/export.csv")'
@@ -493,12 +472,10 @@ def test_application_export_cannot_be_captured_by_applicant_detail_route():
 
     assert source.index(export_route) < source.index(detail_route)
 
-
 def test_application_export_requires_admin(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "export-student@a.edu", "student")
     response = app_client.get("/admin/applications/export.csv", headers=_login(app_client, "export-student@a.edu"))
     assert response.status_code == 403
-
 
 def test_application_action_requires_csrf_after_cookie(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "csrf-admin@a.edu", "admin")

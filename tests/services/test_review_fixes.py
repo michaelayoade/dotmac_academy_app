@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from app.models.announcement import Announcement
 from app.models.cohort import Cohort, Enrollment
-from app.models.person import Person
 from app.services import announcements as ann_mod
 from app.services.grading import grade_submission
+from tests.conftest import make_person_party
 
 
 def test_numeric_malformed_tolerance_does_not_raise():
@@ -25,14 +25,13 @@ def test_numeric_malformed_tolerance_does_not_raise():
     assert grade_submission({"q1": ["10"]}, [q], 0.5).per_item[0]["correct"] is True
     assert grade_submission({"q1": ["11"]}, [q], 0.5).per_item[0]["correct"] is False
 
-
 def test_announcement_survives_notify_failure(admin_session, tenant_a, monkeypatch):
     tid = tenant_a.id
-    author = Person(tenant_id=tid, email="author@a.edu", first_name="A", last_name="U")
+    author = make_person_party(admin_session, tenant_id=tid, email="author@a.edu", first_name="A", last_name="U")
     coh = Cohort(tenant_id=tid, name="C", discipline="networking", status="active")
     admin_session.add_all([author, coh])
     admin_session.flush()
-    stu = Person(tenant_id=tid, email="stu@a.edu", first_name="S", last_name="T")
+    stu = make_person_party(admin_session, tenant_id=tid, email="stu@a.edu", first_name="S", last_name="T")
     admin_session.add(stu)
     admin_session.flush()
     admin_session.add(

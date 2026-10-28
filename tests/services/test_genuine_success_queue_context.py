@@ -13,8 +13,8 @@ from uuid import UUID, uuid4
 import dotmac_learning as learning
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyRoleGrant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import InvalidRequestError
@@ -40,7 +40,7 @@ def _case(actors):
     person, cohort, *_ = _seed(a.admin, a.tenant, email=f"success-{uuid4().hex}@a.edu")
     success_queue.sweep(a.admin, tenant_id=a.tid)
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     (entry,) = _entries(a.db, a.tenant, person, REASON_INACTIVITY)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     return person.id, cohort.id, entry.id
@@ -153,7 +153,7 @@ def test_private_refusal_is_sticky_and_caught_outer_commit_preserves_prior_work(
                 setattr(context, key, old)
     assert context.__dict__ == {} and a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(SuccessQueueEntry, eid).status == "open" and _events(a.db, eid) == []
     assert a.db.get(Cohort, cid).name == "Unrelated prior work"
 
@@ -184,7 +184,7 @@ def test_exact_queue_and_actual_audit_tampering_roll_back(roster_actors, mutatio
             with pytest.raises((boundary.HumanOperationError, InvalidRequestError)):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(SuccessQueueEntry, eid).status == "open" and _events(a.db, eid) == []
 
 
@@ -214,7 +214,7 @@ def test_current_authority_refuses_actual_owner_writes(roster_actors, mutation, 
         _message(actors, cid) if message else _invoke(actors, eid)
     assert caught.value.status_code == (403 if mutation == "role" else 303)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _events(a.db, eid) == _events(a.db, cid) == []
     assert _count(a.db, Notification) == _count(a.db, EmailOutbox) == 0
 
@@ -351,7 +351,7 @@ def test_actual_delivery_and_owner_failure_caught_commit_has_no_operation_effect
         assert caught.value is same
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _events(a.db, cid) == [] and _count(a.db, Notification) == _count(a.db, EmailOutbox) == 0
     assert a.db.get(Cohort, cid).name == "Prior work"
 
@@ -380,7 +380,7 @@ def test_message_actual_receipt_result_and_consequence_tamper_poisoned(roster_ac
             with pytest.raises(boundary.HumanOperationError):
                 context.revalidate()
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert _events(a.db, cid) == [] and _count(a.db, Notification) == _count(a.db, EmailOutbox) == 0
 
 
@@ -411,7 +411,7 @@ def test_actual_owner_queue_lock_wait_rechecks_current_authority(roster_actors, 
 
     def holder():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             db.scalar(select(SuccessQueueEntry).where(SuccessQueueEntry.id == eid).with_for_update())
             locked.set()
             assert release.wait(10)
@@ -419,7 +419,7 @@ def test_actual_owner_queue_lock_wait_rechecks_current_authority(roster_actors, 
 
     def follower():
         with sessions() as db:
-            set_tenant(db, a.tid)
+            resolve_database_runtime().set_tenant(db, a.tid)
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             db.get(Cohort, cid).name = "Prior wait work"
             started.set()
@@ -434,7 +434,7 @@ def test_actual_owner_queue_lock_wait_rechecks_current_authority(roster_actors, 
         second = pool.submit(follower)
         assert started.wait(10)
         try:
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             _wait_for_lock(a.db, backend[0])
             if failure == "expiry":
                 Event().wait(2.1)
@@ -463,7 +463,7 @@ def test_prior_real_audit_receipt_cannot_complete_new_same_assignment(roster_act
     with pytest.raises(boundary.HumanOperationError):
         _invoke(actors, eid)
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert [event.id for event in _events(a.db, eid)] == [prior.audit_event_id]
     assert a.db.get(SuccessQueueEntry, eid).assigned_to == actors.instructor.pid
 
@@ -516,7 +516,7 @@ def test_transition_actual_owner_failure_preserves_transaction_changed_instance(
         _invoke(actors, eid)
     assert caught.value is same
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(SuccessQueueEntry, eid).status == "open" and _events(a.db, eid) == []
 
 
@@ -554,7 +554,7 @@ def test_transition_actual_failure_points_roll_back_queue_audit_and_keep_prior_w
         _invoke(actors, eid)
     assert a.db.get_transaction() is root
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(SuccessQueueEntry, eid).status == "open" and _events(a.db, eid) == []
     assert a.db.get(Cohort, cid).name == "Prior transition work"
 
@@ -569,5 +569,5 @@ def test_transition_actual_owner_reads_current_row_before_status_validation(rost
     with pytest.raises(BadRequestError):
         _invoke(actors, eid, action="acknowledge")
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(SuccessQueueEntry, eid).status == "resolved" and _events(a.db, eid) == []

@@ -12,30 +12,24 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 
 from app.models.assessment import Activity, Question, QuestionBank, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _login(app_client, admin_session, tenant, email="stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Stu", last_name="Dent")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Stu", last_name="Dent")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _seed_course(admin_session, tenant, slug, *, discipline="networking", status="published"):
     """Course + chapter 1 + bank + one question + an mcq activity. Returns (course, activity)."""
@@ -58,7 +52,6 @@ def _seed_course(admin_session, tenant, slug, *, discipline="networking", status
     admin_session.flush()
     return c, act
 
-
 def _enroll(admin_session, tenant, person, *, discipline="networking"):
     coh = Cohort(tenant_id=tenant.id, name="Cohort", discipline=discipline, status="active")
     admin_session.add(coh)
@@ -68,19 +61,16 @@ def _enroll(admin_session, tenant, person, *, discipline="networking"):
     admin_session.flush()
     return coh
 
-
 def _offer(admin_session, tenant, cohort, course, *, starts_at=None, ends_at=None):
     admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=cohort.id,
                                      course_id=course.id, status="active",
                                      starts_at=starts_at, ends_at=ends_at))
     admin_session.flush()
 
-
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
-
 
 def test_enrolled_student_can_open_and_submit(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a)
@@ -99,7 +89,6 @@ def test_enrolled_student_can_open_and_submit(app_client, admin_session, tenant_
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_unenrolled_student_forbidden_on_read(app_client, admin_session, tenant_a):
     """Finding #1: no offering for this course → 403 on chapter and activity GET."""
     _login(app_client, admin_session, tenant_a)
@@ -110,7 +99,6 @@ def test_unenrolled_student_forbidden_on_read(app_client, admin_session, tenant_
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 403
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_unenrolled_student_cannot_submit(app_client, admin_session, tenant_a):
     """Finding #1: submit to a course with no offering → 403 and no Submission written."""
@@ -136,7 +124,6 @@ def test_unenrolled_student_cannot_submit(app_client, admin_session, tenant_a):
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_same_discipline_without_offering_has_no_access(app_client, admin_session, tenant_a):
     """Finding #2: sharing the cohort's discipline no longer grants access without an offering."""
     p = _login(app_client, admin_session, tenant_a)
@@ -150,7 +137,6 @@ def test_same_discipline_without_offering_has_no_access(app_client, admin_sessio
         assert "Disc-Course" not in body
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_future_offering_blocks_activity(app_client, admin_session, tenant_a):
     """Slice 2a: entitled but the offering opens in the future → 403."""
@@ -166,7 +152,6 @@ def test_future_offering_blocks_activity(app_client, admin_session, tenant_a):
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_past_offering_blocks_activity(app_client, admin_session, tenant_a):
     """Slice 2a: the offering window has closed → 403."""
     p = _login(app_client, admin_session, tenant_a)
@@ -179,8 +164,6 @@ def test_past_offering_blocks_activity(app_client, admin_session, tenant_a):
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 403
     finally:
         _cleanup(admin_session, tenant_a)
-
-
 
 def test_enrollment_access_extension_reopens_expired_offering_for_that_learner(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a, email="extended@a.edu")
@@ -212,7 +195,6 @@ def test_enrollment_access_extension_reopens_expired_offering_for_that_learner(a
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_open_window_allows_activity(app_client, admin_session, tenant_a):
     """Slice 2a: now within [starts_at, ends_at] → 200."""
     p = _login(app_client, admin_session, tenant_a)
@@ -226,7 +208,6 @@ def test_open_window_allows_activity(app_client, admin_session, tenant_a):
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_draft_course_hidden_from_learner(app_client, admin_session, tenant_a):
     """Slice 5/#8: a draft course, even offered+entitled, is not accessible."""
@@ -245,7 +226,6 @@ def test_draft_course_hidden_from_learner(app_client, admin_session, tenant_a):
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_dashboard_lists_only_offered_courses(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a)

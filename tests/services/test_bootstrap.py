@@ -1,8 +1,9 @@
 """TDD test for the tenant bootstrap service."""
 
+from dotmac_kernel.models import Party, PartyRoleGrant
+
 from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole, Role
+from app.models.rbac import Role
 from app.services.bootstrap import bootstrap_tenant
 
 
@@ -12,9 +13,9 @@ def test_bootstrap_creates_tenant_roles_and_admin(admin_session):
     admin_session.commit()
     slugs = {r.slug for r in admin_session.query(Role).filter(Role.tenant_id == t.id)}
     assert slugs == {"student", "instructor", "admin"}
-    admin = admin_session.query(Person).filter(Person.tenant_id == t.id).one()
-    grants = admin_session.query(PersonRole).filter(PersonRole.tenant_id == t.id,
-                                                    PersonRole.person_id == admin.id).all()
+    admin = admin_session.query(Party).filter(Party.tenant_id == t.id).one()
+    grants = admin_session.query(PartyRoleGrant).filter(PartyRoleGrant.tenant_id == t.id,
+                                                    PartyRoleGrant.party_id == admin.id).all()
     assert len(grants) == 1
     admin_role_ids = {r.id for r in admin_session.query(Role).filter(Role.tenant_id == t.id, Role.slug == "admin")}
     assert grants[0].role_id in admin_role_ids
@@ -24,8 +25,8 @@ def test_bootstrap_creates_tenant_roles_and_admin(admin_session):
     assert cred.password_hash != "supersecret"
     # Cleanup
     admin_session.query(UserCredential).filter(UserCredential.tenant_id == t.id).delete()
-    admin_session.query(PersonRole).filter(PersonRole.tenant_id == t.id).delete()
-    admin_session.query(Person).filter(Person.tenant_id == t.id).delete()
+    admin_session.query(PartyRoleGrant).filter(PartyRoleGrant.tenant_id == t.id).delete()
+    admin_session.query(Party).filter(Party.tenant_id == t.id).delete()
     admin_session.query(Role).filter(Role.tenant_id == t.id).delete()
     from app.models.tenant import Tenant
     admin_session.query(Tenant).filter(Tenant.id == t.id).delete()

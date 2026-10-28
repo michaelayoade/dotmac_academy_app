@@ -14,9 +14,9 @@ from uuid import uuid4
 import dotmac_kernel.credential_lifecycle as owner
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, UserCredential
 from dotmac_kernel.security import password_needs_rehash, verify_password
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from sqlalchemy import select, text, update
 
@@ -135,7 +135,7 @@ def _state(a):
 
 def _commit_readback(a):
     a.db.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     assert a.db.scalar(text("SELECT current_setting('app.current_tenant')")) == str(a.tid)
     return _state(a)

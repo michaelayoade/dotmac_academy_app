@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import event, select, update
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import sessionmaker
@@ -30,7 +30,7 @@ def test_caller_begin_context_commits_successful_resend(current_account):
     lid = _log(a)
     a.db.commit()
     with a.db.begin():
-        set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
         log = reminders.resend(a.db, request=_request(a.tenant, a.token), tenant_id=a.tid, log_id=lid)
         key = log.outbox_key
     a.admin.expire_all()
@@ -49,7 +49,7 @@ def test_caller_begin_context_rolls_back_without_masking_original_error(current_
     a.db.commit()
     with pytest.raises(CallerAbort):
         with a.db.begin():
-            set_tenant(a.db, a.tid)
+            resolve_database_runtime().set_tenant(a.db, a.tid)
             reminders.resend(a.db, request=_request(a.tenant, a.token), tenant_id=a.tid, log_id=lid)
             raise CallerAbort()
     assert a.db.get_transaction() is None
@@ -77,7 +77,7 @@ def test_caller_enclosing_savepoint_completes_then_root_commits(current_account)
     lid = _log(a)
     a.db.commit()
     with a.db.begin():
-        set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
         with a.db.begin_nested():
             reminders.resend(a.db, request=_request(a.tenant, a.token), tenant_id=a.tid, log_id=lid)
     a.admin.expire_all()
@@ -116,7 +116,7 @@ def test_caller_root_commit_entries_use_actual_durable_readback(current_account,
         EmailOutbox.idempotency_key == key)) is not None
     # Physical entry leaves native stale logical handles; caller reconciles them.
     a.db.rollback()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(select(ReminderLog.id).where(ReminderLog.id == lid)) == lid
     a.db.commit()
 
@@ -371,8 +371,8 @@ def test_independent_sessions_and_preexisting_later_patches_cleanup(current_acco
         other_account = SimpleNamespace(db=other, admin=a.admin, pid=actor.pid, tid=tenant_b.id,
             tenant=tenant_b, token=actor.request.cookies["session"])
         second = _log(other_account)
-        set_tenant(a.db, a.tid)
-        set_tenant(other, tenant_b.id)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(other, tenant_b.id)
         original = a.db.commit
         calls = []
         def preexisting():
@@ -394,7 +394,7 @@ def test_independent_sessions_and_preexisting_later_patches_cleanup(current_acco
         assert other.connection().exec_driver_sql("SELECT 1").scalar_one() == 1
         other.commit()
         _observe(other_account, second, "sent", 1)
-        set_tenant(a.db, a.tid)
+        resolve_database_runtime().set_tenant(a.db, a.tid)
         a.db.commit()  # Surviving later wrapper calls ended native pass-through.
         assert calls == ["later", "preexisting", "later", "preexisting"]
         a.db.commit = original

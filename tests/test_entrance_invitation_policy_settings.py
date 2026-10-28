@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from dotmac_kernel.db import set_tenant
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import func, select, text
 
 from app.config import Settings, validate_entrance_invitation_deadline_days
@@ -252,7 +252,7 @@ def test_shared_actual_policy_preserves_tenant_scope_and_isolates_token_outbox_e
     other = _applicant(a.admin, tenant_b, _cohort(a.admin, tenant_b))
     first_id, other_id = first.id, other.id
     a.admin.commit()
-    set_tenant(a.db, a.tid)
+    resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     root = a.db.get_transaction()
     scoped = a.db.get(Applicant, first_id)
@@ -266,7 +266,7 @@ def test_shared_actual_policy_preserves_tenant_scope_and_isolates_token_outbox_e
     a.admin.refresh(other)
     assert other.assessment_token_hash is None and other.assessment_deadline is None
     # The same global policy is read under the other caller's explicit tenant scope.
-    set_tenant(a.db, tenant_b.id)
+    resolve_database_runtime().set_tenant(a.db, tenant_b.id)
     assert policy.entrance_invitation_policy(a.db).deadline_days == 11
     second = a.db.get(Applicant, other_id)
     entrance_exam.invite(a.db, applicant=second, base_url="https://academy.example")

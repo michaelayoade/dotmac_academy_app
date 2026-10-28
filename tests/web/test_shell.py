@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 
-from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole
+from dotmac_kernel.models import PartyRoleGrant
+
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _login(app_client, admin_session, tenant, *, email, role=None):
@@ -20,32 +20,25 @@ def _login(app_client, admin_session, tenant, *, email, role=None):
 
     Returns (person, headers).
     """
-    p = Person(tenant_id=tenant.id, email=email, first_name="Ada", last_name="Lovelace")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Ada", last_name="Lovelace")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     if role is not None:
         roles = ensure_roles(admin_session, tenant.id)
         admin_session.add(
-            PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role].id)
+            PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id)
         )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return p, h
 
-
 def _collapse(text: str) -> str:
     """Collapse whitespace so assertions are robust to template formatting."""
     return re.sub(r"\s+", " ", text)
-
 
 def test_student_shell_shows_learn_only(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a, email="student@a.edu")
@@ -63,11 +56,9 @@ def test_student_shell_shows_learn_only(app_client, admin_session, tenant_a):
     assert "Teaching" not in body
     assert "Admin" not in body
 
-
 def test_learning_workspace_is_not_available_without_sign_in(app_client):
     response = app_client.get("/learn", headers={"Host": "alpha.localhost"}, follow_redirects=False)
     assert response.status_code == 404
-
 
 def test_instructor_can_switch_between_learning_and_teaching(app_client, admin_session, tenant_a):
     _p, h = _login(
@@ -93,7 +84,6 @@ def test_instructor_can_switch_between_learning_and_teaching(app_client, admin_s
     teaching = app_client.get("/instructor", headers=h)
     assert teaching.status_code == 200
     assert 'aria-label="Switch to Teaching workspace" aria-current="page"' in teaching.text
-
 
 def test_admin_shell_shows_all_areas(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a, email="admin@a.edu", role="admin")

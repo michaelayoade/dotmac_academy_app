@@ -5,24 +5,21 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.models.assessment import Activity, Question, QuestionBank
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _setup(admin_session, tenant, email="pace@a.edu"):
     """Logged-in entitled learner with one mcq activity. Returns (person, course, activity, offering)."""
-    p = Person(tenant_id=tenant.id, email=email, first_name="Pa", last_name="Cer")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Pa", last_name="Cer")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
     c = Course(tenant_id=tenant.id, slug="pace", title="Pace", discipline="networking",
                source_ref="x", version=1)
     admin_session.add(c)
@@ -49,16 +46,13 @@ def _setup(admin_session, tenant, email="pace@a.edu"):
     app_client_login = (p, c, act, off)
     return app_client_login
 
-
 def _login(app_client, email="pace@a.edu"):
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
-
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
-
 
 def test_future_release_blocks_read_and_submit(app_client, admin_session, tenant_a):
     p, c, act, off = _setup(admin_session, tenant_a)
@@ -77,7 +71,6 @@ def test_future_release_blocks_read_and_submit(app_client, admin_session, tenant
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_past_due_blocks_submit_but_allows_read(app_client, admin_session, tenant_a):
     p, c, act, off = _setup(admin_session, tenant_a)
     admin_session.add(OfferingActivity(
@@ -95,7 +88,6 @@ def test_past_due_blocks_submit_but_allows_read(app_client, admin_session, tenan
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_open_window_allows_read_and_submit(app_client, admin_session, tenant_a):
     p, c, act, off = _setup(admin_session, tenant_a)
     admin_session.add(OfferingActivity(
@@ -112,7 +104,6 @@ def test_open_window_allows_read_and_submit(app_client, admin_session, tenant_a)
         assert r.status_code == 200
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_no_override_is_unrestricted(app_client, admin_session, tenant_a):
     p, c, act, off = _setup(admin_session, tenant_a)
