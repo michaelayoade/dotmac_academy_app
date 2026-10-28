@@ -418,6 +418,10 @@ topology:
                     "<p>Launch the lab, inspect the host addressing, and verify "
                     "that the host can reach its default gateway.</p>"
                 ),
+                instructions_md=(
+                    "Launch the lab, inspect the host addressing, and verify "
+                    "that the host can reach its default gateway."
+                ),
                 checks=checks,
                 seed_spec={"gateway": {"type": "choice", "values": ["192.0.2.1"]}},
                 limits={"minutes": 45, "memory_mb": 256},
@@ -435,6 +439,10 @@ topology:
             lab.instructions_html = (
                 "<p>Launch the lab, inspect the host addressing, and verify "
                 "that the host can reach its default gateway.</p>"
+            )
+            lab.instructions_md = (
+                "Launch the lab, inspect the host addressing, and verify "
+                "that the host can reach its default gateway."
             )
             lab.checks = checks
             lab.seed_spec = {"gateway": {"type": "choice", "values": ["192.0.2.1"]}}

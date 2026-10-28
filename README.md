@@ -12,8 +12,12 @@ does not expose public tenant provisioning or public account registration.
 Architecture:
 
 - [ADR 0007 — Academy Is a Kernel Product Assembly](docs/adr/0007-academy-is-a-kernel-assembly.md)
+- [ADR 0009 — Kernel Identity and Migration-Lineage Cutover](docs/adr/0009-kernel-identity-and-lineage-cutover.md) — accepted design; implementation and external evidence remain gated
+  on execution of the entire unchanged Kernel chain before runtime cutover;
+  canonical entry mechanics remain unresolved and Kernel stamping is forbidden.
 - [ADR 0002 — Single-Academy Deployment](docs/adr/0002-single-academy-deployment.md)
 - [ADR 0006 — Shared UI Contract](docs/adr/0006-adopt-shared-ui-contract.md)
+- [ADR 0008 — Dedicated non-owning lab-worker database role](docs/adr/0008-lab-worker-database-role.md)
 - [Source-of-truth relationship map](docs/SOT_RELATIONSHIP_MAP.md)
 - [Direct external-connector surface](docs/external-connector-surface.md) — the
   measured baselines the accepted Governance ratchet freezes
@@ -78,6 +82,19 @@ poetry run uvicorn app.main:app --reload --port 8001 \
 Use `http://academy.localhost:8001`. Browsers resolve `*.localhost`
 automatically.
 
+## Production dependency installation
+
+Academy's checked-in systemd processes run from this checkout's `.venv`.
+Build that environment with the authoritative production dependency recipe:
+
+```bash
+deploy/install.sh
+```
+
+The recipe resolves Poetry from the operator's `PATH`, refuses every version
+except 2.4.1, and synchronizes only the resolved `main` dependency group.
+Migrations and service restarts remain separate deployment operations.
+
 ## Email delivery
 
 Application requests queue email in the same transaction as the business
@@ -100,16 +117,28 @@ explicit transport diagnostic, not a domain consequence.
 - `app_user`: request role with RLS enforced.
 - `platform_api`: restricted settings-writer role retained under its historical
   name; it does not expose a tenant-provisioning API.
-- `app_admin`: migration and offline maintenance role with `BYPASSRLS`; never
-  used by request handlers.
+- `app_admin`: schema-owning offline migration/maintenance role; never used by
+  continuous workers or request handlers.
+- `academy_lab_worker`: non-owning `LOGIN NOINHERIT BYPASSRLS NOSUPERUSER
+  NOCREATEDB NOCREATEROLE NOREPLICATION` role used only by the continuous lab
+  worker. It owns neither the current database nor any non-system schema or
+  application relation, including sequences.
 
 `DATABASE_URL` uses `app_user`, `PLATFORM_DATABASE_URL` uses the restricted
-settings writer, and `MIGRATION_DATABASE_URL` uses the offline migration role.
+settings writer, `MIGRATION_DATABASE_URL` uses the offline migration role, and
+`LAB_WORKER_DATABASE_URL` must authenticate specifically as
+`academy_lab_worker` for the continuous lab worker/reconciler. The worker
+refuses a migration/superuser DSN and rejects any database, schema, or
+application-relation ownership by that role.
 
 ## Validation
 
-Tests require a migrated disposable PostgreSQL database because SQLite cannot
-exercise RLS or the concurrency constraints.
+CI owns test evidence — `pytest` runs only in CI, against CI's migrated
+disposable PostgreSQL database (SQLite cannot exercise RLS or the concurrency
+constraints). Never run `pytest` on a workstation, staging, prod, or an
+ad-hoc host, and never stand up a local database just to make it runnable.
+
+Before pushing, run the permitted local checks:
 
 ```bash
 poetry run ruff check .
@@ -118,10 +147,17 @@ poetry run pip-audit
 npm ci
 npm run build:css
 git diff --exit-code -- static/app.css
+```
+
+CI runs all of the above plus the full test suite:
+
+```bash
 poetry run pytest -q
 ```
 
-CI runs all gates. The CSS rebuild proves Academy still consumes the installed
-`dotmac-ui` preset and that the committed browser asset is current. The
-cross-tenant tests are deliberate RLS isolation
-canaries even though production accepts only one Academy tenant.
+The CSS rebuild proves Academy still consumes the installed `dotmac-ui`
+preset and that the committed browser asset is current. The cross-tenant
+tests are deliberate RLS isolation canaries even though production accepts
+only one Academy tenant. A change is validated locally, not "tested," until
+CI's pytest run reports green — don't represent local static checks as test
+evidence.

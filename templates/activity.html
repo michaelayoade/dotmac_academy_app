@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Chapter test</p>
+<p class="page-eyebrow">Chapter test</p>
 <h1 class="mt-1.5 text-2xl tracking-tight">{{ activity.title }}</h1>
 <form hx-post="/activities/{{ activity.id }}/submit" hx-target="#result" hx-swap="innerHTML" class="mt-8 space-y-5">
   {% for q in questions %}

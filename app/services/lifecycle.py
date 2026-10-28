@@ -209,6 +209,10 @@ def invite_user(
         first_name=first_name,
         last_name=last_name,
         role=role,
+        # No assignments are passed on this path, so _apply_assignment is
+        # never invoked and this value has no effect — passed explicitly
+        # anyway because invite_and_enroll's signature has no default.
+        actor_is_admin=True,
         now=now,
     )
     if result.token is None:

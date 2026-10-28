@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Your portal</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Welcome, {{ person.first_name }}</h1>
-<p class="mt-2 text-ink-soft">Pick up where you left off, or start a new chapter below.</p>
+<p class="page-eyebrow">Your portal</p>
+<h1 class="page-title">Welcome, {{ person.first_name }}</h1>
+<p class="page-intro">Pick up where you left off, or start a new chapter below.</p>
 
 {% if courses %}
 <div class="mt-10 space-y-4">

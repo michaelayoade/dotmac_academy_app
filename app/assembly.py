@@ -13,6 +13,7 @@ the module already owns an independent namespace and lineage.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from dotmac_kernel import ProductAssemblySpec, ProductSecurityPolicy
 from dotmac_kernel.features import FeatureManifest
@@ -56,6 +57,11 @@ from app.web.timetable import router as web_timetable_router
 from app.web.todo import router as web_todo_router
 
 _ROOT = Path(__file__).resolve().parent.parent
+
+# Stable product identity is deliberately distinct from the underscore-form
+# source-repository and Python-distribution coordinate ``dotmac_academy_app``.
+# Neither spelling is a normalization of the other.
+PRODUCT_ID: Final = "dotmac-academy"
 
 
 def _academy_configuration_errors() -> list[str]:
@@ -110,7 +116,7 @@ academy_feature = FeatureManifest(
 )
 
 assembly = ProductAssemblySpec(
-    name="dotmac_academy_app",
+    name=PRODUCT_ID,
     modules=(academy_feature,),
     tenancy="single",
     platform_surface_enabled=False,
@@ -129,4 +135,4 @@ assembly = ProductAssemblySpec(
     assembly_migrations=_ROOT / "alembic" / "versions",
 )
 
-__all__ = ["academy_feature", "assembly"]
+__all__ = ["PRODUCT_ID", "academy_feature", "assembly"]

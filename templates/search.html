@@ -1,9 +1,11 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Search</h1>
+<p class="page-eyebrow">{{ branding_name | default("Technical Academy") }}</p>
+<h1 class="page-title">Search</h1>
 
 <form method="get" action="/search" class="mt-6 flex gap-2">
+  <label class="sr-only" for="academy-search-results">Search courses and chapters</label>
   <input
+    id="academy-search-results"
     type="search"
     name="q"
     value="{{ q | e }}"
@@ -20,7 +22,7 @@
 {% if q and not courses and not chapters %}
 <div class="card mt-8 p-8 text-center">
   <p class="text-lg font-medium text-ink">No results for "{{ q | e }}"</p>
-  <p class="mt-2 text-ink-soft">Try a different term.</p>
+  <p class="page-intro">Try a different term.</p>
 </div>
 {% endif %}
 

@@ -16,7 +16,7 @@ on POST means "keep the existing value".
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -64,6 +64,7 @@ def settings_save(
     smtp_from: str = Form(""),
     branding_name: str = Form(""),
     max_concurrent_labs: str = Form(""),
+    max_concurrent_labs_per_tenant: str = Form(""),
     lab_idle_minutes: str = Form(""),
     smtp_starttls: str | None = Form(None),
     email_auto_on_pass: str | None = Form(None),
@@ -81,6 +82,7 @@ def settings_save(
         "smtp_from": smtp_from,
         "branding_name": branding_name,
         "max_concurrent_labs": max_concurrent_labs,
+        "max_concurrent_labs_per_tenant": max_concurrent_labs_per_tenant,
         "lab_idle_minutes": lab_idle_minutes,
         # Checkboxes: present => "true", absent => "false".
         "smtp_starttls": "true" if smtp_starttls is not None else "false",
@@ -91,7 +93,10 @@ def settings_save(
     if smtp_password:
         values["smtp_password"] = smtp_password
 
-    set_many(platform_db, values)
+    try:
+        set_many(platform_db, values)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     cfg = effective(platform_db)
 
     if request.headers.get("HX-Request"):
