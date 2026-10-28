@@ -137,15 +137,15 @@ def activity_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
         .where(AuditEvent.tenant_id == tenant_id)
         .where(AuditEvent.action == "applicant.transition")
         .where(AuditEvent.created_at >= since)
-        .where(AuditEvent.details["source"].astext == "assessment_policy")
+        .where(AuditEvent.details.op("->>")("source") == "assessment_policy")
     )
     auto_accepted = _count(
         db,
-        decision_events.where(AuditEvent.details["to_status"].astext == "onboarding"),
+        decision_events.where(AuditEvent.details.op("->>")("to_status") == "onboarding"),
     )
     auto_waitlisted = _count(
         db,
-        decision_events.where(AuditEvent.details["to_status"].astext == "waitlisted"),
+        decision_events.where(AuditEvent.details.op("->>")("to_status") == "waitlisted"),
     )
     invalid_awaiting = _count(
         db,
