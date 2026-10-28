@@ -58,7 +58,7 @@
         "path": "app/web/labs.py",
         "symbol": "_proxy_http",
         "category": "outbound_transport",
-        "fingerprint": "7692b24602b10a7d4c006f251d41e48c34f1550b17651a691c7d3c9ebdbc6ec4"
+        "fingerprint": "0e0c244ed0894eb13c7c4014afc2251fb1b67ba794b31388dc2445791de8d313"
       }
     ]
   }
