@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -10,13 +12,11 @@ from app.models.assessment import Activity, Question, QuestionBank
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabTemplate
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
 from app.models.tenant import Tenant
-from app.services.accounts import create_user
-from app.services.bootstrap import ensure_roles
+from app.services.bootstrap import bootstrap_tenant, ensure_roles
 from app.services.security import hash_password
 
 ADMIN_EMAIL = "admin@dotmac.io"
@@ -53,60 +53,97 @@ def main() -> None:
     db = Session()
     try:
         tenant = one(db, select(Tenant).where(Tenant.slug == TENANT_SLUG))
+        bootstrapped_owner_id = None
         if tenant is None:
-            raise RuntimeError(f"Tenant {TENANT_SLUG!r} does not exist")
+            # Fresh environment: the canonical bootstrap creates the tenant
+            # and its owner admin in one act (never a hand-rolled tenant).
+            result = bootstrap_tenant(
+                db,
+                slug=TENANT_SLUG,
+                name="Dotmac Academy",
+                admin_email=ADMIN_EMAIL,
+                admin_password=admin_password,
+            )
+            bootstrapped_owner_id = result.owner_party_id
+            tenant = one(db, select(Tenant).where(Tenant.id == result.id))
 
         roles = ensure_roles(db, tenant.id)
         admin = one(
             db,
-            select(Person)
-            .where(Person.tenant_id == tenant.id)
-            .where(Person.email == ADMIN_EMAIL),
+            select(Party)
+            .where(Party.tenant_id == tenant.id)
+            .where(Party.email == ADMIN_EMAIL)
+            .where(Party.party_type == PartyType.person),
         )
+        now = datetime.now(UTC)
         if admin is None:
-            admin = create_user(
-                db,
+            admin = Party(
                 tenant_id=tenant.id,
+                party_type=PartyType.person,
+                display_name="Dotmac Admin",
                 email=ADMIN_EMAIL,
-                first_name="Dotmac",
-                last_name="Admin",
-                password=admin_password,
-                role="admin",
+                is_active=True,
             )
-        else:
-            admin.first_name = "Dotmac"
-            admin.last_name = "Admin"
-            admin.status = "active"
+            db.add(admin)
+            db.flush()
+            db.add(PartyPerson(party_id=admin.id, first_name="Dotmac", last_name="Admin"))
+            db.add(
+                AcademyAccountProfile(
+                    tenant_id=tenant.id, party_id=admin.id, status="active",
+                    prefs={}, created_at=now, updated_at=now,
+                )
+            )
+            db.flush()
+        person_row = one(db, select(PartyPerson).where(PartyPerson.party_id == admin.id))
+        if person_row is not None:
+            person_row.first_name = "Dotmac"
+            person_row.last_name = "Admin"
+        profile = one(
+            db,
+            select(AcademyAccountProfile).where(
+                AcademyAccountProfile.tenant_id == tenant.id,
+                AcademyAccountProfile.party_id == admin.id,
+            ),
+        )
+        if profile is not None:
+            profile.status = "active"
+            profile.updated_at = now
+        if bootstrapped_owner_id != admin.id:
             cred = one(
                 db,
                 select(UserCredential)
                 .where(UserCredential.tenant_id == tenant.id)
-                .where(UserCredential.email == ADMIN_EMAIL),
+                .where(UserCredential.party_id == admin.id),
             )
             if cred is None:
+                cred = UserCredential(
+                    tenant_id=tenant.id,
+                    party_id=admin.id,
+                    password_hash=hash_password(admin_password),
+                )
+                db.add(cred)
+                db.flush()
                 db.add(
-                    UserCredential(
-                        tenant_id=tenant.id,
-                        person_id=admin.id,
-                        email=ADMIN_EMAIL,
-                        password_hash=hash_password(admin_password),
+                    AcademyCredentialPolicy(
+                        tenant_id=tenant.id, credential_id=cred.id, email=ADMIN_EMAIL,
+                        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+                        reset_required=False, created_at=now, updated_at=now,
                     )
                 )
             else:
-                cred.person_id = admin.id
                 cred.password_hash = hash_password(admin_password)
 
         for role_slug in ("admin", "instructor"):
             role = roles[role_slug]
             grant = one(
                 db,
-                select(PersonRole)
-                .where(PersonRole.tenant_id == tenant.id)
-                .where(PersonRole.person_id == admin.id)
-                .where(PersonRole.role_id == role.id),
+                select(PartyRoleGrant)
+                .where(PartyRoleGrant.tenant_id == tenant.id)
+                .where(PartyRoleGrant.party_id == admin.id)
+                .where(PartyRoleGrant.role_id == role.id),
             )
             if grant is None:
-                db.add(PersonRole(tenant_id=tenant.id, person_id=admin.id, role_id=role.id))
+                db.add(PartyRoleGrant(tenant_id=tenant.id, party_id=admin.id, role_id=role.id))
 
         cohort = one(
             db,

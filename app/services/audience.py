@@ -19,11 +19,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.cohort import Enrollment
-from app.models.person import Person
 
 STAFF = "staff"
 EXTERNAL = "external"
@@ -45,8 +45,9 @@ def classify_from_roster(
     counts = {"staff": 0, "external": 0, "unclassified": 0, "unchanged": 0}
 
     rows = db.execute(
-        select(Enrollment, Person.email)
-        .join(Person, (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id))
+        select(Enrollment, Party.email)
+        .join(Party, (Party.id == Enrollment.person_id) & (Party.tenant_id == Enrollment.tenant_id))
+        .where(Party.party_type == PartyType.person)
         .where(Enrollment.tenant_id == tenant_id)
         .where(Enrollment.status == "active")
         .where(Enrollment.role_in_cohort == "student")
@@ -80,14 +81,17 @@ def unclassified(db: Session, *, tenant_id: UUID) -> list[tuple[str, str]]:
     The human review queue ADR 0004 asks for — surfaced rather than guessed at.
     """
     rows = db.execute(
-        select(Person.email, Person.first_name, Person.last_name)
-        .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
+        select(Party.email, PartyPerson.first_name, PartyPerson.last_name)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(Enrollment, (Enrollment.person_id == Party.id) & (Enrollment.tenant_id == Party.tenant_id))
+        .where(Party.party_type == PartyType.person)
         .where(Enrollment.tenant_id == tenant_id)
         .where(Enrollment.status == "active")
         .where(Enrollment.role_in_cohort == "student")
         .where(Enrollment.audience.is_(None))
         .distinct()
-        .order_by(Person.email)
+        .order_by(Party.email)
     ).all()
     return [(email, f"{first or ''} {last or ''}".strip()) for email, first, last in rows]
 

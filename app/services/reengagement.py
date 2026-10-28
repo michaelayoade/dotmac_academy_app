@@ -5,8 +5,9 @@ but never chose a password. To them the Academy is invisible: nudge emails point
 at a login they cannot pass. Their *only* useful message is a fresh activation
 link, so this module names that population and re-issues one.
 
-Ownership: the stranded rule lives here; token minting stays with
-``services.lifecycle`` and delivery with the outbox. This module decides *who*,
+Ownership: the stranded rule lives here; token minting follows the composed
+stranded invitation policy (``invitation_issuance_policy(purpose="stranded")``)
+and delivery stays with the outbox. This module decides *who*,
 never *how* a token is made or a mail is sent. It is deliberately NOT an
 at-risk detector — learners who can log in but don't are the Success Queue's,
 and duplicating that rule here would create a second, drifting owner.
@@ -14,26 +15,39 @@ and duplicating that rule here would create a second, drifting owner.
 
 from __future__ import annotations
 
+import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.account_token import AccountToken
 from app.models.auth import AuthSession, UserCredential
 from app.models.cohort import Enrollment
-from app.models.person import Person
+from app.models.identity_extensions import AcademyAccountProfile
 from app.services.email_outbox import enqueue_email
-from app.services.lifecycle import _issue_token
+from app.services.invitation_policy import invitation_issuance_policy
 from app.services.security import hash_token
+
+
+@dataclass(frozen=True, slots=True)
+class StrandedLearner:
+    """Projection of one stranded canonical account (id = Party id)."""
+
+    id: UUID
+    email: str
+    first_name: str
 
 # A re-issued invite must outlive a weekend and a slow inbox; the 7-day default
 # matches the entrance-exam invitation wave so learners see one consistent window.
 DEFAULT_TTL_HOURS = 24 * 7
 
 
-def stranded_learners(db: Session, *, tenant_id: UUID, cohort_id: UUID | None = None) -> list[Person]:
+def stranded_learners(db: Session, *, tenant_id: UUID, cohort_id: UUID | None = None) -> list[StrandedLearner]:
     """Active student enrollees with no credential and no session, ever.
 
     Both conditions matter: no credential means they cannot log in, and no
@@ -41,36 +55,81 @@ def stranded_learners(db: Session, *, tenant_id: UUID, cohort_id: UUID | None = 
     quiet is *not* stranded — they are the Success Queue's to chase.
     """
     stmt = (
-        select(Person)
+        select(Party.id, Party.email, PartyPerson.first_name)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
         .join(
             Enrollment,
-            (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id),
+            (Enrollment.person_id == Party.id) & (Enrollment.tenant_id == Party.tenant_id),
         )
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.status == "active")
+        .where(Party.tenant_id == tenant_id)
+        .where(Party.party_type == PartyType.person, Party.is_active.is_(True))
+        .where(AcademyAccountProfile.status == "active")
         .where(Enrollment.status == "active")
         .where(Enrollment.role_in_cohort == "student")
         .where(
             ~select(UserCredential.id)
             .where(UserCredential.tenant_id == tenant_id)
-            .where(UserCredential.person_id == Person.id)
+            .where(UserCredential.party_id == Party.id)
             .exists()
         )
         .where(
             ~select(AuthSession.id)
             .where(AuthSession.tenant_id == tenant_id)
-            .where(AuthSession.person_id == Person.id)
+            .where(AuthSession.party_id == Party.id)
             .exists()
         )
-        .order_by(Person.email)
+        .order_by(Party.email)
         .distinct()
     )
     if cohort_id is not None:
         stmt = stmt.where(Enrollment.cohort_id == cohort_id)
-    return list(db.scalars(stmt).unique())
+    return [StrandedLearner(id=row.id, email=row.email, first_name=row.first_name) for row in db.execute(stmt)]
 
 
-def _bodies(person: Person, link: str) -> tuple[str, str]:
+def _mint_stranded_invite(
+    db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime, ttl_hours: int
+) -> str:
+    """Mint one invite token under the composed stranded policy.
+
+    The human invitation wrappers require a live web actor session, which a
+    CLI sweep does not have; the stranded purpose is prepared precisely as a
+    separate policy (``INVITATION_STRANDED_REPLACE_OUTSTANDING``). Fixed
+    protocol matches the composed issuer: 32 random bytes as hex, HMAC store.
+    """
+    policy = invitation_issuance_policy(db, purpose="stranded")
+    if policy.replace_outstanding:
+        outstanding = db.scalars(
+            select(AccountToken)
+            .where(
+                AccountToken.tenant_id == tenant_id,
+                AccountToken.person_id == person_id,
+                AccountToken.kind == "invite",
+                AccountToken.used_at.is_(None),
+            )
+            .with_for_update()
+        ).all()
+        for row in outstanding:
+            row.used_at = now
+    raw = secrets.token_hex(32)
+    db.add(
+        AccountToken(
+            tenant_id=tenant_id,
+            person_id=person_id,
+            kind="invite",
+            token_hash=hash_token(raw),
+            expires_at=policy.deadline(now, ttl_hours=ttl_hours),
+        )
+    )
+    db.flush()
+    return raw
+
+
+def _bodies(person: StrandedLearner, link: str) -> tuple[str, str]:
     """Activation copy. States why they are hearing from us, then the one action."""
     greeting = escape(person.first_name) or "there"
     html = (
@@ -110,7 +169,7 @@ def reinvite_stranded(
     targets = stranded_learners(db, tenant_id=tenant_id, cohort_id=cohort_id)
     queued = failed = 0
     for person in targets:
-        token = _issue_token(db, tenant_id=tenant_id, person_id=person.id, kind="invite", now=now, ttl_hours=ttl_hours)
+        token = _mint_stranded_invite(db, tenant_id=tenant_id, person_id=person.id, now=now, ttl_hours=ttl_hours)
         link = f"{base_url.rstrip('/')}/accept-invite?token={token}"
         html, text = _bodies(person, link)
         if enqueue_email(

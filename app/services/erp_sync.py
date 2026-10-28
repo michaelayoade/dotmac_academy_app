@@ -2,8 +2,9 @@
 
 Best-effort: each completed course is a signed webhook to ERP, which records an
 EmployeeCertification for staff learners (matched by work email) and ignores
-everyone else. Inert unless ``erp_webhook_url`` is configured. ``erp_synced_at``
-on the completion marks what's already been pushed so the sweep doesn't re-send.
+everyone else. Inert unless ``erp_webhook_url`` is configured. The Academy
+``ERPCompletionCheckpoint.erp_synced_at`` marks what's already been pushed so
+the sweep doesn't re-send (Learning owns the completion row itself).
 """
 
 from __future__ import annotations
@@ -16,13 +17,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
+from dotmac_kernel.models import Party, PartyType
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.person import Person
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +113,19 @@ def push_completion(
     """
     if not settings.erp_webhook_url:
         return FAILED
-    person = db.get(Person, completion.person_id)
+    party = db.scalars(
+        select(Party).where(
+            Party.tenant_id == tenant_id,
+            Party.id == completion.person_id,
+            Party.party_type == PartyType.person,
+        )
+    ).first()
     course = db.get(Course, completion.course_id)
-    if person is None or course is None:
+    if party is None or course is None or not (party.email or "").strip():
         return FAILED
 
     payload = build_payload(
-        email=person.email,
+        email=party.email,
         course_title=course.title,
         completed_on=completion.completed_at,
         certificate_ref=str(completion.id),
@@ -141,7 +149,7 @@ def push_completion(
         # match any ERP employee. It needs the identity link corrected.
         logger.warning(
             "erp training push not recorded for completion %s: ERP matched no employee for %s",
-            completion.id, person.email,
+            completion.id, party.email,
         )
         return UNMATCHED
     if outcome == FAILED:
@@ -150,7 +158,19 @@ def push_completion(
         )
         return FAILED
 
-    completion.erp_synced_at = now or datetime.now(UTC)
+    # Learning owns the completion row; the ERP acknowledgement lives in the
+    # Academy checkpoint table (data-owner change, not a column rename).
+    checkpoint = db.get(ERPCompletionCheckpoint, (tenant_id, completion.id))
+    if checkpoint is None:
+        db.add(
+            ERPCompletionCheckpoint(
+                tenant_id=tenant_id,
+                completion_id=completion.id,
+                erp_synced_at=now or datetime.now(UTC),
+            )
+        )
+    else:
+        checkpoint.erp_synced_at = now or datetime.now(UTC)
     db.flush()
     return SYNCED
 
@@ -168,7 +188,13 @@ def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -
         select(CourseCompletion)
         .where(CourseCompletion.tenant_id == tenant_id)
         .where(CourseCompletion.status == "completed")
-        .where(CourseCompletion.erp_synced_at.is_(None))
+        .where(
+            ~select(ERPCompletionCheckpoint.completion_id)
+            .where(ERPCompletionCheckpoint.tenant_id == tenant_id)
+            .where(ERPCompletionCheckpoint.completion_id == CourseCompletion.id)
+            .where(ERPCompletionCheckpoint.erp_synced_at.is_not(None))
+            .exists()
+        )
     ).all()
     for completion in rows:
         counts[push_completion(db, tenant_id=tenant_id, completion=completion, now=now)] += 1
