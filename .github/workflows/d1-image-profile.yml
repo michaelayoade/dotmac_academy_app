@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 10
     services:
       db:
-        image: postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962
+        image: postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b
         env:
           POSTGRES_PASSWORD: disposable_image_inventory
           POSTGRES_DB: academy_image_profile
@@ -23,10 +23,10 @@ jobs:
     steps:
       # Independent image inventory only; no Academy schema or adoption entry.
       # Official immutable source:
-      # https://github.com/docker-library/repo-info/blob/1218b6a4b08f5f5be91b116f482989668710594e/repos/postgres/remote/16-bookworm.md
+      # https://github.com/docker-library/repo-info/blob/1218b6a4b08f5f5be91b116f482989668710594e/repos/postgres/remote/16.md
       - name: Inventory the preselected immutable image
         env:
-          IMAGE: postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962
+          IMAGE: postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b
           SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
         shell: bash
         run: |
@@ -43,9 +43,27 @@ jobs:
           test "$(docker exec "$SERVICE_CONTAINER_ID" psql -U postgres -d academy_image_profile -Atc 'SHOW server_version_num')" = 160015
 
           test "$actual_id" = "$expected_id"
-          test "$config_id" = sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f
+          test "$config_id" = sha256:74d436cb49d3398cf7b5d7b33635d43623d9e4da4b93c22db453f7d5d81181b1
           # Docker image stores report either the manifest or config identity.
           case "$actual_id" in
-            sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962|sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f) ;;
+            sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b|sha256:74d436cb49d3398cf7b5d7b33635d43623d9e4da4b93c22db453f7d5d81181b1) ;;
             *) exit 1 ;;
           esac
+
+          # Technical deparser context only, not Academy catalog qualification.
+          profile_context=$(docker exec "$SERVICE_CONTAINER_ID" psql -U postgres -d academy_image_profile -v ON_ERROR_STOP=1 -Atc "SELECT json_build_array(current_setting('server_version_num')::integer,current_setting('server_version'),current_setting('search_path'),pg_catalog.current_schemas(true),current_setting('quote_all_identifiers'),current_setting('standard_conforming_strings'))")
+          echo "ACADEMY_RENDERING_CONTEXT=$profile_context"
+          ACADEMY_INVENTORY_RENDERING_CONTEXT="$profile_context" python3 - <<'PY'
+          import json
+          import os
+
+          expected = [
+              160015,
+              "16.15 (Debian 16.15-1.pgdg13+2)",
+              '"$user", public',
+              ["pg_catalog", "public"],
+              "off",
+              "on",
+          ]
+          assert json.loads(os.environ["ACADEMY_INVENTORY_RENDERING_CONTEXT"]) == expected
+          PY
