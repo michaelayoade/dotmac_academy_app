@@ -5,6 +5,7 @@ Revises: a005_erp_completion_checkpoint
 """
 
 from alembic import op
+from app.maintenance import fresh_product as fresh
 from app.maintenance import lab_claim_lease_transition as lab_claim
 from app.maintenance import product_adoption as product
 
@@ -16,6 +17,9 @@ depends_on = None
 
 def upgrade():
     connection = op.get_bind()
+    if fresh._issued(connection) is not None:
+        fresh._apply(connection, revision)
+        return
     try:
         entry = product._consume_lab_claim_lease_transition(connection)
         lab_claim._apply_lab_claim_lease_transition(connection, entry)

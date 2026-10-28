@@ -398,7 +398,6 @@ def test_returned_public_snapshot_tampering_cannot_change_private_source_export(
 
 @contextmanager
 def _canonical_learning_import(engine, tmp_path, monkeypatch):
-    from dotmac_kernel.migrations import versions_dir as kernel_versions
     from dotmac_kernel.prerequisites import (
         MODULE_DATABASE_ROLES_V1,
         PARTY_PERSON_CATALOG_V1,
@@ -408,10 +407,9 @@ def _canonical_learning_import(engine, tmp_path, monkeypatch):
         install_prerequisite_bindings,
         installed_bindings,
     )
-    from dotmac_learning.migrations import versions_dir as learning_versions
 
     from alembic import command
-    from tests.fixtures.kernel_identity_entry.rehearsal import config_for
+    from tests.fixtures.kernel_identity_entry.rehearsal import composed_config_for
 
     # Exact actual f674/a1 assembly providers; no latest-head invention. Public
     # binding installation precedes any Learning ScriptDirectory/map loading.
@@ -426,11 +424,7 @@ def _canonical_learning_import(engine, tmp_path, monkeypatch):
         with _identity_imported_source(engine, tmp_path, monkeypatch) as (connection, capture, entry, receipt):
             install_prerequisite_bindings(actual_bindings)
             applied = []
-            cfg = config_for(connection, identity_tests.ASSEMBLY, tmp_path / "full-learning", applied)
-            cfg.set_main_option(
-                "version_locations",
-                " ".join(map(str, (kernel_versions(), identity_tests.ASSEMBLY, learning_versions()))),
-            )
+            cfg = composed_config_for(connection, tmp_path / "full-learning", applied)
             authorize_historical_account_token_adoption(connection, entry, receipt)
             command.upgrade(cfg, "a003_account_token_identity")
             # Required immediate capture consumes/deletes the OTHER owner's

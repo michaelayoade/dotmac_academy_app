@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from dotmac_kernel.audit import write_audit_event as write_canonical_audit_event
 from sqlalchemy.orm import Session
 
 from app.models.rbac import AuditEvent
@@ -14,23 +15,28 @@ def write_audit_event(
     db: Session,
     *,
     tenant_id: UUID,
-    actor_person_id: UUID | None,
+    actor_type: str,
+    actor_id: str | None,
+    actor_party_id: UUID | None,
+    source_application: str,
     action: str,
     entity_type: str,
     entity_id: str | None = None,
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
-    event = AuditEvent(
+    """Write explicit forensic attribution through the canonical Kernel owner."""
+    return write_canonical_audit_event(
+        db,
         tenant_id=tenant_id,
-        actor_person_id=actor_person_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_party_id=actor_party_id,
+        source_application=source_application,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
         details=details or {},
     )
-    db.add(event)
-    db.flush()
-    return event
 
 
 def list_events(

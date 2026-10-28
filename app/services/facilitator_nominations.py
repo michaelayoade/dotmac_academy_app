@@ -372,7 +372,10 @@ def nominate(db: Session, *, command: NominateFacilitatorCommand) -> Facilitator
     write_audit_event(
         db,
         tenant_id=command.tenant_id,
-        actor_person_id=command.actor_person_id,
+        actor_type="user",
+        actor_id=str(command.actor_person_id),
+        actor_party_id=command.actor_person_id,
+        source_application="dotmac_academy_app",
         action="facilitator_nomination.create",
         entity_type="facilitator_nomination",
         entity_id=str(nomination.id),
@@ -452,7 +455,10 @@ def revoke(db: Session, *, command: RevokeFacilitatorCommand) -> FacilitatorNomi
         write_audit_event(
             db,
             tenant_id=command.tenant_id,
-            actor_person_id=command.actor_person_id,
+            actor_type="user",
+            actor_id=str(command.actor_person_id),
+            actor_party_id=command.actor_person_id,
+            source_application="dotmac_academy_app",
             action="facilitator_nomination.revoke",
             entity_type="facilitator_nomination",
             entity_id=str(nomination.id),

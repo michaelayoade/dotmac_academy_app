@@ -1,7 +1,7 @@
 """Add scoped facilitator nominations without overloading learner enrollment.
 
-Revision ID: 0064_facilitator_nominations
-Revises: 0063_lab_console_activity
+Revision ID: a010_facilitator_nominations
+Revises: a009_applicant_bank_version_pin
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0064_facilitator_nominations"
-down_revision = "0063_lab_console_activity"
+revision = "a010_facilitator_nominations"
+down_revision = "a009_applicant_bank_version_pin"
 branch_labels = None
 depends_on = None
 
@@ -23,31 +23,41 @@ ACTIVATION_CAPABILITY = "public.activate_eligible_facilitator_nominations"
 
 def _timestamps() -> tuple[sa.Column, sa.Column]:
     return (
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("pg_catalog.now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("pg_catalog.now()")),
     )
 
 
 def _tenant_table(table: str) -> None:
-    op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
-    op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;")
+    op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY;")
+    op.execute(f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY;")
     op.execute(
-        f"CREATE POLICY {table}_tenant_isolation ON {table} "
-        f"USING (tenant_id = app_current_tenant_id()) "
-        f"WITH CHECK (tenant_id = app_current_tenant_id());"
+        f"CREATE POLICY {table}_tenant_isolation ON public.{table} "
+        f"USING (tenant_id = public.app_current_tenant_id()) "
+        f"WITH CHECK (tenant_id = public.app_current_tenant_id());"
     )
-    op.execute(f"REVOKE ALL PRIVILEGES ON {table} FROM PUBLIC;")
-    op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO app_user, platform_api;")
+    op.execute(f"REVOKE ALL PRIVILEGES ON public.{table} FROM PUBLIC;")
+    op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON public.{table} TO app_user, platform_api;")
 
 
 def upgrade() -> None:
+    if op.get_bind().scalar(sa.text("SELECT current_user")) != "app_admin":
+        raise ValueError("Academy assembly migration requires app_admin")
+    if op.get_bind().scalar(sa.text("""
+        SELECT pg_catalog.to_regclass('public.facilitator_nominations') IS NOT NULL
+          OR pg_catalog.to_regclass('public.facilitator_requirements') IS NOT NULL
+          OR pg_catalog.to_regprocedure(
+              'public.activate_eligible_facilitator_nominations(uuid,uuid,uuid,uuid,integer,uuid)'
+          ) IS NOT NULL
+    """)):
+        raise ValueError("facilitator nomination objects already exist")
     op.create_table(
         NOMINATIONS,
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "tenant_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            sa.ForeignKey("public.tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("person_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -63,24 +73,32 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "id", name="uq_facilitator_nominations_tenant_id_id"),
         sa.ForeignKeyConstraint(
             ["tenant_id", "person_id"],
-            ["people.tenant_id", "people.id"],
+            ["public.parties.tenant_id", "public.parties.id"],
             ondelete="CASCADE",
             name="fk_facilitator_nominations_person",
         ),
         sa.ForeignKeyConstraint(
+            ["person_id"], ["public.party_persons.party_id"], ondelete="CASCADE",
+            name="fk_facilitator_nominations_person_subtype",
+        ),
+        sa.ForeignKeyConstraint(
+            ["nominated_by_person_id"], ["public.party_persons.party_id"],
+            name="fk_facilitator_nominations_nominator_subtype",
+        ),
+        sa.ForeignKeyConstraint(
             ["tenant_id", "nominated_by_person_id"],
-            ["people.tenant_id", "people.id"],
+            ["public.parties.tenant_id", "public.parties.id"],
             name="fk_facilitator_nominations_nominator",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id", "cohort_id"],
-            ["cohorts.tenant_id", "cohorts.id"],
+            ["mod_learning.cohorts.tenant_id", "mod_learning.cohorts.id"],
             ondelete="CASCADE",
             name="fk_facilitator_nominations_cohort",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id", "offering_id"],
-            ["course_offerings.tenant_id", "course_offerings.id"],
+            ["mod_learning.course_offerings.tenant_id", "mod_learning.course_offerings.id"],
             ondelete="CASCADE",
             name="fk_facilitator_nominations_offering",
         ),
@@ -91,16 +109,18 @@ def upgrade() -> None:
             "(scope_type = 'course' AND cohort_id IS NULL AND offering_id IS NOT NULL)",
             name="ck_facilitator_nominations_target",
         ),
+        schema="public",
     )
-    op.create_index("ix_facilitator_nominations_tenant_id", NOMINATIONS, ["tenant_id"])
-    op.create_index("ix_facilitator_nominations_person_id", NOMINATIONS, ["person_id"])
-    op.create_index("ix_facilitator_nominations_cohort_id", NOMINATIONS, ["cohort_id"])
-    op.create_index("ix_facilitator_nominations_offering_id", NOMINATIONS, ["offering_id"])
-    op.create_index("ix_facilitator_nominations_status", NOMINATIONS, ["status"])
+    op.create_index("ix_facilitator_nominations_tenant_id", NOMINATIONS, ["tenant_id"], schema="public")
+    op.create_index("ix_facilitator_nominations_person_id", NOMINATIONS, ["person_id"], schema="public")
+    op.create_index("ix_facilitator_nominations_cohort_id", NOMINATIONS, ["cohort_id"], schema="public")
+    op.create_index("ix_facilitator_nominations_offering_id", NOMINATIONS, ["offering_id"], schema="public")
+    op.create_index("ix_facilitator_nominations_status", NOMINATIONS, ["status"], schema="public")
     op.create_index(
         "uq_facilitator_nominations_cohort_scope",
         NOMINATIONS,
         ["tenant_id", "person_id", "cohort_id"],
+        schema="public",
         unique=True,
         postgresql_where=sa.text("scope_type = 'cohort'"),
     )
@@ -108,6 +128,7 @@ def upgrade() -> None:
         "uq_facilitator_nominations_course_scope",
         NOMINATIONS,
         ["tenant_id", "person_id", "offering_id"],
+        schema="public",
         unique=True,
         postgresql_where=sa.text("scope_type = 'course'"),
     )
@@ -118,7 +139,7 @@ def upgrade() -> None:
         sa.Column(
             "tenant_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            sa.ForeignKey("public.tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("nomination_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -130,22 +151,26 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id", "nomination_id"],
-            ["facilitator_nominations.tenant_id", "facilitator_nominations.id"],
+            ["public.facilitator_nominations.tenant_id", "public.facilitator_nominations.id"],
             ondelete="CASCADE",
             name="fk_facilitator_requirements_nomination",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id", "course_id"],
-            ["courses.tenant_id", "courses.id"],
+            ["mod_learning.courses.tenant_id", "mod_learning.courses.id"],
             name="fk_facilitator_requirements_course",
         ),
+        schema="public",
     )
-    op.create_index("ix_facilitator_requirements_tenant_id", REQUIREMENTS, ["tenant_id"])
-    op.create_index("ix_facilitator_requirements_nomination_id", REQUIREMENTS, ["nomination_id"])
-    op.create_index("ix_facilitator_requirements_course_id", REQUIREMENTS, ["course_id"])
+    op.create_index("ix_facilitator_requirements_tenant_id", REQUIREMENTS, ["tenant_id"], schema="public")
+    op.create_index("ix_facilitator_requirements_nomination_id", REQUIREMENTS, ["nomination_id"], schema="public")
+    op.create_index("ix_facilitator_requirements_course_id", REQUIREMENTS, ["course_id"], schema="public")
     _tenant_table(NOMINATIONS)
     _tenant_table(REQUIREMENTS)
 
+    # A supplied actor is the authenticated user nomination command; automatic
+    # reconcile/completion/sweep commands omit it and receive fixed system audit
+    # attribution. The caller cannot supply audit type/id/source/action/details.
     # Activation is the sole privileged persistence path shared by the web tier,
     # repair sweep, and restricted lab worker. The definer function re-derives
     # eligibility from canonical facts and emits fixed consequences atomically;
@@ -176,9 +201,11 @@ def upgrade() -> None:
             IF p_actor_person_id IS NOT NULL
                AND NOT EXISTS (
                    SELECT 1
-                     FROM public.people AS actor
+                     FROM public.parties AS actor
+                     JOIN public.party_persons AS actor_person ON actor_person.party_id = actor.id
                     WHERE actor.tenant_id = p_tenant_id
                       AND actor.id = p_actor_person_id
+                      AND actor.party_type = 'person'
                )
             THEN
                 RAISE EXCEPTION 'facilitator activation actor tenant mismatch'
@@ -213,10 +240,14 @@ def upgrade() -> None:
                          AND n.status = 'pending'
                          AND EXISTS (
                              SELECT 1
-                               FROM public.people AS person
+                               FROM public.parties AS person
+                              JOIN public.party_persons AS subtype ON subtype.party_id = person.id
+                              JOIN public.academy_account_profiles AS profile
+                                ON profile.tenant_id = person.tenant_id AND profile.party_id = person.id
                               WHERE person.tenant_id = n.tenant_id
                                 AND person.id = n.person_id
-                                AND person.status = 'active'
+                                AND person.party_type = 'person'
+                                AND profile.status = 'active'
                          )
                          AND EXISTS (
                              SELECT 1
@@ -231,7 +262,7 @@ def upgrade() -> None:
                                 AND required.nomination_id = n.id
                                 AND NOT EXISTS (
                                     SELECT 1
-                                      FROM public.course_completions AS completed
+                                      FROM mod_learning.course_completions AS completed
                                      WHERE completed.tenant_id = required.tenant_id
                                        AND completed.person_id = n.person_id
                                        AND completed.course_id = required.course_id
@@ -288,10 +319,14 @@ def upgrade() -> None:
                 IF v_nomination.status = 'pending'
                    AND EXISTS (
                        SELECT 1
-                         FROM public.people AS candidate
+                         FROM public.parties AS candidate
+                        JOIN public.party_persons AS subtype ON subtype.party_id = candidate.id
+                        JOIN public.academy_account_profiles AS profile
+                          ON profile.tenant_id = candidate.tenant_id AND profile.party_id = candidate.id
                         WHERE candidate.tenant_id = v_nomination.tenant_id
                           AND candidate.id = v_nomination.person_id
-                          AND candidate.status = 'active'
+                          AND candidate.party_type = 'person'
+                          AND profile.status = 'active'
                    )
                    AND EXISTS (
                        SELECT 1
@@ -306,7 +341,7 @@ def upgrade() -> None:
                           AND required.nomination_id = v_nomination.id
                           AND NOT EXISTS (
                               SELECT 1
-                                FROM public.course_completions AS completed
+                                FROM mod_learning.course_completions AS completed
                                WHERE completed.tenant_id = required.tenant_id
                                  AND completed.person_id = v_nomination.person_id
                                  AND completed.course_id = required.course_id
@@ -334,16 +369,21 @@ def upgrade() -> None:
                             v_nomination.person_id,
                             'facilitator_activated',
                             'Your facilitator assignment is active',
-                            'You completed the required course work and can now facilitate the assigned learning scope.',
+                            'You completed the required course work and can now facilitate '
+                            'the assigned learning scope.',
                             '/learn'
                         );
                         INSERT INTO public.audit_events (
-                            id, tenant_id, actor_person_id, action,
+                            id, tenant_id, actor_type, actor_id, actor_party_id, source_application, action,
                             entity_type, entity_id, details
                         ) VALUES (
                             pg_catalog.gen_random_uuid(),
                             v_nomination.tenant_id,
+                            CASE WHEN p_actor_person_id IS NULL THEN 'system' ELSE 'user' END,
+                            CASE WHEN p_actor_person_id IS NULL THEN 'facilitator_activation'
+                                 ELSE p_actor_person_id::text END,
                             p_actor_person_id,
+                            'dotmac_academy_app',
                             'facilitator_nomination.activate',
                             'facilitator_nomination',
                             v_nomination.id::text,
@@ -368,16 +408,18 @@ def upgrade() -> None:
 
     op.execute(
         """
-        INSERT INTO facilitator_nominations (
+        INSERT INTO public.facilitator_nominations (
             id, tenant_id, person_id, scope_type, cohort_id, status,
             activated_at, activation_reason, created_at, updated_at
         )
-        SELECT gen_random_uuid(), e.tenant_id, e.person_id, 'cohort', e.cohort_id,
-               'active', now(), 'legacy_grandfathered', now(), now()
-          FROM enrollments e
-          JOIN person_roles pr
-            ON pr.tenant_id = e.tenant_id AND pr.person_id = e.person_id
-          JOIN roles r
+        SELECT pg_catalog.gen_random_uuid(), e.tenant_id, e.person_id, 'cohort', e.cohort_id,
+               'active', pg_catalog.now(), 'legacy_grandfathered', pg_catalog.now(), pg_catalog.now()
+          FROM mod_learning.enrollments e
+          JOIN public.parties p ON p.tenant_id=e.tenant_id AND p.id=e.person_id AND p.party_type='person'
+          JOIN public.party_persons pp ON pp.party_id=p.id
+          JOIN public.party_role_grants pr
+            ON pr.tenant_id = e.tenant_id AND pr.party_id = e.person_id
+          JOIN public.roles r
             ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
            AND r.slug = 'instructor'
          WHERE e.role_in_cohort = 'instructor' AND e.status = 'active'
@@ -386,7 +428,6 @@ def upgrade() -> None:
     )
 
 
+
 def downgrade() -> None:
-    op.execute(f"DROP FUNCTION {ACTIVATION_CAPABILITY}(uuid, uuid, uuid, uuid, integer, uuid);")
-    op.drop_table(REQUIREMENTS)
-    op.drop_table(NOMINATIONS)
+    raise RuntimeError("Academy assembly reversal requires a reviewed new-facts disposition")

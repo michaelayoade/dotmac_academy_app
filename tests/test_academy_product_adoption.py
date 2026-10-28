@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import dotmac_learning as learning
 import pytest
 import sqlalchemy as sa
-from dotmac_kernel.migrations import versions_dir as kernel_versions
 from dotmac_kernel.prerequisites import (
     MODULE_DATABASE_ROLES_V1,
     PARTY_PERSON_CATALOG_V1,
@@ -21,7 +20,6 @@ from dotmac_kernel.prerequisites import (
     install_prerequisite_bindings,
     installed_bindings,
 )
-from dotmac_learning.migrations import versions_dir as learning_versions
 
 from alembic import command
 from app.maintenance import account_token_identity as tokens
@@ -30,11 +28,10 @@ from app.maintenance import product_adoption as product
 from app.maintenance import retained_history as retained
 from app.maintenance import retained_hosted_genesis as hosted
 from app.maintenance.identity_history import IdentityHistoryImportRefused, import_academy_identity_history
-from tests import test_academy_identity_history as identity_tests
 from tests import test_academy_learning_history as learning_tests
 from tests.fixtures import product_adoption_entry as entry
 from tests.fixtures.hosted_genesis import hosted_declaration, qualified_root, replayed_owner
-from tests.fixtures.kernel_identity_entry.rehearsal import config_for, plan_entry, verify_legacy_source
+from tests.fixtures.kernel_identity_entry.rehearsal import composed_config_for, plan_entry, verify_legacy_source
 from tests.test_kernel_identity_entry import public_footprint
 
 assert hosted_declaration
@@ -123,10 +120,7 @@ def _import_identity(connection, handle, expected, operation):
 
 def _upgrade_tokens(connection, tmp_path):
     applied = []
-    cfg = config_for(connection, identity_tests.ASSEMBLY, tmp_path / "product-learning", applied)
-    cfg.set_main_option(
-        "version_locations", " ".join(map(str, (kernel_versions(), identity_tests.ASSEMBLY, learning_versions())))
-    )
+    cfg = composed_config_for(connection, tmp_path / "product-learning", applied)
     command.upgrade(cfg, "a003_account_token_identity")
     return cfg, applied
 

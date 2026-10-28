@@ -13,7 +13,6 @@ from unittest.mock import Mock
 import pytest
 import sqlalchemy as sa
 from dotmac_kernel import audit_actions, credential_lifecycle, security
-from dotmac_kernel.migrations import versions_dir
 from dotmac_kernel.migrations.gate import run_gate
 from dotmac_kernel.migrations.identity_history import (
     IdentityHistoryCohortV1,
@@ -22,7 +21,6 @@ from dotmac_kernel.migrations.identity_history import (
     IdentityHistoryManifestV1,
     IdentityHistoryRelationsV1,
 )
-from dotmac_kernel.namespaces import HOST_MIGRATION_OWNERS, NamespaceRegistry
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.elements import quoted_name
@@ -32,10 +30,12 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from app.maintenance.identity_history import import_academy_identity_history
+from app.migration_bindings import ASSEMBLY_PREREQUISITE_BINDINGS
+from app.migration_graph import ordinary_migration_config
 from tests.fixtures.kernel_identity_entry.rehearsal import (
     COLLISIONS,
     COMPATIBILITY_SCHEMA,
-    config_for,
+    composed_config_for,
     installed_kernel,
     plan_entry,
     relocate,
@@ -54,8 +54,10 @@ ASSEMBLY = Path(__file__).resolve().parents[1] / "alembic/identity_assembly_vers
 
 
 def test_reserved_assembly_composition():
-    registry = NamespaceRegistry(HOST_MIGRATION_OWNERS)
-    report = run_gate((), (Path(versions_dir()), ASSEMBLY), registry=registry, bindings=())
+    cfg = ordinary_migration_config()
+    registry = cfg.attributes["academy_migration_registry"]
+    report = run_gate(registry.startup_order(), cfg.attributes["academy_migration_locations"],
+                      registry=registry.namespaces(), bindings=ASSEMBLY_PREREQUISITE_BINDINGS)
     assert report.violations == ()
 
 
@@ -120,8 +122,7 @@ def _prepared(engine, tmp_path, monkeypatch):
         replay_kernel(connection, tmp_path / "kernel", applied)
         assert tuple(applied) == kernel.revisions
         composed = []
-        cfg = config_for(connection, ASSEMBLY, tmp_path / "composed", composed)
-        cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
+        cfg = composed_config_for(connection, tmp_path / "composed", composed)
         command.upgrade(cfg, "a002_credential_reset_state")
         assert [r.revision for r in composed] == [
             "a001_identity_extensions",
@@ -360,8 +361,7 @@ def test_missing_real_credential_key_refuses_before_extension_ddl(legacy_engine,
         connection.execute(
             sa.text("ALTER TABLE public.user_credentials DROP CONSTRAINT uq_user_credentials_tenant_id_id")
         )
-        cfg = config_for(connection, ASSEMBLY, tmp_path / "assembly", [])
-        cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
+        cfg = composed_config_for(connection, tmp_path / "assembly", [])
         revision = ScriptDirectory.from_config(cfg).get_revision("a001_identity_extensions")
         with Operations.context(MigrationContext.configure(connection)):
             with pytest.raises(ValueError, match="credential tenant key"):

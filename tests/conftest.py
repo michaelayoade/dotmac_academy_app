@@ -24,6 +24,28 @@ from sqlalchemy.orm import Session, sessionmaker
 pytest_plugins = ("tests.canonical_identity_fixtures",)
 
 
+def pytest_sessionstart(session):
+    if os.environ.get("CI") != "true":
+        return
+    # This one explicit prequalification canary owns isolated historical/fresh
+    # roots and cannot commit. It runs before the application DB exists.
+    discovery = "tests/test_fresh_product_entry_hosted.py::test_historical_and_fresh_catalogs_converge"
+    if session.config.args == [discovery]:
+        return
+    from scripts.ci_bootstrap_composed_db import bootstrap
+
+    try:
+        bootstrap(os.environ, expected_database="academy", verify_only=True)
+    except Exception:
+        raise pytest.UsageError("CI application database is not independently qualified and bootstrapped") from None
+
+
+def _missing_database(message):
+    if os.environ.get("CI") == "true":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 @pytest.fixture(scope="session")
 def admin_engine():
     """Migration-authority connection (app_admin in CI).
@@ -35,7 +57,7 @@ def admin_engine():
     """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
+        _missing_database("TEST_DATABASE_URL not set — these tests require a real Postgres")
     engine = create_engine(url, future=True)
     yield engine
     engine.dispose()
@@ -101,7 +123,7 @@ def lab_worker_engine():
     """
     url = os.getenv("TEST_LAB_WORKER_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_LAB_WORKER_DATABASE_URL not set — lab-worker privilege tests skipped")
+        _missing_database("TEST_LAB_WORKER_DATABASE_URL not set — lab-worker privilege tests require their role")
     engine = create_engine(url, future=True)
     with engine.connect() as conn:
         current_user = conn.execute(text("SELECT current_user")).scalar()
@@ -172,7 +194,7 @@ def app_user_session() -> Generator[Session, None, None]:
     """Connection as app_user for RLS visibility assertions."""
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
+        _missing_database("TEST_DATABASE_URL not set — these tests require a real Postgres")
     engine = create_engine(url, future=True)
     SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     db = SessionLocal()

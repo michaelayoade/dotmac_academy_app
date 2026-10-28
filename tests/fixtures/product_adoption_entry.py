@@ -10,21 +10,19 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from dotmac_kernel import audit_actions, security
-from dotmac_kernel.migrations import versions_dir as kernel_versions
 from dotmac_kernel.migrations.identity_history import (
     IdentityHistoryCohortV1,
     IdentityHistoryImportOperationV1,
     IdentityHistoryManifestV1,
     IdentityHistoryRelationsV1,
 )
-from dotmac_learning.migrations import versions_dir as learning_versions
 from sqlalchemy.sql.elements import quoted_name
 
 from alembic import command
 from tests.fixtures.kernel_identity_entry.rehearsal import (
     COLLISIONS,
     COMPATIBILITY_SCHEMA,
-    config_for,
+    composed_config_for,
     installed_kernel,
     relocate,
 )
@@ -159,8 +157,8 @@ def prepare_relocated_identity(connection, plan, tmp_path):
     kernel = installed_kernel(connection, tmp_path / "inspect")
     assert any(r.revision == "0030_credential_tenant_key" for r in kernel.revisions)
     applied = []
-    cfg = config_for(connection, ASSEMBLY, tmp_path / "composed", applied)
-    cfg.set_main_option("version_locations", " ".join(map(str, (kernel_versions(), ASSEMBLY, learning_versions()))))
+    cfg = composed_config_for(connection, tmp_path / "composed", applied)
+
     # Select explicit stages with the COMPLETE composed graph present.
     command.upgrade(cfg, kernel.head)
     assert tuple(applied) == kernel.revisions

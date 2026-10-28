@@ -29,10 +29,15 @@ from app.services.security import hash_token
 
 
 def _legacy_write_audit_event(*args, **kwargs):
-    """Historical admin/assessment mapping; canonical bridge separately owed."""
+    """Explicit automated legacy assessment origin, never a human fallback."""
     from app.services.audit import write_audit_event
 
-    return write_audit_event(*args, **kwargs)
+    if kwargs.pop("actor_person_id", None) is not None:
+        raise BadRequestError("legacy assessment origin cannot assert a human actor")
+    return write_audit_event(
+        *args, **kwargs, actor_type="system", actor_id="assessment_policy",
+        actor_party_id=None, source_application="dotmac_academy_app",
+    )
 
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)

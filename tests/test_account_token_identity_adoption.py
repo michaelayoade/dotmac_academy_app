@@ -16,13 +16,11 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 from dotmac_kernel import security
-from dotmac_kernel.migrations import versions_dir
 from dotmac_kernel.migrations.identity_history import IdentityHistoryImportRefused
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from alembic import command
-from alembic.script import ScriptDirectory
 from app.maintenance import account_token_identity as token_owner
 from app.maintenance.account_token_identity import (
     _catalog,
@@ -33,7 +31,7 @@ from app.maintenance.account_token_identity import (
 )
 from app.maintenance.identity_history import import_academy_identity_history
 from tests import test_academy_identity_history as history
-from tests.fixtures.kernel_identity_entry.rehearsal import config_for, replay_kernel, verify_legacy_source
+from tests.fixtures.kernel_identity_entry.rehearsal import composed_config_for, replay_kernel, verify_legacy_source
 from tests.test_kernel_identity_entry import entry_transaction, legacy_engine, public_footprint
 
 assert legacy_engine  # Genuine unchanged, separately provisioned full 62 fixture.
@@ -87,13 +85,11 @@ def _historical(engine, tmp_path, monkeypatch):
 
 def _heads(connection, tmp_path, *, fail_after=None):
     applied = []
-    cfg = config_for(connection, ASSEMBLY, tmp_path, applied, fail_after)
-    # ALL source files stay composed, including a003 while importer runs at a002.
-    cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
-    command.upgrade(cfg, "heads")
-    scripts = ScriptDirectory.from_config(cfg)
+    cfg = composed_config_for(connection, tmp_path, applied, fail_after)
+    # ALL installed owners stay composed; this proof stops at the token boundary.
+    command.upgrade(cfg, "a003_account_token_identity")
     actual = set(connection.scalars(sa.text("SELECT version_num FROM public.alembic_version")))
-    assert actual == set(scripts.get_heads())
+    assert actual == {"a003_account_token_identity"}
     return applied
 
 
@@ -397,8 +393,7 @@ def test_genuine_fresh_entry_same_recorded_canonical_contract(fresh_engine, tmp_
     with entry_transaction(fresh_engine) as connection:
         root = connection.get_transaction()
         replay_kernel(connection, tmp_path / "kernel", [])
-        cfg = config_for(connection, ASSEMBLY, tmp_path / "assembly", [])
-        cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
+        cfg = composed_config_for(connection, tmp_path / "assembly", [])
         command.upgrade(cfg, "a002_credential_reset_state")
         entry = prepare_fresh_account_token_identity(connection, decision_ref="reviewed-hosted-fresh-entry-canary")
         _heads(connection, tmp_path / "finish")
@@ -481,8 +476,7 @@ def test_fresh_and_historical_converge_on_column_key_index_security_contract(
         _values_preserved(connection)
     with entry_transaction(fresh_engine) as connection:
         replay_kernel(connection, tmp_path / "fresh-kernel", [])
-        cfg = config_for(connection, ASSEMBLY, tmp_path / "fresh-assembly", [])
-        cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
+        cfg = composed_config_for(connection, tmp_path / "fresh-assembly", [])
         command.upgrade(cfg, "a002_credential_reset_state")
         prepare_fresh_account_token_identity(connection, decision_ref="reviewed-hosted-convergence-canary")
         _heads(connection, tmp_path / "fresh-finish")
@@ -502,8 +496,7 @@ def test_fresh_and_historical_converge_on_column_key_index_security_contract(
 def test_fresh_live_absence_rechecked_and_no_implicit_fallback(fresh_engine, tmp_path, intrusion):
     with entry_transaction(fresh_engine) as connection:
         replay_kernel(connection, tmp_path / "kernel", [])
-        cfg = config_for(connection, ASSEMBLY, tmp_path / "assembly", [])
-        cfg.set_main_option("version_locations", str(versions_dir()) + " " + str(ASSEMBLY))
+        cfg = composed_config_for(connection, tmp_path / "assembly", [])
         command.upgrade(cfg, "a002_credential_reset_state")
         prepare_fresh_account_token_identity(connection, decision_ref="reviewed-hosted-absence-canary")
         if intrusion == "token_relation":

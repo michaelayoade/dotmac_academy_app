@@ -5,6 +5,7 @@ Revises: a003_account_token_identity
 """
 
 from alembic import op
+from app.maintenance import fresh_product as fresh
 from app.maintenance import product_adoption as product
 from app.maintenance import retained_transition as retained
 
@@ -16,6 +17,9 @@ depends_on = "lr_0007_enrollment_state_policy"
 
 def upgrade():
     connection = op.get_bind()
+    if fresh._issued(connection) is not None:
+        fresh._apply(connection, revision)
+        return
     try:
         entry = product._consume_retained_transition(connection)
         retained._apply_retained_transition(connection, entry)

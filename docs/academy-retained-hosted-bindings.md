@@ -64,3 +64,37 @@ containers. Hosted canaries require hosted CI and their declarations; they are
 not local Docker tests. JUnit execution evidence is retained by the workflow.
 A successful local workflow contract test proves only the source configuration,
 not a successful hosted replay, catalog qualification or adoption.
+
+## Empty composed CI entry
+
+The workflow checks out the exact pull-request head and declares
+`ACADEMY_CI_SOURCE_REVISION` separately from GitHub's synthetic merge-run SHA.
+The application database is owned by `app_admin` and carries a non-secret
+database comment bound to that source revision, run ID and attempt. The CI
+wrapper verifies the checkout, loopback endpoint, fixed database name, database
+owner/comment, and actual login/effective roles before invoking the owner.
+Neither a CLI flag nor a DSN query parameter can select another target.
+
+Before application bootstrap, the single explicit convergence canary runs
+historical adoption and fresh installation in separate rolled-back roots. It
+reports H/F schema fingerprints and names of differing catalog objects. This
+discovery is unqualified and cannot commit. Its equality result must be reviewed
+and pinned in a separate source commit; an absent pin refuses strict bootstrap
+before DDL. A discovery-only workflow cannot qualify D1.
+
+After qualification, `python -m scripts.ci_bootstrap_composed_db
+--expect-database academy` creates and commits the empty composed database.
+The normal migration CLI must then be a no-op; `--verify-only` checks the
+committed result in a read-only transaction. The full pytest session repeats
+that sanity check. Only the exact pre-bootstrap discovery test selection is
+exempt, and missing required database fixtures fail under CI. JUnit skips must
+equal the separately reviewed exact allowlist (initially empty).
+
+`academy_fresh_entry` holds rolled-back fresh/refusal cases;
+`academy_facilitator_runtime` holds a separately qualified committed schema for
+genuine runtime logins and concurrent capability tests; and
+`academy_legacy_roundtrip` replays the exact frozen62 history for destructive
+legacy roundtrip tests. They are distinct from the application database and
+from the no-commit hosted genesis containers. New assembly revisions a007-a010
+carry access, heartbeat, bank-version and canonical facilitator semantics.
+Populated production adoption, admission and deployment remain gated.

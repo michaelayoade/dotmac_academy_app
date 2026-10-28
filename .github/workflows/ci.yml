@@ -48,6 +48,12 @@ jobs:
       # token fresh-entry assembly revision require that exact session identity.
       ACADEMY_MIGRATION_GRAPH_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_migration_graph
       ACCOUNT_TOKEN_FRESH_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_account_token_fresh
+      ACADEMY_FRESH_ENTRY_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_fresh_entry
+      ACADEMY_FACILITATOR_RUNTIME_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_facilitator_runtime
+      ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_legacy_roundtrip
+      # Non-secret provisioning marker, tied to this exact controlled CI run.
+      ACADEMY_CI_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      ACADEMY_CI_DATABASE_MARKER: academy-ci:${{ github.run_id }}:${{ github.run_attempt }}:${{ github.event.pull_request.head.sha || github.sha }}
       # Explicit non-secret hosted protocol declarations, before observation.
       # Three distinct disposable targets, one per purpose (environment, history,
       # assembly); scripts/declare_retained_hosted_bindings.py refuses otherwise
@@ -111,6 +117,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -162,11 +170,6 @@ jobs:
           CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
           SQL
 
-      # Canonical composed entry (alembic.ini): the ordinary graph has several
-      # owner heads (Kernel, assembly, Learning), so `heads`, not `head`.
-      - name: Run migrations
-        run: poetry run python -m app.migration_cli upgrade heads
-
       - name: Bootstrap isolated Kernel entry rehearsal database
         if: '!cancelled()'
         env:
@@ -178,6 +181,9 @@ jobs:
           CREATE DATABASE academy_retained_environment OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
           CREATE DATABASE academy_migration_graph OWNER app_admin;
           CREATE DATABASE academy_account_token_fresh OWNER app_admin;
+          CREATE DATABASE academy_fresh_entry OWNER app_admin;
+          CREATE DATABASE academy_facilitator_runtime OWNER app_admin;
+          CREATE DATABASE academy_legacy_roundtrip OWNER app_admin;
           CREATE DATABASE academy_retained_history OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
           SQL
           psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
@@ -198,10 +204,41 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy_account_token_fresh -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
+          psql -h localhost -p 5437 -U postgres -d academy_fresh_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_facilitator_runtime -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_legacy_roundtrip -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 -v ci_marker="$ACADEMY_CI_DATABASE_MARKER" <<'SQL'
+          ALTER DATABASE academy OWNER TO app_admin;
+          COMMENT ON DATABASE academy IS :'ci_marker';
+          SQL
 
       - name: Declare hosted environment expectations before profile observation
         if: '!cancelled()'
         run: poetry run python scripts/declare_retained_hosted_bindings.py
+
+      # Discovery never commits or qualifies the DB. Before an independently
+      # reviewed H==F pin exists this canary supplies evidence, then the strict
+      # bootstrap below refuses. A discovery-only run cannot qualify this PR.
+      - name: Discover historical and fresh schema convergence without commit
+        if: '!cancelled()'
+        run: >-
+          poetry run pytest -q -s
+          tests/test_fresh_product_entry_hosted.py::test_historical_and_fresh_catalogs_converge
+          --junitxml=artifacts/convergence.xml
+
+      - name: Bootstrap qualified empty composed application database
+        run: poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy
+
+      - name: Verify ordinary migration CLI is a no-op and verify committed schema
+        run: |
+          poetry run python -m app.migration_cli upgrade heads
+          poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy --verify-only
 
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
@@ -228,11 +265,17 @@ jobs:
         if: '!cancelled()'
         run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
 
+      - name: Refuse unreviewed test skips
+        if: '!cancelled()'
+        run: poetry run python scripts/check_ci_test_skips.py artifacts/pytest.xml tests/ci_skip_allowlist.txt
+
       - name: Retain hosted rehearsal execution evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: academy-hosted-tests-${{ github.run_id }}
-          path: artifacts/pytest.xml
+          path: |
+            artifacts/pytest.xml
+            artifacts/convergence.xml
           if-no-files-found: error
           retention-days: 30

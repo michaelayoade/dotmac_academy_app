@@ -197,7 +197,10 @@ def test_course_nomination_activates_immediately_when_requirement_is_completed(a
         )
         .one()
     )
-    assert activation_audit.actor_person_id == actor.id
+    assert (
+        activation_audit.actor_type, activation_audit.actor_id,
+        activation_audit.actor_party_id, activation_audit.source_application,
+    ) == ("user", str(actor.id), actor.id, "dotmac_academy_app")
 
 
 def test_cohort_nomination_snapshots_requirements_and_sweep_activates_once(admin_session, tenant_a):

@@ -114,22 +114,17 @@ _FROZEN62 = (
     ("20260711_0034_entrance_resilience.py", 1860, "0b14733170a5c9cb84edb6be6e1c57e703851537f6447aa173bd2046e80b2554"),
     ("20260711_0035_applicant_profile.py", 2280, "d6bcfc0f7932cdb1aa8df3f2608e3a4911e32673512da3e3ea2533ed7d82fdc0"),
 )
-# Post-adoption ordinary-schema successors of the frozen 0061 head: pinned
-# (filename, size, sha256). 0062-0064 are the 444ce556 blobs; 0065 is the
-# renumbered applicant bank version pin. Any other live file is refused.
-_SUCCESSORS = (
-    ("0062_lab_template_access.py", 1325, "7311f8e81a271d7dc4b071a16905fb2c87c9f7466c6051897c65cc9ed7b7a3ad"),
-    ("0063_lab_console_activity.py", 3407, "15cd8b678ad53e6175e164964d391af3066c683598c5f048e19408eab19f6c04"),
-    ("0064_facilitator_nominations.py", 18086, "97bc33859c9bf6599e4e1be6ce94c5fcc5dc55f192f0abfa5bfb8c8230d6e559"),
-    ("0065_applicant_bank_version_pin.py", 1504, "5c50301d9c7a73eedf7193839c9d0e804af1a401bb85867cfdd6381b3a53639c"),
-)
 _ASSEMBLY = (
-    ("a001_identity_extensions.py", 4749, "e176281e63ef99a36b3715a886fe602af03b4b6bed33718198f6e0cb35922730"),
-    ("a002_credential_reset_state.py", 1537, "73d0b4912eef3c1cfe23b05bdb624e556f169be709b057784b525943365ba71d"),
-    ("a003_account_token_identity.py", 19922, "d1f3ad5dde9ecd7379c1ddbdfcdf8f36102aae99009a83da9c8520db22e83bcb"),
-    ("a004_retained_learning_refs.py", 1071, "f2099ac1231551a3f4db989a3c7f488678aa19937ec31250f5afd71a06a064ad"),
-    ("a005_erp_completion_checkpoint.py", 1058, "4f17765e7e75a8b2948bceb4da0159247303fd6b312cc9219aab5ba148ac50ff"),
-    ("a006_lab_claim_lease.py", 1048, "1aa80ad69245e50d57176fa0573f3e1ae070e114ff2d6a6e11509558ada35ce5"),
+    ('a001_identity_extensions.py', 4749, 'e176281e63ef99a36b3715a886fe602af03b4b6bed33718198f6e0cb35922730'),
+    ('a002_credential_reset_state.py', 1537, '73d0b4912eef3c1cfe23b05bdb624e556f169be709b057784b525943365ba71d'),
+    ('a003_account_token_identity.py', 19922, 'd1f3ad5dde9ecd7379c1ddbdfcdf8f36102aae99009a83da9c8520db22e83bcb'),
+    ('a004_retained_learning_refs.py', 1226, '2791a21d5c0a7dcfe628dc3b56360aecaa3b07b227a59ac69016b8c339c0d4ed'),
+    ('a005_erp_completion_checkpoint.py', 1213, '5189ff695b2849409f8909545b39150d737f2dfd72b383d22b240d1572acd223'),
+    ('a006_lab_claim_lease.py', 1203, 'adcfeaa21816f3580fd35f7851d8b7aa44bc2d6929d9925c74d87eab6d597601'),
+    ('a007_lab_template_access.py', 1847, 'bf03d0289873e1772133ef7aa34692873b27d735aacf0a074fccc72557b24c2f'),
+    ('a008_lab_console_activity.py', 4103, 'f80ec248ecdde8cb52c485d3a40641b0936d8aa02d9274feea841ec9e91e4662'),
+    ('a009_applicant_bank_version_pin.py', 2280, '402724a0685fe9b3d147c4ae19f0e57ac2b8027d51bc16caa3a1b0251c906869'),
+    ('a010_facilitator_nominations.py', 21176, '3139eeb4cd257cbdfc8b3b6e2f6babe57cdc51b4ff6b51c0fd114203fa95219a'),
 )
 _IDENTITY = tokens._FAMILIES
 _RETAINED = (
@@ -327,9 +322,7 @@ def _composed_graph(directories, inventories):
 def _provenance():
     root = Path(__file__).resolve().parents[2]
     frozen = _inventory(root / "alembic/versions")
-    successor_names = {row[0] for row in _SUCCESSORS}
-    _require(tuple(row[:3] for row in frozen if row[0] not in successor_names) == _FROZEN62)
-    _require(tuple(row[:3] for row in frozen if row[0] in successor_names) == _SUCCESSORS)
+    _require(tuple(row[:3] for row in frozen) == _FROZEN62)
     revisions = {dict(row[3])["revision"] for row in frozen}
     for row in frozen:
         assignments = dict(row[3])
@@ -338,12 +331,12 @@ def _provenance():
             if parents is not None:
                 parents = (parents,) if type(parents) is str else parents
                 _require(type(parents) is tuple and all(parent in revisions for parent in parents))
-    # Successors extend the frozen history: exactly one head, and it is 0065.
+    # Legacy custody remains exactly frozen62; successors belong to the assembly.
     referenced = set()
     for row in frozen:
         parents = dict(row[3]).get("down_revision")
         referenced.update((parents,) if type(parents) is str else parents or ())
-    _require({dict(row[3])["revision"] for row in frozen} - referenced == {"0065_applicant_bank_version_pin"})
+    _require({dict(row[3])["revision"] for row in frozen} - referenced == {"0061_lab_completion_grants"})
     assembly = _inventory(root / "alembic/identity_assembly_versions")
     _require(tuple(row[:3] for row in assembly) == _ASSEMBLY)
     _require(
@@ -355,6 +348,10 @@ def _provenance():
             "a004_retained_learning_refs",
             "a005_erp_completion_checkpoint",
             "a006_lab_claim_lease",
+            "a007_lab_template_access",
+            "a008_lab_console_activity",
+            "a009_applicant_bank_version_pin",
+            "a010_facilitator_nominations",
         }
     )
     kernel_directory = Path(kernel_versions())

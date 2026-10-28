@@ -6,6 +6,7 @@ Revises: a004_retained_learning_refs
 
 from alembic import op
 from app.maintenance import checkpoint_transition as checkpoint
+from app.maintenance import fresh_product as fresh
 from app.maintenance import product_adoption as product
 
 revision = "a005_erp_completion_checkpoint"
@@ -16,6 +17,9 @@ depends_on = None
 
 def upgrade():
     connection = op.get_bind()
+    if fresh._issued(connection) is not None:
+        fresh._apply(connection, revision)
+        return
     try:
         entry = product._consume_checkpoint_transition(connection)
         checkpoint._apply_checkpoint_transition(connection, entry)
