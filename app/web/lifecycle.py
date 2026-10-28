@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 from html import escape
+from urllib.parse import urlencode
 
 from dotmac_kernel.credential_lifecycle import CredentialLifecycleError
 from dotmac_kernel.transactions import conflict_savepoint, conflict_savepoint_requires_rollback
+from dotmac_kernel.web_surfaces import surface_path
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -89,7 +91,7 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
         # Best-effort enqueue; a failed row must not poison the caller root.
         # Actual provider delivery remains outside this request transaction.
         try:
-            link = str(request.url_for("reset_form").include_query_params(token=raw))
+            link = f"{surface_path(request, 'reset_form')}?{urlencode({'token': raw})}"
             escaped_link = escape(link, quote=True)
             with conflict_savepoint(db):
                 enqueue_email(

@@ -143,8 +143,8 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
     )
 
 
-@router.get("/", response_class=HTMLResponse)
-@router.get("/learn", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse, name="home")
+@router.get("/learn", response_class=HTMLResponse, name="learn_home")
 def home(
     request: Request,
     person: AcademyCurrentAccount | None = Depends(optional_web_user),

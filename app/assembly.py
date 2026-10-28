@@ -16,6 +16,17 @@ from typing import Final
 
 from dotmac_kernel import ProductAssemblySpec, ProductSecurityPolicy
 from dotmac_kernel.api_documentation import environment_api_documentation_policy
+from dotmac_kernel.permission_provisioning import RoleDefinition, RoleGrant, RoleGrantProfile
+from dotmac_kernel.web_deps import TENANT_COOKIE_AUTHENTICATION
+from dotmac_kernel.web_surfaces import (
+    AuthenticationProfileBinding,
+    BrowserSecurityPlane,
+    BrowserSessionPolicy,
+    NavigationRegion,
+    TemplateRef,
+    WebFacetMount,
+    WebRouteRef,
+)
 from dotmac_ui import static_dir
 
 from app.academy_declarations import ACADEMY_FEATURE_DECLARATION
@@ -29,7 +40,7 @@ from app.database_runtime import get_academy_database_runtime
 from app.error_tracking import init_error_tracking
 from app.operational import router as operational_router
 from app.owner_composition import compose_owner_declarations
-from app.ui import UI_STYLESHEET_URL
+from app.ui import UI_CONTRACT_VERSION, UI_STYLESHEET_URL
 from app.web.account import router as web_account_router
 from app.web.accounts import router as web_accounts_router
 from app.web.admin_home import router as web_admin_router
@@ -123,6 +134,24 @@ OWNER_DECLARATIONS = compose_owner_declarations(academy_feature)
 assembly = ProductAssemblySpec(
     name=PRODUCT_ID,
     modules=OWNER_DECLARATIONS,
+    role_definitions=(
+        RoleDefinition("student"),
+        RoleDefinition("instructor"),
+        RoleDefinition("admin"),
+    ),
+    # Exact compatibility shadow of PermissionSpec.default_roles — keep in
+    # lockstep; the plan writes nothing, authorize_party reads default_roles.
+    role_grant_profiles=(
+        RoleGrantProfile(
+            code="academy.web",
+            version=1,
+            grants=(
+                RoleGrant("student", "academy.web.access"),
+                RoleGrant("instructor", "academy.web.access"),
+                RoleGrant("admin", "academy.web.access"),
+            ),
+        ),
+    ),
     database_runtime=get_academy_database_runtime(),
     require_database_runtime=True,
     api_documentation=environment_api_documentation_policy(settings.environment),
@@ -130,6 +159,57 @@ assembly = ProductAssemblySpec(
     tenancy="single",
     platform_surface_enabled=False,
     web_enabled=settings.web_enabled,
+    ui_contract_version=UI_CONTRACT_VERSION,
+    web_facets=(
+        WebFacetMount(
+            # Kernel-mandated legacy label; audience = all Academy web.
+            code="staff_admin",
+            url_prefix="/",
+            shell=TemplateRef("base.html"),
+            authentication_profile="academy_tenant_session",
+            admission_permission="academy.web.access",
+            navigation_regions=(NavigationRegion("primary"),),
+            entry_routes=(
+                WebRouteRef("academy", "legacy", "login_form"),
+                WebRouteRef("academy", "legacy", "login"),
+                WebRouteRef("academy", "legacy", "logout"),
+                WebRouteRef("academy", "legacy", "forgot_form"),
+                WebRouteRef("academy", "legacy", "forgot_submit"),
+                WebRouteRef("academy", "legacy", "reset_form"),
+                WebRouteRef("academy", "legacy", "reset_submit"),
+                WebRouteRef("academy", "legacy", "accept_form"),
+                WebRouteRef("academy", "legacy", "accept_submit"),
+                WebRouteRef("academy", "legacy", "apply_form"),
+                WebRouteRef("academy", "legacy", "submit_apply"),
+                WebRouteRef("academy", "legacy", "assessment_page"),
+                WebRouteRef("academy", "legacy", "assessment_start"),
+                WebRouteRef("academy", "legacy", "assessment_autosave"),
+                WebRouteRef("academy", "legacy", "assessment_submit"),
+                WebRouteRef("academy", "legacy", "onboarding_page"),
+                WebRouteRef("academy", "legacy", "confirm_details"),
+                WebRouteRef("academy", "legacy", "acknowledge_orientation"),
+                WebRouteRef("academy", "legacy", "resend_assessment"),
+                WebRouteRef("academy", "legacy", "courses_list"),
+                WebRouteRef("academy", "legacy", "management_enrollment_form"),
+                WebRouteRef("academy", "legacy", "submit_management_enrollment"),
+                WebRouteRef("academy", "legacy", "home"),
+                WebRouteRef("academy", "legacy", "learn_home"),
+                WebRouteRef("academy", "legacy", "calendar_feed"),
+            ),
+            login_route=WebRouteRef("academy", "legacy", "login_form"),
+            # landing_route intentionally None: Academy handlers compute their
+            # own post-login redirects (app/web/auth.py).
+            logout_route=WebRouteRef("academy", "legacy", "logout"),
+        ),
+    ),
+    authentication_profiles=(
+        AuthenticationProfileBinding(
+            code="academy_tenant_session",
+            provider=TENANT_COOKIE_AUTHENTICATION,
+            session=BrowserSessionPolicy(cookie_name="session", cookie_path="/"),
+            security_plane=BrowserSecurityPlane.TENANT,
+        ),
+    ),
     startup_checks=(_academy_configuration_errors,),
     startup_hooks=(_initialize_error_tracking,),
     security_policy=ProductSecurityPolicy(

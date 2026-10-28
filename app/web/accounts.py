@@ -20,10 +20,12 @@ from __future__ import annotations
 
 from html import escape
 from types import SimpleNamespace
+from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.exceptions import BadRequestError, ForbiddenError
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType
+from dotmac_kernel.web_surfaces import surface_path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import or_, select
@@ -290,7 +292,7 @@ def users_invite(
         token = result.token
         existing_user = not result.created_person
         assignments = result.assignments
-        link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
+        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}" if token else ""
         assignment_html = ""
         assignment_text = ""
         if assignments:
@@ -375,7 +377,7 @@ def users_reset_link(
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    link = str(request.url_for("reset_form").include_query_params(token=token))
+    link = f"{surface_path(request, 'reset_form')}?{urlencode({'token': token})}"
     sent = enqueue_email(
         db,
         tenant_id=tenant.id,
@@ -422,7 +424,7 @@ def users_invite_link(
                 )
             )
         token = result.token
-        link = str(request.url_for("accept_form").include_query_params(token=token))
+        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}"
         sent = enqueue_email(
             db,
             tenant_id=tenant.id,

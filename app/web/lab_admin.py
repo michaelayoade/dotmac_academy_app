@@ -49,7 +49,7 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/scores/{submission_id}/override")
+@router.post("/scores/{submission_id}/override", name="lab_override")
 def override(
     submission_id: UUID,
     request: Request,

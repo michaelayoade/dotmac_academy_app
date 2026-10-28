@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.assembly import OWNER_DECLARATIONS, assembly
 from app.canonical_models import ModelOwnershipError
 from app.owner_composition import inspect_owner_registry
+from app.web.labs import ws_router
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,10 @@ def create_academy_app(spec: ProductAssemblySpec = assembly) -> FastAPI:
     actual_graph = inspect_owner_registry(app.state.module_registry, declarations=OWNER_DECLARATIONS)
     if actual_graph.owners != declared_graph.owners:
         raise ModelOwnershipError("factory registry changed declared model ownership")
+    # Kernel a107 has no facet/WebSocket composition and its web mounter copies
+    # only HTTP routes, so mount the lab console socket directly; its handler
+    # self-authenticates exactly as before (see app/web/labs.py console_ws).
+    app.include_router(ws_router)
     app.add_middleware(AcademyInstrumentationMiddleware)
     return app
 

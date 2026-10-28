@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from dotmac_kernel.db import set_tenant
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, Role
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, text, update
@@ -44,7 +44,7 @@ def current_account(request):
     result = sign_in(db, tenant_id=tid, email=email, password="chosen-password9")
     assert result is not None
     db.commit()  # Test setup ends the login writer lock before independent changes.
-    set_tenant(db, tid)
+    resolve_database_runtime().set_tenant(db, tid)
     assert db.scalar(text("SELECT current_user")) == "app_user"
     return SimpleNamespace(
         db=db,

@@ -17,10 +17,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import cast
+from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.audit import resolve_event_attribution
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role
+from dotmac_kernel.web_surfaces import surface_path
 from dotmac_learning import (
     AttemptAuditContext,
     BankLifecycleError,
@@ -854,7 +856,7 @@ def invite_to_cohort(
             invited_person = result.person
             sent = False
             if result.token is not None:
-                link = str(request.url_for("accept_form").include_query_params(token=result.token))
+                link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': result.token})}"
                 link_e = _e(link)
                 sent = enqueue_email(
                     db,
