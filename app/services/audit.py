@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.rbac import AuditEvent
+from app.services.api_identity_reads import WebAuditView, list_web_audit_events
 
 
 def write_audit_event(
@@ -41,22 +41,9 @@ def list_events(
     offset: int = 0,
     action: str | None = None,
     actor_person_id: UUID | None = None,
-) -> list[AuditEvent]:
-    """Return audit events for a tenant, newest first.
-
-    Keyword-only args. Optional filters:
-    - action: exact match on AuditEvent.action
-    - actor_person_id: exact match on AuditEvent.actor_person_id
-    """
-    stmt = (
-        select(AuditEvent)
-        .where(AuditEvent.tenant_id == tenant_id)
-        .order_by(AuditEvent.created_at.desc())
-        .limit(limit)
-        .offset(offset)
+) -> list[WebAuditView]:
+    """Read canonical audit facts; actor_person_id remains a legacy input name."""
+    return list_web_audit_events(
+        db, tenant_id=tenant_id, limit=limit, offset=offset,
+        action=action, actor_party_id=actor_person_id,
     )
-    if action:
-        stmt = stmt.where(AuditEvent.action == action)
-    if actor_person_id is not None:
-        stmt = stmt.where(AuditEvent.actor_person_id == actor_person_id)
-    return list(db.scalars(stmt).all())

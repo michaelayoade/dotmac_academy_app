@@ -4,31 +4,45 @@ from html.parser import HTMLParser
 from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType, UserCredential
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
 
 
-def _make_person(admin_session, tenant, email: str) -> Person:
-    p = Person(tenant_id=tenant.id, email=email, first_name="S", last_name="L")
+def _make_person(admin_session, tenant, email: str) -> Party:
+    # Genuine canonical fixture records, following sign_in_account setup.
+    now = datetime.now(UTC)
+    p = Party(
+        tenant_id=tenant.id, party_type=PartyType.person,
+        display_name="S L", email=email, is_active=True,
+    )
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+    admin_session.add(PartyPerson(party_id=p.id, first_name="S", last_name="L"))
+    admin_session.flush()
+    admin_session.add(AcademyAccountProfile(
+        tenant_id=tenant.id, party_id=p.id, status="active", prefs={},
+        created_at=now, updated_at=now,
+    ))
+    credential = UserCredential(
+        tenant_id=tenant.id, party_id=p.id, password_hash=hash_password("password1"),
     )
+    admin_session.add(credential)
+    admin_session.flush()
+    admin_session.add(AcademyCredentialPolicy(
+        tenant_id=tenant.id, credential_id=credential.id, email=email,
+        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+        reset_required=False, created_at=now, updated_at=now,
+    ))
     admin_session.commit()
     return p
+
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
@@ -322,7 +336,6 @@ def test_console_startup_guidance_is_specific_to_router_nodes(
 ):
     _, activity, instance, headers = journey
     instance.consoles = {"node": {"kind": kind}}
-    instance.runtime_presence = "present"  # links render only for a reachable console
     admin_session.commit()
     response = app_client.get(f"/labs/{activity.id}", headers=headers)
     assert response.status_code == 200

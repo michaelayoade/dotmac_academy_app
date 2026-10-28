@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 
 from app.models.auth import UserCredential
@@ -9,6 +10,7 @@ from app.models.class_session import ClassSession
 from app.models.cohort import Cohort
 from app.models.person import Person
 from app.models.rbac import PersonRole
+from app.services import settings_store
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 
@@ -21,8 +23,7 @@ def _login_instructor(app_client, admin_session, tenant):
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(tenant_id=tenant.id, person_id=p.id, email="tt@a.edu",
-                       password_hash=hash_password("password1"))
+        UserCredential(tenant_id=tenant.id, person_id=p.id, email="tt@a.edu", password_hash=hash_password("password1"))
     )
     admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["instructor"].id))
     admin_session.commit()
@@ -31,8 +32,7 @@ def _login_instructor(app_client, admin_session, tenant):
 
 
 def _cohort(admin_session, tenant):
-    c = Cohort(tenant_id=tenant.id, name="TT Cohort", discipline="fiber",
-               status="active", delivery_mode="self_paced")
+    c = Cohort(tenant_id=tenant.id, name="TT Cohort", discipline="fiber", status="active", delivery_mode="self_paced")
     admin_session.add(c)
     admin_session.commit()
     admin_session.refresh(c)
@@ -54,14 +54,17 @@ def test_create_session_and_autopromote_delivery_mode(app_client, admin_session,
     r = app_client.post(
         f"/instructor/cohorts/{c.id}/sessions",
         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
-        data={"title": "Live Q&A", "session_type": "live_class",
-              "starts_at": "2026-08-01T10:00", "ends_at": "2026-08-01T11:00",
-              "location": "Lagos lab", "join_url": "https://meet.example/x"},
+        data={
+            "title": "Live Q&A",
+            "session_type": "live_class",
+            "starts_at": "2026-08-01T10:00",
+            "ends_at": "2026-08-01T11:00",
+            "location": "Lagos lab",
+            "join_url": "https://meet.example/x",
+        },
     )
     assert r.status_code == 200
-    session = admin_session.scalars(
-        select(ClassSession).where(ClassSession.cohort_id == c.id)
-    ).first()
+    session = admin_session.scalars(select(ClassSession).where(ClassSession.cohort_id == c.id)).first()
     assert session is not None and session.title == "Live Q&A"
     # Scheduling on a self-paced cohort promotes it to blended.
     admin_session.expire(c)
@@ -99,3 +102,59 @@ def test_set_delivery_mode(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     admin_session.expire(c)
     assert admin_session.get(Cohort, c.id).delivery_mode == "live"
+
+
+@pytest.mark.parametrize("submitted_type", [None, "live_class"])
+def test_session_form_and_create_use_policy_only_for_omission(app_client, admin_session, tenant_a, submitted_type):
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    c = _cohort(admin_session, tenant_a)
+    settings_store.set_many(admin_session, {"learning_default_session_type": "lab"})
+    admin_session.commit()
+    page = app_client.get(f"/instructor/cohorts/{c.id}/timetable", headers=h)
+    assert page.status_code == 200
+    assert '<option value="lab" selected>lab</option>' in page.text
+    csrf = app_client.cookies.get("csrf_token", "")
+    data = {"title": "Policy session", "starts_at": "2026-08-03T10:00"}
+    if submitted_type is not None:
+        data["session_type"] = submitted_type
+    response = app_client.post(
+        f"/instructor/cohorts/{c.id}/sessions",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data=data,
+    )
+    assert response.status_code == 200
+    admin_session.expire_all()
+    session = admin_session.scalars(
+        select(ClassSession).where(ClassSession.tenant_id == tenant_a.id, ClassSession.cohort_id == c.id)
+    ).one()
+    assert session.session_type == ("lab" if submitted_type is None else submitted_type)
+
+
+@pytest.mark.parametrize("submitted_type", [None, "live_class"])
+def test_session_edit_keeps_explicit_type_and_composes_omitted_default(
+    app_client, admin_session, tenant_a, submitted_type
+):
+    h = _login_instructor(app_client, admin_session, tenant_a)
+    c = _cohort(admin_session, tenant_a)
+    settings_store.set_many(admin_session, {"learning_default_session_type": "lab"})
+    admin_session.commit()
+    csrf = app_client.cookies.get("csrf_token", "")
+    created = app_client.post(
+        f"/instructor/cohorts/{c.id}/sessions",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"title": "Before", "starts_at": "2026-08-04T10:00", "session_type": "live_class"},
+    )
+    assert created.status_code == 200
+    session = admin_session.scalars(select(ClassSession).where(ClassSession.cohort_id == c.id)).one()
+    data = {"title": "After", "starts_at": "2026-08-04T11:00"}
+    if submitted_type is not None:
+        data["session_type"] = submitted_type
+    edited = app_client.post(
+        f"/instructor/sessions/{session.id}/edit",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data=data,
+    )
+    assert edited.status_code == 200
+    admin_session.expire(session)
+    assert session.title == "After"
+    assert session.session_type == ("lab" if submitted_type is None else submitted_type)

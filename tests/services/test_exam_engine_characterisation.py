@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services import entrance_exam
+from app.services import entrance_exam, exam_engine
 
 
 class _Q:
@@ -27,11 +27,7 @@ class _Applicant:
         self.id = id_
 
 
-BANK = [
-    _Q(f"{cat}-{i:02d}", cat)
-    for cat in ("numeracy", "reading", "safety", "logic", "technical")
-    for i in range(18)
-]
+BANK = [_Q(f"{cat}-{i:02d}", cat) for cat in ("numeracy", "reading", "safety", "logic", "technical") for i in range(18)]
 
 
 @pytest.mark.parametrize("applicant_id", ["cand-alpha", "cand-bravo", "cand-charlie"])
@@ -51,7 +47,11 @@ def test_selection_draws_the_same_shape_for_every_applicant():
         for q in drawn:
             counts[q.category] = counts.get(q.category, 0) + 1
         assert counts == {
-            "numeracy": 6, "reading": 6, "safety": 6, "logic": 6, "technical": 6,
+            "numeracy": 6,
+            "reading": 6,
+            "safety": 6,
+            "logic": 6,
+            "technical": 6,
         }
 
 
@@ -68,8 +68,16 @@ def test_selection_differs_between_applicants():
 def test_selection_is_byte_stable_against_a_recorded_draw():
     drawn = [q.ext_id for q in entrance_exam.sample_for(_Applicant("cand-alpha"), BANK, 2)]
     assert drawn == [
-        "reading-08", "safety-09", "reading-06", "numeracy-00", "logic-08",
-        "numeracy-04", "safety-08", "logic-10", "technical-09", "technical-04",
+        "reading-08",
+        "safety-09",
+        "reading-06",
+        "numeracy-00",
+        "logic-08",
+        "numeracy-04",
+        "safety-08",
+        "logic-10",
+        "technical-09",
+        "technical-04",
     ]
 
 
@@ -94,29 +102,30 @@ def test_option_order_differs_between_applicants():
 def test_option_order_is_byte_stable_against_a_recorded_shuffle():
     q = _Q("numeracy-00", "numeracy")
     assert entrance_exam.options_for(_Applicant("cand-alpha"), q) == [
-        "delta", "alpha", "bravo", "charlie",
+        "delta",
+        "alpha",
+        "bravo",
+        "charlie",
     ]
 
 
 def test_validity_gate_thresholds():
     """Near-chance and too-fast are absence of data, not weak candidates."""
-    assert entrance_exam.check_validity(0.90, 900) == (True, None)
-    assert entrance_exam.check_validity(0.33, 900)[1] == entrance_exam.INVALID_NEAR_CHANCE
-    assert entrance_exam.check_validity(0.90, 60)[1] == entrance_exam.INVALID_TOO_FAST
-    assert entrance_exam.check_validity(0.90, None)[1] == entrance_exam.INVALID_TOO_FAST
+    assert entrance_exam.check_validity(0.90, 900, terms=VALIDITY_TERMS) == (True, None)
+    assert entrance_exam.check_validity(0.33, 900, terms=VALIDITY_TERMS)[1] == entrance_exam.INVALID_NEAR_CHANCE
+    assert entrance_exam.check_validity(0.90, 60, terms=VALIDITY_TERMS)[1] == entrance_exam.INVALID_TOO_FAST
+    assert entrance_exam.check_validity(0.90, None, terms=VALIDITY_TERMS)[1] == entrance_exam.INVALID_TOO_FAST
 
 
 # --- the engine, used directly -------------------------------------------
+
 
 def test_course_learners_now_get_a_per_learner_option_order():
     """The leak this closes: every learner previously saw the same order."""
     from app.services import exam_engine
 
     q = _Q("ch01-q1", None)
-    orders = {
-        tuple(exam_engine.present_options(_Applicant(f"learner-{i}"), q))
-        for i in range(8)
-    }
+    orders = {tuple(exam_engine.present_options(_Applicant(f"learner-{i}"), q)) for i in range(8)}
     assert len(orders) > 1, "all learners still see one order"
     for order in orders:
         assert sorted(order) == sorted(q.options), "shuffling must not drop or add an option"
@@ -162,12 +171,21 @@ def test_variant_does_not_disturb_the_entrance_draw():
 
     policy = exam_engine.SelectionPolicy(per_category=2)
     assert [q.ext_id for q in exam_engine.select(_Applicant("cand-alpha"), BANK, policy)] == [
-        "reading-08", "safety-09", "reading-06", "numeracy-00", "logic-08",
-        "numeracy-04", "safety-08", "logic-10", "technical-09", "technical-04",
+        "reading-08",
+        "safety-09",
+        "reading-06",
+        "numeracy-00",
+        "logic-08",
+        "numeracy-04",
+        "safety-08",
+        "logic-10",
+        "technical-09",
+        "technical-04",
     ]
 
 
 # --- validity floors derived from the paper ------------------------------
+
 
 def _paper(n, options_each=4):
     return [_Q(f"q{i:02d}", options=[f"opt{j}" for j in range(options_each)]) for i in range(n)]
@@ -177,30 +195,51 @@ def test_time_floor_tracks_the_paper_size():
     """The bug this fixes: a 60-question paper was still gated at six minutes."""
     from app.services import exam_engine
 
-    assert exam_engine.duration_floor(_paper(30)) == 360   # unchanged for the old shape
-    assert exam_engine.duration_floor(_paper(60)) == 720   # and now moves with it
+    assert exam_engine.duration_floor(_paper(30), seconds_per_question=12.0) == 360  # unchanged for the old shape
+    assert exam_engine.duration_floor(_paper(60), seconds_per_question=12.0) == 720  # and now moves with it
 
     # 8 minutes on a 60-question paper is too fast, though it cleared the old gate.
-    assert exam_engine.check_validity(0.9, 480, questions=_paper(60))[1] == exam_engine.INVALID_TOO_FAST
-    assert exam_engine.check_validity(0.9, 480, questions=_paper(30)) == (True, None)
+    assert (
+        exam_engine.check_validity(0.9, 480, questions=_paper(60), terms=VALIDITY_TERMS)[1]
+        == exam_engine.INVALID_TOO_FAST
+    )
+    assert exam_engine.check_validity(0.9, 480, questions=_paper(30), terms=VALIDITY_TERMS) == (True, None)
 
 
 def test_chance_floor_tracks_the_options_actually_offered():
     """A true/false paper carries a 50% guessing baseline, not 25%."""
     from app.services import exam_engine
 
-    assert exam_engine.chance_baseline(_paper(10, options_each=4)) == pytest.approx(0.25)
-    assert exam_engine.chance_baseline(_paper(10, options_each=2)) == pytest.approx(0.50)
+    assert exam_engine.chance_baseline(
+        _paper(10, options_each=4), fallback_baseline=(1.0 / 3.0) / 1.33
+    ) == pytest.approx(0.25)
+    assert exam_engine.chance_baseline(
+        _paper(10, options_each=2), fallback_baseline=(1.0 / 3.0) / 1.33
+    ) == pytest.approx(0.50)
 
     # 60% on a true/false paper is near chance; on a four-option paper it is not.
-    assert exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=2))[1] == exam_engine.INVALID_NEAR_CHANCE
-    assert exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=4)) == (True, None)
+    assert (
+        exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=2), terms=VALIDITY_TERMS)[1]
+        == exam_engine.INVALID_NEAR_CHANCE
+    )
+    assert exam_engine.check_validity(0.60, 900, questions=_paper(10, options_each=4), terms=VALIDITY_TERMS) == (
+        True,
+        None,
+    )
 
 
 def test_without_a_paper_the_historical_constants_still_apply():
     """Callers that cannot supply the paper must behave exactly as before."""
     from app.services import exam_engine
 
-    assert exam_engine.check_validity(0.90, 900) == (True, None)
-    assert exam_engine.check_validity(0.33, 900)[1] == exam_engine.INVALID_NEAR_CHANCE
-    assert exam_engine.check_validity(0.90, 300)[1] == exam_engine.INVALID_TOO_FAST
+    assert exam_engine.check_validity(0.90, 900, terms=VALIDITY_TERMS) == (True, None)
+    assert exam_engine.check_validity(0.33, 900, terms=VALIDITY_TERMS)[1] == exam_engine.INVALID_NEAR_CHANCE
+    assert exam_engine.check_validity(0.90, 300, terms=VALIDITY_TERMS)[1] == exam_engine.INVALID_TOO_FAST
+
+
+VALIDITY_TERMS = exam_engine.ValidityTerms(
+    seconds_per_question=12.0,
+    near_chance_margin=1.33,
+    fallback_score_floor=1.0 / 3.0,
+    fallback_duration_seconds=360.0,
+)

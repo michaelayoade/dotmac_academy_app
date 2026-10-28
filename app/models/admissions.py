@@ -13,6 +13,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
+from dotmac_kernel.models import Tenant
+from dotmac_learning.curriculum_models import QuestionBank, QuestionBankVersion
+from dotmac_learning.participation_models import CohortTrack
 from sqlalchemy import (
     Boolean,
     Date,
@@ -74,20 +77,25 @@ class Applicant(Base, TimestampMixin):
         UniqueConstraint("tenant_id", "id", name="uq_applicants_tenant_id_id"),
         ForeignKeyConstraint(
             ["tenant_id", "cohort_id", "track_id"],
-            ["cohort_tracks.tenant_id", "cohort_tracks.cohort_id", "cohort_tracks.track_id"],
+            [CohortTrack.__table__.c.tenant_id, CohortTrack.__table__.c.cohort_id, CohortTrack.__table__.c.track_id],
             name="fk_applicants_tenant_cohort_track",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "assessment_bank_id"],
-            ["question_banks.tenant_id", "question_banks.id"],
+            [QuestionBank.__table__.c.tenant_id, QuestionBank.__table__.c.id],
             name="fk_applicants_tenant_assessment_bank",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "assessment_bank_version_id"],
+            [QuestionBankVersion.__table__.c.tenant_id, QuestionBankVersion.__table__.c.id],
+            name="fk_applicants_tenant_assessment_bank_version",
         ),
     )
 
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -131,14 +139,20 @@ class Applicant(Base, TimestampMixin):
     # A per-application bank snapshot/override. Null retains the historical
     # cohort -> tenant fallback for ordinary Academy intake.
     assessment_bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    # Immutable bank-version pin stamped at explicit sitting start (never at
+    # grade time): the sitting is served and graded from exactly this
+    # version even if a newer one publishes mid-sitting. Null = legacy
+    # sitting started before versioning (served best-effort, see
+    # entrance_exam.effective_bank_version_id).
+    assessment_bank_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     # Validated browser destination supplied by the ERP. It is navigational
     # only; authoritative result delivery is the signed server webhook.
     assessment_return_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # Durable state-derived webhook queue marker and monotonic result revision.
     assessment_erp_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    assessment_result_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    assessment_result_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     # HMAC of the self-serve entrance-exam access token (the raw is emailed once).
     assessment_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Timed sitting: server-stamped when explicitly started. All duration and

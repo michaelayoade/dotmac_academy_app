@@ -8,13 +8,12 @@ session, DB error) falls back to safe empty defaults.
 
 from __future__ import annotations
 
-from dotmac_kernel.db import SessionLocal
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import Request
-from sqlalchemy import text
 
 from app.services import notifications as notif_svc
 from app.services import web_auth
-from app.services.facilitator_access import facilitator_access
+from app.services.roles import role_slugs
 from app.services.settings_store import effective
 from app.web import nav
 
@@ -25,7 +24,6 @@ def _empty(request: Request) -> dict:
         "current_person": None,
         "is_instructor": False,
         "is_admin": False,
-        "has_global_staff_access": False,
         "current_area": nav.area_for_path(request.url.path),
         "nav_areas": [],
         "nav_sidebar": [],
@@ -43,40 +41,33 @@ def nav_context(request: Request) -> dict:
         if tenant is None or not token:
             return _empty(request)
 
-        db = SessionLocal()
+        runtime = resolve_database_runtime()
+        db = runtime.session_factory()
         try:
-            db.execute(
-                text("SELECT set_config('app.current_tenant', :t, true)"),
-                {"t": str(tenant.id)},
-            )
-            person = web_auth._current_person(db, tenant.id, token)
-            if person is None:
-                return _empty(request)
+            with runtime.tenant_scope(db, tenant.id):
+                person = web_auth._current_person(db, tenant.id, token)
+                if person is None:
+                    return _empty(request)
 
-            access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
-            is_instructor = access.can_teach
-            is_admin = access.is_admin
-            current_area = nav.area_for_path(request.url.path)
-            try:
-                unread = notif_svc.unread_count(db, tenant_id=tenant.id, person_id=person.id)
-            except Exception:
-                unread = 0
-            return {
-                "current_person": person,
-                "is_instructor": is_instructor,
-                "is_admin": is_admin,
-                "has_global_staff_access": access.has_global_staff_access,
-                "current_area": current_area,
-                "nav_areas": nav.areas_for_roles(is_instructor, is_admin),
-                "nav_sidebar": nav.sidebar_for(
-                    current_area,
-                    scoped_facilitator=(access.has_active_assignment and not access.has_global_staff_access),
-                    has_cohort_scope=bool(access.cohort_ids),
-                ),
-                "branding_name": effective(db).branding_name,
-                "avatar_url": person.avatar_path,
-                "unread_notifications": unread,
-            }
+                slugs = role_slugs(db, tenant.id, person.id)
+                is_instructor = "instructor" in slugs or "admin" in slugs
+                is_admin = "admin" in slugs
+                current_area = nav.area_for_path(request.url.path)
+                try:
+                    unread = notif_svc.unread_count(db, tenant_id=tenant.id, person_id=person.id)
+                except Exception:
+                    unread = 0
+                return {
+                    "current_person": person,
+                    "is_instructor": is_instructor,
+                    "is_admin": is_admin,
+                    "current_area": current_area,
+                    "nav_areas": nav.areas_for_roles(is_instructor, is_admin),
+                    "nav_sidebar": nav.sidebar_for(current_area),
+                    "branding_name": effective(db).branding_name,
+                    "avatar_url": person.avatar_path,
+                    "unread_notifications": unread,
+                }
         finally:
             db.close()
     except Exception:

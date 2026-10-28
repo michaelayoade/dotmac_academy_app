@@ -104,7 +104,9 @@ def hosted_bindings():
     key = "academy_retained_environment_extension_versions"
     assert key in values
     values[key] = tuple(tuple(item) for item in values[key])
-    return environment.bindings_from_settings(values)
+    bindings = environment.bindings_from_settings(values)
+    assert bindings.target_database == make_url(os.environ["RETAINED_ENVIRONMENT_DATABASE_URL"]).database
+    return bindings
 
 
 def _is_metadata_select(statement):

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.cli import _sigterm_raises_shutdown_requested, _WorkerShutdownRequested
-from app.services import lab_operations
+from app.config import LabExecutionPolicy, settings
 from app.services.labengine import containerlab
 from app.services.labengine.containerlab import ContainerlabEngine
 from app.services.labengine.interface import ExecResult, LabHandle, WrongLabHostError
@@ -30,8 +30,14 @@ def _fake_popen(returncode: int = 0, stdout: str = "", stderr: str = "", pid: in
     return proc
 
 
-def test_exec_runs_docker_exec():
-    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+def test_exec_runs_docker_exec(
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir="/tmp/labs",
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     handle = MagicMock(nodes={"r1": "clab-dal-u1-linux-1-r1"})
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="ok\n")
@@ -46,28 +52,31 @@ def test_exec_runs_docker_exec():
         assert popen.return_value.communicate.call_args.kwargs["timeout"] == 480
 
 
-def test_external_command_timeouts_are_strictly_below_their_leases():
+def test_external_command_timeouts_are_strictly_below_their_leases(
+    policy,
+):
+    assert policy.lab_command_timeout_seconds_by_action["deploy"] < policy.lab_operation_lease_seconds_by_kind["deploy"]
     assert (
-        containerlab._DEPLOY_TIMEOUT_SECONDS
-        < lab_operations.LEASE_SECONDS_BY_KIND["deploy"]
+        policy.lab_command_timeout_seconds_by_action["destroy"] < policy.lab_operation_lease_seconds_by_kind["destroy"]
     )
-    assert (
-        containerlab._DESTROY_TIMEOUT_SECONDS
-        < lab_operations.LEASE_SECONDS_BY_KIND["destroy"]
-    )
-    assert (
-        containerlab._CHECK_COMMAND_TIMEOUT_SECONDS
-        < lab_operations.LEASE_SECONDS_BY_KIND["check"]
-    )
+    assert policy.lab_command_timeout_seconds_by_action["check"] < policy.lab_operation_lease_seconds_by_kind["check"]
 
 
-def test_deploy_writes_topology_and_calls_containerlab(tmp_path, monkeypatch):
+def test_deploy_writes_topology_and_calls_containerlab(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     real_exists = os.path.exists
     monkeypatch.setattr(
         "app.services.labengine.containerlab.os.path.exists",
         lambda path: True if path == "/dev/kvm" else real_exists(path),
     )
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
             stdout='[{"name":"clab-i-r1","ipv4_address":"172.20.20.3/24","kind":"vr-ros"}]',
@@ -81,8 +90,14 @@ def test_deploy_writes_topology_and_calls_containerlab(tmp_path, monkeypatch):
         assert h.kinds["r1"] == "vr-ros"
 
 
-def test_ssh_exec_uses_mgmt_ip():
-    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+def test_ssh_exec_uses_mgmt_ip(
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir="/tmp/labs",
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     handle = LabHandle(
         instance_name="i",
         nodes={"r1": "c"},
@@ -97,11 +112,18 @@ def test_ssh_exec_uses_mgmt_ip():
 
 
 @pytest.mark.parametrize(
-    "method", ["inventory", "deploy", "ssh_exec", "destroy", "reset", "exec", "status",
-               "inspect_running"]
+    "method", ["inventory", "deploy", "ssh_exec", "destroy", "reset", "exec", "status", "inspect_running"]
 )
-def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="web")
+def test_operations_refuse_on_web_host_without_side_effects(
+    tmp_path,
+    method,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="web",
+        execution_policy=policy,
+    )
     handle = LabHandle(instance_name="i", nodes={"r1": "c"}, mgmt={"r1": "127.0.0.1"}, kinds={"r1": "linux"})
     with patch("subprocess.Popen") as popen:
         with pytest.raises(WrongLabHostError):
@@ -119,8 +141,15 @@ def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
     assert not (tmp_path / "i").exists()
 
 
-def test_destroy_raises_when_containerlab_fails(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_destroy_raises_when_containerlab_fails(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     topo = tmp_path / "i" / "topo.clab.yml"
     topo.parent.mkdir()
     topo.write_text("name: i")
@@ -130,8 +159,15 @@ def test_destroy_raises_when_containerlab_fails(tmp_path):
             eng.destroy("i")
 
 
-def test_destroy_treats_an_absent_topology_as_already_destroyed(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_destroy_treats_an_absent_topology_as_already_destroyed(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="{}")
         eng.destroy("missing")
@@ -146,7 +182,10 @@ def test_destroy_treats_an_absent_topology_as_already_destroyed(tmp_path):
     assert not (tmp_path / "missing").exists()
 
 
-def test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_topology(tmp_path):
+def test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_topology(
+    tmp_path,
+    policy,
+):
     """An exact-name collision must not get destroyed at an unverified path.
 
     ``inspect`` reporting a different path for this exact instance_name would
@@ -155,29 +194,34 @@ def test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_top
     so a same-named lab from elsewhere would have been destroyed wherever
     ``inspect`` said it lived. It must be refused instead.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
-            stdout=(
-                '[{"lab_name":"missing","absLabPath":"/srv/labs/missing.clab.yml",'
-                '"state":"running"}]'
-            ),
+            stdout=('[{"lab_name":"missing","absLabPath":"/srv/labs/missing.clab.yml",' '"state":"running"}]'),
         )
         with pytest.raises(RuntimeError, match="destroy refused"):
             eng.destroy("missing")
     popen.assert_called_once()  # only the inspect call; never proceeds to destroy
 
 
-def test_destroy_uses_the_inspected_path_when_it_matches_the_expected_topology(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_destroy_uses_the_inspected_path_when_it_matches_the_expected_topology(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     expected_path = str(tmp_path / "missing" / "topo.clab.yml")
     with patch("subprocess.Popen") as popen:
         popen.side_effect = [
             _fake_popen(
-                stdout=(
-                    f'[{{"lab_name":"missing","absLabPath":"{expected_path}",'
-                    f'"state":"running"}}]'
-                ),
+                stdout=(f'[{{"lab_name":"missing","absLabPath":"{expected_path}",' f'"state":"running"}}]'),
             ),
             _fake_popen(stdout=""),
         ]
@@ -214,12 +258,20 @@ def _counting_host_lock(monkeypatch):
     return calls
 
 
-def test_deploy_if_absent_acquires_host_lock_exactly_once_when_deploying(tmp_path, monkeypatch):
+def test_deploy_if_absent_acquires_host_lock_exactly_once_when_deploying(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     """Observation + mutation happen inside exactly ONE host_lock acquisition
     — not two separate ones the way composing the public inventory()+deploy()
     would (each of those independently acquires and releases its own lock)."""
     calls = _counting_host_lock(monkeypatch)
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.side_effect = [
             _fake_popen(stdout="{}"),  # inspect --all: nothing running (absent)
@@ -235,10 +287,16 @@ def test_deploy_if_absent_acquires_host_lock_exactly_once_when_deploying(tmp_pat
 
 
 def test_deploy_if_absent_acquires_host_lock_exactly_once_and_noops_when_present(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     calls = _counting_host_lock(monkeypatch)
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
             stdout=f'[{{"lab_name":"i","absLabPath":"{eng._topo_path("i")}"}}]',
@@ -251,10 +309,16 @@ def test_deploy_if_absent_acquires_host_lock_exactly_once_and_noops_when_present
 
 
 def test_destroy_if_present_acquires_host_lock_exactly_once_when_destroying(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     calls = _counting_host_lock(monkeypatch)
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     topo = tmp_path / "i" / "topo.clab.yml"
     topo.parent.mkdir()
     topo.write_text("name: i")
@@ -272,10 +336,16 @@ def test_destroy_if_present_acquires_host_lock_exactly_once_when_destroying(
 
 
 def test_destroy_if_present_acquires_host_lock_exactly_once_and_noops_when_absent(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     calls = _counting_host_lock(monkeypatch)
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="{}")
         destroyed = eng.destroy_if_present("i")
@@ -284,8 +354,15 @@ def test_destroy_if_present_acquires_host_lock_exactly_once_and_noops_when_absen
     assert len(calls) == 1
 
 
-def test_inspect_running_reconstructs_a_handle_for_an_already_running_instance(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_inspect_running_reconstructs_a_handle_for_an_already_running_instance(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     expected_path = eng._topo_path("i")
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
@@ -302,15 +379,25 @@ def test_inspect_running_reconstructs_a_handle_for_an_already_running_instance(t
     popen.assert_called_once()  # only the inspect — never a redeploy
 
 
-def test_inspect_running_returns_none_when_not_actually_running(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_inspect_running_returns_none_when_not_actually_running(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="{}")
         handle = eng.inspect_running("i")
     assert handle is None
 
 
-def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(tmp_path):
+def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(
+    tmp_path,
+    policy,
+):
     """Mirrors ``_destroy_unlocked``'s own ownership-verification test
     (``test_destroy_refuses_when_the_inspected_path_does_not_match_the_expected_topology``):
     an exact-name collision from outside Academy's own workdir must not
@@ -318,7 +405,11 @@ def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(tmp
     helper, so it returns ``None`` (behaves as "not found") rather than
     raising, unlike the destructive ``_destroy_unlocked`` path.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
             stdout=(
@@ -331,7 +422,10 @@ def test_inspect_running_refuses_a_lab_name_match_at_the_wrong_topology_path(tmp
     assert handle is None
 
 
-def test_inspect_running_never_merges_nodes_across_a_same_named_path_collision(tmp_path):
+def test_inspect_running_never_merges_nodes_across_a_same_named_path_collision(
+    tmp_path,
+    policy,
+):
     """A same-``lab_name`` collision reported at an unowned path must never
     contribute even ONE node to the accepted result, regardless of which
     record ``containerlab inspect --all`` happened to report last.
@@ -345,7 +439,11 @@ def test_inspect_running_never_merges_nodes_across_a_same_named_path_collision(t
     present. The fix groups discovered node data by the path it was reported
     under and only ever reads from the one group whose path matches exactly.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     expected_path = eng._topo_path("i")
     good_record = (
         '{"lab_name":"i","name":"clab-i-r1","absLabPath":"' + expected_path + '",'
@@ -379,8 +477,15 @@ def test_inspect_running_never_merges_nodes_across_a_same_named_path_collision(t
     assert "r2" not in handle.kinds
 
 
-def test_inventory_maps_lab_names_to_inspected_topology_paths(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_inventory_maps_lab_names_to_inspected_topology_paths(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     one_path = str(tmp_path / "dal-one" / "topo.clab.yml")
     two_path = str(tmp_path / "dal-two" / "topo.clab.yml")
     with patch("subprocess.Popen") as popen:
@@ -396,7 +501,10 @@ def test_inventory_maps_lab_names_to_inspected_topology_paths(tmp_path):
         }
 
 
-def test_inventory_excludes_a_lab_whose_path_is_outside_this_engines_workdir(tmp_path):
+def test_inventory_excludes_a_lab_whose_path_is_outside_this_engines_workdir(
+    tmp_path,
+    policy,
+):
     """A dal-*-named lab is not automatically Academy's — only its real path is proof.
 
     An unrelated containerlab lab on the same host could coincidentally share
@@ -404,19 +512,21 @@ def test_inventory_excludes_a_lab_whose_path_is_outside_this_engines_workdir(tmp
     coincidence). ``inventory()`` must exclude it rather than let
     ``reconcile_runtime`` treat it as a rowless orphan eligible for destroy.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(
-            stdout=(
-                '[{"lab_name":"dal-imposter",'
-                '"absLabPath":"/some/other/operators/lab.clab.yml"}]'
-            ),
+            stdout=('[{"lab_name":"dal-imposter",' '"absLabPath":"/some/other/operators/lab.clab.yml"}]'),
         )
         assert eng.inventory() == {}
 
 
 def test_inventory_includes_the_owned_path_despite_a_same_named_collision_at_an_unowned_path(
     tmp_path,
+    policy,
 ):
     """Regression test for the Finding-3 last-write-wins bug: ``inventory()``
     grouped discovered paths by a single mutable "last path" variable, so an
@@ -425,7 +535,11 @@ def test_inventory_includes_the_owned_path_despite_a_same_named_collision_at_an_
     result entirely. The fix groups ALL distinct paths per ``lab_name`` into
     a set and checks membership, so walk order can no longer matter.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     owned_path = eng._topo_path("i")
     owned_record = f'{{"lab_name":"i","absLabPath":"{owned_path}"}}'
     unowned_record = '{"lab_name":"i","absLabPath":"/some/other/operators/i.clab.yml"}'
@@ -443,12 +557,17 @@ def test_inventory_includes_the_owned_path_despite_a_same_named_collision_at_an_
 
 def test_destroy_uses_the_owned_path_despite_a_same_named_collision_at_an_unowned_path(
     tmp_path,
+    policy,
 ):
     """Mirrors the inventory regression test above for ``destroy()``: a
     same-named unowned collision walked LAST must not make destroy wrongly
     refuse a genuinely owned, destroyable lab.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     owned_path = eng._topo_path("i")
     # No topology file on disk (mirrors ``test_destroy_uses_the_inspected_
     # path_when_it_matches_the_expected_topology``'s own setup): this forces
@@ -465,7 +584,13 @@ def test_destroy_uses_the_owned_path_despite_a_same_named_collision_at_an_unowne
         eng.destroy("i")
     assert popen.call_count == 2
     assert popen.call_args_list[1].args[0] == [
-        "sudo", "-n", "containerlab", "destroy", "-t", owned_path, "--cleanup",
+        "sudo",
+        "-n",
+        "containerlab",
+        "destroy",
+        "-t",
+        owned_path,
+        "--cleanup",
     ]
 
     # Reversed order.
@@ -477,12 +602,25 @@ def test_destroy_uses_the_owned_path_despite_a_same_named_collision_at_an_unowne
         eng.destroy("i")
     assert popen.call_count == 2
     assert popen.call_args_list[1].args[0] == [
-        "sudo", "-n", "containerlab", "destroy", "-t", owned_path, "--cleanup",
+        "sudo",
+        "-n",
+        "containerlab",
+        "destroy",
+        "-t",
+        owned_path,
+        "--cleanup",
     ]
 
 
-def test_destroy_does_not_hide_an_inspection_failure(tmp_path):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+def test_destroy_does_not_hide_an_inspection_failure(
+    tmp_path,
+    policy,
+):
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(returncode=1, stderr="runtime unavailable")
         with pytest.raises(RuntimeError, match="inspect failed: runtime unavailable"):
@@ -498,9 +636,16 @@ def test_destroy_does_not_hide_an_inspection_failure(tmp_path):
     ],
 )
 def test_vr_deploy_refuses_without_kvm_before_writing_or_shelling_out(
-    tmp_path, monkeypatch, topology
+    tmp_path,
+    monkeypatch,
+    topology,
+    policy,
 ):
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     monkeypatch.setattr("app.services.labengine.containerlab.os.path.exists", lambda _: False)
     with patch("subprocess.Popen") as popen, pytest.raises(RuntimeError, match="requires /dev/kvm"):
         eng.deploy(topology, "i")
@@ -516,7 +661,12 @@ def test_vr_deploy_refuses_without_kvm_before_writing_or_shelling_out(
         "topology:\n  defaults:\n    kind: vr-ros\n  nodes:\n    r1: {}",
     ],
 )
-def test_vr_reset_refuses_the_redeploy_half_without_kvm(tmp_path, monkeypatch, topology):
+def test_vr_reset_refuses_the_redeploy_half_without_kvm(
+    tmp_path,
+    monkeypatch,
+    topology,
+    policy,
+):
     """reset() calls the unlocked deploy helper directly (to avoid a nested
     lock acquisition) rather than the public deploy() wrapper. The KVM
     fail-closed guard must still apply to it, not only to deploy() — a
@@ -527,7 +677,11 @@ def test_vr_reset_refuses_the_redeploy_half_without_kvm(tmp_path, monkeypatch, t
     subprocess call) is existing, unchanged behavior — only the doomed
     deploy attempt itself must never be reached.
     """
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     monkeypatch.setattr("app.services.labengine.containerlab.os.path.exists", lambda _: False)
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="{}")
@@ -559,10 +713,18 @@ def test_vr_reset_refuses_the_redeploy_half_without_kvm(tmp_path, monkeypatch, t
         ),
     ],
 )
-def test_every_call_site_runs_in_its_own_session(tmp_path, call_site):
+def test_every_call_site_runs_in_its_own_session(
+    tmp_path,
+    call_site,
+    policy,
+):
     """Every one of the five call sites goes through _run_contained with
     start_new_session=True — the property os.killpg relies on."""
-    eng = ContainerlabEngine(workdir=str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(
+        workdir=str(tmp_path),
+        lab_host_role="lab",
+        execution_policy=policy,
+    )
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(stdout="[]")
         call_site(eng)
@@ -619,12 +781,19 @@ def _spy_on_real_popen(monkeypatch) -> list[subprocess.Popen]:
     return created
 
 
-def test_timeout_terminates_a_real_spawned_child_process(monkeypatch):
+def test_timeout_terminates_a_real_spawned_child_process(
+    monkeypatch,
+    policy,
+):
     """A real (non-mock) child process is actually gone after a timeout."""
     created = _spy_on_real_popen(monkeypatch)
     cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=0.2)
+        containerlab._run_contained(
+            cmd,
+            timeout=0.2,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     proc = created[0]
     try:
         deadline = time.monotonic() + 5
@@ -637,7 +806,11 @@ def test_timeout_terminates_a_real_spawned_child_process(monkeypatch):
         proc.wait(timeout=5)
 
 
-def test_timeout_terminates_an_orphaned_grandchild_too(tmp_path, monkeypatch):
+def test_timeout_terminates_an_orphaned_grandchild_too(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     """The core process-group property: a grandchild the direct child forked
     must be gone too, not just the direct child — proving the teardown
     signals the whole group (os.killpg), not just proc itself.
@@ -649,7 +822,11 @@ def test_timeout_terminates_an_orphaned_grandchild_too(tmp_path, monkeypatch):
     # Timeout is well above the near-instant fork(), so the grandchild is
     # already alive by the time _run_contained's communicate() times out.
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=1.0)
+        containerlab._run_contained(
+            cmd,
+            timeout=1.0,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     proc = created[0]
     try:
         assert (marker / "grandchild.pid").exists(), "grandchild never started"
@@ -690,7 +867,9 @@ time.sleep(60)
 
 
 def test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigterm(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """The direct child dies promptly from SIGTERM (so its own ``proc.wait()``
     inside ``_terminate_process_group`` succeeds within the grace period),
@@ -703,7 +882,11 @@ def test_sigkill_escalation_is_not_skipped_when_the_direct_child_dies_from_sigte
     created = _spy_on_real_popen(monkeypatch)
     cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=1.0)
+        containerlab._run_contained(
+            cmd,
+            timeout=1.0,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     proc = created[0]
     try:
         assert (marker / "grandchild.pid").exists(), "grandchild never started"
@@ -760,7 +943,9 @@ time.sleep(60)
 
 
 def test_a_grandchild_gracefully_finishing_within_the_grace_period_is_not_sigkilled(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """The whole-group grace period must be honoured even though the direct
     child (the process-group leader) exits near-instantly on SIGTERM by
@@ -784,7 +969,11 @@ def test_a_grandchild_gracefully_finishing_within_the_grace_period_is_not_sigkil
 
     cmd = _spawn_grandchild_that_finishes_cleanup_before_exiting(str(marker))
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=1.0)
+        containerlab._run_contained(
+            cmd,
+            timeout=1.0,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     proc = created[0]
     try:
         assert (marker / "grandchild.pid").exists(), "grandchild never started"
@@ -798,8 +987,7 @@ def test_a_grandchild_gracefully_finishing_within_the_grace_period_is_not_sigkil
         )
         assert not _pid_alive(grandchild_pid), "grandchild should have exited voluntarily"
         assert signal.SIGKILL not in killpg_signals, (
-            "SIGKILL was sent even though the grandchild exited voluntarily "
-            "within the grace period"
+            "SIGKILL was sent even though the grandchild exited voluntarily " "within the grace period"
         )
         assert signal.SIGTERM in killpg_signals
     finally:
@@ -842,7 +1030,9 @@ time.sleep(60)
 
 
 def test_a_direct_child_actually_receives_sigterm_despite_the_parents_own_mask(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """The direct child spawned by ``_run_contained`` must NOT inherit this
     process's own SIGTERM-blocked mask (blocked around ``Popen(...)`` itself
@@ -875,7 +1065,11 @@ def test_a_direct_child_actually_receives_sigterm_despite_the_parents_own_mask(
 
     cmd = _spawn_direct_child_that_finishes_cleanup_before_exiting(str(marker))
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=1.0)
+        containerlab._run_contained(
+            cmd,
+            timeout=1.0,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     proc = created[0]
     try:
         deadline = time.monotonic() + 5
@@ -901,7 +1095,10 @@ def test_a_direct_child_actually_receives_sigterm_despite_the_parents_own_mask(
         proc.wait(timeout=5)
 
 
-def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkeypatch):
+def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(
+    monkeypatch,
+    policy,
+):
     """A non-timeout exception raised mid-communicate (e.g. KeyboardInterrupt
     reaching this call) must still tear down the process group before
     propagating, not just a TimeoutExpired. The exception itself is
@@ -911,13 +1108,15 @@ def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkey
     """
     cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
     real_proc = subprocess.Popen(cmd, start_new_session=True)  # noqa: S603
-    monkeypatch.setattr(
-        real_proc, "communicate", MagicMock(side_effect=KeyboardInterrupt())
-    )
+    monkeypatch.setattr(real_proc, "communicate", MagicMock(side_effect=KeyboardInterrupt()))
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: real_proc)
     try:
         with pytest.raises(KeyboardInterrupt):
-            containerlab._run_contained(cmd, timeout=30)
+            containerlab._run_contained(
+                cmd,
+                timeout=30,
+                grace_seconds=policy.lab_process_termination_grace_seconds,
+            )
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and _pid_alive(real_proc.pid):
             time.sleep(0.05)
@@ -928,7 +1127,11 @@ def test_cancellation_mid_communicate_follows_the_same_group_cleanup_path(monkey
         real_proc.wait(timeout=5)
 
 
-def test_real_sigterm_mid_communicate_triggers_group_cleanup(tmp_path, monkeypatch):
+def test_real_sigterm_mid_communicate_triggers_group_cleanup(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     """A REAL SIGTERM delivered to this process while it is genuinely
     blocked inside ``_run_contained``'s ``communicate()`` on a real spawned
     process must interrupt that blocking call via the lab worker's own
@@ -959,13 +1162,17 @@ def test_real_sigterm_mid_communicate_triggers_group_cleanup(tmp_path, monkeypat
         sender.start()
         try:
             with pytest.raises(_WorkerShutdownRequested):
-                containerlab._run_contained(cmd, timeout=30)
+                containerlab._run_contained(
+                    cmd,
+                    timeout=30,
+                    grace_seconds=policy.lab_process_termination_grace_seconds,
+                )
         finally:
             sender.join(timeout=5)
 
-    assert signal.getsignal(signal.SIGTERM) == previous_handler, (
-        "SIGTERM disposition leaked past _sigterm_raises_shutdown_requested"
-    )
+    assert (
+        signal.getsignal(signal.SIGTERM) == previous_handler
+    ), "SIGTERM disposition leaked past _sigterm_raises_shutdown_requested"
 
     proc = created[0]
     try:
@@ -986,7 +1193,9 @@ def test_real_sigterm_mid_communicate_triggers_group_cleanup(tmp_path, monkeypat
 
 
 def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """A SIGTERM landing after the real fork+exec but before ``_run_contained``'s
     own ``proc`` local is bound must not leak the freshly-spawned process.
@@ -1035,7 +1244,11 @@ def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
     previous_handler = signal.getsignal(signal.SIGTERM)
     with _sigterm_raises_shutdown_requested():
         with pytest.raises(_WorkerShutdownRequested):
-            containerlab._run_contained(cmd, timeout=30)
+            containerlab._run_contained(
+                cmd,
+                timeout=30,
+                grace_seconds=policy.lab_process_termination_grace_seconds,
+            )
     assert signal.getsignal(signal.SIGTERM) == previous_handler
 
     assert created, "Popen was never actually called"
@@ -1045,8 +1258,7 @@ def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
         while time.monotonic() < deadline and _pid_alive(proc.pid):
             time.sleep(0.05)
         assert not _pid_alive(proc.pid), (
-            "child process leaked — SIGTERM during Popen construction was not "
-            "deferred past proc being bound"
+            "child process leaked — SIGTERM during Popen construction was not " "deferred past proc being bound"
         )
     finally:
         if _pid_alive(proc.pid):
@@ -1057,7 +1269,11 @@ def test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child(
         proc.wait(timeout=5)
 
 
-def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monkeypatch):
+def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     """A second SIGTERM arriving while ``_terminate_process_group`` is
     already running (the exact scenario of an operator sending SIGTERM twice
     because the first one doesn't seem to have worked yet) must not abort the
@@ -1095,7 +1311,11 @@ def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monke
     previous_handler = signal.getsignal(signal.SIGTERM)
     with _sigterm_raises_shutdown_requested():
         with pytest.raises(_WorkerShutdownRequested):
-            containerlab._run_contained(cmd, timeout=1.0)
+            containerlab._run_contained(
+                cmd,
+                timeout=1.0,
+                grace_seconds=policy.lab_process_termination_grace_seconds,
+            )
     assert signal.getsignal(signal.SIGTERM) == previous_handler
 
     proc = created[0]
@@ -1110,8 +1330,7 @@ def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monke
             "mid-escalation aborted teardown before SIGKILL could run"
         )
         assert signal.SIGKILL in killpg_calls, (
-            "escalation never reached SIGKILL — aborted early by the second "
-            "SIGTERM instead of deferring it"
+            "escalation never reached SIGKILL — aborted early by the second " "SIGTERM instead of deferring it"
         )
     finally:
         if _pid_alive(proc.pid):
@@ -1123,7 +1342,9 @@ def test_a_second_sigterm_mid_escalation_does_not_abort_teardown(tmp_path, monke
 
 
 def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """The same construction-window leak
     ``test_sigterm_arriving_mid_popen_construction_still_tears_down_the_child``
@@ -1161,7 +1382,11 @@ def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
 
     previous_handler = signal.getsignal(signal.SIGINT)
     with pytest.raises(KeyboardInterrupt):
-        containerlab._run_contained(cmd, timeout=30)
+        containerlab._run_contained(
+            cmd,
+            timeout=30,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     assert signal.getsignal(signal.SIGINT) == previous_handler
 
     assert created, "Popen was never actually called"
@@ -1171,8 +1396,7 @@ def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
         while time.monotonic() < deadline and _pid_alive(proc.pid):
             time.sleep(0.05)
         assert not _pid_alive(proc.pid), (
-            "child process leaked — SIGINT during Popen construction was not "
-            "deferred past proc being bound"
+            "child process leaked — SIGINT during Popen construction was not " "deferred past proc being bound"
         )
     finally:
         if _pid_alive(proc.pid):
@@ -1183,7 +1407,11 @@ def test_sigint_arriving_mid_popen_construction_still_tears_down_the_child(
         proc.wait(timeout=5)
 
 
-def test_a_second_sigint_mid_escalation_does_not_abort_teardown(tmp_path, monkeypatch):
+def test_a_second_sigint_mid_escalation_does_not_abort_teardown(
+    tmp_path,
+    monkeypatch,
+    policy,
+):
     """The SIGINT counterpart of
     ``test_a_second_sigterm_mid_escalation_does_not_abort_teardown``: a real
     Ctrl+C landing while ``_terminate_process_group`` is already running
@@ -1218,7 +1446,11 @@ def test_a_second_sigint_mid_escalation_does_not_abort_teardown(tmp_path, monkey
 
     previous_handler = signal.getsignal(signal.SIGINT)
     with pytest.raises(KeyboardInterrupt):
-        containerlab._run_contained(cmd, timeout=1.0)
+        containerlab._run_contained(
+            cmd,
+            timeout=1.0,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     assert signal.getsignal(signal.SIGINT) == previous_handler
 
     proc = created[0]
@@ -1233,8 +1465,7 @@ def test_a_second_sigint_mid_escalation_does_not_abort_teardown(tmp_path, monkey
             "(SIGINT) mid-escalation aborted teardown before SIGKILL could run"
         )
         assert signal.SIGKILL in killpg_calls, (
-            "escalation never reached SIGKILL — aborted early by the SIGINT "
-            "instead of deferring it"
+            "escalation never reached SIGKILL — aborted early by the SIGINT " "instead of deferring it"
         )
     finally:
         if _pid_alive(proc.pid):
@@ -1245,26 +1476,40 @@ def test_a_second_sigint_mid_escalation_does_not_abort_teardown(tmp_path, monkey
         proc.wait(timeout=5)
 
 
-def test_run_contained_returns_a_completed_process_shaped_result():
+def test_run_contained_returns_a_completed_process_shaped_result(
+    policy,
+):
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(returncode=0, stdout="ok", stderr="")
-        result = containerlab._run_contained(["true"], timeout=5)
+        result = containerlab._run_contained(
+            ["true"],
+            timeout=5,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     assert isinstance(result, subprocess.CompletedProcess)
     assert result.returncode == 0
     assert result.stdout == "ok"
     assert result.stderr == ""
 
 
-def test_run_contained_nonzero_exit_still_returns_normally():
+def test_run_contained_nonzero_exit_still_returns_normally(
+    policy,
+):
     with patch("subprocess.Popen") as popen:
         popen.return_value = _fake_popen(returncode=1, stdout="", stderr="boom")
-        result = containerlab._run_contained(["false"], timeout=5)
+        result = containerlab._run_contained(
+            ["false"],
+            timeout=5,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )
     assert result.returncode == 1
     assert result.stderr == "boom"
 
 
 def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reaped(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    policy,
 ):
     """The poll loop must not degenerate into a busy-spin once the direct
     child (process-group leader) has already been reaped by ``proc.wait()``.
@@ -1290,7 +1535,6 @@ def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reape
     marker.mkdir()
     created = _spy_on_real_popen(monkeypatch)
 
-    monkeypatch.setattr(containerlab, "_GROUP_KILL_GRACE_SECONDS", 1.0)
     monkeypatch.setattr(containerlab, "_GROUP_LIVENESS_POLL_INTERVAL_SECONDS", 0.1)
 
     probe_calls: list[int] = []
@@ -1305,7 +1549,11 @@ def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reape
 
     cmd = _spawn_grandchild_that_ignores_sigterm(str(marker))
     with pytest.raises(subprocess.TimeoutExpired):
-        containerlab._run_contained(cmd, timeout=0.2)
+        containerlab._run_contained(
+            cmd,
+            timeout=0.2,
+            grace_seconds=1.0,
+        )
     proc = created[0]
     try:
         assert (marker / "grandchild.pid").exists(), "grandchild never started"
@@ -1318,8 +1566,7 @@ def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reape
         # for scheduling jitter. The pre-fix busy-spin produced thousands of
         # probe calls in a fraction of that window.
         assert len(probe_calls) <= 40, (
-            f"expected roughly bounded polling, got {len(probe_calls)} probe "
-            "calls — the loop is busy-spinning"
+            f"expected roughly bounded polling, got {len(probe_calls)} probe " "calls — the loop is busy-spinning"
         )
     finally:
         if _pid_alive(proc.pid):
@@ -1330,7 +1577,9 @@ def test_grace_period_polling_does_not_busy_spin_after_the_direct_child_is_reape
         proc.wait(timeout=5)
 
 
-def test_terminate_process_group_swallows_already_terminated_process():
+def test_terminate_process_group_swallows_already_terminated_process(
+    policy,
+):
     """ProcessLookupError at either signalling step must not mask the caller's
     real exception — it means the group is already gone, not a new failure.
     """
@@ -1340,11 +1589,17 @@ def test_terminate_process_group_swallows_already_terminated_process():
         "app.services.labengine.containerlab.os.killpg",
         side_effect=ProcessLookupError,
     ):
-        containerlab._terminate_process_group(proc)  # must not raise
+        containerlab._terminate_process_group(
+            proc,
+            grace_seconds=policy.lab_process_termination_grace_seconds,
+        )  # must not raise
     proc.wait.assert_called_once()
 
 
-def test_unblock_call_itself_raising_still_reaches_terminate_process_group(monkeypatch):
+def test_unblock_call_itself_raising_still_reaches_terminate_process_group(
+    monkeypatch,
+    policy,
+):
     """Pins the exact mechanism behind the construction-window fix, independent
     of real OS signal timing: CPython's own
     ``signal.pthread_sigmask(SIG_UNBLOCK, ...)`` can synchronously raise a
@@ -1379,17 +1634,20 @@ def test_unblock_call_itself_raising_still_reaches_terminate_process_group(monke
 
     fake_proc = _fake_popen()
     with patch("subprocess.Popen", return_value=fake_proc):
-        with patch(
-            "app.services.labengine.containerlab._terminate_process_group"
-        ) as terminate:
+        with patch("app.services.labengine.containerlab._terminate_process_group") as terminate:
             with pytest.raises(_Boom):
-                containerlab._run_contained(["true"], timeout=5)
-            terminate.assert_called_once_with(fake_proc)
+                containerlab._run_contained(
+                    ["true"],
+                    timeout=5,
+                    grace_seconds=policy.lab_process_termination_grace_seconds,
+                )
+            terminate.assert_called_once_with(fake_proc, grace_seconds=policy.lab_process_termination_grace_seconds)
     fake_proc.communicate.assert_not_called()
 
 
 def test_final_reap_does_not_block_indefinitely_on_a_process_that_never_exits(
     monkeypatch,
+    policy,
 ):
     """The last ``proc.wait()`` in ``_terminate_process_group`` — after the
     SIGTERM/grace/SIGKILL sequence has already run — must be bounded, not an
@@ -1404,7 +1662,6 @@ def test_final_reap_does_not_block_indefinitely_on_a_process_that_never_exits(
     test itself stays fast. The function must still return (not hang, not
     raise) within a bounded time.
     """
-    monkeypatch.setattr(containerlab, "_GROUP_KILL_GRACE_SECONDS", 0.05)
 
     proc = MagicMock()
     proc.pid = 99999999  # exceedingly unlikely to be a real pid
@@ -1415,11 +1672,71 @@ def test_final_reap_does_not_block_indefinitely_on_a_process_that_never_exits(
         side_effect=ProcessLookupError,
     ):
         started = time.monotonic()
-        containerlab._terminate_process_group(proc)  # must not hang
+        containerlab._terminate_process_group(
+            proc,
+            grace_seconds=0.05,
+        )  # must not hang
         elapsed = time.monotonic() - started
 
     assert elapsed < 5, f"final reap blocked for {elapsed}s instead of returning promptly"
     # Called once for the (skipped, since killpg raised ProcessLookupError)
     # grace-period loop path is never entered here — only the final bounded
     # reap call itself.
-    proc.wait.assert_called_once_with(timeout=containerlab._GROUP_KILL_GRACE_SECONDS)
+    proc.wait.assert_called_once_with(timeout=0.05)
+
+
+@pytest.fixture
+def policy():
+    """Explicit validated env/default snapshot; never used as a production fallback."""
+    return LabExecutionPolicy.from_settings(settings)
+
+
+def test_nondefault_policy_controls_every_command_wait_and_cleanup_grace(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from app.config import Settings
+
+    source = LabExecutionPolicy.from_settings(Settings.model_construct())
+    policy = replace(
+        source,
+        lab_command_timeout_seconds_by_action={"inspect": 2, "deploy": 7, "destroy": 3, "check": 4},
+        lab_operation_lease_seconds_by_kind={"deploy": 30, "destroy": 20, "check": 15},
+        lab_process_termination_grace_seconds=2,
+    )
+    engine = ContainerlabEngine(str(tmp_path), lab_host_role="lab", execution_policy=policy)
+    calls = []
+
+    def run(command, *, timeout, grace_seconds):
+        calls.append((command, timeout, grace_seconds))
+        return subprocess.CompletedProcess(command, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(containerlab, "_run_contained", run)
+    monkeypatch.setattr(containerlab.os.path, "exists", lambda path: True)
+    engine._inspect_all()
+    engine._deploy_unlocked("name: x\ntopology: {nodes: {r1: {kind: linux}}}", "x")
+    engine._destroy_unlocked("x")
+    handle = LabHandle("x", {"r1": "node"}, {"r1": "10.0.0.1"}, {"r1": "linux"})
+    engine._exec_unlocked(handle, "r1", ["true"])
+    engine._ssh_exec_unlocked(handle, "r1", "true", "admin", "")
+    assert engine.execution_policy is policy
+    assert {timeout for _, timeout, _ in calls} == {2, 3, 4, 7}
+    assert all(grace == 2 for _, _, grace in calls)
+    assert policy.lease_seconds("deploy") == 30
+    assert policy.lease_seconds("destroy") == 20
+    assert policy.lease_seconds("check") == 15
+
+
+def test_default_combined_path_wait_budgets_include_both_cleanup_graces(policy):
+    waits = policy.lab_command_timeout_seconds_by_action
+    grace = policy.lab_process_termination_grace_seconds
+    inspect, deploy, destroy, check = (waits[action] for action in ("inspect", "deploy", "destroy", "check"))
+    assert max(inspect + destroy, inspect + deploy, 2 * inspect) + 2 * grace == 970
+    assert 2 * inspect + destroy + 2 * grace == 550
+    assert check + 2 * grace == 490
+    assert policy.lease_seconds("deploy") > 970
+    assert policy.lease_seconds("destroy") > 550
+    assert policy.lease_seconds("check") > 490
+    assert policy.lease_seconds("unknown") > inspect + 2 * grace
+    # Direct reset has no lease heartbeat between destroy and deploy; it remains
+    # a direct engine operation and does not define the worker's renewal budget.
+    assert inspect + destroy + deploy + 2 * grace > policy.lease_seconds("deploy")

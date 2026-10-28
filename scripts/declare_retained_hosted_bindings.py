@@ -1,7 +1,8 @@
-"""Declare non-secret hosted expectations before profile catalog observation.
+"""Project separately PREdeclared non-secret environment/history/assembly data.
 
-Source-only GitHub service custody is assumed, never established or admitted.
-No SQL, application imports, credentials, or target-derived expectations.
+No SQL, Docker, observed target, DSN or current_database retargeting. This data
+cannot authenticate a service, GitHub origin, access fence or resource owner.
+Root CI chooses and verifies the immutable OCI image and platform separately.
 """
 
 from __future__ import annotations
@@ -9,14 +10,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 
 class Unsupported(Exception):
-    """The bounded hosted declaration protocol could not be satisfied."""
+    """Incomplete or contradictory predeclaration; do not write partial output."""
 
 
 def require(condition: bool) -> None:
@@ -26,86 +25,73 @@ def require(condition: bool) -> None:
 
 def declaration(name: str) -> str:
     value = os.environ.get("ACADEMY_RETAINED_EXPECTED_" + name)
-    require(type(value) is str and 0 < len(value) <= 240)
+    require(type(value) is str and 0 < len(value) <= 1024)
     require(value.isascii() and value.isprintable())
     return value
 
 
-def fact(docker: str, *args: str) -> str:
-    # Executable and argv are controlled; never invoke a shell or expose stderr.
-    result = subprocess.run(  # noqa: S603
-        (docker, *args), check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30
-    )
-    require(0 < len(result.stdout) <= 256)
-    value = result.stdout.decode("ascii").removesuffix("\n")
-    require(bool(value) and value.isprintable())
-    return value
+def declarations() -> dict[str, object]:
+    """Every rendering input is declared before creation, never learned by SQL."""
+    image = declaration("SERVICE_IMAGE")
+    platform = declaration("PLATFORM")
+    require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[a-f0-9]{64}", image) is not None)
+    require(platform in ("linux/amd64", "linux/arm64"))
+    version = declaration("SERVER_VERSION_NUM")
+    require(re.fullmatch(r"16[0-9]{4}", version) is not None)
+    fields = {
+        "setup_session": declaration("SETUP_SESSION"),
+        "service_image": image,
+        "server_version_num": int(version),
+        "encoding": declaration("ENCODING"),
+        "locale_provider": declaration("LOCALE_PROVIDER"),
+        "lc_collate": declaration("LC_COLLATE"),
+        "lc_ctype": declaration("LC_CTYPE"),
+        "icu_locale": json.loads(declaration("ICU_LOCALE")),
+        "collation_version": json.loads(declaration("COLLATION_VERSION")),
+        "actual_collation_version": json.loads(declaration("ACTUAL_COLLATION_VERSION")),
+        "extension_versions": json.loads(declaration("EXTENSION_VERSIONS")),
+    }
+    require(fields["setup_session"] == "postgres" and fields["encoding"] == "UTF8")
+    require(fields["locale_provider"] == "c" and fields["icu_locale"] is None)
+    require(fields["lc_collate"] == fields["lc_ctype"] == "en_US.utf8")
+    require(type(fields["collation_version"]) is str and bool(fields["collation_version"]))
+    require(fields["collation_version"] == fields["actual_collation_version"])
+    require(fields["extension_versions"] == [["plpgsql", "1.0"]])
+    result = {"image": image, "platform": platform}
+    targets = []
+    for purpose in ("environment", "history", "assembly"):
+        target = declaration(purpose.upper() + "_TARGET_DATABASE")
+        require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", target) is not None)
+        targets.append(target)
+        result[purpose] = {
+            "academy_retained_environment_" + name: value
+            for name, value in {"target_database": target, **fields}.items()
+        }
+    require(len(set(targets)) == 3)
+    return result
 
 
 def main() -> None:
     require(os.environ.get("CI") == "true" and os.environ.get("GITHUB_ACTIONS") == "true")
-    require(os.environ.get("RUNNER_OS") == "Linux")
-    require(os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted")
-    require(re.fullmatch(r"[1-9][0-9]{0,19}", os.environ.get("GITHUB_RUN_ID", "")) is not None)
-    require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,99}", os.environ.get("GITHUB_JOB", "")) is not None)
-    container = os.environ.get("ACADEMY_RETAINED_SERVICE_CONTAINER_ID", "")
-    require(re.fullmatch(r"[a-f0-9]{64}", container) is not None)
+    # These strings are preflight only; actual repository/workflow/job/run
+    # authority is externally verified by Root, never by this declaration.
     output = Path(os.environ.get("GITHUB_ENV", ""))
     require(output.is_absolute() and output.is_file() and not output.is_symlink())
-
-    target = declaration("TARGET_DATABASE")
-    session = declaration("SETUP_SESSION")
-    encoding = declaration("ENCODING")
-    provider = declaration("LOCALE_PROVIDER")
-    collate = declaration("LC_COLLATE")
-    ctype = declaration("LC_CTYPE")
-    extensions = json.loads(declaration("EXTENSION_VERSIONS"))
-    require(target == "academy_retained_environment" and session == "postgres")
-    require(encoding == "UTF8" and provider == "c")
-    # Reviewed official PG16 Debian image protocol, not an application default.
-    require(collate == "en_US.utf8" and ctype == collate)
-    require(extensions == [["plpgsql", "1.0"]])
-
-    docker = shutil.which("docker")
-    require(docker is not None and Path(docker).is_absolute())
-    image = fact(docker, "inspect", "--format", "{{.Image}}", container)
-    require(re.fullmatch(r"sha256:[a-f0-9]{64}", image) is not None)
-    binary = fact(docker, "exec", container, "postgres", "--version")
-    version = re.fullmatch(
-        r"postgres \(PostgreSQL\) (16)\.(0|[1-9][0-9]{0,3})(?: \([A-Za-z0-9 .+~:/_-]{1,160}\))?", binary
-    )
-    require(version is not None)
-    libc = fact(docker, "exec", container, "getconf", "GNU_LIBC_VERSION")
-    libc_version = re.fullmatch(r"glibc ([1-9][0-9]?\.[0-9]{1,3}(?:\.[0-9]{1,3})?)", libc)
-    require(libc_version is not None)
-    require(fact(docker, "exec", container, "printenv", "LANG") == collate)
-
-    # PG>=10 encodes major*10000+minor. PG16 libc non-C locale versions use
-    # gnu_get_libc_version(); neither value comes from the profile database.
-    bindings = {
-        "target_database": target,
-        "setup_session": session,
-        "service_image": image,
-        "server_version_num": int(version[1]) * 10000 + int(version[2]),
-        "encoding": encoding,
-        "locale_provider": provider,
-        "lc_collate": collate,
-        "lc_ctype": ctype,
-        "icu_locale": None,
-        "collation_version": libc_version[1],
-        "actual_collation_version": libc_version[1],
-        "extension_versions": extensions,
-    }
-    values = {"academy_retained_environment_" + name: value for name, value in bindings.items()}
-    require(all(re.fullmatch(r"academy_retained_environment_[a-z_]+", name) for name in values))
+    values = declarations()
+    lines = []
+    for purpose in ("environment", "history", "assembly"):
+        encoded = json.dumps(values[purpose], ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        require("\n" not in encoded and "\r" not in encoded and len(encoded) <= 4096)
+        lines.append("ACADEMY_RETAINED_" + purpose.upper() + "_BINDINGS=" + encoded)
     encoded = json.dumps(values, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    require("\n" not in encoded and "\r" not in encoded and len(encoded) <= 4096)
+    require("\n" not in encoded and "\r" not in encoded and len(encoded) <= 16384)
+    lines.append("ACADEMY_HOSTED_GENESIS_DECLARATION=" + encoded)
     with output.open("a", encoding="ascii") as stream:
-        stream.write("ACADEMY_RETAINED_ENVIRONMENT_BINDINGS=" + encoded + "\n")
+        stream.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (Unsupported, OSError, ValueError, subprocess.SubprocessError):
-        sys.exit("Hosted retained environment bindings unsupported; declaration refused")
+    except (Unsupported, OSError, ValueError):
+        sys.exit("Hosted retained bindings unsupported; declaration refused")

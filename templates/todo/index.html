@@ -25,11 +25,11 @@
 {% if timeline.due_today %}{{ deadline_list(timeline.due_today) }}
 {% else %}<div class="card mt-3 p-5 text-ink-soft">Nothing due today.</div>{% endif %}
 
-<h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Next 7 days</h2>
+<h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Next {{ timeline.near_deadline_days }} days</h2>
 {% if timeline.next_7 %}{{ deadline_list(timeline.next_7) }}
-{% else %}<div class="card mt-3 p-5 text-ink-soft">Nothing due this week.</div>{% endif %}
+{% else %}<div class="card mt-3 p-5 text-ink-soft">{% if timeline.near_deadline_days == 7 %}Nothing due this week.{% else %}Nothing due in the next {{ timeline.near_deadline_days }} days.{% endif %}</div>{% endif %}
 
-<h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Next 30 days</h2>
+<h2 class="mt-8 text-sm font-semibold uppercase tracking-wide text-ink-soft">Next {{ timeline.far_deadline_days }} days</h2>
 {% if timeline.next_30 %}{{ deadline_list(timeline.next_30) }}
 {% else %}<div class="card mt-3 p-5 text-ink-soft">Nothing further out yet.</div>{% endif %}
 
@@ -92,7 +92,7 @@
   </div>
   {% endfor %}
 </div>
-{% else %}<div class="card mt-3 p-5 text-ink-soft">No course openings or closings in the next 30 days.</div>{% endif %}
+{% else %}<div class="card mt-3 p-5 text-ink-soft">No course openings or closings in the next {{ timeline.window_horizon_days }} days.</div>{% endif %}
 
 <h2 class="mt-10 text-sm font-semibold uppercase tracking-wide text-ink-soft">Calendar export</h2>
 <div class="card mt-3 p-5">

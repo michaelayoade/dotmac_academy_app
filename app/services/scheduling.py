@@ -1,5 +1,8 @@
 """Scheduling service — cohort timetables of class sessions.
 
+Public scheduling operations delegate to Learning and return detached facts.
+Updates require the genuine request-bound human operation boundary.
+
 Repo convention: ``db`` + explicit ids, ``flush`` not ``commit``, domain
 exceptions for the router to translate. RLS scopes reads to the tenant.
 """
@@ -9,46 +12,30 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+import dotmac_learning as learning
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.models.class_session import SESSION_STATUSES, SESSION_TYPES, ClassSession
-from app.models.cohort import Cohort
+from app.models.class_session import SESSION_TYPES as SESSION_TYPES
+from app.services.audit_context import update_web_session
 from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.learning_policy import creation_defaults
+from app.services.settings_store import effective
 
 DELIVERY_MODES = frozenset({"self_paced", "live", "blended"})
-_TYPES = frozenset(SESSION_TYPES)
-_STATUSES = frozenset(SESSION_STATUSES)
 
 _UNSET = object()  # sentinel: "field not provided" vs. None ("clear this field")
 
 
-def _clean_join_url(value: str | None) -> str | None:
-    """Accept only http(s) join URLs. Rejects javascript:, data:, etc. — the
-    value is rendered into an href, so a bad scheme is a stored-XSS vector."""
-    v = (value or "").strip()
-    if not v:
-        return None
-    lowered = v.lower()
-    if not (lowered.startswith("http://") or lowered.startswith("https://")):
-        raise BadRequestError("Join URL must start with http:// or https://.")
-    return v
-
-
-def _cohort(db: Session, cohort_id: UUID) -> Cohort:
-    cohort = db.get(Cohort, cohort_id)
-    if cohort is None:
-        raise NotFoundError("Cohort not found.")
-    return cohort
-
-
-def set_delivery_mode(db: Session, *, cohort_id: UUID, mode: str) -> Cohort:
-    if mode not in DELIVERY_MODES:
-        raise BadRequestError(f"Unknown delivery mode: {mode}")
-    cohort = _cohort(db, cohort_id)
-    cohort.delivery_mode = mode
-    db.flush()
-    return cohort
+def set_delivery_mode(db: Session, *, tenant_id: UUID, cohort_id: UUID, mode: str) -> learning.CohortDeliveryFact:
+    try:
+        return learning.set_delivery_mode(
+            db, learning.SetDeliveryModeCommand(tenant_id=tenant_id, cohort_id=cohort_id, mode=mode)
+        )
+    except learning.SchedulingBadRequest as exc:
+        raise BadRequestError(str(exc)) from exc
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 def create_session(
@@ -58,66 +45,71 @@ def create_session(
     cohort_id: UUID,
     title: str,
     starts_at: datetime,
-    session_type: str = "live_class",
+    session_type: str | None = None,
     ends_at: datetime | None = None,
     offering_id: UUID | None = None,
     instructor_person_id: UUID | None = None,
     location: str | None = None,
     join_url: str | None = None,
     notes: str | None = None,
-) -> ClassSession:
-    if session_type not in _TYPES:
-        raise BadRequestError(f"Unknown session type: {session_type}")
-    if ends_at is not None and ends_at <= starts_at:
-        raise BadRequestError("ends_at must be after starts_at.")
-    join_url = _clean_join_url(join_url)
-    cohort = _cohort(db, cohort_id)  # existence + RLS
-    # Scheduling a session implies the cohort is not purely self-paced.
-    if cohort.delivery_mode == "self_paced":
-        cohort.delivery_mode = "blended"
-
-    session = ClassSession(
-        tenant_id=tenant_id,
-        cohort_id=cohort_id,
-        offering_id=offering_id,
-        session_type=session_type,
-        title=title.strip(),
-        starts_at=starts_at,
-        ends_at=ends_at,
-        instructor_person_id=instructor_person_id,
-        location=(location or None),
-        join_url=(join_url or None),
-        notes=(notes or None),
-        status="scheduled",
-    )
-    db.add(session)
-    db.flush()
-    return session
+) -> learning.ClassSessionFact:
+    if session_type is None:
+        session_type = effective(db, require_store=True)["learning_default_session_type"]
+    try:
+        return learning.create_session(
+            db,
+            learning.CreateSessionCommand(
+                tenant_id=tenant_id,
+                cohort_id=cohort_id,
+                title=title,
+                starts_at=starts_at,
+                session_type=session_type,
+                promote_delivery_mode=creation_defaults(db).session_promotes_delivery_mode,
+                ends_at=ends_at,
+                offering_id=offering_id,
+                instructor_person_id=instructor_person_id,
+                location=location,
+                join_url=join_url,
+                notes=notes,
+            ),
+        )
+    except learning.SchedulingBadRequest as exc:
+        raise BadRequestError(str(exc)) from exc
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
-def get_session(db: Session, *, session_id: UUID) -> ClassSession:
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        raise NotFoundError("Session not found.")
-    return session
+def get_session(db: Session, *, tenant_id: UUID, session_id: UUID) -> learning.ClassSessionFact:
+    """Detached owner fact for rendering; not a mutable Academy ORM alias."""
+    try:
+        return learning.get_session(db, tenant_id=tenant_id, session_id=session_id)
+    except learning.SchedulingBadRequest as exc:
+        raise BadRequestError(str(exc)) from exc
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 def list_for_cohort(
-    db: Session, *, cohort_id: UUID, upcoming_only: bool = False, now: datetime | None = None
-) -> list[ClassSession]:
-    """The cohort's timetable, chronological."""
-    stmt = select(ClassSession).where(ClassSession.cohort_id == cohort_id)
-    if upcoming_only:
-        stmt = stmt.where(
-            ClassSession.status == "scheduled",
-            ClassSession.starts_at > (now or datetime.now(tz=None).astimezone()),
+    db: Session, *, tenant_id: UUID, cohort_id: UUID, upcoming_only: bool = False, now: datetime | None = None
+) -> list[learning.ClassSessionFact]:
+    """The cohort's timetable, in owner order, with detached fact leaves."""
+    try:
+        return list(
+            learning.list_cohort_sessions(
+                db, tenant_id=tenant_id, cohort_id=cohort_id, upcoming_only=upcoming_only, now=now
+            )
         )
-    return list(db.scalars(stmt.order_by(ClassSession.starts_at)).all())
+    except learning.SchedulingBadRequest as exc:
+        raise BadRequestError(str(exc)) from exc
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 def update_session(
     db: Session,
     *,
+    request: Request,
+    tenant_id: UUID,
     session_id: UUID,
     title=_UNSET,
     starts_at=_UNSET,
@@ -127,129 +119,65 @@ def update_session(
     join_url=_UNSET,
     notes=_UNSET,
     status=_UNSET,
-) -> tuple[ClassSession, dict[str, dict[str, object]]]:
-    """Edit an existing session and return (session, changes).
-
-    Only fields passed as something other than ``_UNSET`` are touched, so a
-    caller can clear a nullable field by passing ``None`` — the old
-    ``if value is None: continue`` guard made fields permanently unclearable.
-    ``changes`` maps each changed field to ``{"from": old, "to": new}`` for the
-    caller's audit record.
-    """
-    session = get_session(db, session_id=session_id)
-    if session_type is not _UNSET and session_type not in _TYPES:
-        raise BadRequestError(f"Unknown session type: {session_type}")
-    if status is not _UNSET and status not in _STATUSES:
-        raise BadRequestError(f"Unknown status: {status}")
-
-    updates: dict[str, object] = {}
-    if title is not _UNSET:
-        updates["title"] = (title or "").strip()
-    if starts_at is not _UNSET:
-        updates["starts_at"] = starts_at
-    if ends_at is not _UNSET:
-        updates["ends_at"] = ends_at
-    if session_type is not _UNSET:
-        updates["session_type"] = session_type
-    if location is not _UNSET:
-        updates["location"] = (location or None)
-    if join_url is not _UNSET:
-        updates["join_url"] = _clean_join_url(join_url)
-    if notes is not _UNSET:
-        updates["notes"] = (notes or None)
-    if status is not _UNSET:
-        updates["status"] = status
-
-    changes: dict[str, dict[str, object]] = {}
-    for key, new in updates.items():
-        old = getattr(session, key)
-        if old != new:
-            changes[key] = {
-                "from": old.isoformat() if isinstance(old, datetime) else old,
-                "to": new.isoformat() if isinstance(new, datetime) else new,
+) -> tuple[learning.ClassSessionFact, dict[str, dict[str, object]]]:
+    """Edit through the genuine Learning owner, preserving omitted versus None."""
+    human = result = supplied = None
+    try:
+        supplied = tuple(
+            (key, value)
+            for key, value in (
+                ("title", title),
+                ("starts_at", starts_at),
+                ("ends_at", ends_at),
+                ("session_type", session_type),
+                ("location", location),
+                ("join_url", join_url),
+                ("notes", notes),
+                ("status", status),
+            )
+            if value is not _UNSET
+        )
+        with update_web_session(db, request=request, session_id=session_id, supplied=supplied) as human:
+            if human.tenant_id != tenant_id:
+                raise HTTPException(status_code=403, detail="Forbidden")
+            result = human.update_session()
+            return result.session, {
+                change.field: {"from": change.from_value, "to": change.to_value} for change in result.changes
             }
-            setattr(session, key, new)
-
-    if session.ends_at is not None and session.ends_at <= session.starts_at:
-        raise BadRequestError("ends_at must be after starts_at.")
-    db.flush()
-    return session, changes
+    finally:
+        db = request = human = result = supplied = title = starts_at = ends_at = session_type = None
+        location = join_url = notes = status = tenant_id = session_id = None
 
 
-def cancel_session(db: Session, *, session_id: UUID) -> ClassSession:
-    session = get_session(db, session_id=session_id)
-    session.status = "cancelled"
-    db.flush()
-    return session
+def cancel_session(db: Session, *, tenant_id: UUID, session_id: UUID) -> learning.ClassSessionFact:
+    try:
+        return learning.cancel_session(db, learning.CancelSessionCommand(tenant_id=tenant_id, session_id=session_id))
+    except learning.SchedulingBadRequest as exc:
+        raise BadRequestError(str(exc)) from exc
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 def list_for_person(
     db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
-) -> dict[str, list[tuple[ClassSession, str]]]:
-    """A learner's timetable: (session, cohort name) pairs, split
-    upcoming/past.
-
-    Upcoming = scheduled sessions that have not yet ended (an in-progress
-    session still belongs on the learner's "now" list). Past = everything
-    else that wasn't cancelled, most recent first.
-    """
-    from app.models.cohort import Enrollment  # local import avoids cycle
-
-    rows = db.execute(
-        select(ClassSession, Cohort.name)
-        .join(Cohort, (Cohort.id == ClassSession.cohort_id) & (Cohort.tenant_id == ClassSession.tenant_id))
-        .join(
-            Enrollment,
-            (Enrollment.cohort_id == ClassSession.cohort_id)
-            & (Enrollment.tenant_id == ClassSession.tenant_id),
-        )
-        .where(ClassSession.tenant_id == tenant_id)
-        .where(Enrollment.person_id == person_id)
-        .where(Enrollment.status == "active")
-        .order_by(ClassSession.starts_at)
-    ).all()
-
-    upcoming: list[tuple[ClassSession, str]] = []
-    past: list[tuple[ClassSession, str]] = []
-    for s, cohort_name in rows:
-        end = s.ends_at or s.starts_at
-        if s.status == "scheduled" and end >= now:
-            upcoming.append((s, cohort_name))
-        elif s.status != "cancelled":
-            past.append((s, cohort_name))
-    past.reverse()
-    return {"upcoming": upcoming, "past": past}
+) -> dict[str, list[tuple[learning.ClassSessionFact, str]]]:
+    timetable = learning.person_timetable(db, tenant_id=tenant_id, person_id=person_id, now=now)
+    return {
+        "upcoming": [(entry.session, entry.cohort_name) for entry in timetable.upcoming],
+        "past": [(entry.session, entry.cohort_name) for entry in timetable.past],
+    }
 
 
 def get_session_for_person(
     db: Session, *, tenant_id: UUID, person_id: UUID, session_id: UUID
-) -> tuple[ClassSession, str]:
-    """A single session, only if it belongs to one of the person's cohorts."""
-    from app.models.cohort import Enrollment  # local import avoids cycle
-
-    row = db.execute(
-        select(ClassSession, Cohort.name)
-        .join(Cohort, (Cohort.id == ClassSession.cohort_id) & (Cohort.tenant_id == ClassSession.tenant_id))
-        .join(
-            Enrollment,
-            (Enrollment.cohort_id == ClassSession.cohort_id)
-            & (Enrollment.tenant_id == ClassSession.tenant_id),
-        )
-        .where(ClassSession.tenant_id == tenant_id)
-        .where(ClassSession.id == session_id)
-        .where(Enrollment.person_id == person_id)
-        .where(Enrollment.status == "active")
-    ).first()
-    if row is None:
-        raise NotFoundError("Session not found.")
-    return row[0], row[1]
+) -> tuple[learning.ClassSessionFact, str]:
+    try:
+        entry = learning.get_session_for_person(db, tenant_id=tenant_id, person_id=person_id, session_id=session_id)
+    except learning.SchedulingNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
+    return entry.session, entry.cohort_name
 
 
-def join_is_open(session: ClassSession, *, now: datetime, lead_minutes: int = 60) -> bool:
-    """Whether the Join action should be offered: session has a link and is
-    imminent (within ``lead_minutes``) or currently in progress."""
-    if not session.join_url or session.status != "scheduled":
-        return False
-    end = session.ends_at or session.starts_at
-    seconds_to_start = (session.starts_at - now).total_seconds()
-    return seconds_to_start <= lead_minutes * 60 and end >= now
+def join_is_open(session: learning.ClassSessionFact, *, now: datetime, lead_minutes: int) -> bool:
+    """Use the caller's resolved join lead; the owner applies the join formula."""
+    return learning.join_is_open(session, now=now, lead_minutes=lead_minutes)

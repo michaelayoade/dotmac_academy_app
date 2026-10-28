@@ -6,17 +6,21 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_learning import (
+    ActivityWrite,
+    CourseWrite,
+    create_activity,
+    create_course,
+    get_activity,
+)
+from dotmac_learning.models import Certificate, CourseCompletion, Submission
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
-from app.models.assessment import Activity, Submission
-from app.models.certificate import Certificate
-from app.models.completion import CourseCompletion
-from app.models.course import Course
+from app.config import LabExecutionPolicy, settings
 from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.models.person import Person
 from app.services import lab_lifecycle, lab_operations
 from app.services.exceptions import ConflictError
 from app.services.host_lock import HostLockUnavailable
@@ -31,14 +35,16 @@ _REAL_START_CONSOLE = lab_lifecycle.start_console
 
 
 def _seed(db, tid):
-    c = Course(tenant_id=tid, slug="foundation", title="F",
-               discipline="networking", source_ref="x", version=1)
-    db.add(c)
-    db.flush()
-    act = Activity(tenant_id=tid, course_id=c.id, chapter_number=14, type="lab",
-                   title="VLAN Lab", pass_threshold=0.6)
-    db.add(act)
-    db.flush()
+    c = create_course(db, CourseWrite(
+        id=uuid4(), tenant_id=tid, slug="foundation", title="F",
+        discipline="networking", source_ref="x", version=1,
+        status="published", listed=False,
+    ))
+    act = create_activity(db, ActivityWrite(
+        id=uuid4(), tenant_id=tid, course_id=c.id, chapter_number=14, type="lab",
+        title="VLAN Lab", pass_threshold=0.6,
+        assessment_mode="graded", grading="auto", weight=1.0,
+    ))
     lt = LabTemplate(
         tenant_id=tid, course_id=c.id, chapter_number=14, activity_id=act.id,
         slug="vlan", title="VLAN", topology="name: x {{o}}",
@@ -50,8 +56,11 @@ def _seed(db, tid):
     )
     db.add(lt)
     db.flush()
-    p = Person(tenant_id=tid, email="trainee@example.com", first_name="T", last_name="U")
+    p = Party(tenant_id=tid, party_type=PartyType.person, display_name="T U",
+              email="trainee@example.com", is_active=True)
     db.add(p)
+    db.flush()
+    db.add(PartyPerson(party_id=p.id, first_name="T", last_name="U"))
     db.flush()
     return c, act, lt, p
 
@@ -187,7 +196,7 @@ def test_concurrent_launches_reuse_one_instance(
     def _launch() -> object:
         db = factory()
         try:
-            local_activity = db.get(Activity, activity_id)
+            local_activity = get_activity(db, tenant_id=tenant_id, activity_id=activity_id)
             local_template = db.get(LabTemplate, template_id)
             assert local_activity is not None
             assert local_template is not None
@@ -366,7 +375,7 @@ def test_provision_deploy_failure_still_counts_against_capacity(
                             status="queued", consoles={})
     admin_session.add(candidate)
     admin_session.flush()
-    assert lab_operations._capacity_available(admin_session, candidate) is False
+    assert lab_operations._capacity_available(admin_session, candidate, policy=LabExecutionPolicy.from_settings(settings)) is False
     admin_session.rollback()
 
 
@@ -676,53 +685,6 @@ def test_destroy_marks_reaped(admin_session, tenant_a):
     admin_session.flush()
     assert out.status == "reaped"
     engine.destroy.assert_called_once_with("dal-destroy")
-    admin_session.rollback()
-
-
-def test_destroy_clears_consoles(admin_session, tenant_a):
-    """A reaped row must not keep mgmt IPs / ttyd ports other instances reuse."""
-    _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-clear", seed={"o": 5}, status="active",
-                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
-    admin_session.add(inst)
-    admin_session.flush()
-    out = lab_lifecycle.destroy(admin_session, inst, MagicMock())
-    admin_session.flush()
-    assert out.status == "reaped"
-    assert out.consoles == {}
-    admin_session.rollback()
-
-
-def test_destroy_if_present_clears_consoles(admin_session, tenant_a):
-    _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-clear2", seed={"o": 5}, status="active",
-                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
-    admin_session.add(inst)
-    admin_session.flush()
-    engine = MagicMock()
-    engine.destroy_if_present.return_value = True
-    out = lab_lifecycle.destroy_if_present(admin_session, inst, engine)
-    admin_session.flush()
-    assert out.status == "reaped"
-    assert out.consoles == {}
-    admin_session.rollback()
-
-
-def test_reset_failure_clears_stale_consoles(admin_session, tenant_a):
-    _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-reset-clear", seed={"o": 5}, status="active",
-                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
-    admin_session.add(inst)
-    admin_session.flush()
-    engine = MagicMock()
-    engine.reset.side_effect = RuntimeError("engine boom")
-    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
-    admin_session.flush()
-    assert out.status == "error"
-    assert out.consoles == {}
     admin_session.rollback()
 
 

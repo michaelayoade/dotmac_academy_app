@@ -51,13 +51,17 @@ def _resolve(request: Request, db: Session, token: str) -> Applicant | None:
     return admissions_service.applicant_for_onboarding_token(db, tenant_id=tenant.id, raw=token)
 
 
-def _finish_task_and_maybe_enroll(request: Request, db: Session, applicant: Applicant, key: str) -> None:
-    onboarding.complete_task_by_key(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id, key=key)
-    enrolled_now, invite_raw = admissions_service.try_auto_enroll(db, applicant=applicant)
-    if enrolled_now:
-        base = str(request.base_url).rstrip("/")
-        setup_url = f"{base}/accept-invite?token={invite_raw}" if invite_raw else None
-        applicant_email.send_enrollment_welcome(db, applicant=applicant, setup_url=setup_url)
+def _finish_task_and_maybe_enroll(request: Request, db: Session, token: str, key: str):
+    from app.services.invitation_issuance import finish_onboarding_step
+
+    with finish_onboarding_step(db, tenant_id=require_tenant(request).id, raw=token, key=key) as result:
+        if result is None:
+            return _notice(request, "Link not valid", "This onboarding link is invalid or has expired.")
+        if result.enrolled_now:
+            base = str(request.base_url).rstrip("/")
+            setup_url = f"{base}/accept-invite?token={result.invite_raw}" if result.invite_raw else None
+            applicant_email.send_enrollment_welcome(db, applicant=result.applicant, setup_url=setup_url)
+    return _redirect(request, token)
 
 
 @router.get("/onboarding")
@@ -84,20 +88,12 @@ def onboarding_page(request: Request, token: str = "", resent: str = "", db: Ses
 
 @router.post("/onboarding/confirm")
 def confirm_details(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
-    applicant = _resolve(request, db, token)
-    if applicant is None:
-        return _notice(request, "Link not valid", "This onboarding link is invalid or has expired.")
-    _finish_task_and_maybe_enroll(request, db, applicant, "confirm_details")
-    return _redirect(request, token)
+    return _finish_task_and_maybe_enroll(request, db, token, "confirm_details")
 
 
 @router.post("/onboarding/orientation")
 def acknowledge_orientation(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
-    applicant = _resolve(request, db, token)
-    if applicant is None:
-        return _notice(request, "Link not valid", "This onboarding link is invalid or has expired.")
-    _finish_task_and_maybe_enroll(request, db, applicant, "orientation")
-    return _redirect(request, token)
+    return _finish_task_and_maybe_enroll(request, db, token, "orientation")
 
 
 @router.post("/onboarding/resend-assessment")

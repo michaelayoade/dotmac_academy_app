@@ -1,15 +1,20 @@
 """Service-level tests for app/services/announcements.py."""
+
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
+import dotmac_learning as learning
 import pytest
+from dotmac_kernel import audit_actions, source_applications
+from dotmac_kernel.audit import AuditEvent
+from dotmac_kernel.models import Party, PartyPerson
 from sqlalchemy import select, text
 
-from app.models.cohort import Cohort, Enrollment
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.notification import Notification
-from app.models.person import Person
-from app.models.rbac import AuditEvent
 from app.services import announcements as ann_svc
 
 
@@ -19,36 +24,68 @@ def _set_tenant(db, tenant_id):
 
 def _make_person(db, tenant, suffix=""):
     pid = uuid4()
-    p = Person(
+    person = Party(
+        id=pid,
         tenant_id=tenant.id,
+        party_type="person",
         email=f"{pid}{suffix}@ann.test",
-        first_name="Ann",
-        last_name="Test",
+        display_name="Ann Test",
+        person_profile=PartyPerson(first_name="Ann", last_name="Test"),
     )
-    p.id = pid
-    db.add(p)
+    db.add(person)
     db.flush()
-    return p
+    db.add(AcademyAccountProfile(tenant_id=tenant.id, party_id=person.id, status="active", prefs={}, created_at=datetime.now(UTC), updated_at=datetime.now(UTC)))
+    db.flush()
+    return person
 
 
 def _make_cohort(db, tenant, name="Cohort"):
-    c = Cohort(tenant_id=tenant.id, name=name, discipline="net", status="active")
-    db.add(c)
-    db.flush()
-    return c
-
-
-def _enroll(db, tenant, person, cohort, role="student", status="active"):
-    e = Enrollment(
-        tenant_id=tenant.id,
-        cohort_id=cohort.id,
-        person_id=person.id,
-        role_in_cohort=role,
-        status=status,
+    learning.create_cohort(
+        db,
+        learning.CreateCohortCommand(tenant_id=tenant.id, name=name, discipline="net"),
     )
-    db.add(e)
     db.flush()
-    return e
+    cohort_id = db.execute(
+        text(
+            "SELECT id FROM mod_learning.cohorts "
+            "WHERE tenant_id = :tenant_id AND name = :name "
+            "ORDER BY created_at DESC LIMIT 1"
+        ),
+        {"tenant_id": tenant.id, "name": name},
+    ).scalar_one()
+    return SimpleNamespace(id=cohort_id)
+
+
+def _enroll(db, tenant, person, cohort):
+    result = learning.bulk_enroll(
+        db,
+        learning.BulkEnrollCommand(
+            tenant_id=tenant.id, cohort_id=cohort.id, emails=(person.email,), pacing_default_open=True
+        ),
+        authority=learning.RosterAuthority(tenant_id=tenant.id, actor_is_admin=True),
+        initial_state=learning.BulkEnrollmentInitialState(role_in_cohort="student", status="active"),
+        accounts=learning.AccountPresenceSelection(
+            tenant_id=tenant.id,
+            person_ids=select(Party.id).join(PartyPerson, PartyPerson.party_id == Party.id).join(
+                AcademyAccountProfile,
+                (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+            ).where(Party.tenant_id == tenant.id, Party.party_type == "person"),
+        ),
+    )
+    assert result.enrolled == (person.email,)
+
+
+@pytest.fixture(autouse=True)
+def installed_announcement_attribution(monkeypatch):
+    """Install the real Learning vocabulary and host; restore process state afterward."""
+    # Monkeypatch records the prior process globals for teardown; installation
+    # itself goes through the public Kernel APIs exercised by the command.
+    monkeypatch.setattr(audit_actions, "_active_registry", audit_actions._active_registry)
+    monkeypatch.setattr(source_applications, "_active_registry", source_applications._active_registry)
+    monkeypatch.setattr(source_applications, "_host_application", source_applications._host_application)
+    audit_actions.install_audit_actions(audit_actions.AuditActionRegistry.from_manifests([learning.module]))
+    source_applications.install_source_applications(source_applications.SourceApplicationRegistry(["academy"]))
+    source_applications.install_host_application("academy")
 
 
 @pytest.fixture
@@ -163,7 +200,10 @@ def test_create_writes_audit_event(db_session, tenant_a):
         .where(AuditEvent.entity_id == str(ann.id))
     ).all()
     assert len(events) == 1
-    assert events[0].actor_person_id == author.id
+    assert events[0].actor_party_id == author.id
+    assert events[0].actor_type == "user"
+    assert events[0].actor_id == str(author.id)
+    assert events[0].source_application == "academy"
 
 
 def test_for_person_tenant_wide_visible_to_all_enrolled(db_session, tenant_a):
@@ -247,14 +287,20 @@ def test_for_person_newest_first(db_session, tenant_a):
     student = _make_person(db_session, tenant_a)
     _enroll(db_session, tenant_a, student, cohort)
 
-    ann1 = ann_svc.create(
-        db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="First", body_md=""
+    ann1 = ann_svc.create(db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="First", body_md="")
+    db_session.execute(
+        text(
+            "UPDATE mod_learning.announcements SET created_at = :created_at WHERE tenant_id = :tenant_id AND id = :id"
+        ),
+        {"created_at": datetime(2024, 1, 1, tzinfo=UTC), "tenant_id": tenant_a.id, "id": ann1.id},
     )
-    ann1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-    ann2 = ann_svc.create(
-        db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="Second", body_md=""
+    ann2 = ann_svc.create(db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="Second", body_md="")
+    db_session.execute(
+        text(
+            "UPDATE mod_learning.announcements SET created_at = :created_at WHERE tenant_id = :tenant_id AND id = :id"
+        ),
+        {"created_at": datetime(2024, 1, 2, tzinfo=UTC), "tenant_id": tenant_a.id, "id": ann2.id},
     )
-    ann2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
     db_session.flush()
 
     items = ann_svc.for_person(db_session, tenant_id=tenant_a.id, person_id=student.id)
@@ -266,12 +312,8 @@ def test_list_for_tenant(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     author = _make_person(db_session, tenant_a)
 
-    ann_svc.create(
-        db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="T1", body_md=""
-    )
-    ann_svc.create(
-        db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="T2", body_md=""
-    )
+    ann_svc.create(db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="T1", body_md="")
+    ann_svc.create(db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="T2", body_md="")
     db_session.flush()
 
     items = ann_svc.list_for_tenant(db_session, tenant_id=tenant_a.id)
@@ -284,9 +326,7 @@ def test_delete_removes_announcement(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
     author = _make_person(db_session, tenant_a)
 
-    ann = ann_svc.create(
-        db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="To delete", body_md=""
-    )
+    ann = ann_svc.create(db_session, tenant_id=tenant_a.id, author_person_id=author.id, title="To delete", body_md="")
     db_session.flush()
 
     ann_svc.delete(db_session, tenant_id=tenant_a.id, announcement_id=ann.id)

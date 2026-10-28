@@ -1,95 +1,62 @@
-"""Tenant bootstrap service.
+"""Academy CLI compatibility facade over the sole Kernel bootstrap owner."""
 
-Creates a new tenant with the three standard roles (student, instructor, admin),
-an initial admin Person + UserCredential, and grants that person the admin role.
-This is a platform-level operation — the caller must pass a session connected as a
-role with INSERT privileges on the ``tenants`` table (e.g. the migration/superuser
-role). The application ``app_user`` role is RLS-restricted and cannot create tenants.
-"""
-
-from __future__ import annotations
-
+from dataclasses import dataclass
 from uuid import UUID
 
+from dotmac_kernel.identity_provisioning import BootstrapTenantV1
+from dotmac_kernel.identity_provisioning import bootstrap_tenant as _bootstrap_tenant
 from sqlalchemy.orm import Session
 
-from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole, Role
-from app.models.tenant import Tenant
 from app.services.identity import normalize_email
-from app.services.security import hash_password
-
-ROLE_SLUGS: dict[str, str] = {
-    "student": "Student",
-    "instructor": "Instructor",
-    "admin": "Administrator",
-}
 
 
-def ensure_roles(db: Session, tenant_id: UUID) -> dict[str, Role]:
-    """Idempotent: return slug→Role for the three standard roles, creating any that are missing."""
-    existing = {r.slug: r for r in db.query(Role).filter(Role.tenant_id == tenant_id)}
-    for slug, name in ROLE_SLUGS.items():
-        if slug not in existing:
-            role = Role(tenant_id=tenant_id, slug=slug, name=name)
-            db.add(role)
-            db.flush()
-            existing[slug] = role
-    return existing
+@dataclass(frozen=True, slots=True)
+class AcademyBootstrapTenantResult:
+    id: UUID
+    slug: str
+    owner_party_id: UUID
 
 
-def bootstrap_tenant(
-    db: Session,
-    *,
-    slug: str,
-    name: str,
-    admin_email: str,
-    admin_password: str,
-) -> Tenant:
-    """Create a tenant, its three standard roles, and an initial admin user.
+def bootstrap_tenant(db: Session, *, slug: str, name: str, admin_email: str, admin_password: str):
+    result = _bootstrap_tenant(
+        db, BootstrapTenantV1(slug=slug, name=name, owner_email=normalize_email(admin_email)), password=admin_password,
+    )
+    return AcademyBootstrapTenantResult(result.tenant_id, result.slug, result.owner_party_id)
 
-    Args:
-        db: A SQLAlchemy session connected as a role that can INSERT into ``tenants``
-            (superuser or migration role). ``app_user`` will not work under RLS.
-        slug: URL-safe identifier for the tenant.
-        name: Human-readable tenant name.
-        admin_email: Email address for the initial admin user.
-        admin_password: Plaintext password — hashed before storage.
 
-    Returns:
-        The newly created :class:`Tenant` instance (flushed but not committed).
+def ensure_roles(db: Session, tenant_id: UUID):
+    """Compatibility storage helper; authorization remains with its existing caller.
+
+    Product-configured web role names retain the historical additive behavior;
+    existing roles are returned unchanged, including roles outside that catalog.
     """
-    admin_email = normalize_email(admin_email)
-    tenant = Tenant(slug=slug, name=name)
-    db.add(tenant)
-    db.flush()
+    from uuid import uuid4
 
-    roles = ensure_roles(db, tenant.id)
+    from dotmac_kernel.identity_storage import RoleFact, provision_missing_roles
+    from dotmac_kernel.models import Role
+    from sqlalchemy import func, select
 
-    person = Person(
-        tenant_id=tenant.id,
-        email=admin_email,
-        first_name="Admin",
-        last_name=name,
-    )
-    db.add(person)
-    db.flush()
+    from app.services.settings_store import effective
 
-    db.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=person.id,
-            email=admin_email,
-            password_hash=hash_password(admin_password),
-        )
+    configured = effective(db, require_store=True).web_account_creation_role_provisioning
+    existing = tuple(db.scalars(
+        select(Role).where(Role.tenant_id == tenant_id).order_by(Role.id)
+        .with_for_update().execution_options(populate_existing=True)
+    ).all())
+    by_slug = {row.slug: row for row in existing}
+    # Legacy TimestampMixin uses server now(): PostgreSQL transaction time.
+    now = db.scalar(select(func.transaction_timestamp()))
+    missing = {slug:uuid4() for slug in configured if slug not in by_slug}
+    expected_ids = {row.id for row in existing} | set(missing.values())
+    provision_missing_roles(
+        db, tenant_id=tenant_id, catalog=tuple(RoleFact(row.id,row.tenant_id,row.slug,row.name) for row in existing),
+        configured_names=configured, missing_role_ids=missing,
+        created_at=now, updated_at=now,
     )
-    db.add(
-        PersonRole(
-            tenant_id=tenant.id,
-            person_id=person.id,
-            role_id=roles["admin"].id,
-        )
-    )
-    db.flush()
-    return tenant
+    rows = tuple(db.scalars(
+        select(Role).where(Role.tenant_id == tenant_id,Role.id.in_(expected_ids)).order_by(Role.id)
+        .with_for_update().execution_options(populate_existing=True)
+    ).all())
+    if {row.id for row in rows} != expected_ids:
+        raise ValueError("configured role storage outcome differs")
+    return {row.slug: row for row in rows}

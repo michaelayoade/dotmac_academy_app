@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.engine import Connection
 
+from app.maintenance import retained_hosted_genesis as hosted
 from app.maintenance import retained_schema as retained
 
 
@@ -417,30 +418,45 @@ def _check_fixed_environment(packet: dict[str, tuple], bindings: HostedEnvironme
     )
 
 
-def observe_retained_environment(connection: Connection, bindings: HostedEnvironmentBindings | None) -> None:
-    """Read fixed environment and retained checks, then ALWAYS Unsupported.
+def observe_retained_environment(
+    connection: Connection, bindings: HostedEnvironmentBindings | None, *, _hosted_context: object = None
+) -> None:
+    """Qualify fixed SQL conformity AND the actual owner's still-live boundary.
 
-    Does not authenticate the service image or exclusive CI boundary. Does not
-    issue proof, consume proof, authorize a004, acquire locks, establish a fence,
-    manage the root, or approve production. Future adoption must wire trusted
-    Settings/CI and qualify the genuine hosted projection separately.
+    Missing context remains Unsupported after unchanged fixed failure checks.
+    No result opens runtime access or supplies product adoption phase authority.
+    Every error poisons an issued owner context, including caught/repaired drift.
     """
-    if bindings is None:
-        raise RetainedEnvironmentUnsupported("Required hosted environment bindings absent")
-    _check_bindings(bindings)
-    root = retained._preflight(connection)
-    if root is None:
-        raise RetainedEnvironmentRefused("Disposable hosted Genesis environment refused; root rollback required")
-    packet = _observe_hosted_environment(connection)
-    _check_fixed_environment(packet, bindings)
     try:
-        catalog = retained._observe_historical_catalog(connection)
-        retained._check_structure(catalog)
-        retained._check_security(catalog)
-        retained._check_tenant_helper(catalog)
-    except retained.RetainedSchemaRefused:
-        raise RetainedEnvironmentRefused(
-            "Frozen retained source/security contradiction; root rollback required"
-        ) from None
-    _require(root.is_active and connection.get_transaction() is root)
-    raise RetainedEnvironmentUnsupported("Hosted bindings, service image and exclusive Genesis boundary unqualified")
+        if bindings is None:
+            raise RetainedEnvironmentUnsupported("Required hosted environment bindings absent")
+        _check_bindings(bindings)
+        root = retained._preflight(connection)
+        if root is None:
+            raise RetainedEnvironmentRefused("Disposable hosted Genesis environment refused; root rollback required")
+        if _hosted_context is not None:
+            hosted._verify_context(_hosted_context, connection, bindings)
+        packet = _observe_hosted_environment(connection)
+        _check_fixed_environment(packet, bindings)
+        try:
+            catalog = retained._observe_historical_catalog(connection)
+            retained._check_structure(catalog)
+            retained._check_security(catalog)
+            retained._check_tenant_helper(catalog)
+            # Includes the fixed all-role observer; schema conformity alone is
+            # not service custody, but cannot be omitted on a positive path.
+            retained._verify_historical_retained_schema(connection)
+        except retained.RetainedSchemaRefused:
+            raise RetainedEnvironmentRefused(
+                "Frozen retained source/security contradiction; root rollback required"
+            ) from None
+        _require(root.is_active and connection.get_transaction() is root)
+        if _hosted_context is None:
+            raise RetainedEnvironmentUnsupported("Actual disposable hosted resource context absent")
+        hosted._verify_context(_hosted_context, connection, bindings)
+    except hosted.HostedGenesisRefused:
+        hosted._poison_context(_hosted_context, connection)
+        raise RetainedEnvironmentRefused("Hosted resource continuity refused; root rollback required") from None
+    except BaseException:
+        hosted._poison_context(_hosted_context, connection)
+        raise

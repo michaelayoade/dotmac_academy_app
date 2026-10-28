@@ -18,13 +18,14 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
-from sqlalchemy import func, select
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_learning import learner_window_activity
+from sqlalchemy import select
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
-from app.models.assessment import Score, Submission
 from app.models.cohort import Enrollment
-from app.models.learning_event import KIND_CHAPTER_VIEWED, LearningEvent
-from app.models.person import Person
+from app.models.identity_extensions import AcademyAccountProfile
 from app.services import learner_dashboard
 from app.services.email import recipient_allows
 from app.services.email_outbox import enqueue_email
@@ -39,45 +40,14 @@ OPTOUT_KIND = "email_learner_digest"
 MAX_COURSE_LINES = 5
 
 
-def _display_name(person: Person) -> str:
+def _display_name(person: Row) -> str:
     return (person.first_name or "").strip() or "there"
 
 
 def week_activity(db: Session, *, tenant_id: UUID, person_id: UUID, since: datetime) -> dict:
     """What this learner actually did in the window."""
-    chapters = int(
-        db.scalar(
-            select(func.count(func.distinct(LearningEvent.subject_id)))
-            .where(LearningEvent.tenant_id == tenant_id)
-            .where(LearningEvent.person_id == person_id)
-            .where(LearningEvent.kind == KIND_CHAPTER_VIEWED)
-            .where(LearningEvent.occurred_at >= since)
-        )
-        or 0
-    )
-    submissions = int(
-        db.scalar(
-            select(func.count())
-            .select_from(Submission)
-            .where(Submission.tenant_id == tenant_id)
-            .where(Submission.person_id == person_id)
-            .where(Submission.created_at >= since)
-        )
-        or 0
-    )
-    passed = int(
-        db.scalar(
-            select(func.count())
-            .select_from(Score)
-            .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
-            .where(Score.tenant_id == tenant_id)
-            .where(Submission.person_id == person_id)
-            .where(Score.created_at >= since)
-            .where(Score.passed.is_(True))
-        )
-        or 0
-    )
-    return {"chapters": chapters, "submissions": submissions, "passed": passed}
+    activity = learner_window_activity(db, tenant_id=tenant_id, person_id=person_id, since=since)
+    return {"chapters": activity.chapters, "submissions": activity.submissions, "passed": activity.passed}
 
 
 def _headline(activity: dict, name: str) -> str:
@@ -95,7 +65,7 @@ def _headline(activity: dict, name: str) -> str:
     return "You haven't studied this week — here's where you left off."
 
 
-def build_digest(db: Session, *, tenant_id: UUID, person: Person, since: datetime, now: datetime) -> dict | None:
+def build_digest(db: Session, *, tenant_id: UUID, person: Row, since: datetime, now: datetime) -> dict | None:
     """The digest payload for one learner, or None when there is nothing to say.
 
     Returns None only when the learner has no live course at all. A quiet week
@@ -176,7 +146,11 @@ def render(digest: dict, *, base_url: str, branding: str) -> tuple[str, str]:
 
 
 def send_weekly_digests(
-    db: Session, *, tenant_id: UUID, base_url: str, branding: str = "Dotmac Academy",
+    db: Session,
+    *,
+    tenant_id: UUID,
+    base_url: str,
+    branding: str = "Dotmac Academy",
     now: datetime | None = None,
 ) -> dict:
     """Queue one digest per active student learner. Returns per-outcome counts.
@@ -189,15 +163,22 @@ def send_weekly_digests(
     period = now.strftime("%G-W%V")
     counts = {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
 
-    learners = db.scalars(
-        select(Person)
-        .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.status == "active")
+    learners = db.execute(
+        select(Party.id, Party.email, PartyPerson.first_name, AcademyAccountProfile.prefs)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .join(Enrollment, (Enrollment.person_id == Party.id) & (Enrollment.tenant_id == Party.tenant_id))
+        .where(Party.tenant_id == tenant_id)
+        .where(
+            Party.party_type == PartyType.person, Party.is_active.is_(True), AcademyAccountProfile.status == "active"
+        )
         .where(Enrollment.status == "active")
         .where(Enrollment.role_in_cohort == "student")
         .distinct()
-    ).unique()
+    )
 
     for person in learners:
         if not recipient_allows(person, OPTOUT_KIND):

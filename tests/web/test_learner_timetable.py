@@ -19,8 +19,9 @@ def _learner(admin_session, tenant, email="tt-stu@a.edu"):
     p = Person(tenant_id=tenant.id, email=email, first_name="Tt", last_name="Stu")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                                     password_hash=hash_password("password1")))
+    admin_session.add(
+        UserCredential(tenant_id=tenant.id, person_id=p.id, email=email, password_hash=hash_password("password1"))
+    )
     admin_session.commit()
     return p
 
@@ -29,18 +30,22 @@ def _login(app_client, email="tt-stu@a.edu"):
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
 
 
-def _cohort_with_session(admin_session, tenant, person=None, *, name="TZ Cohort",
-                         starts_in_hours=2.0, join_url=None):
-    c = Cohort(tenant_id=tenant.id, name=name, discipline="fiber",
-               status="active", delivery_mode="blended")
+def _cohort_with_session(admin_session, tenant, person=None, *, name="TZ Cohort", starts_in_hours=2.0, join_url=None):
+    c = Cohort(tenant_id=tenant.id, name=name, discipline="fiber", status="active", delivery_mode="blended")
     admin_session.add(c)
     admin_session.flush()
     if person is not None:
-        admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=c.id, person_id=person.id,
-                                     role_in_cohort="student", status="active"))
+        admin_session.add(
+            Enrollment(
+                tenant_id=tenant.id, cohort_id=c.id, person_id=person.id, role_in_cohort="student", status="active"
+            )
+        )
     s = ClassSession(
-        tenant_id=tenant.id, cohort_id=c.id, session_type="live_class",
-        title=f"Live for {name}", status="scheduled",
+        tenant_id=tenant.id,
+        cohort_id=c.id,
+        session_type="live_class",
+        title=f"Live for {name}",
+        status="scheduled",
         starts_at=datetime.now(UTC) + timedelta(hours=starts_in_hours),
         ends_at=datetime.now(UTC) + timedelta(hours=starts_in_hours + 1),
         join_url=join_url,
@@ -72,8 +77,7 @@ def test_timetable_lists_only_my_cohort_sessions(app_client, admin_session, tena
 
 def test_session_detail_own_and_foreign(app_client, admin_session, tenant_a):
     p = _learner(admin_session, tenant_a, email="tt-det@a.edu")
-    _c, mine = _cohort_with_session(admin_session, tenant_a, p, name="DetMine",
-                                    join_url="https://meet.example/x")
+    _c, mine = _cohort_with_session(admin_session, tenant_a, p, name="DetMine", join_url="https://meet.example/x")
     _c2, other = _cohort_with_session(admin_session, tenant_a, None, name="DetOther")
     _login(app_client, email="tt-det@a.edu")
     r = app_client.get(f"/timetable/sessions/{mine.id}", headers=H)
@@ -95,19 +99,20 @@ def test_agenda_session_links_to_detail_not_bare_timetable(admin_session, tenant
 def test_join_window_rules(admin_session, tenant_a):
     p = _learner(admin_session, tenant_a, email="tt-join@a.edu")
     now = datetime.now(UTC)
-    _c, soon = _cohort_with_session(admin_session, tenant_a, p, name="Soon",
-                                    starts_in_hours=0.5, join_url="https://meet.example/soon")
-    _c2, far = _cohort_with_session(admin_session, tenant_a, p, name="Far",
-                                    starts_in_hours=48, join_url="https://meet.example/far")
-    _c3, nolink = _cohort_with_session(admin_session, tenant_a, p, name="NoLink",
-                                       starts_in_hours=0.5)
-    assert join_is_open(soon, now=now) is True
-    assert join_is_open(far, now=now) is False
-    assert join_is_open(nolink, now=now) is False
+    _c, soon = _cohort_with_session(
+        admin_session, tenant_a, p, name="Soon", starts_in_hours=0.5, join_url="https://meet.example/soon"
+    )
+    _c2, far = _cohort_with_session(
+        admin_session, tenant_a, p, name="Far", starts_in_hours=48, join_url="https://meet.example/far"
+    )
+    _c3, nolink = _cohort_with_session(admin_session, tenant_a, p, name="NoLink", starts_in_hours=0.5)
+    assert join_is_open(soon, now=now, lead_minutes=60) is True
+    assert join_is_open(far, now=now, lead_minutes=60) is False
+    assert join_is_open(nolink, now=now, lead_minutes=60) is False
     # In-progress session with a link is still joinable.
     soon.starts_at = now - timedelta(minutes=10)
     soon.ends_at = now + timedelta(minutes=50)
-    assert join_is_open(soon, now=now) is True
+    assert join_is_open(soon, now=now, lead_minutes=60) is True
 
 
 def test_instructor_input_stored_as_utc_from_lagos(app_client, admin_session, tenant_a):
@@ -119,8 +124,7 @@ def test_instructor_input_stored_as_utc_from_lagos(app_client, admin_session, te
     roles = ensure_roles(admin_session, tenant_a.id)
     p = _learner(admin_session, tenant_a, email="tt-inst@a.edu")
     admin_session.add(PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["instructor"].id))
-    c = Cohort(tenant_id=tenant_a.id, name="TZ Input", discipline="fiber",
-               status="active", delivery_mode="self_paced")
+    c = Cohort(tenant_id=tenant_a.id, name="TZ Input", discipline="fiber", status="active", delivery_mode="self_paced")
     admin_session.add(c)
     admin_session.commit()
     _login(app_client, email="tt-inst@a.edu")

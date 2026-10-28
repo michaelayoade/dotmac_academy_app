@@ -20,6 +20,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+# Expose the genuine shared fixture chain in every requesting test module.
+pytest_plugins = ("tests.canonical_identity_fixtures",)
+
 
 @pytest.fixture(scope="session")
 def admin_engine():

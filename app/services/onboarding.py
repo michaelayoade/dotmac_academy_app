@@ -13,28 +13,42 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.admissions import Applicant
 from app.models.onboarding import TASK_STATUSES, OnboardingTask
 from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.onboarding_policy import onboarding_policy
 
-# Default onboarding checklist (key, label, order). Non-billing per scope.
-DEFAULT_TASKS: tuple[tuple[str, str], ...] = (
-    ("entrance_assessment", "Complete the entrance assessment"),
-    ("confirm_details", "Confirm your enrolment details"),
-    ("orientation", "Review the programme orientation"),
-)
+
+def _lock_applicant(db, *, tenant_id, applicant_id):
+    row = db.scalars(
+        select(Applicant)
+        .where(Applicant.tenant_id == tenant_id, Applicant.id == applicant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if row is None:
+        raise NotFoundError("Applicant not found.")
+    return row
+
+
+def _lock_tasks(db, *, tenant_id, applicant_id):
+    return list(
+        db.scalars(
+            select(OnboardingTask)
+            .where(OnboardingTask.tenant_id == tenant_id, OnboardingTask.applicant_id == applicant_id)
+            .order_by(OnboardingTask.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+    )
 
 
 def seed_tasks(db: Session, *, tenant_id: UUID, applicant_id: UUID) -> list[OnboardingTask]:
     """Create the default onboarding tasks for an applicant. Idempotent."""
-    existing = {
-        t.key: t
-        for t in db.scalars(
-            select(OnboardingTask)
-            .where(OnboardingTask.tenant_id == tenant_id)
-            .where(OnboardingTask.applicant_id == applicant_id)
-        ).all()
-    }
-    for order, (key, label) in enumerate(DEFAULT_TASKS):
+    _lock_applicant(db, tenant_id=tenant_id, applicant_id=applicant_id)
+    catalog = onboarding_policy(db).task_catalog
+    existing = {t.key: t for t in _lock_tasks(db, tenant_id=tenant_id, applicant_id=applicant_id)}
+    for order, (key, label) in enumerate(catalog):
         if key in existing:
             continue
         db.add(
@@ -72,7 +86,14 @@ def get_task(db: Session, *, task_id: UUID) -> OnboardingTask:
 def set_task_status(db: Session, *, task_id: UUID, status: str, now: datetime | None = None) -> OnboardingTask:
     if status not in TASK_STATUSES:
         raise BadRequestError(f"Unknown task status: {status}")
-    task = get_task(db, task_id=task_id)
+    identified = get_task(db, task_id=task_id)
+    tenant_id, applicant_id = identified.tenant_id, identified.applicant_id
+    _lock_applicant(db, tenant_id=tenant_id, applicant_id=applicant_id)
+    task = next(
+        (row for row in _lock_tasks(db, tenant_id=tenant_id, applicant_id=applicant_id) if row.id == task_id), None
+    )
+    if task is None:
+        raise NotFoundError("Onboarding task not found.")
     task.status = status
     task.completed_at = (now or datetime.now(UTC)) if status == "done" else None
     db.flush()
@@ -82,12 +103,10 @@ def set_task_status(db: Session, *, task_id: UUID, status: str, now: datetime | 
 def complete_task_by_key(db: Session, *, tenant_id: UUID, applicant_id: UUID, key: str) -> OnboardingTask | None:
     """Mark a task done by key (used when a step self-completes, e.g. a passed
     entrance assessment). Returns the task, or None if the applicant has no such task."""
-    task = db.scalars(
-        select(OnboardingTask)
-        .where(OnboardingTask.tenant_id == tenant_id)
-        .where(OnboardingTask.applicant_id == applicant_id)
-        .where(OnboardingTask.key == key)
-    ).first()
+    _lock_applicant(db, tenant_id=tenant_id, applicant_id=applicant_id)
+    task = next(
+        (row for row in _lock_tasks(db, tenant_id=tenant_id, applicant_id=applicant_id) if row.key == key), None
+    )
     if task is None:
         return None
     return set_task_status(db, task_id=task.id, status="done")

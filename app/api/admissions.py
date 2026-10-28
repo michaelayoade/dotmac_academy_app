@@ -15,11 +15,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_role, require_tenant
 from app.models.admissions import Applicant
 from app.models.onboarding import OnboardingTask
-from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import admissions as admissions_service
-from app.services import applicant_email
 from app.services import onboarding as onboarding_service
+from app.services.identity import AcademyCurrentAccount
 
 router = APIRouter(
     prefix="/admissions",
@@ -106,7 +105,7 @@ def list_applicants(
     cohort_id: UUID | None = Query(default=None),
     rank: bool = Query(default=False, description="Order by entrance-assessment score, best first"),
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> list[Applicant]:
     return admissions_service.list_applicants(db, status=status, cohort_id=cohort_id, rank_by_score=rank)
 
@@ -115,7 +114,7 @@ def list_applicants(
 def get_applicant(
     applicant_id: UUID,
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> object:
     return admissions_service.get_applicant(db, applicant_id=applicant_id)
 
@@ -126,7 +125,7 @@ def transition_applicant(
     payload: ApplicantTransition,
     request: Request,
     db: Session = Depends(get_db),
-    actor: Person = Depends(require_role("admin")),
+    actor: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> object:
     """Advance an applicant through the pipeline (screen / accept / reject / etc.).
 
@@ -134,34 +133,29 @@ def transition_applicant(
     and emails the onboarding invitation — from there the applicant can finish
     enrolment without an admin.
     """
-    applicant = admissions_service.transition_applicant(
+    return admissions_service.transition_api_applicant(
         db,
+        request=request,
         applicant_id=applicant_id,
         to_status=payload.to_status,
         notes=payload.notes,
-        actor_person_id=actor.id,
-        source="admin_api",
     )
-    if payload.to_status == "onboarding":
-        raw = admissions_service.mint_onboarding_token(db, applicant=applicant)
-        base = str(request.base_url).rstrip("/")
-        applicant_email.send_onboarding_invite(db, applicant=applicant, url=f"{base}/onboarding?token={raw}")
-    return applicant
 
 
 @router.post("/{applicant_id}/enroll", response_model=ApplicantRead)
 def enroll_applicant(
     applicant_id: UUID,
     payload: ApplicantEnroll,
+    request: Request,
     db: Session = Depends(get_db),
-    actor: Person = Depends(require_role("admin")),
+    actor: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> object:
     """Enrol an onboarding applicant: create/reuse a Person + Enrollment."""
     return admissions_service.enroll_applicant(
         db,
         applicant_id=applicant_id,
         cohort_id=payload.cohort_id,
-        actor_person_id=actor.id,
+        request=request,
     )
 
 
@@ -170,7 +164,7 @@ def list_onboarding_tasks(
     applicant_id: UUID,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
-    _: Person = Depends(require_role("admin")),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> list[OnboardingTask]:
     """The applicant's onboarding checklist, ordered."""
     return onboarding_service.list_tasks(db, tenant_id=tenant.id, applicant_id=applicant_id)
@@ -181,7 +175,7 @@ def update_onboarding_task(
     task_id: UUID,
     payload: OnboardingTaskUpdate,
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> object:
     """Mark an onboarding task done (or back to pending)."""
     return onboarding_service.set_task_status(db, task_id=task_id, status=payload.status)

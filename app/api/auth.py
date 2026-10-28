@@ -14,9 +14,9 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant, require_user_auth
-from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import web_auth
+from app.services.identity import AcademyCurrentAccount
 
 router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(require_tenant)])
 
@@ -45,20 +45,19 @@ def login(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
 ) -> TokenResponse | JSONResponse:
-    person = web_auth.authenticate(db, tenant.id, payload.email, payload.password)
-    if person is None:
+    result = web_auth.sign_in(db, tenant_id=tenant.id, email=payload.email, password=payload.password)
+    if result is None:
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
 
-    token = web_auth.start_session(db, tenant.id, person.id)
-    return TokenResponse(access_token=token)
+    return TokenResponse(access_token=result.session_token)
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-def me(person: Person = Depends(require_user_auth)) -> CurrentUserResponse:
+def me(person: AcademyCurrentAccount = Depends(require_user_auth)) -> CurrentUserResponse:
     return _current_user_response(person)
 
 
-def _current_user_response(person: Person) -> CurrentUserResponse:
+def _current_user_response(person: AcademyCurrentAccount) -> CurrentUserResponse:
     return CurrentUserResponse(
         id=person.id,
         email=person.email,

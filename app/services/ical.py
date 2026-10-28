@@ -11,15 +11,16 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.account_token import AccountToken
+from app.services.canonical_identity_store import lock_parties, lock_person
 from app.services.security import hash_token
+from app.services.settings_store import effective
 from app.services.todo import timeline_for_person
 
 ICAL_TOKEN_KIND = "ical_feed"  # noqa: S105 — token *kind* label, not a secret
-ICAL_TOKEN_TTL_DAYS = 365
 
 
 def mint_feed_token(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime | None = None) -> str:
@@ -28,14 +29,19 @@ def mint_feed_token(db: Session, *, tenant_id: UUID, person_id: UUID, now: datet
     Rotation = expire every previous ical_feed token so exactly one works.
     """
     now = now or datetime.now(UTC)
-    old = db.scalars(
-        select(AccountToken)
-        .where(AccountToken.tenant_id == tenant_id)
-        .where(AccountToken.person_id == person_id)
-        .where(AccountToken.kind == ICAL_TOKEN_KIND)
-    ).all()
-    for t in old:
-        t.expires_at = now
+    # Match canonical lifecycle lock order: principal before person subtype.
+    # This also serializes rotations when no previous feed tokens exist.
+    lock_parties(db, tenant_id=tenant_id, party_ids=(person_id,))
+    if lock_person(db, tenant_id=tenant_id, party_id=person_id) is None:
+        raise ValueError("calendar feed requires a tenant-local person")
+    policy = effective(db, require_store=True)
+    db.execute(
+        update(AccountToken).where(
+            AccountToken.tenant_id == tenant_id,
+            AccountToken.person_id == person_id,
+            AccountToken.kind == ICAL_TOKEN_KIND,
+        ).values(expires_at=now)
+    )
     raw = uuid4().hex + uuid4().hex
     db.add(
         AccountToken(
@@ -43,7 +49,7 @@ def mint_feed_token(db: Session, *, tenant_id: UUID, person_id: UUID, now: datet
             person_id=person_id,
             kind=ICAL_TOKEN_KIND,
             token_hash=hash_token(raw),
-            expires_at=now + timedelta(days=ICAL_TOKEN_TTL_DAYS),
+            expires_at=now + timedelta(days=policy["ical_feed_token_ttl_days"]),
         )
     )
     db.flush()
@@ -54,11 +60,12 @@ def has_feed_token(db: Session, *, tenant_id: UUID, person_id: UUID, now: dateti
     now = now or datetime.now(UTC)
     return (
         db.scalars(
-            select(AccountToken)
+            select(AccountToken.id)
             .where(AccountToken.tenant_id == tenant_id)
             .where(AccountToken.person_id == person_id)
             .where(AccountToken.kind == ICAL_TOKEN_KIND)
             .where(AccountToken.expires_at > now)
+            .where(AccountToken.used_at.is_(None))
         ).first()
         is not None
     )
@@ -69,14 +76,15 @@ def resolve_feed_token(db: Session, *, tenant_id: UUID, raw: str, now: datetime 
     if not raw:
         return None
     now = now or datetime.now(UTC)
-    token = db.scalars(
-        select(AccountToken)
+    person_id = db.scalars(
+        select(AccountToken.person_id)
         .where(AccountToken.tenant_id == tenant_id)
         .where(AccountToken.kind == ICAL_TOKEN_KIND)
         .where(AccountToken.token_hash == hash_token(raw))
         .where(AccountToken.expires_at > now)
+        .where(AccountToken.used_at.is_(None))
     ).first()
-    return token.person_id if token else None
+    return person_id
 
 
 # --- RFC 5545 rendering -----------------------------------------------------
@@ -88,7 +96,8 @@ def _esc(value: str) -> str:
         .replace("\\", "\\\\")
         .replace(";", "\\;")
         .replace(",", "\\,")
-        .replace("\r\n", "\\n")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
         .replace("\n", "\\n")
     )
 
@@ -103,15 +112,19 @@ def _uri(value: str) -> str:
 def _fold(line: str) -> str:
     """RFC 5545 content-line folding: no line may exceed 75 octets; a fold is
     CRLF + a single leading space. Fold on octet boundaries (UTF-8 safe)."""
-    raw = line.encode("utf-8")
-    if len(raw) <= 75:
-        return line
-    chunks = [raw[:75]]
-    rest = raw[75:]
-    while rest:
-        chunks.append(rest[:74])  # 74 + the leading space = 75 octets
-        rest = rest[74:]
-    return "\r\n ".join(c.decode("utf-8", "ignore") for c in chunks)
+    chunks: list[str] = []
+    chunk = ""
+    size = 0
+    limit = 75
+    for char in line:
+        width = len(char.encode("utf-8"))
+        if size + width > limit:
+            chunks.append(chunk)
+            chunk, size, limit = "", 0, 74
+        chunk += char
+        size += width
+    chunks.append(chunk)
+    return "\r\n ".join(chunks)
 
 
 def _stamp(dt: datetime) -> str:
@@ -134,15 +147,16 @@ def render_feed(events: list[dict], *, calname: str, now: datetime) -> str:
     ]
     for e in events:
         start = e["starts_at"]
-        end = e.get("ends_at") or start
+        end = e.get("ends_at")
         lines += [
             "BEGIN:VEVENT",
             f"UID:{_esc(e['uid'])}",
             f"DTSTAMP:{_stamp(now)}",
             f"DTSTART:{_stamp(start)}",
-            f"DTEND:{_stamp(end)}",
             f"SUMMARY:{_esc(e['summary'])}",
         ]
+        if end is not None:
+            lines.append(f"DTEND:{_stamp(end)}")
         if e.get("description"):
             lines.append(f"DESCRIPTION:{_esc(e['description'])}")
         if e.get("location"):  # LOCATION is TEXT-typed → escaped
@@ -157,15 +171,20 @@ def render_feed(events: list[dict], *, calname: str, now: datetime) -> str:
 def events_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime) -> list[dict]:
     """Flatten the To-Do projection into feed events (sessions + deadlines)."""
     t = timeline_for_person(db, tenant_id=tenant_id, person_id=person_id, now=now)
+    policy = effective(db, require_store=True)
+    domain = policy["ical_feed_uid_domain"]
     events: list[dict] = []
     for s, cohort_name in t["sessions"]:
         events.append(
             {
-                "uid": f"session-{s.id}@academy.dotmac.io",
+                "uid": f"session-{s.id}@{domain}",
                 "summary": s.title,
                 "starts_at": s.starts_at,
                 "ends_at": s.ends_at,
-                "description": f"{cohort_name} — live session" if s.session_type == "live_class" else cohort_name,
+                "description": (
+                    f"{cohort_name} — live session"
+                    if s.session_type == policy["learning_default_session_type"] else cohort_name
+                ),
                 "location": s.location or "",
                 "url": s.join_url or "",
             }
@@ -175,7 +194,7 @@ def events_for_person(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
             act = row["activity"]
             events.append(
                 {
-                    "uid": f"due-{act.id}@academy.dotmac.io",
+                    "uid": f"due-{act.id}@{domain}",
                     "summary": f"Due: {act.title}",
                     "starts_at": row["due_at"],
                     "description": row["course_title"],

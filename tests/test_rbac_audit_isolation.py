@@ -59,6 +59,7 @@ def test_audit_events_from_tenant_a_invisible_to_tenant_b(
     assert b_events.status_code == 200
     assert b_events.json() == []
 
+
 def _create_role(client: TestClient, token: str, slug: str) -> dict[str, object]:
     response = client.post(
         "/rbac/roles",

@@ -13,12 +13,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.person import Person
-from app.models.rbac import AuditEvent
+from app.services.api_identity_reads import count_audit_events, existing_people
 from app.services.audit import list_events
 from app.services.web_auth import require_web_role
 from app.web.pagination import pagination_context
@@ -46,12 +44,8 @@ def audit_log(
     filter_actor_id: UUID | None = None
     actor_not_found = False
     if actor_email:
-        person = db.scalars(
-            select(Person).where(
-                Person.tenant_id == tenant.id,
-                Person.email == actor_email,
-            )
-        ).first()
+        people = existing_people(db, tenant_id=tenant.id, email=actor_email)
+        person = people[0] if people else None
         if person is not None:
             filter_actor_id = person.id
         else:
@@ -69,26 +63,15 @@ def audit_log(
             actor_person_id=filter_actor_id,
         )
     )
-    count_stmt = select(func.count()).select_from(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
-    if actor_not_found:
-        total = 0
-    else:
-        if action:
-            count_stmt = count_stmt.where(AuditEvent.action == action)
-        if filter_actor_id is not None:
-            count_stmt = count_stmt.where(AuditEvent.actor_person_id == filter_actor_id)
-        total = int(db.scalar(count_stmt) or 0)
+    total = 0 if actor_not_found else count_audit_events(
+        db, tenant_id=tenant.id, action=action or None, actor_party_id=filter_actor_id
+    )
 
-    # Resolve actor emails for display in the table.
-    person_ids = {e.actor_person_id for e in events if e.actor_person_id is not None}
+    # Current email is optional enrichment, never the stored forensic actor.
+    person_ids = {e.actor_party_id for e in events if e.actor_party_id is not None}
     actor_map: dict[UUID, str] = {}
     if person_ids:
-        people = db.scalars(
-            select(Person).where(
-                Person.tenant_id == tenant.id,
-                Person.id.in_(person_ids),
-            )
-        ).all()
+        people = existing_people(db, tenant_id=tenant.id, person_ids=person_ids)
         actor_map = {p.id: p.email for p in people}
 
     return templates.TemplateResponse(

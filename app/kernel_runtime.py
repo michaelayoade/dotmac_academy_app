@@ -1,6 +1,6 @@
 """Academy's narrow instrumentation adapter around the kernel runtime.
 
-Kernel 0.1.0a38 owns construction, product startup checks/hooks, browser
+Kernel owns construction, product startup checks/hooks, browser
 security policy, platform-surface composition, and every generic runtime
 control. Academy keeps only product-specific request metrics and GlitchTip
 request correlation here.
@@ -11,13 +11,16 @@ from __future__ import annotations
 import logging
 import time
 
-from dotmac_kernel import create_app
+from dotmac_kernel import ProductAssemblySpec, create_app
+from dotmac_kernel.modules import ModuleRegistry
 from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.assembly import assembly
+from app.assembly import OWNER_DECLARATIONS, assembly
+from app.canonical_models import ModelOwnershipError
+from app.owner_composition import inspect_owner_registry
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +68,14 @@ class AcademyInstrumentationMiddleware:
                 logger.debug("metrics observation failed", exc_info=True)
 
 
-def create_academy_app() -> FastAPI:
+def create_academy_app(spec: ProductAssemblySpec = assembly) -> FastAPI:
     """Build Academy through the public kernel assembly contract."""
-    app = create_app(assembly)
+    declared_registry = ModuleRegistry(spec.modules)
+    declared_graph = inspect_owner_registry(declared_registry, declarations=OWNER_DECLARATIONS)
+    app = create_app(spec)
+    actual_graph = inspect_owner_registry(app.state.module_registry, declarations=OWNER_DECLARATIONS)
+    if actual_graph.owners != declared_graph.owners:
+        raise ModelOwnershipError("factory registry changed declared model ownership")
     app.add_middleware(AcademyInstrumentationMiddleware)
     return app
 

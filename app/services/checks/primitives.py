@@ -17,11 +17,13 @@ import re
 
 from jsonpath_ng import parse as jp_parse
 
+from app.config import settings, validate_lab_check_output_limit
 from app.services.lab_seed import interpolate
 
 # Command output echoed back to the learner is truncated: it is evidence, not a
 # terminal, and an unbounded blob would be stored on every Score row.
-_EVIDENCE_CHARS = 160
+# Limits are deployment policy in Settings; no database session or runtime
+# adapter is introduced into these existing pure caller interfaces.
 
 
 def _evidence(text: str) -> str:
@@ -29,7 +31,8 @@ def _evidence(text: str) -> str:
     flat = " ".join((text or "").split())
     if not flat:
         return "no output"
-    return flat[:_EVIDENCE_CHARS] + ("…" if len(flat) > _EVIDENCE_CHARS else "")
+    limit = validate_lab_check_output_limit(settings.lab_check_evidence_chars)
+    return flat[:limit] + ("…" if len(flat) > limit else "")
 
 
 def eval_command(check, engine, handle, seed):
@@ -120,7 +123,7 @@ def eval_probe(check, engine, handle, seed):
         ok = "Address" in res.stdout
         return {
             "pass": ok,
-            "actual": res.stdout.strip()[:120],
+            "actual": res.stdout.strip()[:validate_lab_check_output_limit(settings.lab_check_dns_actual_chars)],
             "expected": f"resolves {target}",
             "detail": (
                 f"{node} resolved {target}."

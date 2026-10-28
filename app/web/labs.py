@@ -21,22 +21,23 @@ from uuid import UUID
 
 import httpx
 import websockets
-from dotmac_kernel.db import SessionLocal
 from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
+from dotmac_kernel.session_runtime import resolve_database_runtime
+from dotmac_learning import LabResultRead, ScoreFact, read_lab_result
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from sqlalchemy import desc, select, text
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
-from app.models.assessment import Activity, Score, Submission
+from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.models.person import Person
 from app.models.tenant import Tenant
-from app.services import lab_console_activity, lab_lifecycle, web_auth
+from app.services import lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
+from app.services.identity import AcademyCurrentAccount
 from app.services.lab_content import render_instance_instructions
 from app.services.lab_operations import OPEN_STATES, enqueue
 from app.services.web_auth import require_web_user
@@ -50,11 +51,6 @@ logger = logging.getLogger(__name__)
 _NO_INSTANCE_INSTRUCTIONS = (
     "<p>Launch the lab to view your instance-specific instructions.</p>"
 )
-
-
-#: Instance states in which the learner has (or is getting) a lab, so the
-#: device logins are useful. ``error`` and ``reaped`` show none.
-_ACCESS_VISIBLE_STATUSES = frozenset({"queued", "provisioning", "resetting", "active"})
 
 
 class _TenantContext(Protocol):
@@ -114,7 +110,7 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
 def _require_instance_entitlement(
     db: Session,
     tenant: _TenantContext,
-    person: Person,
+    person: AcademyCurrentAccount,
     instance: LabInstance,
 ) -> None:
     """Re-check the owner is STILL entitled to the lab's course.
@@ -132,35 +128,17 @@ def _require_instance_entitlement(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
 
 
-def _console_live(instance: LabInstance) -> bool:
-    """The one definition of "this instance's consoles are reachable".
-
-    Stored mgmt IPs / ttyd ports are only meaningful while the instance's own
-    runtime is live; after reap/error/reset they may belong to another learner.
-    Shared by the console gate and the status template so a link is shown only
-    when following it can succeed.
-    """
-    return (
-        instance.status == "active"
-        and instance.error is None
-        and instance.runtime_presence == "present"
-    )
-
-
-templates.env.globals["lab_console_live"] = _console_live
-
-
 def _authorize_console(
     db: Session,
     tenant: _TenantContext,
-    person: Person,
+    person: AcademyCurrentAccount,
     instance_id: UUID,
     node: str,
 ) -> str:
     """Security gate shared by the HTTP (and future WebSocket) console paths.
 
     Returns the upstream target URL, or raises:
-      404 — instance not found in this tenant, not live, or node/target missing.
+      404 — instance not found in this tenant, or node/target missing.
       403 — instance exists in-tenant but is owned by another person.
 
     Loads via a tenant-filtered select (never ``db.get(PK)``) so a cross-tenant
@@ -174,25 +152,10 @@ def _authorize_console(
     if instance.person_id != person.id:
         raise HTTPException(status_code=403)
     _require_instance_entitlement(db, tenant, person, instance)
-    if not _console_live(instance):
-        raise HTTPException(status_code=404)
     target = _console_target(instance, node)
     if target is None:
         raise HTTPException(status_code=404)
     return target
-
-
-def _note_console_use(db: Session, tenant: _TenantContext, instance_id: UUID) -> None:
-    """Record console use for the idle reaper; never lets a failure reach the proxy.
-
-    Call only AFTER ``_authorize_console`` succeeded. A savepoint keeps a failed
-    write from poisoning the request's session.
-    """
-    try:
-        with db.begin_nested():
-            lab_console_activity.record(db, tenant_id=tenant.id, instance_id=instance_id)
-    except Exception as exc:
-        lab_console_activity.warn_failure(instance_id, exc)
 
 
 async def _proxy_http(request: Request, target: str) -> Response:
@@ -256,7 +219,9 @@ def _lab_template(db: Session, tenant: Tenant, activity_id: UUID) -> LabTemplate
     return tpl
 
 
-def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: UUID) -> LabInstance | None:
+def _current_instance(
+    db: Session, tenant: Tenant, person: AcademyCurrentAccount, activity_id: UUID
+) -> LabInstance | None:
     """Latest non-reaped instance for this person+activity, if any."""
     return db.scalars(
         select(LabInstance)
@@ -268,7 +233,7 @@ def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: 
     ).first()
 
 
-def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UUID) -> LabInstance:
+def _owned_instance(db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance_id: UUID) -> LabInstance:
     """Load a tenant-scoped instance, assert ownership (404/403) AND current
     entitlement to the lab's course (so revocation propagates to live instances)."""
     inst = db.scalars(
@@ -283,8 +248,8 @@ def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UU
 
 
 def _operation_score(
-    db: Session, tenant: Tenant, person: Person, instance: LabInstance, operation: LabOperation
-) -> Score | None:
+    db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance: LabInstance, operation: LabOperation
+) -> ScoreFact | None:
     """Read only the durable result inside this worker operation's window."""
     if (
         operation.tenant_id != tenant.id or operation.instance_id != instance.id
@@ -294,22 +259,20 @@ def _operation_score(
         or operation.finished_at < operation.claimed_at
     ):
         return None
-    return db.scalars(
-        select(Score)
-        .join(Submission, Score.submission_id == Submission.id)
-        .where(Score.tenant_id == tenant.id)
-        .where(Score.tenant_id == Submission.tenant_id)
-        .where(Submission.tenant_id == tenant.id)
-        .where(Submission.person_id == person.id)
-        .where(Submission.activity_id == instance.activity_id)
-        .where(Submission.answers["instance"].astext == str(instance.id))
-        .where(Submission.created_at >= operation.claimed_at)
-        .where(Submission.created_at <= operation.finished_at)
-        .order_by(Score.created_at.desc(), Score.id.desc())
-    ).first()
+    return read_lab_result(
+        db,
+        LabResultRead(
+            tenant_id=tenant.id,
+            person_id=person.id,
+            activity_id=instance.activity_id,
+            instance_id=instance.id,
+            claimed_at=operation.claimed_at,
+            finished_at=operation.finished_at,
+        ),
+    )
 
 
-def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> dict:
+def _result_context(db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance: LabInstance) -> dict:
     """Recover current work and the last saved check for this runtime journey.
 
     A deploy request (including a reset that subsequently fails) invalidates the
@@ -352,7 +315,7 @@ def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabIn
 def lab_detail(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Lab page: instructions + Launch (if none/reaped) or status/console/Check."""
@@ -373,14 +336,6 @@ def lab_detail(
             "template": tpl,
             "instance": instance,
             "instructions_html": instructions_html,
-            # Device login info is released only alongside the caller's OWN live
-            # instance (``_current_instance`` is scoped to this person and
-            # tenant), and only the sanitised list the loader validated.
-            "device_access": (
-                (tpl.access or [])
-                if instance is not None and instance.status in _ACCESS_VISIBLE_STATUSES
-                else []
-            ),
             **(_result_context(db, tenant, person, instance) if instance else {}),
         },
     )
@@ -390,7 +345,7 @@ def lab_detail(
 def lab_launch(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Request a new lab instance (queued/provisioning) → status partial."""
@@ -413,7 +368,7 @@ def lab_launch(
 def lab_status(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """htmx polling target — current instance status + console links when active."""
@@ -429,7 +384,7 @@ def lab_status(
 def lab_check(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Enqueue worker-owned grading and return a polling partial."""
@@ -459,7 +414,7 @@ def lab_check(
 def lab_reset(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Enqueue a worker-owned destroy-then-deploy reset/retry."""
@@ -509,7 +464,7 @@ def lab_reset(
 def lab_operation_status(
     operation_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Poll an owned operation; expose a completed check's durable score."""
@@ -545,13 +500,12 @@ async def console(
     instance_id: UUID,
     node: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
-    _note_console_use(db, tenant, instance_id)  # opening a console is use
     # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
     # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
     # land on the correct index for each.
@@ -577,15 +531,12 @@ async def console_subpath(
     node: str,
     subpath: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
-    # Deliberately no heartbeat here: sub-resources are assets, tokens and
-    # WebFig polling, not user action, so an idle open page must not keep a lab
-    # alive. Typing is counted on the ttyd websocket; opening a console above.
     return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
 
 
@@ -605,11 +556,6 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
         await websocket.close(code=1011)
         return
 
-    # ttyd command byte "0" is INPUT (keystrokes/paste); resize, pause and
-    # keepalive frames are not user activity, so an idle open tab does not
-    # keep a lab alive.
-    beat = getattr(websocket.state, "console_heartbeat", None)
-
     async def client_to_upstream() -> None:
         try:
             while True:
@@ -617,12 +563,8 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
                 if msg["type"] == "websocket.disconnect":
                     break
                 if msg.get("text") is not None:
-                    if beat is not None and msg["text"][:1] == "0":
-                        await beat()
                     await upstream.send(msg["text"])
                 elif msg.get("bytes") is not None:
-                    if beat is not None and msg["bytes"][:1] == b"0":
-                        await beat()
                     await upstream.send(msg["bytes"])
         except (WebSocketDisconnect, websockets.ConnectionClosed):
             pass
@@ -647,25 +589,6 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
     await asyncio.gather(client_to_upstream(), upstream_to_client())
 
 
-_heartbeat_tasks: set[asyncio.Task] = set()
-
-
-def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
-    """Short-lived session for one heartbeat write; failures are swallowed."""
-    db = SessionLocal()
-    try:
-        db.execute(
-            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-            {"tenant_id": str(tenant_id)},
-        )
-        lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
-        db.commit()
-    except Exception as exc:
-        lab_console_activity.warn_failure(instance_id, exc)
-    finally:
-        db.close()
-
-
 @ws_router.websocket("/labs/instances/{instance_id}/console/{node}/ws")
 async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None:
     """Auth-gated WebSocket proxy to a Linux node's ttyd terminal.
@@ -681,39 +604,22 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
         await websocket.close(code=1008)
         return
 
-    db = SessionLocal()
+    runtime = resolve_database_runtime()
+    db = runtime.session_factory()
     try:
-        db.execute(
-            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-            {"tenant_id": str(tenant.id)},
-        )
-        person = web_auth._current_person(db, tenant.id, websocket.cookies.get(web_auth.COOKIE))
-        if person is None:
-            await websocket.close(code=1008)
-            return
-        try:
-            target = _authorize_console(db, tenant, person, instance_id, node)
-        except HTTPException:
-            await websocket.close(code=1008)
-            return
-        port = urlsplit(target).port
+        with runtime.tenant_scope(db, tenant.id):
+            person = web_auth._current_person(db, tenant.id, websocket.cookies.get(web_auth.COOKIE))
+            if person is None:
+                await websocket.close(code=1008)
+                return
+            try:
+                target = _authorize_console(db, tenant, person, instance_id, node)
+            except HTTPException:
+                await websocket.close(code=1008)
+                return
+            port = urlsplit(target).port
     finally:
         db.close()
-
-    tenant_id = tenant.id
-
-    async def _heartbeat() -> None:
-        # In-process gate first: keystrokes cost a dict lookup, not a thread.
-        if not lab_console_activity.try_acquire(instance_id):
-            return
-        # Background task: input forwarding must never wait on the database
-        # (a saturated pool would otherwise stall keystrokes for the pool
-        # timeout). The set keeps a reference so the task is not collected.
-        task = asyncio.create_task(asyncio.to_thread(_write_console_heartbeat, tenant_id, instance_id))
-        _heartbeat_tasks.add(task)
-        task.add_done_callback(_heartbeat_tasks.discard)
-
-    websocket.state.console_heartbeat = _heartbeat
 
     upstream_url = f"ws://{settings.lab_console_host}:{port}" f"/labs/instances/{instance_id}/console/{node}/ws"
     await _proxy_ws(websocket, upstream_url)

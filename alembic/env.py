@@ -1,72 +1,90 @@
-"""Alembic environment.
+"""Ordinary online migration environment; preserves a caller's active root.
 
-Connects as app_admin (RLS bypass) — set MIGRATION_DATABASE_URL or DATABASE_URL.
+Frozen legacy replay must complete independently before protected adoption.
+This environment never replays legacy history, stamps a head or supplies import
+receipts. Offline adoption and autogeneration have no supported evidence path.
 """
 
 from __future__ import annotations
 
-import os
-from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config, pool
+from dotmac_kernel.migrations.configuration import select_migration_database_url
+from dotmac_kernel.migrations.verify import require_prerequisites
+from sqlalchemy import create_engine, pool, text
+from sqlalchemy.engine import Connection
 
 from alembic import context
-from app.models import (  # noqa: F401  (register models for autogenerate)
-    admissions,
-    assessment,
-    auth,
-    class_session,
-    cohort,
-    course,
-    onboarding,
-    person,
-    rbac,
-    tenant,
-)
-from app.models.base import Base
+from app.config import settings
+from app.migration_graph import ordinary_migration_config
 
-config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-target_metadata = Base.metadata
+config = ordinary_migration_config(config=context.config)
+# Actual owner metadata still contains copied identity references; it cannot
+# truthfully supply a canonical, duplicate-free autogenerate metadata sequence.
+target_metadata = None
 
 
-def get_url() -> str:
-    return (
-        os.getenv("MIGRATION_DATABASE_URL")
-        or os.getenv("DATABASE_URL")
-        or ""
+def validate_migration_authority(connection: Connection) -> None:
+    """Prove configured server identities and actual migration-role effects."""
+    login = settings.migration_login_role
+    effective = settings.migration_effective_role
+    if not login or login != login.strip() or not effective or effective != effective.strip():
+        raise ValueError("explicit migration login and effective role policy is required")
+    if connection.dialect.name != "postgresql":
+        raise ValueError("migration authority requires PostgreSQL catalog evidence")
+    actual = connection.execute(text("SELECT session_user, current_user")).one()
+    if tuple(actual) != (login, effective):
+        raise ValueError("migration server identities do not match configured policy")
+    capable = connection.scalar(
+        text("SELECT rolbypassrls AND NOT rolsuper FROM pg_roles WHERE rolname=current_user")
     )
+    if capable is not True:
+        raise ValueError("migration effective role lacks required catalog posture")
+    require_prerequisites(connection, ("module_database_roles.v1",))
 
 
-def run_migrations_offline() -> None:
+def run_on_connection(connection: Connection) -> None:
+    """Never reconnect, close, commit or replace this actual caller root."""
+    if not isinstance(connection, Connection) or connection.closed:
+        raise ValueError("an actual open SQLAlchemy Connection is required")
+    root = connection.get_transaction()
+    if root is None or not root.is_active or connection.in_nested_transaction():
+        raise ValueError("migration entry requires one active caller root transaction")
+    validate_migration_authority(connection)
     context.configure(
-        url=get_url(),
+        connection=connection,
         target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+        version_table_schema="public",
+        transactional_ddl=True,
+        on_version_apply=config.attributes.get("on_version_apply", ()),
     )
-    with context.begin_transaction():
-        context.run_migrations()
+    revision_context = context.get_context().opts.get("revision_context")
+    if revision_context is not None and revision_context.command_args.get("autogenerate"):
+        raise ValueError("autogenerate unavailable: canonical owner metadata contains copied identity references")
+    context.run_migrations()
+    if connection.closed or connection.get_transaction() is not root or not root.is_active:
+        raise ValueError("migration execution changed caller connection or root")
 
 
 def run_migrations_online() -> None:
-    configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = get_url()
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        run_on_connection(supplied)
+        return
+    # Preserve explicit blank migration URL refusal; fallback is product policy.
+    configured = "migration_database_url" in settings.model_fields_set
+    url = select_migration_database_url(
+        migration_database_url=settings.migration_database_url if configured else None,
+        fallback_database_url=settings.database_url,
     )
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+    engine = create_engine(url, poolclass=pool.NullPool, hide_parameters=True)
+    try:
+        with engine.connect() as connection, connection.begin():
+            run_on_connection(connection)
+    finally:
+        engine.dispose()
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+    raise ValueError("offline adoption is unsupported: actual catalog and identity history evidence is required")
+if getattr(config.cmd_opts, "autogenerate", False):
+    raise ValueError("autogenerate unavailable: canonical owner metadata contains copied identity references")
+run_migrations_online()

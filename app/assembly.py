@@ -4,29 +4,31 @@ Academy owns learning, admissions, lab, reporting, and product workflows. The
 kernel owns application construction, tenancy startup, the generic security
 middleware stack, liveness, static/template layering, and error translation.
 
-The single ``FeatureManifest`` is deliberately transitional. Academy's tables
-still use the host migration lineage and public schema; declaring a stateful
-``ModuleManifest`` before that authority is migrated would falsely claim that
-the module already owns an independent namespace and lineage.
+Academy's retained product tables stay product-owned. The installed Learning
+manifest owns its stateful namespace independently of Academy route visibility.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
 from dotmac_kernel import ProductAssemblySpec, ProductSecurityPolicy
-from dotmac_kernel.features import FeatureManifest
+from dotmac_kernel.api_documentation import environment_api_documentation_policy
 from dotmac_ui import static_dir
 
+from app.academy_declarations import ACADEMY_FEATURE_DECLARATION
 from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
 from app.api.erp_applicant_assessments import router as erp_applicant_assessments_router
 from app.api.persons import router as persons_router
 from app.api.rbac import router as rbac_router
 from app.config import ACADEMY_CONTENT_SECURITY_POLICY, settings, validate_settings
+from app.database_runtime import get_academy_database_runtime
 from app.error_tracking import init_error_tracking
 from app.operational import router as operational_router
+from app.owner_composition import compose_owner_declarations
 from app.ui import UI_STYLESHEET_URL
 from app.web.account import router as web_account_router
 from app.web.accounts import router as web_accounts_router
@@ -71,11 +73,11 @@ def _academy_configuration_errors() -> list[str]:
 
 def _initialize_error_tracking() -> None:
     """Run Academy telemetry setup as an ordered product startup hook."""
-    init_error_tracking()
+    init_error_tracking(server_name=PRODUCT_ID)
 
 
-academy_feature = FeatureManifest(
-    name="academy",
+academy_feature = replace(
+    ACADEMY_FEATURE_DECLARATION,
     routers=(
         auth_router,
         erp_applicant_assessments_router,
@@ -115,12 +117,19 @@ academy_feature = FeatureManifest(
     ),
 )
 
+# One immutable installed-owner declaration source, independent of route switches.
+OWNER_DECLARATIONS = compose_owner_declarations(academy_feature)
+
 assembly = ProductAssemblySpec(
     name=PRODUCT_ID,
-    modules=(academy_feature,),
+    modules=OWNER_DECLARATIONS,
+    database_runtime=get_academy_database_runtime(),
+    require_database_runtime=True,
+    api_documentation=environment_api_documentation_policy(settings.environment),
+    disabled_modules=frozenset(settings.disabled_feature_set),
     tenancy="single",
     platform_surface_enabled=False,
-    web_enabled=True,
+    web_enabled=settings.web_enabled,
     startup_checks=(_academy_configuration_errors,),
     startup_hooks=(_initialize_error_tracking,),
     security_policy=ProductSecurityPolicy(
@@ -132,7 +141,7 @@ assembly = ProductAssemblySpec(
     assembly_static_dir=_ROOT / "static",
     packaged_static_dirs=(static_dir(),),
     stylesheets=(UI_STYLESHEET_URL,),
-    assembly_migrations=_ROOT / "alembic" / "versions",
+    assembly_migrations=_ROOT / "alembic" / "identity_assembly_versions",
 )
 
-__all__ = ["PRODUCT_ID", "academy_feature", "assembly"]
+__all__ = ["OWNER_DECLARATIONS", "PRODUCT_ID", "academy_feature", "assembly"]

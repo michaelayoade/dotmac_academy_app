@@ -2,32 +2,8 @@
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole
-from app.services.audit import write_audit_event
-from app.services.bootstrap import ensure_roles
-from app.services.security import hash_password
-
-
-def _seed_login(admin_session, tenant, email, role_slug):
-    roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Test", last_name="User")
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
-    )
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id)
-    )
-    admin_session.commit()
-    return p
+from tests.services.test_canonical_audit_web_read import seed_historical_event as write_audit_event
+from tests.services.test_canonical_audit_web_read import seed_login as _seed_login
 
 
 def _login(app_client, email):

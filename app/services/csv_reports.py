@@ -12,15 +12,11 @@ import io
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+import dotmac_learning as learning
 from sqlalchemy.orm import Session
 
-from app.models.cohort import Cohort, Enrollment
-from app.models.completion import CourseCompletion
-from app.models.person import Person
-from app.models.success_queue import STATUS_RESOLVED, SuccessQueueEntry
-from app.services import insights, learning_events, success_queue
-from app.services.gradebook import course_grade
+from app.services import insights
+from app.services.reports import cohort_matrix
 
 _CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
@@ -41,71 +37,20 @@ def _csv(rows: list[list]) -> str:
     return buf.getvalue()
 
 
-def _cohort(db: Session, tenant_id: UUID, cohort_id: UUID) -> Cohort:
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)
-    ).first()
-    if cohort is None:
-        raise ValueError("cohort not found")
-    return cohort
-
-
 def cohort_roster_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
                       now: datetime | None = None) -> tuple[str, str]:
     """Per-learner progress: completion, grade, last activity, open queue reasons."""
-    now = now or datetime.now(UTC)
-    cohort = _cohort(db, tenant_id, cohort_id)
-    course_ids = insights._cohort_course_ids(db, tenant_id, cohort_id)
-
-    people = db.scalars(
-        select(Person)
-        .join(Enrollment, (Enrollment.person_id == Person.id)
-              & (Enrollment.tenant_id == Person.tenant_id))
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.cohort_id == cohort_id)
-        .where(Enrollment.role_in_cohort == "student")
-        .where(Enrollment.status == "active")
-        .order_by(Person.last_name, Person.first_name)
-    ).all()
-
-    rows: list[list] = [[
-        "name", "email", "courses", "avg_completion_pct", "avg_grade_pct",
-        "last_activity_at", "days_inactive", "open_queue_reasons",
-    ]]
-    for person in people:
-        completions = db.scalars(
-            select(CourseCompletion)
-            .where(CourseCompletion.tenant_id == tenant_id)
-            .where(CourseCompletion.person_id == person.id)
-            .where(CourseCompletion.course_id.in_(course_ids or [cohort_id]))
-        ).all()
-        avg_completion = (
-            round(100 * sum(c.pct for c in completions) / len(completions))
-            if completions else 0
-        )
-        # Average over courses the learner has actually attempted (any graded
-        # activity), not courses with pct>0 — a genuine 0% must count, and only
-        # never-started courses should be excluded.
-        grade_docs = [course_grade(db, tenant_id=tenant_id, person_id=person.id, course_id=cid)
-                      for cid in course_ids]
-        attempted_pcts = [
-            g["pct"] for g in grade_docs
-            if any(a["graded"] for a in g["per_activity"])
-        ]
-        avg_grade = round(sum(attempted_pcts) / len(attempted_pcts)) if attempted_pcts else 0
-        last = learning_events.last_activity_at(db, tenant_id=tenant_id, person_id=person.id)
-        reasons = list(db.scalars(
-            select(SuccessQueueEntry.reason_kind)
-            .where(SuccessQueueEntry.tenant_id == tenant_id)
-            .where(SuccessQueueEntry.person_id == person.id)
-            .where(SuccessQueueEntry.status != STATUS_RESOLVED)
-        ).all())
+    fact = learning.cohort_roster_progress(db, tenant_id=tenant_id, cohort_id=cohort_id, now=now)
+    cohort = fact.cohort
+    rows = [["name", "email", "courses", "avg_completion_pct", "avg_grade_pct",
+             "last_activity_at", "days_inactive", "open_queue_reasons"]]
+    for row in fact.rows:
         rows.append([
-            f"{person.first_name} {person.last_name}".strip(), person.email,
-            len(course_ids), avg_completion, avg_grade,
-            last.isoformat() if last else "",
-            (now - last).days if last else "",
-            ";".join(sorted(reasons)),
+            f"{row.person.first_name} {row.person.last_name}".strip(), row.person.email,
+            row.courses, row.avg_completion_pct, row.avg_grade_pct,
+            row.last_activity_at.isoformat() if row.last_activity_at else "",
+            row.days_inactive if row.days_inactive is not None else "",
+            ";".join(row.open_queue_reasons),
         ])
     safe = cohort.name.lower().replace(" ", "-")[:40]
     return f"roster-progress-{safe}.csv", _csv(rows)
@@ -114,7 +59,7 @@ def cohort_roster_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
 def cohort_funnel_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
                       now: datetime | None = None) -> tuple[str, str]:
     """Completion funnel + work states, straight from the insights projection."""
-    cohort = _cohort(db, tenant_id, cohort_id)
+    cohort = cohort_matrix(db, tenant_id=tenant_id, cohort_id=cohort_id)["cohort"]
     ov = insights.cohort_overview(db, tenant_id=tenant_id, cohort_id=cohort_id, now=now)
     funnel = ov["funnel"]
     rows = [
@@ -140,23 +85,12 @@ def cohort_funnel_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
 def queue_summary_csv(db: Session, *, tenant_id: UUID,
                       cohort_id: UUID | None = None) -> tuple[str, str]:
     """Open/acknowledged Success Queue entries, most severe first."""
-    q = (
-        select(SuccessQueueEntry, Person, Cohort.name)
-        .join(Person, (Person.id == SuccessQueueEntry.person_id)
-              & (Person.tenant_id == SuccessQueueEntry.tenant_id))
-        .join(Cohort, (Cohort.id == SuccessQueueEntry.cohort_id)
-              & (Cohort.tenant_id == SuccessQueueEntry.tenant_id), isouter=True)
-        .where(SuccessQueueEntry.tenant_id == tenant_id)
-        .where(SuccessQueueEntry.status != STATUS_RESOLVED)
-        .order_by(success_queue.severity_order(), SuccessQueueEntry.detected_at.desc())
-    )
-    if cohort_id is not None:
-        q = q.where(SuccessQueueEntry.cohort_id == cohort_id)
     rows: list[list] = [[
         "name", "email", "cohort", "reason", "severity", "status",
         "detected_at", "recommended_action", "facts",
     ]]
-    for entry, person, cohort_name in db.execute(q).all():
+    for row in learning.queue_summary(db, tenant_id=tenant_id, cohort_id=cohort_id):
+        entry, person, cohort_name = row.entry, row.person, row.cohort_name
         rows.append([
             f"{person.first_name} {person.last_name}".strip(), person.email,
             cohort_name or "", entry.reason_kind, entry.severity, entry.status,

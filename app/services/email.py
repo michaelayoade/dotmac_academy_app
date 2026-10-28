@@ -23,10 +23,8 @@ import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
 
-from sqlalchemy import func, select
+from dotmac_learning import has_other_passing_score
 from sqlalchemy.orm import Session
-
-from app.models.assessment import Score, Submission
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +134,7 @@ def notify_score_if_first_pass(db: Session, *, score, activity, person) -> bool:
     """Queue congratulations IFF this is the student's FIRST passing score.
 
     Fires only when ``score.passed`` is true AND there is no other passing
-    :class:`Score` for the same (tenant, activity, person). Each optional intent
+    score for the same (tenant, activity, person). Each optional intent
     owns a savepoint; catches run after rollback so a database refusal cannot
     poison the caller's grading transaction. No caller rollback or commit.
     """
@@ -163,20 +161,13 @@ def _queue_first_pass_intents(db: Session, *, score, activity, person) -> bool:
     if not effective(db).email_auto_on_pass:
         return False
 
-    prior_passes = db.scalar(
-        select(func.count())
-        .select_from(Score)
-        .join(
-            Submission,
-            (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id),
-        )
-        .where(Score.tenant_id == score.tenant_id)
-        .where(Submission.activity_id == activity.id)
-        .where(Submission.person_id == person.id)
-        .where(Score.passed.is_(True))
-        .where(Score.id != score.id)
-    )
-    if int(prior_passes or 0) > 0:
+    if has_other_passing_score(
+        db,
+        tenant_id=score.tenant_id,
+        person_id=person.id,
+        activity_id=activity.id,
+        excluded_score_id=score.id,
+    ):
         return False
 
     subject = f"You passed {activity.title}"

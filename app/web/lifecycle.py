@@ -3,7 +3,7 @@
 
 Self-contained minimal pages (pre-login, no nav chrome) that reuse the same
 htmx + CSRF-cookie pattern as the login form. The service layer
-(app.services.lifecycle) holds all the security logic.
+(canonical_lifecycle and invitation_claim) holds all the security logic.
 """
 
 from __future__ import annotations
@@ -11,14 +11,19 @@ from __future__ import annotations
 import logging
 from html import escape
 
+from dotmac_kernel.credential_lifecycle import CredentialLifecycleError
+from dotmac_kernel.transactions import conflict_savepoint, conflict_savepoint_requires_rollback
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.services import lifecycle
+from app.services import canonical_lifecycle as lifecycle
+from app.services import invitation_claim
+from app.services.credential_policy import password_reset_policy
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, ConflictError
+from app.services.invitation_policy import invitation_acceptance_policy
 from app.services.security import hash_token
 from app.ui import UI_STYLESHEET_URL, UI_THEME, UI_THEME_ATTRIBUTE
 
@@ -62,14 +67,17 @@ def _result_panel(title: str, message: str, *, ok: bool = True) -> str:
 
 # ── Forgot / reset password ───────────────────────────────────────────────────
 
+
 @router.get("/forgot")
 def forgot_form(request: Request):
-    return _page("Reset your password",
+    return _page(
+        "Reset your password",
         "<form hx-post='/forgot' hx-target='#msg' hx-swap='innerHTML' class='space-y-4'>"
         "<input name='email' type='email' required placeholder='you@example.com' "
         "class='w-full px-3 py-2'>"
         "<button class='btn-primary w-full py-2'>Send reset link</button></form>"
-        "<div id='msg' class='mt-4 text-sm' role='status'></div>")
+        "<div id='msg' class='mt-4 text-sm' role='status'></div>",
+    )
 
 
 @router.post("/forgot")
@@ -77,24 +85,31 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
     tenant = require_tenant(request)
     raw = lifecycle.request_password_reset(db, tenant_id=tenant.id, email=email)
     if raw is not None:
-        # Best-effort email; never block on delivery and never reveal existence.
+        root = db.get_transaction()
+        # Best-effort enqueue; a failed row must not poison the caller root.
+        # Actual provider delivery remains outside this request transaction.
         try:
             link = str(request.url_for("reset_form").include_query_params(token=raw))
             escaped_link = escape(link, quote=True)
-            enqueue_email(
-                db,
-                tenant_id=tenant.id,
-                idempotency_key=f"password-reset:{hash_token(raw)}",
-                kind="password_reset",
-                recipient=email.strip().lower(),
-                subject="Reset your password",
-                html_body=(
-                    "<p>Reset your password: "
-                    f"<a href='{escaped_link}'>{escaped_link}</a></p>"
-                ),
-                text_body=f"Reset your password: {link}\n",
-            )
+            with conflict_savepoint(db):
+                enqueue_email(
+                    db,
+                    tenant_id=tenant.id,
+                    idempotency_key=f"password-reset:{hash_token(raw)}",
+                    kind="password_reset",
+                    recipient=email.strip().lower(),
+                    subject="Reset your password",
+                    html_body=("<p>Reset your password: " f"<a href='{escaped_link}'>{escaped_link}</a></p>"),
+                    text_body=f"Reset your password: {link}\n",
+                )
         except Exception as exc:
+            if (
+                root is None
+                or not db.is_active
+                or db.get_transaction() is not root
+                or conflict_savepoint_requires_rollback(db, expected_root=root)
+            ):
+                raise CredentialLifecycleError("password reset delivery requires caller transaction rollback") from None
             logger.warning(
                 "password-reset outbox enqueue failed for tenant %s (%s)",
                 tenant.id,
@@ -113,21 +128,23 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
 
 
 @router.get("/reset")
-def reset_form(request: Request, token: str = ""):
-    return _page("Choose a new password",
+def reset_form(request: Request, token: str = "", db: Session = Depends(get_db)):
+    minimum = password_reset_policy(db).minimum_length
+    return _page(
+        "Choose a new password",
         f"<div id='activation-panel'>"
         f"<form method='post' action='/reset' hx-post='/reset' "
         f"hx-target='#activation-panel' hx-swap='outerHTML' class='space-y-4'>"
         f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
-        f"<input name='password' type='password' required minlength='8' "
-        f"placeholder='New password (min 8 chars)' class='w-full px-3 py-2'>"
+        f"<input name='password' type='password' required minlength='{minimum}' "
+        f"placeholder='New password (min {minimum} chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Set password</button></form>"
-        f"</div>")
+        f"</div>",
+    )
 
 
 @router.post("/reset")
-def reset_submit(request: Request, token: str = Form(...), password: str = Form(...),
-                 db: Session = Depends(get_db)):
+def reset_submit(request: Request, token: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     try:
         lifecycle.reset_password(db, tenant_id=tenant.id, raw=token, new_password=password)
@@ -144,25 +161,34 @@ def reset_submit(request: Request, token: str = Form(...), password: str = Form(
 
 # ── Accept invitation ─────────────────────────────────────────────────────────
 
+
 @router.get("/accept-invite")
-def accept_form(request: Request, token: str = ""):
-    return _page("Set up your account",
+def accept_form(request: Request, token: str = "", db: Session = Depends(get_db)):
+    minimum = invitation_acceptance_policy(db).minimum_length
+    return _page(
+        "Set up your account",
         f"<div id='activation-panel'>"
         f"<form method='post' action='/accept-invite' hx-post='/accept-invite' "
         f"hx-target='#activation-panel' hx-swap='outerHTML' class='space-y-4'>"
         f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
-        f"<input name='password' type='password' required minlength='8' "
-        f"placeholder='Choose a password (min 8 chars)' class='w-full px-3 py-2'>"
+        f"<input name='password' type='password' required minlength='{minimum}' "
+        f"placeholder='Choose a password (min {minimum} chars)' class='w-full px-3 py-2'>"
         f"<button class='btn-primary w-full py-2'>Activate account</button></form>"
-        f"</div>")
+        f"</div>",
+    )
 
 
 @router.post("/accept-invite")
-def accept_submit(request: Request, token: str = Form(...), password: str = Form(...),
-                  db: Session = Depends(get_db)):
+def accept_submit(request: Request, token: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     try:
-        lifecycle.accept_invite(db, tenant_id=tenant.id, raw=token, password=password)
+        invitation_claim.accept_invite(
+            db,
+            tenant_id=tenant.id,
+            raw=token,
+            password=password,
+            password_policy=invitation_acceptance_policy(db),
+        )
     except (BadRequestError, ConflictError) as exc:
         body = _result_panel("Account was not activated", escape(str(exc)), ok=False)
         if request.headers.get("HX-Request"):

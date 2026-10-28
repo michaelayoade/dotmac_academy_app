@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from app.models.person import Person
-from app.services.audit import list_events, write_audit_event
+from app.services.audit import list_events
+from tests.services.test_canonical_audit_web_read import seed_historical_event as write_audit_event
+from tests.services.test_canonical_audit_web_read import seed_person
 
 
 def _seed_three(db, tenant_id, actor_id=None):
@@ -62,7 +63,8 @@ def test_list_events_action_filter_excludes_others(admin_session, tenant_a):
 
 
 def test_list_events_actor_filter(admin_session, tenant_a):
-    actor = Person(
+    actor = seed_person(
+        admin_session,
         tenant_id=tenant_a.id,
         email="actor@a.edu",
         first_name="Actor",

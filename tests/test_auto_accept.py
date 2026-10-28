@@ -13,7 +13,7 @@ from sqlalchemy import text
 from tests.conftest import client_for
 
 
-def _cohort(admin_session, tenant, threshold=None):
+def _cohort(admin_session, tenant, threshold=None, below_action="waitlisted"):
     from app.models.cohort import Cohort
     from app.models.track import CohortTrack, Track
 
@@ -24,6 +24,7 @@ def _cohort(admin_session, tenant, threshold=None):
         discipline="fiber",
         status="active",
         auto_accept_threshold=threshold,
+        auto_accept_below_action=below_action,
     )
     admin_session.add(c)
     admin_session.flush()
@@ -166,3 +167,12 @@ def test_zero_admin_end_to_end(app_client, tenant_a, admin_session):
         {"p": str(row.person_id)},
     ).scalar()
     assert invites == 1
+
+
+def test_valid_low_score_left_for_humans_when_below_action_none(app_client, tenant_a, admin_session):
+    cohort, track = _cohort(admin_session, tenant_a, threshold=0.6, below_action="none")
+    a = _applicant(admin_session, tenant_a, cohort, track, "none@a.ex", score=0.4, valid=True)
+    assert _policy(admin_session, a) is None
+    admin_session.refresh(a)
+    assert a.status == "applied"
+    assert "auto-waitlisted" not in (a.notes or "")

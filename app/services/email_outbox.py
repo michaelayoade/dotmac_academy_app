@@ -158,27 +158,14 @@ def _attachments(db: Session, row: EmailOutbox) -> list[tuple[str, bytes, str]]:
     except (KeyError, ValueError) as exc:
         raise ValueError("invalid certificate attachment payload") from exc
 
-    from app.models.certificate import Certificate
-    from app.models.course import Course
-    from app.models.person import Person
+    from dotmac_learning import get_certificate, get_course
+
+    from app.services.api_identity_reads import certificate_recipient
     from app.services.certificates import render_certificate_pdf
 
-    person = db.scalars(
-        select(Person)
-        .where(Person.tenant_id == row.tenant_id)
-        .where(Person.id == person_id)
-    ).first()
-    course = db.scalars(
-        select(Course)
-        .where(Course.tenant_id == row.tenant_id)
-        .where(Course.id == course_id)
-    ).first()
-    cert = db.scalars(
-        select(Certificate)
-        .where(Certificate.tenant_id == row.tenant_id)
-        .where(Certificate.person_id == person_id)
-        .where(Certificate.course_id == course_id)
-    ).first()
+    person = certificate_recipient(db, tenant_id=row.tenant_id, person_id=person_id)
+    course = get_course(db, tenant_id=row.tenant_id, course_id=course_id)
+    cert = get_certificate(db, tenant_id=row.tenant_id, person_id=person_id, course_id=course_id)
     if person is None or course is None or cert is None:
         raise ValueError("certificate attachment state is missing")
     pdf = render_certificate_pdf(

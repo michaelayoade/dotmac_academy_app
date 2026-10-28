@@ -1,24 +1,25 @@
 # app/services/certificates.py
-"""Issue and render course-completion certificates.
-
-A certificate may be issued only once the learner's ``CourseCompletion`` is
-``completed``. Issuance is idempotent (one per person/course). The PDF is
-rendered on demand with fpdf2 — no system dependencies.
-"""
+"""Delegate certificate issuance to Learning; render and notify in Academy."""
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
+from dotmac_learning import (
+    CertificateCommand,
+    CertificateFact,
+    CertificateIssue,
+    CertificateNotEligible,
+)
+from dotmac_learning import (
+    issue_certificate as learning_issue_certificate,
+)
 from fpdf import FPDF
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.certificate import Certificate
-from app.services.completion_aggregate import lock_existing_completion
 from app.services.exceptions import ConflictError
 
 # Ornamental certificate frame (generated). app/services/ -> repo root.
@@ -27,73 +28,48 @@ _FRAME = Path(__file__).resolve().parents[2] / "static" / "img" / "cert-frame.pn
 logger = logging.getLogger(__name__)
 
 
-def _serial() -> str:
-    return f"CERT-{uuid4().hex[:12].upper()}"
-
-
 def issue_certificate(
-    db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID,
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    course_id: UUID,
     now: datetime | None = None,
-) -> Certificate:
-    """Return the certificate for a completed course, creating it if needed.
+) -> CertificateFact:
+    """Return a detached certificate, preserving the product eligibility error."""
+    try:
+        result = learning_issue_certificate(
+            db,
+            CertificateCommand(tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now),
+        )
+    except CertificateNotEligible as exc:
+        raise ConflictError(str(exc)) from exc
+    deliver_certificate_notification(db, result)
+    return result.certificate
 
-    Raises ConflictError if the course is not yet completed.
-    """
-    existing = db.scalars(
-        select(Certificate)
-        .where(Certificate.tenant_id == tenant_id)
-        .where(Certificate.person_id == person_id)
-        .where(Certificate.course_id == course_id)
-    ).first()
-    if existing is not None:
-        return existing
 
-    completion = lock_existing_completion(
-        db, tenant_id=tenant_id, person_id=person_id, course_id=course_id
-    )
-    # A concurrent completion/certificate writer may have issued it while we
-    # waited for the aggregate lock. Recheck before the gate and insertion.
-    existing = db.scalars(
-        select(Certificate)
-        .where(Certificate.tenant_id == tenant_id)
-        .where(Certificate.person_id == person_id)
-        .where(Certificate.course_id == course_id)
-    ).first()
-    if existing is not None:
-        return existing
-    if completion is None or completion.status != "completed":
-        raise ConflictError("course not completed; certificate cannot be issued")
-
-    cert = Certificate(tenant_id=tenant_id, person_id=person_id, course_id=course_id,
-                       serial=_serial(), issued_at=now or datetime.now(UTC))
-    db.add(cert)
-    db.flush()
-    from app.services import learning_events
-
-    learning_events.emit(
-        db, tenant_id=tenant_id, person_id=person_id, kind="certificate_earned",
-        course_id=course_id, subject_id=course_id,
-        detail={"serial": cert.serial},
-    )
+def deliver_certificate_notification(db: Session, result: CertificateIssue) -> None:
+    """Notify only for new issuance, including issuance by completion commands."""
+    if not result.created:
+        return
+    cert = result.certificate
     try:
         from app.services.notifications import notify as _notify
+
         with db.begin_nested():
             _notify(
                 db,
-                tenant_id=tenant_id,
-                person_id=person_id,
+                tenant_id=cert.tenant_id,
+                person_id=cert.person_id,
                 kind="certificate",
                 title="Your certificate is ready",
                 body="Congratulations on completing the course!",
             )
     except Exception as exc:
         logger.warning("in-app notify (certificate) failed: %s", exc)
-    return cert
 
 
-def render_certificate_pdf(
-    *, recipient_name: str, course_title: str, serial: str, issued_at: datetime
-) -> bytes:
+def render_certificate_pdf(*, recipient_name: str, course_title: str, serial: str, issued_at: datetime) -> bytes:
     """Render a single-page landscape A4 certificate PDF and return its bytes."""
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=False)

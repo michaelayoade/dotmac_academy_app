@@ -10,18 +10,19 @@ all run on.
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from urllib.parse import quote
 from uuid import UUID
 
+import dotmac_learning as learning
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.admissions import Applicant
-from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.models.entrance_defaults import TenantEntranceDefaults
-from app.services import exam_engine
+from app.services import exam_engine, settings_store
+from app.services.entrance_invitation_policy import entrance_invitation_policy
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
 from app.services.security import hash_token
@@ -53,8 +54,6 @@ def level_for(fraction: float, levels: tuple[tuple[str, float], ...] = LEVELS) -
 # With 4 options the guessing baseline is 25%; a score at or below a third is
 # indistinguishable from clicking at random. And nobody engages with a 30-question
 # assessment in under six minutes.
-MIN_VALID_FRACTION = exam_engine.MIN_VALID_FRACTION
-MIN_DURATION_SECONDS = exam_engine.MIN_DURATION_SECONDS
 
 INVALID_NEAR_CHANCE = exam_engine.INVALID_NEAR_CHANCE
 INVALID_TOO_FAST = exam_engine.INVALID_TOO_FAST
@@ -98,9 +97,7 @@ def sample_for(applicant: Applicant, questions: list, per_category: int) -> list
     because the entrance flow and its tests refer to it, but the decision now
     belongs to the engine so the course path cannot drift from it.
     """
-    return exam_engine.select(
-        applicant, questions, exam_engine.SelectionPolicy(per_category=max(per_category, 0))
-    )
+    return exam_engine.select(applicant, questions, exam_engine.SelectionPolicy(per_category=max(per_category, 0)))
 
 
 def issue_token(db: Session, *, applicant: Applicant) -> str:
@@ -187,6 +184,77 @@ def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
     raise BadRequestError("No entrance assessment is configured for this cohort or academy.")
 
 
+def effective_bank_version_id(
+    db: Session, *, tenant_id: UUID, applicant: Applicant, bank_id: UUID
+) -> UUID | None:
+    """The version this sitting serves/grades from.
+
+    The start-time pin wins. Without a pin (legacy in-flight sitting, or
+    the pre-start instruction screen) the bank's current published
+    version serves. A versioned bank with no current version (retired)
+    refuses new sittings; a bank with no versions at all is legacy and
+    serves its unversioned rows (None).
+    """
+    pin = applicant.assessment_bank_version_id
+    if pin is not None:
+        return pin
+    fact = learning.get_bank_fact(db, tenant_id=tenant_id, bank_id=bank_id)
+    if fact.current_version_id is not None:
+        return fact.current_version_id
+    if learning.bank_version_history(db, tenant_id=tenant_id, bank_id=bank_id):
+        raise BadRequestError("No published entrance assessment is currently available.")
+    return None
+
+
+def serving_question_facts(
+    db: Session, *, tenant_id: UUID, applicant: Applicant, bank_id: UUID | None = None
+) -> tuple[list, UUID | None, str | None]:
+    """Server-side question facts for sampling/grading plus version state.
+
+    Key-bearing: results must never be serialized to the candidate.
+    Display goes through :func:`entrance_sitting_view`.
+    """
+    bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
+    version_id = effective_bank_version_id(db, tenant_id=tenant_id, applicant=applicant, bank_id=bank_id)
+    if version_id is not None:
+        bundle = learning.bank_version_questions(db, tenant_id=tenant_id, version_id=version_id)
+        return list(bundle.questions), version_id, bundle.version.state
+    return list(learning.bank_questions(db, tenant_id=tenant_id, bank_id=bank_id)), None, None
+
+
+def sampled_facts(db: Session, *, tenant_id: UUID, applicant: Applicant) -> tuple[list, UUID | None, str | None]:
+    """The deterministic paper this applicant sits (facts, version, state)."""
+    facts, version_id, state = serving_question_facts(db, tenant_id=tenant_id, applicant=applicant)
+    return sample_for(applicant, facts, questions_per_category(db)), version_id, state
+
+
+def entrance_sitting_view(db: Session, *, tenant_id: UUID, applicant: Applicant) -> list[dict]:
+    """Candidate-facing questions: stems/types/options only, never keys.
+
+    Published versions render through Learning ``sitting_questions``
+    (its dataclass has no correct/explanation fields). A pinned version
+    retired mid-sitting still finishes locally with the same stripping,
+    because Learning refuses retired versions in that projection.
+    """
+    facts, version_id, state = sampled_facts(db, tenant_id=tenant_id, applicant=applicant)
+    if version_id is not None and state == "published":
+        projected = learning.sitting_questions(
+            db,
+            tenant_id=tenant_id,
+            version_id=version_id,
+            sitter_id=applicant.id,
+            only_ext_ids=[f.ext_id for f in facts],
+        )
+        return [
+            {"ext_id": q.ext_id, "stem": q.stem, "type": q.type, "options": list(q.options)}
+            for q in projected
+        ]
+    return [
+        {"ext_id": q.ext_id, "stem": q.stem, "type": q.type, "options": options_for(applicant, q)}
+        for q in facts
+    ]
+
+
 def has_entrance_exam(db: Session, *, applicant: Applicant) -> bool:
     """Whether an entrance exam applies to this applicant (cohort or academy default)."""
     try:
@@ -212,9 +280,17 @@ def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
-    """Server-stamp the explicit start and return authoritative timing."""
+    """Server-stamp the explicit start, pin the bank version, return timing.
+
+    The pin is written only here (sitting start, never grade time) so a
+    publish mid-sitting cannot change the paper under the candidate.
+    """
     now = now or datetime.now(UTC)
     if applicant.assessment_started_at is None:
+        bank_id = resolve_bank_id(db, applicant=applicant)
+        applicant.assessment_bank_version_id = effective_bank_version_id(
+            db, tenant_id=applicant.tenant_id, applicant=applicant, bank_id=bank_id
+        )
         applicant.assessment_started_at = now
         applicant.assessment_elapsed_seconds = 0
         db.flush()
@@ -265,7 +341,6 @@ def record_elapsed(
 # The invitation link stays valid until a fixed date rather than pinning the
 # candidate to a booked slot. On unreliable connectivity that matters: they pick
 # their own good moment instead of missing a window they cannot control.
-DEFAULT_DEADLINE_DAYS = 7
 
 
 def past_deadline(applicant: Applicant, now: datetime | None = None) -> bool:
@@ -279,7 +354,7 @@ def invite(
     *,
     applicant: Applicant,
     base_url: str,
-    deadline_days: int = DEFAULT_DEADLINE_DAYS,
+    deadline_days: int | None = None,
     send: bool = True,
 ) -> dict:
     """Mint the exam link, set the deadline, and email the invitation.
@@ -290,8 +365,9 @@ def invite(
     """
     from app.services import applicant_email  # local: avoid an import cycle
 
+    deadline = entrance_invitation_policy(db, deadline_days=deadline_days).deadline(datetime.now(UTC))
     raw = issue_token(db, applicant=applicant)
-    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=deadline_days)
+    applicant.assessment_deadline = deadline
     db.flush()
 
     url = f"{base_url.rstrip('/')}/apply/assessment?token={quote(raw)}"
@@ -334,6 +410,7 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     the timer, the autosaved answers and any recorded result, and audits the reset.
     """
     applicant.assessment_started_at = None
+    applicant.assessment_bank_version_id = None  # next start re-pins current
     applicant.assessment_elapsed_seconds = 0
     applicant.assessment_taken_at = None
     applicant.assessment_answers = None
@@ -354,13 +431,14 @@ def reset_and_invite(
     *,
     applicant: Applicant,
     base_url: str,
-    deadline_days: int = DEFAULT_DEADLINE_DAYS,
+    deadline_days: int | None = None,
 ) -> bool:
     """Reset a sitting and atomically queue its replacement invitation."""
     from app.services import applicant_email
 
+    deadline = entrance_invitation_policy(db, deadline_days=deadline_days).deadline(datetime.now(UTC))
     raw = reset_exam(db, applicant=applicant)
-    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=deadline_days)
+    applicant.assessment_deadline = deadline
     url = f"{base_url.rstrip('/')}/apply/assessment?token={quote(raw)}"
     queued = applicant_email.send_exam_invite(
         db,
@@ -400,12 +478,19 @@ def grade_and_record(
     db.execute(select(Applicant.id).where(Applicant.id == applicant.id).with_for_update())
     if applicant.assessment_started_at is None:
         raise BadRequestError("Entrance assessment has not been started.")
+    from app.services.learning_policy import validity_terms
+
+    terms = validity_terms(db)
+    missing_question_weight = settings_store.effective(db, require_store=True)["learning_missing_question_weight"]
     record_elapsed(db, applicant=applicant, now=now)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
     applicant.assessment_bank_id = bank_id
 
-    questions = list(
-        db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
+    # Grade the pinned version's paper (start-time pin; see start_exam).
+    # The pin itself is never written here. Facts stay server-side; the
+    # stored/returned result remains score/level/profile only.
+    questions, _version_id, _state = serving_question_facts(
+        db, tenant_id=tenant_id, applicant=applicant, bank_id=bank_id
     )
     if not questions:
         raise NotFoundError("Entrance assessment has no questions.")
@@ -417,14 +502,19 @@ def grade_and_record(
         {"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight, "options": q.options}
         for q in questions
     ]
-    result = grade_submission(answers, q_dicts, 0.0)
+    result = grade_submission(
+        answers,
+        q_dicts,
+        0.0,
+        missing_question_weight=missing_question_weight,
+    )
 
     cat_of = {q.ext_id: (q.category or "general") for q in questions}
     weight_of = {q.ext_id: float(q.weight) for q in questions}
     agg: dict[str, list[float]] = {}  # category -> [correct_weight, total_weight]
     for item in result.per_item:
         cat = cat_of.get(item["id"], "general")
-        w = weight_of.get(item["id"], 1.0)
+        w = weight_of[item["id"]]
         bucket = agg.setdefault(cat, [0.0, 0.0])
         bucket[1] += w
         if item["correct"]:
@@ -436,7 +526,7 @@ def grade_and_record(
 
     # Validity gate: is this a real measurement, or an absence of data?
     duration = float(applicant.assessment_elapsed_seconds)
-    valid, reason = check_validity(overall, duration, questions=questions)
+    valid, reason = check_validity(overall, duration, terms=terms, questions=questions)
 
     applicant.assessment_score = overall
     applicant.assessment_level = level

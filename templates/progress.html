@@ -72,8 +72,8 @@
     <div class="h-full rounded-full bg-brand-500" style="width: {{ o.completion_pct }}%"></div>
   </div>
   <p class="mt-2 text-xs text-ink-soft">{{ o.completion_pct }}% complete
-    {% if o.certificate.status == 'issued' %} &middot; <a class="font-semibold text-brand-700 hover:underline" href="{{ o.certificate.href }}">Download certificate ({{ o.certificate.serial }})</a>
-    {% elif o.certificate.status == 'eligible' %} &middot; <a class="font-semibold text-brand-700 hover:underline" href="{{ o.certificate.href }}">Certificate ready — download</a>
+    {% if o.certificate.status == 'issued' %} &middot; <a class="font-semibold text-brand-700 hover:underline" href="{{ '/certificates/' ~ o.course.id }}">Download certificate ({{ o.certificate.serial }})</a>
+    {% elif o.certificate.status == 'eligible' %} &middot; <a class="font-semibold text-brand-700 hover:underline" href="{{ '/certificates/' ~ o.course.id }}">Certificate ready — download</a>
     {% endif %}</p>
 
   {% if o.overdue or o.upcoming %}

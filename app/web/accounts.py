@@ -27,19 +27,25 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
-from app.models.track import Track
 from app.services import tracks as track_svc
-from app.services.account_invitations import CohortAssignment, invite_and_enroll
+from app.services.account_invitations import CohortAssignment
 from app.services.accounts import create_user
 from app.services.bootstrap import ensure_roles
 from app.services.email_outbox import enqueue_email
-from app.services.lifecycle import issue_invite_for_person, request_password_reset, set_account_status
+from app.services.identity import AcademyCurrentAccount
+from app.services.invitation_issuance import (
+    cohort_fact,
+    course_fact,
+    invite_web_account,
+    resend_web_account_invitation,
+    track_fact,
+)
+from app.services.lifecycle import request_password_reset, set_account_status
 from app.services.roles import role_slugs
 from app.services.security import hash_token
 from app.services.web_auth import require_web_user
@@ -151,7 +157,7 @@ def users_invite(
     track_id: str = Form(""),
     course_ids: list[str] = Form([]),
     course_id: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -161,9 +167,9 @@ def users_invite(
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
 
-    cohorts: list[Cohort] = []
-    courses_by_cohort: dict[UUID, list[Course]] = {}
-    tracks_by_cohort: dict[UUID, Track] = {}
+    cohorts = []
+    courses_by_cohort = {}
+    tracks_by_cohort = {}
     selected_cohort_ids = [raw for raw in [*cohort_ids, cohort_id] if raw]
     selected_track_ids = [raw for raw in [*track_ids, track_id] if raw]
     selected_course_ids = [raw for raw in [*course_ids, course_id] if raw]
@@ -175,12 +181,7 @@ def users_invite(
             return _html_error("Invalid cohort selection")
         if cohort_uuid in seen_cohort_ids:
             continue
-        cohort = db.scalars(
-            select(Cohort)
-            .where(Cohort.tenant_id == tenant.id)
-            .where(Cohort.id == cohort_uuid)
-            .where(Cohort.status == "active")
-        ).first()
+        cohort = cohort_fact(db, tenant_id=tenant.id, cohort_id=cohort_uuid, active_only=True)
         if cohort is None:
             return _html_error("Selected cohort was not found")
         seen_cohort_ids.add(cohort_uuid)
@@ -206,9 +207,7 @@ def users_invite(
             cohort_track = track_svc.cohort_track_or_404(
                 db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=track_uuid
             )
-            track = db.scalars(
-                select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
-            ).first()
+            track = track_fact(db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=cohort_track.track_id)
             if track is None:
                 return _html_error("Selected track was not found")
             tracks_by_cohort[pair_cohort_id] = track
@@ -237,9 +236,7 @@ def users_invite(
                 course_uuid = UUID(raw_course_uuid)
             except ValueError:
                 return _html_error("Invalid course selection")
-            course = db.scalars(
-                select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_uuid)
-            ).first()
+            course = course_fact(db, tenant_id=tenant.id, course_id=course_uuid)
             if course is None:
                 return _html_error("Selected course was not found")
             for target_cohort_id in target_cohort_ids:
@@ -249,79 +246,76 @@ def users_invite(
                 seen_course_pairs.add(pair)
                 courses_by_cohort.setdefault(target_cohort_id, []).append(course)
 
-    result = invite_and_enroll(
+    with invite_web_account(
         db,
-        tenant_id=tenant.id,
+        request=request,
         email=email,
         first_name=first_name,
         last_name=last_name,
         role=role,
-        # This route already requires "admin" in slugs (checked above), so
-        # any reactivation activate_enrollment performs here is by an admin.
-        actor_is_admin=True,
         assignments=tuple(
             CohortAssignment(
-                cohort=cohort,
-                courses=tuple(courses_by_cohort.get(cohort.id, [])),
-                track=tracks_by_cohort.get(cohort.id),
+                cohort_id=cohort.id,
+                course_ids=tuple(course.id for course in courses_by_cohort.get(cohort.id, [])),
+                track_id=tracks_by_cohort[cohort.id].id if cohort.id in tracks_by_cohort else None,
             )
             for cohort in cohorts
         ),
-    )
-    invited = result.person
-    token = result.token
-    existing_user = not result.created_person
-    assignments = result.assignments
-    link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
-    assignment_html = ""
-    assignment_text = ""
-    if assignments:
-        assignment_items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
-        assignment_html = f"<p>Assignments:</p><ul>{assignment_items}</ul>"
-        assignment_text = "\nAssignments: " + "; ".join(assignments) + "\n"
-    sent = False
-    if token:
-        sent = enqueue_email(
-            db,
-            tenant_id=tenant.id,
-            idempotency_key=f"account-invite:{invited.id}:{hash_token(token)}",
-            kind="account_invite",
-            recipient=invited.email,
-            subject="You're invited to Dotmac Academy",
-            html_body=(
-                f"<p>Hi {escape(invited.first_name)},</p>"
-                f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
-                f"{assignment_html}"
-                f'<p><a href="{link}">Set up your account</a></p>'
-                f"<p>If the button does not work, open this link: {link}</p>"
-            ),
-            text_body=(
-                f"Hi {invited.first_name},\n\n"
-                f"You have been invited to Dotmac Academy as {role}.\n"
-                f"{assignment_text}\n"
-                f"Set up your account: {link}\n"
-            ),
-        )
-    if existing_user and token:
-        if sent:
-            status_text = "User already existed. Invite queued and assignments updated."
+    ) as result:
+        invited = result.person
+        token = result.token
+        existing_user = not result.created_person
+        assignments = result.assignments
+        link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
+        assignment_html = ""
+        assignment_text = ""
+        if assignments:
+            assignment_items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
+            assignment_html = f"<p>Assignments:</p><ul>{assignment_items}</ul>"
+            assignment_text = "\nAssignments: " + "; ".join(assignments) + "\n"
+        sent = False
+        if token:
+            sent = enqueue_email(
+                db,
+                tenant_id=tenant.id,
+                idempotency_key=f"account-invite:{invited.id}:{hash_token(token)}",
+                kind="account_invite",
+                recipient=invited.email,
+                subject="You're invited to Dotmac Academy",
+                html_body=(
+                    f"<p>Hi {escape(invited.first_name)},</p>"
+                    f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
+                    f"{assignment_html}"
+                    f'<p><a href="{link}">Set up your account</a></p>'
+                    f"<p>If the button does not work, open this link: {link}</p>"
+                ),
+                text_body=(
+                    f"Hi {invited.first_name},\n\n"
+                    f"You have been invited to Dotmac Academy as {role}.\n"
+                    f"{assignment_text}\n"
+                    f"Set up your account: {link}\n"
+                ),
+            )
+        if existing_user and token:
+            if sent:
+                status_text = "User already existed. Invite queued and assignments updated."
+            else:
+                status_text = "User already existed. Assignments updated; invite could not be queued."
+        elif existing_user:
+            status_text = "User already exists. Assignments updated."
         else:
-            status_text = "User already existed. Assignments updated; invite could not be queued."
-    elif existing_user:
-        status_text = "User already exists. Assignments updated."
-    else:
-        status_text = "Invite queued." if sent else "Invite could not be queued."
-    assignment_status = ""
-    if assignments:
-        items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
-        assignment_status = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
-    return HTMLResponse(
-        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
-        f'<p class="font-semibold">{status_text}</p>'
-        f"<p>{escape(invited.email)} - {escape(role)}</p>"
-        f"{assignment_status}"
-        f"</div>"
-    )
+            status_text = "Invite queued." if sent else "Invite could not be queued."
+        assignment_status = ""
+        if assignments:
+            items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
+            assignment_status = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
+        return HTMLResponse(
+            f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+            f'<p class="font-semibold">{status_text}</p>'
+            f"<p>{escape(invited.email)} - {escape(role)}</p>"
+            f"{assignment_status}"
+            f"</div>"
+        )
 
 
 @router.post("/{person_id}/reset-link", response_class=HTMLResponse)
@@ -375,51 +369,47 @@ def users_reset_link(
 def users_invite_link(
     person_id: UUID,
     request: Request,
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send invites")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    credential = db.scalars(
-        select(UserCredential).where(UserCredential.tenant_id == tenant.id).where(UserCredential.person_id == target.id)
-    ).first()
-    if credential is not None:
-        return HTMLResponse(
-            (
-                '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
-                '<p class="font-semibold">This user already has a password.</p>'
-                '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
-                "</div>"
+    with resend_web_account_invitation(db, request=request, person_id=person_id) as result:
+        target = result.person
+        if result.had_credential:
+            return HTMLResponse(
+                (
+                    '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
+                    '<p class="font-semibold">This user already has a password.</p>'
+                    '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
+                    "</div>"
+                )
             )
+        token = result.token
+        link = str(request.url_for("accept_form").include_query_params(token=token))
+        sent = enqueue_email(
+            db,
+            tenant_id=tenant.id,
+            idempotency_key=f"account-invite:{target.id}:{hash_token(token)}",
+            kind="account_invite",
+            recipient=target.email,
+            subject="Activate your Dotmac Academy account",
+            html_body=(
+                f"<p>Hi {escape(target.first_name)},</p>"
+                "<p>Use this link to activate your Dotmac Academy account:</p>"
+                f'<p><a href="{link}">Set up your account</a></p>'
+                f"<p>If the button does not work, open this link: {link}</p>"
+            ),
+            text_body=f"Set up your Dotmac Academy account: {link}\n",
         )
-    token = issue_invite_for_person(db, tenant_id=tenant.id, person_id=target.id)
-    link = str(request.url_for("accept_form").include_query_params(token=token))
-    sent = enqueue_email(
-        db,
-        tenant_id=tenant.id,
-        idempotency_key=f"account-invite:{target.id}:{hash_token(token)}",
-        kind="account_invite",
-        recipient=target.email,
-        subject="Activate your Dotmac Academy account",
-        html_body=(
-            f"<p>Hi {escape(target.first_name)},</p>"
-            "<p>Use this link to activate your Dotmac Academy account:</p>"
-            f'<p><a href="{link}">Set up your account</a></p>'
-            f"<p>If the button does not work, open this link: {link}</p>"
-        ),
-        text_body=f"Set up your Dotmac Academy account: {link}\n",
-    )
-    status_text = "Invite email queued." if sent else "Invite email could not be queued."
-    return HTMLResponse(
-        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
-        f'<p class="font-semibold">{status_text}</p>'
-        f"</div>"
-    )
+        status_text = "Invite email queued." if sent else "Invite email could not be queued."
+        return HTMLResponse(
+            f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+            f'<p class="font-semibold">{status_text}</p>'
+            f"</div>"
+        )
 
 
 @router.post("/{person_id}/role")

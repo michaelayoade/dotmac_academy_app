@@ -4,16 +4,9 @@ Usage
 -----
     python -m app.cli <subcommand> [options]
 
-IMPORTANT — database role for bootstrap-tenant
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Creating a tenant is a platform-level operation.  The application role
-(``app_user``) is RLS-restricted and cannot INSERT into the ``tenants``
-table.  Before running ``bootstrap-tenant``, set ``DATABASE_URL`` (or
-``PLATFORM_DATABASE_URL``) to a role that has the required privileges,
-such as the migration/superuser URL, e.g.::
-
-    DATABASE_URL=postgresql+psycopg://postgres:secret@host/db \\
-        python -m app.cli bootstrap-tenant ...
+Offline tenant bootstrap requires the configured login/effective database-role
+pair and the actual canonical/Academy privileges and tenant policies. Configure
+BOOTSTRAP_ALLOWED_DATABASE_ROLE_PAIRS deliberately; its empty default denies.
 """
 
 from __future__ import annotations
@@ -24,11 +17,13 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
-from dotmac_kernel.db import platform_session, tenant_session_by_slug
 from dotmac_kernel.exceptions import NotFoundError
 from dotmac_kernel.models import Tenant as KernelTenant
 from sqlalchemy.orm import Session
+
+from app.database_runtime import bind_academy_database_runtime
 
 _DEFAULT_CHAPTERS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters")
 _DEFAULT_FIGURES_DIR = Path("/home/dotmac/projects/dotmac-academy/figures/final")
@@ -51,7 +46,7 @@ def _tenant_session(slug: str) -> Iterator[tuple[Session, KernelTenant]]:
     place instead of six.
     """
     try:
-        with tenant_session_by_slug(slug) as (db, tenant):
+        with bind_academy_database_runtime().tenant_session_by_slug(slug) as (db, tenant):
             yield db, tenant
     except NotFoundError as exc:
         raise SystemExit(str(exc)) from exc
@@ -64,7 +59,7 @@ def _bootstrap(args: argparse.Namespace) -> None:
     # so there is nothing to scope to yet. Creating a tenant is a platform
     # operation, which is what `platform_session` is for. Its small pool is
     # irrelevant here — this is a one-shot command, not a request path.
-    with platform_session() as db:
+    with bind_academy_database_runtime().platform_session() as db:
         t = bootstrap_tenant(
             db,
             slug=args.slug,
@@ -72,7 +67,7 @@ def _bootstrap(args: argparse.Namespace) -> None:
             admin_email=args.admin_email,
             admin_password=args.admin_password,
         )
-        print(f"tenant {t.slug} ({t.id}) created")
+    print(f"tenant {t.slug} ({t.id}) created")
 
 
 def _email_outbox(args: argparse.Namespace) -> None:
@@ -186,9 +181,21 @@ def _audit_banks(args: argparse.Namespace) -> None:
 
 
 def _load_banks(args: argparse.Namespace) -> None:
-    from app.models.assessment import Activity
+    """Import YAML banks as Learning DRAFTS (never publishes).
+
+    Retires the destructive writer: import never edits a published
+    version, never overwrites a UI draft, never repoints activities or
+    entrance defaults, and never touches Activity title/pass threshold.
+    The YAML policy block is reported as unapplied proposals. A
+    lint-failing bank still becomes a draft for repair in the UI.
+    Publishing is an explicit admin action in the instructor UI.
+    """
+    import dotmac_learning as learning
+    from sqlalchemy import select
+
     from app.models.course import Course
-    from app.services.bank_loader import lint_bank, load_bank, parse_bank
+    from app.services.bank_authoring import cli_bank_audit_context
+    from app.services.bank_loader import BankDocumentConversionError, import_bank_as_draft, parse_bank
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
         banks_dir = Path(args.banks_dir)
@@ -200,78 +207,93 @@ def _load_banks(args: argparse.Namespace) -> None:
             print(f"No *.yaml files found in {banks_dir}")
             return
 
-        loaded = 0
+        context = cli_bank_audit_context(tenant_id=tenant.id)
+        imported = 0
         for yaml_path in yaml_files:
-            doc = parse_bank(yaml_path)
-            violations = lint_bank(doc)
-            if violations:
-                print(f"SKIP {yaml_path.name}: rubric lint violations:")
-                for v in violations:
-                    print(f"  - {v}")
+            try:
+                doc = parse_bank(yaml_path)
+            except Exception as exc:  # unparseable file: report, keep going
+                print(f"SKIP {yaml_path.name}: could not parse — {exc}")
                 continue
-
-            # Resolve the course by slug within this tenant
-            course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == doc.course).first()
+            course = db.scalars(
+                select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == doc.course)
+            ).first()
             if course is None:
                 print(f"SKIP {yaml_path.name}: course '{doc.course}' not found for tenant '{args.tenant_slug}'")
                 continue
-
-            bank = load_bank(db, tenant_id=tenant.id, course_id=course.id, doc=doc)
-
-            # Upsert Activity for this chapter bank
-            # The bank may set its own pass mark; the per-kind values are the
-            # default for banks that do not. Activity.pass_threshold is a real
-            # column, and hardcoding it here silently reverted anything set
-            # elsewhere on every import.
-            pass_threshold = doc.policy.get(
-                "pass_threshold",
-                {"chapter": 0.0, "mid": 0.60, "final": 0.70}.get(doc.kind, 0.0),
-            )
-            title = f"Chapter {doc.chapter} test" if doc.kind == "chapter" else f"{doc.kind.title()} assessment"
-            activity = (
-                db.query(Activity)
-                .filter(
-                    Activity.tenant_id == tenant.id,
-                    Activity.course_id == course.id,
-                    Activity.bank_id == bank.id,
-                )
-                .first()
-            )
-            if activity is None:
-                activity = Activity(
+            try:
+                report = import_bank_as_draft(
+                    db,
                     tenant_id=tenant.id,
                     course_id=course.id,
-                    chapter_number=doc.chapter,
-                    type="mcq_test",
-                    bank_id=bank.id,
-                    title=title,
-                    pass_threshold=pass_threshold,
+                    doc=doc,
+                    audit_context=context,
+                    replace_imported_draft=bool(getattr(args, "replace_imported_draft", False)),
                 )
-                db.add(activity)
-            else:
-                activity.title = title
-                activity.pass_threshold = pass_threshold
-
-            # Assessment policy declared in the bank. Only keys the author
-            # actually set are applied, so a bank without a policy block leaves
-            # the activity exactly as it was.
-            policy_applied = []
-            if "pool" in doc.policy:
-                activity.question_count = doc.policy["pool"]
-                policy_applied.append(f"pool={doc.policy['pool']}")
-            if "max_attempts" in doc.policy:
-                activity.max_attempts = doc.policy["max_attempts"]
-                policy_applied.append(f"max_attempts={doc.policy['max_attempts']}")
-            if "mode" in doc.policy:
-                activity.assessment_mode = doc.policy["mode"]
-                policy_applied.append(f"mode={doc.policy['mode']}")
-
+            except learning.BankImportRefused as exc:
+                # Learning stages the refusal audit in this transaction;
+                # commit so the refusal evidence persists.
+                db.commit()
+                print(f"REFUSED {yaml_path.name}: {exc}")
+                continue
+            except BankDocumentConversionError as exc:
+                db.rollback()
+                print(f"SKIP {yaml_path.name}: {exc}")
+                continue
+            except learning.BankLifecycleError as exc:
+                db.rollback()
+                print(f"ERROR {yaml_path.name}: {exc}")
+                continue
             db.commit()
-            suffix = f", policy: {' '.join(policy_applied)}" if policy_applied else ""
-            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'{suffix}")
-            loaded += 1
+            proposals = " ".join(f"{key}={value}" for key, value in report.policy_proposals)
+            suffix = f", policy proposals NOT applied: {proposals}" if proposals else ""
+            print(
+                f"Imported {yaml_path.name} as draft: outcome={report.outcome} bank={report.bank_id} "
+                f"version={report.version_id} questions={len(doc.questions)} "
+                f"lint_violations={len(report.lint_violations)}{suffix}"
+            )
+            for violation in report.lint_violations:
+                print(f"  - {violation}")
+            imported += 1
 
-        print(f"Done — {loaded}/{len(yaml_files)} bank(s) loaded.")
+        print(f"Done — {imported}/{len(yaml_files)} bank(s) imported as drafts (none published).")
+
+
+def _export_bank(args: argparse.Namespace) -> None:
+    """Export one bank version to YAML (audited; full answer keys).
+
+    Writes only to the explicit --output file; keys are never printed.
+    """
+    from sqlalchemy import select
+
+    from app.models.course import Course
+    from app.services import bank_authoring
+
+    with _tenant_session(args.tenant_slug) as (db, tenant):
+        course = db.scalars(
+            select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == args.course)
+        ).first()
+        if course is None:
+            raise SystemExit(f"Course '{args.course}' not found for tenant '{args.tenant_slug}'")
+        bank = bank_authoring.find_bank(
+            db, tenant_id=tenant.id, course_id=course.id, chapter_number=args.chapter, kind=args.kind
+        )
+        if bank is None:
+            raise SystemExit(f"No bank for course '{args.course}' chapter={args.chapter} kind={args.kind}")
+        version_id = args.version_id or bank.current_version_id
+        if version_id is None:
+            raise SystemExit("Bank has no published version to export; pass --version-id for a specific version.")
+        text = bank_authoring.export_yaml(
+            db,
+            tenant_id=tenant.id,
+            version_id=version_id,
+            course_slug=course.slug,
+            context=bank_authoring.cli_bank_audit_context(tenant_id=tenant.id),
+        )
+        output = Path(args.output)
+        output.write_text(text, encoding="utf-8")
+        db.commit()
+        print(f"Exported bank {bank.id} version {version_id} to {output} ({len(text)} bytes, audited).")
 
 
 def _import_labs(args: argparse.Namespace) -> None:
@@ -314,19 +336,12 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
-    from app.services.facilitator_nominations import SweepFacilitatorsCommand, sweep_pending
     from app.services.reminders import sweep
     from app.services.success_queue import sweep as queue_sweep
 
     with lab_jobs.admin_session() as db:
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
-            facilitator_counts = sweep_pending(
-                db,
-                command=SweepFacilitatorsCommand(tenant_id=tenant.id),
-            )
-            db.commit()
-            print(f"facilitator-sweep[{tenant.slug}]: {facilitator_counts}")
             counts = sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")
@@ -461,10 +476,11 @@ def _email_digest(args: argparse.Namespace) -> None:
     """
     from datetime import UTC, datetime
 
+    from dotmac_kernel.models import Party, PartyPerson, PartyType
     from sqlalchemy import select
 
     from app.models.cohort import Cohort, Enrollment
-    from app.models.person import Person
+    from app.models.identity_extensions import AcademyAccountProfile
     from app.models.tenant import Tenant
     from app.services import lab_jobs
     from app.services.email import recipient_allows, render_cohort_html
@@ -483,12 +499,25 @@ def _email_digest(args: argparse.Namespace) -> None:
             cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
             for cohort in cohorts:
                 matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort.id)
-                instructors = db.scalars(
-                    select(Person)
+                instructors = db.execute(
+                    select(
+                        Party.id,
+                        Party.email,
+                        PartyPerson.first_name,
+                        PartyPerson.last_name,
+                        AcademyAccountProfile.prefs,
+                    )
+                    .join(PartyPerson, PartyPerson.party_id == Party.id)
+                    .join(
+                        AcademyAccountProfile,
+                        (AcademyAccountProfile.party_id == Party.id)
+                        & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+                    )
                     .join(
                         Enrollment,
-                        (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id),
+                        (Enrollment.person_id == Party.id) & (Enrollment.tenant_id == Party.tenant_id),
                     )
+                    .where(Party.tenant_id == tenant.id, Party.party_type == PartyType.person)
                     .where(Enrollment.tenant_id == tenant.id)
                     .where(Enrollment.cohort_id == cohort.id)
                     .where(Enrollment.role_in_cohort == "instructor")
@@ -705,16 +734,23 @@ def _invite_applicants(args: argparse.Namespace) -> None:
     Idempotent-ish: re-inviting mints a fresh token and a fresh deadline, which
     invalidates any older link for that applicant.
     """
+    from datetime import UTC, datetime
+
     from sqlalchemy import select
 
     from app.models.admissions import Applicant
     from app.models.tenant import Tenant
     from app.services import entrance_exam, lab_jobs
+    from app.services.entrance_invitation_policy import entrance_invitation_policy
 
     with lab_jobs.admin_session() as db:
         tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
         if tenant is None:
             raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+
+        policy = entrance_invitation_policy(db, deadline_days=args.deadline_days)
+        policy.deadline(datetime.now(UTC))  # Validate representability before token/outbox effects.
+        deadline_days = policy.deadline_days
 
         stmt = (
             select(Applicant)
@@ -731,7 +767,7 @@ def _invite_applicants(args: argparse.Namespace) -> None:
             stmt = stmt.where(Applicant.email == args.email)
         targets = list(db.scalars(stmt).all())
 
-        print(f"{len(targets)} applicant(s) to invite (deadline {args.deadline_days} days, base {args.base_url})")
+        print(f"{len(targets)} applicant(s) to invite (deadline {deadline_days} days, base {args.base_url})")
         if args.dry_run:
             for a in targets[:20]:
                 print(f"  DRY-RUN would email {a.email}")
@@ -745,7 +781,7 @@ def _invite_applicants(args: argparse.Namespace) -> None:
             if not entrance_exam.has_entrance_exam(db, applicant=a):
                 skipped += 1
                 continue
-            res = entrance_exam.invite(db, applicant=a, base_url=args.base_url, deadline_days=args.deadline_days)
+            res = entrance_exam.invite(db, applicant=a, base_url=args.base_url, deadline_days=deadline_days)
             if res["emailed"]:
                 queued += 1
             else:
@@ -911,6 +947,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
     from app.services import lab_jobs, lab_operations
     from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
     from app.services.labengine.containerlab import ContainerlabEngine
+    from app.services.settings_store import execution_policy
 
     if settings.lab_host_role.lower() != "lab":
         raise SystemExit("lab-worker requires LAB_HOST_ROLE=lab")
@@ -919,7 +956,6 @@ def _lab_worker(args: argparse.Namespace) -> None:
     errors = validate_settings(settings)
     if errors:
         raise SystemExit("; ".join(errors))
-    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
     # The singleton lock is held for this whole process's lifetime (acquired
     # before any database session or reclaim/drain work), not per-iteration
     # like host_lock — see worker_singleton_lock's docstring. A second worker
@@ -940,7 +976,10 @@ def _lab_worker(args: argparse.Namespace) -> None:
             identity = lab_operations.worker_identity_parts()
             with lab_jobs.lab_worker_session() as db:
                 try:
-                    reclaimed = lab_operations.reclaim_previous_epoch(db, host=identity.host, epoch=identity.epoch)
+                    startup_policy = execution_policy(db)
+                    reclaimed = lab_operations.reclaim_previous_epoch(
+                        db, host=identity.host, epoch=identity.epoch, policy=startup_policy
+                    )
                     db.commit()
                 except BaseException:
                     # Includes _WorkerShutdownRequested (a SIGTERM arriving
@@ -955,16 +994,21 @@ def _lab_worker(args: argparse.Namespace) -> None:
                     raise
             if reclaimed:
                 print(f"reclaimed {reclaimed} operation(s) from a previous worker " "epoch on this host")
-            print("lab-worker started; draining durable operations every 5s")
+            print("lab-worker started; draining durable operations")
             while True:
                 with lab_jobs.lab_worker_session() as db:
-                    repaired = lab_operations.reconcile_stuck(db)
+                    policy = execution_policy(db)
+                    engine = ContainerlabEngine(
+                        settings.lab_workdir, execution_policy=policy, lock_label="academy-lab-worker"
+                    )
+                    repaired = lab_operations.reconcile_stuck(db, policy=policy)
                     db.commit()
-                    recovered = lab_jobs.recover_missing_consoles(db, engine)
+                    recovered = lab_jobs.recover_missing_consoles(db, engine, policy=policy)
                     db.commit()
                     n = lab_jobs.drain_once(
                         db,
                         engine,
+                        policy=policy,
                         claimed_by=identity.claimed_by,
                         claimed_host=identity.host,
                         claimed_epoch=identity.epoch,
@@ -975,7 +1019,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
                     print(f"recovered {recovered} missing lab console(s)")
                 if n:
                     print(f"provisioned {n} lab(s)")
-                time.sleep(5)
+                time.sleep(policy.lab_worker_poll_interval_seconds)
     except HostLockUnavailable as exc:
         raise SystemExit(f"lab-worker: {exc}") from exc
     except _WorkerShutdownRequested:
@@ -997,6 +1041,7 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
     from app.services import lab_jobs, lab_operations
     from app.services.host_lock import HostLockUnavailable
     from app.services.labengine.containerlab import ContainerlabEngine
+    from app.services.settings_store import execution_policy
 
     if settings.lab_host_role.lower() != "lab":
         raise SystemExit("lab-reconcile requires LAB_HOST_ROLE=lab")
@@ -1005,9 +1050,10 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
     errors = validate_settings(settings)
     if errors:
         raise SystemExit("; ".join(errors))
-    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-reconcile")
     with lab_jobs.lab_worker_session() as db:
-        requeued = lab_operations.reconcile_stuck(db)
+        policy = execution_policy(db)
+        engine = ContainerlabEngine(settings.lab_workdir, execution_policy=policy, lock_label="academy-lab-reconcile")
+        requeued = lab_operations.reconcile_stuck(db, policy=policy)
         # Commit the stuck-claim reconciliation in its own short transaction —
         # its FOR UPDATE SKIP LOCKED scan takes a row lock on every currently
         # claimed operation (not just the stuck ones; "stuck" is decided in
@@ -1019,7 +1065,7 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
         # reason.
         db.commit()
         try:
-            runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine)
+            runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine, policy=policy)
         except HostLockUnavailable as exc:
             # reconcile_runtime makes no database writes before it can raise
             # this (see its phase breakdown), so there is nothing this pass
@@ -1041,83 +1087,95 @@ def _lab_reconcile(args: argparse.Namespace) -> None:
 
 
 def _load_curriculum(args: argparse.Namespace) -> None:
-    """Apply a CURRICULUM.yaml's prerequisite graph. The canonical writer.
+    """Parse product YAML and delegate prerequisite reconciliation to Learning.
 
-    ``CoursePrerequisite`` is read by ``entitlements`` in two places and was
-    written in none, so prerequisites were enforceable and uncreatable. The file
-    is authoritative and the table is a projection of it: rows for the
-    discipline that the file no longer declares are removed, so re-running after
-    deleting an edge actually deletes it.
+    The tenant session remains the transaction authority. Learning stages graph
+    changes and counts; this CLI retains dry-run rollback and ordinary commit.
+    Typed commands preserve supported string slugs, not arbitrary malformed
+    Python/YAML error ordering.
+
+    HM-01 creation defaults are materialized here, never in Learning: an
+    entry carrying explicit ``conditions`` (or ``composition``) is
+    authoritative for its course, so an omitted composition falls back to
+    the composed creation default. A pure legacy ``requires`` entry stays
+    on the legacy path at the historical ``course_completed`` default, so
+    re-running an old file never restates authored conditions or
+    composition; a non-default creation kind is materialized into typed
+    conditions only when it needs no parameters a slug cannot supply.
     """
+    import dotmac_learning as learning
     import yaml
 
-    from app.models.course import Course
-    from app.models.prerequisite import CoursePrerequisite
+    from app.services.learning_policy import creation_defaults
 
     doc = yaml.safe_load(args.file.read_text())["curriculum"]
     declared = doc.get("prerequisites") or []
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
-        courses = {c.slug: c for c in db.query(Course).filter(Course.tenant_id == tenant.id).all()}
-
-        wanted: set[tuple] = set()
-        missing: list[str] = []
+        defaults = creation_defaults(db)
+        declarations = []
         for entry in declared:
-            slug = entry["course"]
-            for req in entry.get("requires") or []:
-                for name in (slug, req):
-                    if name not in courses:
-                        missing.append(name)
-                if slug in courses and req in courses:
-                    if slug == req:
-                        raise SystemExit(f"{slug} cannot require itself")
-                    wanted.add((courses[slug].id, courses[req].id))
-
-        if missing:
-            # Fail rather than silently skip: a typo'd slug would otherwise look
-            # exactly like a successful run that enforced nothing.
-            raise SystemExit(
-                "These courses are declared in the file but not imported: " + ", ".join(sorted(set(missing)))
+            course = entry["course"]
+            raw_conditions = entry.get("conditions") or []
+            composition = entry.get("composition")
+            requires = entry.get("requires") or []
+            if raw_conditions:
+                declarations.append(
+                    learning.PrerequisiteDeclaration(
+                        course=course,
+                        requires=requires,
+                        conditions=tuple(
+                            learning.PrerequisiteConditionDeclaration(**condition)
+                            for condition in raw_conditions
+                        ),
+                        composition=composition or defaults.prerequisite_default_composition,
+                    )
+                )
+                continue
+            if requires and defaults.prerequisite_default_kind != "course_completed":
+                if defaults.prerequisite_default_kind != "certificate_held":
+                    raise SystemExit(
+                        f"learning_prerequisite_default_kind {defaults.prerequisite_default_kind!r} "
+                        "needs typed conditions in the curriculum file; legacy requires "
+                        "entries cannot supply its parameters"
+                    )
+                declarations.append(
+                    learning.PrerequisiteDeclaration(
+                        course=course,
+                        conditions=tuple(
+                            learning.PrerequisiteConditionDeclaration(
+                                kind=defaults.prerequisite_default_kind,
+                                requires=slug,
+                            )
+                            for slug in requires
+                        ),
+                        composition=composition or defaults.prerequisite_default_composition,
+                    )
+                )
+                continue
+            declarations.append(
+                learning.PrerequisiteDeclaration(
+                    course=course,
+                    requires=requires,
+                    composition=composition,
+                )
             )
-
-        # A cycle would lock every course in it permanently unreachable.
-        edges: dict = {}
-        for course_id, requires_id in wanted:
-            edges.setdefault(course_id, set()).add(requires_id)
-        state: dict = {}
-
-        def _walk(node) -> None:
-            state[node] = 1
-            for nxt in edges.get(node, ()):
-                if state.get(nxt) == 1:
-                    raise SystemExit("prerequisite cycle detected; refusing to write")
-                if not state.get(nxt):
-                    _walk(nxt)
-            state[node] = 2
-
-        for node in list(edges):
-            if not state.get(node):
-                _walk(node)
-
-        existing_rows = db.query(CoursePrerequisite).filter(CoursePrerequisite.tenant_id == tenant.id).all()
-        scoped = {c.id for c in courses.values() if c.discipline == doc.get("discipline")}
-        existing = {(r.course_id, r.requires_course_id): r for r in existing_rows}
-
-        added = removed = 0
-        for pair in wanted - set(existing):
-            db.add(CoursePrerequisite(tenant_id=tenant.id, course_id=pair[0], requires_course_id=pair[1]))
-            added += 1
-        for pair, row in existing.items():
-            if pair not in wanted and pair[0] in scoped:
-                db.delete(row)
-                removed += 1
+        command = learning.ReconcilePrerequisitesCommand(
+            tenant_id=tenant.id,
+            discipline=doc.get("discipline"),
+            declarations=tuple(declarations),
+        )
+        try:
+            result = learning.reconcile_prerequisites(db, command)
+        except learning.PrerequisiteReconciliationError as exc:
+            raise SystemExit(str(exc)) from exc
 
         if args.dry_run:
             db.rollback()
-            print(f"[dry-run] would add {added}, remove {removed}")
+            print(f"[dry-run] would add {result.added}, remove {result.removed}")
             return
         db.commit()
-        print(f"prerequisites: {added} added, {removed} removed, {len(wanted)} declared")
+        print(f"prerequisites: {result.added} added, {result.removed} removed, {result.declared} declared")
 
 
 def main() -> None:
@@ -1129,13 +1187,10 @@ def main() -> None:
 
     b = sub.add_parser(
         "bootstrap-tenant",
-        help="Create a tenant with standard roles and an initial admin user.",
+        help="Create a tenant and initial owner using configured bootstrap policy.",
         description=(
-            "Create a tenant, the three standard roles (student/instructor/admin), "
-            "an admin Person + UserCredential, and grant that person the admin role. "
-            "NOTE: this is a platform-level operation — run with DATABASE_URL pointing "
-            "at a role allowed to INSERT into tenants (superuser/migration URL), "
-            "since app_user is RLS-restricted."
+            "Create a tenant, configured roles, and an initial owner through the offline Kernel owner. "
+            "Requires an explicitly configured login/effective database-role pair and actual write privileges."
         ),
     )
     b.add_argument("--slug", required=True, help="URL-safe tenant identifier")
@@ -1209,11 +1264,14 @@ def main() -> None:
 
     lb = sub.add_parser(
         "load-banks",
-        help="Load YAML MCQ question banks into the database for a tenant.",
+        aliases=["import-banks-as-draft"],
+        help="Import YAML MCQ question banks as unpublished drafts for a tenant.",
         description=(
-            "For each *.yaml file in --banks-dir: parse the bank, lint it against the "
-            "20/50/30 rubric-mix rule (skip and print violations on failure), load it into "
-            "QuestionBank/Question tables, and create an Activity for each chapter bank."
+            "For each *.yaml file in --banks-dir: parse the bank and import it as a "
+            "Learning DRAFT version. Import never publishes, never overwrites a UI "
+            "draft, never repoints activities/entrance defaults, and never touches "
+            "Activity rows; YAML policy is reported as unapplied proposals. "
+            "Lint-failing banks become unrepublishable drafts for UI repair."
         ),
     )
     lb.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
@@ -1223,7 +1281,30 @@ def main() -> None:
         default=_DEFAULT_BANKS_DIR,
         help="Directory containing *.yaml bank files (default: Foundation assessments/banks)",
     )
+    lb.add_argument(
+        "--replace-imported-draft",
+        action="store_true",
+        help="Replace an existing untouched YAML-imported draft (UI drafts are never replaced).",
+    )
     lb.set_defaults(func=_load_banks)
+
+    eb = sub.add_parser(
+        "export-bank",
+        help="Export one bank version to a YAML file (audited; contains answer keys).",
+        description=(
+            "Render the bank's current published version (or --version-id) to the "
+            "YAML transport shape with provenance comments. The export is audited "
+            "and written only to --output; keys are never printed."
+        ),
+    )
+    eb.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    eb.add_argument("--course", required=True, help="Course slug owning the bank")
+    eb.add_argument("--chapter", type=int, default=None, help="Bank chapter number (omit for non-chapter banks)")
+    eb.add_argument("--kind", required=True, help="Bank kind, e.g. chapter or final")
+    eb.add_argument("--version-id", type=UUID, default=None,
+                    help="Specific version UUID (default: current published)")
+    eb.add_argument("--output", type=Path, required=True, help="YAML file to write (contains answer keys)")
+    eb.set_defaults(func=_export_bank)
 
     lc = sub.add_parser(
         "load-curriculum",
@@ -1425,7 +1506,9 @@ def main() -> None:
     seb.set_defaults(func=_set_entrance_bank)
 
     arp = sub.add_parser("admin-report", help="Email tenant admins the admissions/learning activity report")
-    arp.add_argument("--hours", type=int, default=24, help="Reporting window in hours (default 24)")
+    arp.add_argument(
+        "--hours", type=int, default=None, help="Reporting window in hours (omission uses effective Academy settings)"
+    )
     arp.set_defaults(func=_admin_report)
 
     saa = sub.add_parser("set-auto-accept", help="Auto-accept valid entrance sittings at/above a score threshold")
@@ -1451,7 +1534,12 @@ def main() -> None:
     inv.add_argument(
         "--base-url", default="https://academy.dotmac.io", help="Public base URL used to build the exam link"
     )
-    inv.add_argument("--deadline-days", type=int, default=7, help="Days the link stays valid (default 7)")
+    inv.add_argument(
+        "--deadline-days",
+        type=int,
+        default=None,
+        help="Days the link stays valid (omit to use the configured Settings default)",
+    )
     inv.add_argument("--cohort-id", default=None, help="Limit to one intake")
     inv.add_argument("--email", default=None, help="Just this one applicant (use to test first)")
     inv.add_argument(
@@ -1499,6 +1587,7 @@ def main() -> None:
     rel.set_defaults(func=_recompute_entrance_levels)
 
     args = p.parse_args()
+    bind_academy_database_runtime()
     args.func(args)
 
 

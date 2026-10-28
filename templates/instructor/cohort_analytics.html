@@ -14,13 +14,13 @@
 <div class="mt-8 grid gap-4 sm:grid-cols-4">
   <div class="card p-5"><p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Learners</p>
     <p class="mt-1 text-2xl font-medium text-ink tabular-nums">{{ ov.learners }}</p></div>
-  <div class="card p-5"><p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Active / inactive (7d)</p>
+  <div class="card p-5"><p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Active / inactive ({{ insight_terms.active_window_days }}d)</p>
     <p class="mt-1 text-2xl font-medium text-ink tabular-nums">{{ ov.active }} / {{ ov.inactive }}</p></div>
   <div class="card p-5"><p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Average score</p>
     <p class="mt-1 text-2xl font-medium text-ink tabular-nums">{% if ov.avg_score_pct is not none %}{{ ov.avg_score_pct }}%{% else %}&mdash;{% endif %}</p></div>
   <div class="card p-5"><p class="text-xs font-semibold uppercase tracking-wide text-ink-soft">Events this week</p>
     <p class="mt-1 text-2xl font-medium text-ink tabular-nums">{{ ov.week_events }}</p>
-    <p class="text-xs text-ink-soft">vs {{ ov.prior_week_avg }} 4-week average</p></div>
+    <p class="text-xs text-ink-soft">vs {{ ov.prior_week_avg }} {{ insight_terms.comparison_prior_weeks }}-week average</p></div>
 </div>
 
 <h2 class="mt-10 text-xl font-medium text-ink">Work state</h2>

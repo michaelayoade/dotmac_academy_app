@@ -7,26 +7,25 @@ import html
 from itertools import groupby
 from uuid import UUID
 
+import dotmac_learning as learning
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.cohort import Cohort
-from app.models.course import Course
-from app.models.person import Person
 from app.services import announcements as ann_svc
 from app.services import learning_events, management_inquiries
 from app.services.agenda import upcoming_for_person
 from app.services.catalog import (
     all_courses,
+    catalog_course_by_slug,
     course_completion,
     course_structure,
     my_courses,
     public_catalog,
 )
 from app.services.entitlements import course_access_states, open_course_ids
+from app.services.identity import AcademyCurrentAccount
 from app.services.localtime import to_local
 from app.services.roles import role_slugs
 from app.services.settings_store import effective
@@ -35,17 +34,15 @@ from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
-_STAFF_ROLES = {"instructor", "admin"}
-
 
 def _is_staff(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
-    return bool(_STAFF_ROLES & role_slugs(db, tenant_id, person_id))
+    return bool(set(effective(db, require_store=True).catalog_staff_roles) & role_slugs(db, tenant_id, person_id))
 
 
 @router.get("/courses", response_class=HTMLResponse)
 def courses_list(
     request: Request,
-    person: Person | None = Depends(optional_web_user),
+    person: AcademyCurrentAccount | None = Depends(optional_web_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Signed-in: 'My courses' (+ 'All courses' for staff). Anonymous: the
@@ -80,7 +77,7 @@ def courses_list(
             }
         )
 
-    all_: list[Course] | None = None
+    all_: list[learning.CourseFact] | None = None
     if staff:
         all_ = all_courses(db, tenant_id=tenant.id)
 
@@ -165,7 +162,7 @@ def submit_management_enrollment(
 def course_landing(
     slug: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Course landing page — Part-grouped structure + Continue CTA.
@@ -174,11 +171,7 @@ def course_landing(
     entitlement check so they can preview any course.
     """
     tenant = require_tenant(request)
-    course = db.scalars(
-        select(Course)
-        .where(Course.tenant_id == tenant.id)
-        .where(Course.slug == slug)
-    ).first()
+    course = catalog_course_by_slug(db, tenant_id=tenant.id, slug=slug)
     if course is None:
         raise HTTPException(status_code=404)
 
@@ -218,7 +211,7 @@ def course_landing(
 @router.get("/announcements", response_class=HTMLResponse)
 def announcements(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Learner announcements list — tenant-wide and cohort-targeted."""
@@ -227,12 +220,8 @@ def announcements(
     cohort_ids = {a.cohort_id for a in items if a.cohort_id is not None}
     cohort_map: dict = {}
     if cohort_ids:
-        cohorts = db.scalars(
-            select(Cohort)
-            .where(Cohort.tenant_id == tenant.id)
-            .where(Cohort.id.in_(cohort_ids))
-        ).all()
-        cohort_map = {c.id: c.name for c in cohorts}
+        cohorts = learning.instructor_cohort_choices(db, tenant_id=tenant.id)
+        cohort_map = {c.id: c.name for c in cohorts if c.id in cohort_ids}
     return templates.TemplateResponse(
         request,
         "learn/announcements.html",
@@ -243,7 +232,7 @@ def announcements(
 @router.get("/calendar", response_class=HTMLResponse)
 def calendar(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Learner agenda — upcoming offering windows and activity deadlines."""

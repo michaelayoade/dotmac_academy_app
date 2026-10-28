@@ -1,13 +1,3 @@
-"""Instructor lab admin routes — monitor active lab instances + override lab scores.
-
-All routes are gated by require_web_role("instructor") (admins inherit the role).
-Students and unauthenticated users receive 403 / a redirect to /login.
-
-IMPORTANT: no db.commit() inside any handler. The get_db dependency owns the
-transaction (SET LOCAL app.current_tenant, then commit after the response). A
-mid-handler commit would clear that GUC and break RLS.
-"""
-
 from __future__ import annotations
 
 from uuid import UUID
@@ -19,15 +9,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.lab import LabInstance
-from app.models.person import Person
+from app.services.api_identity_reads import person_contacts
 from app.services.assessment import override_score
-from app.services.web_auth import require_web_role
+from app.services.product_admin_access import require_lab_admin_access
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
 router = APIRouter(
     prefix="/instructor/labs",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("instructor"))],
+    dependencies=[Depends(require_tenant), Depends(require_lab_admin_access)],
 )
 
 # Statuses considered "live" for the monitor view.
@@ -45,17 +35,14 @@ def monitor(request: Request, db: Session = Depends(get_db)):
             LabInstance.instance_name,
             LabInstance.activity_id,
             LabInstance.last_active_at,
-            Person.email,
-        )
-        .join(
-            Person,
-            (Person.id == LabInstance.person_id)
-            & (Person.tenant_id == LabInstance.tenant_id),
+            LabInstance.person_id,
         )
         .where(LabInstance.tenant_id == tenant.id)
         .where(LabInstance.status.in_(_ACTIVE_STATUSES))
         .order_by(LabInstance.last_active_at.desc().nullslast())
     ).all()
+    contacts = person_contacts(db, tenant_id=tenant.id, person_ids=[row.person_id for row in rows])
+    rows = [(*row[:5], contacts[row.person_id].email) for row in rows if row.person_id in contacts]
     return templates.TemplateResponse(
         request,
         "labs/admin_monitor.html", {"request": request, "rows": rows}

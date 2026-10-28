@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from app.models.assessment import Activity, Question, QuestionBank
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
@@ -283,31 +285,56 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
 
 def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
     """A course the learner may study, with one chapter and one activity."""
-    c = Course(tenant_id=tenant.id, slug=slug, title="SP", discipline="networking",
-               source_ref="x", version=1)
+    c = Course(tenant_id=tenant.id, slug=slug, title="SP", discipline="networking", source_ref="x", version=1)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(
-        Chapter(tenant_id=tenant.id, course_id=c.id, number=1, title="One", part="I",
-                body_html=body_html, source_hash="sh", order_index=1)
+        Chapter(
+            tenant_id=tenant.id,
+            course_id=c.id,
+            number=1,
+            title="One",
+            part="I",
+            body_html=body_html,
+            source_hash="sh",
+            order_index=1,
+        )
     )
     bank = QuestionBank(tenant_id=tenant.id, course_id=c.id, chapter_number=1, kind="chapter", version=1)
     admin_session.add(bank)
     admin_session.flush()
     admin_session.add(
-        Question(tenant_id=tenant.id, bank_id=bank.id, ext_id="q1", stem="Pick A", type="single",
-                 options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1)
+        Question(
+            tenant_id=tenant.id,
+            bank_id=bank.id,
+            ext_id="q1",
+            stem="Pick A",
+            type="single",
+            options=["A", "B"],
+            correct=["A"],
+            rubric_category="recall",
+            explanation="",
+            weight=1,
+        )
     )
     admin_session.add(
-        Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="mcq_test",
-                 bank_id=bank.id, title="Ch1 test", pass_threshold=0.6)
+        Activity(
+            tenant_id=tenant.id,
+            course_id=c.id,
+            chapter_number=1,
+            type="mcq_test",
+            bank_id=bank.id,
+            title="Ch1 test",
+            pass_threshold=0.6,
+        )
     )
     coh = Cohort(tenant_id=tenant.id, name=f"C-{slug}", discipline="networking", status="active")
     admin_session.add(coh)
     admin_session.flush()
     admin_session.add(
-        Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person.id,
-                   role_in_cohort="student", status="active")
+        Enrollment(
+            tenant_id=tenant.id, cohort_id=coh.id, person_id=person.id, role_in_cohort="student", status="active"
+        )
     )
     admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=c.id, status="active"))
     admin_session.commit()
@@ -319,9 +346,7 @@ def test_subtopic_progress_survives_a_new_browser_session(app_client, admin_sess
     who switched device found the chapter's activities re-locked with nothing on
     the server to show the work was done. A fresh cookie jar is that new device."""
     p, h = _login(app_client, admin_session, tenant_a)
-    _seed_entitled_chapter(
-        admin_session, tenant_a, p, slug="subtopics", body_html="<h2>Alpha</h2><h2>Beta</h2>"
-    )
+    _seed_entitled_chapter(admin_session, tenant_a, p, slug="subtopics", body_html="<h2>Alpha</h2><h2>Beta</h2>")
 
     r = app_client.get("/courses/subtopics/chapters/1", headers=h)
     assert r.status_code == 200
@@ -364,13 +389,20 @@ def test_subtopic_progress_requires_course_access(app_client, admin_session, ten
     """Without the entitlement gate a learner could write progress — and feed the
     activity gate — for a course they cannot open."""
     p, h = _login(app_client, admin_session, tenant_a)
-    c = Course(tenant_id=tenant_a.id, slug="notmine", title="NM", discipline="networking",
-               source_ref="x", version=1)
+    c = Course(tenant_id=tenant_a.id, slug="notmine", title="NM", discipline="networking", source_ref="x", version=1)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(
-        Chapter(tenant_id=tenant_a.id, course_id=c.id, number=1, title="One", part="I",
-                body_html="<h2>Alpha</h2>", source_hash="sh2", order_index=1)
+        Chapter(
+            tenant_id=tenant_a.id,
+            course_id=c.id,
+            number=1,
+            title="One",
+            part="I",
+            body_html="<h2>Alpha</h2>",
+            source_hash="sh2",
+            order_index=1,
+        )
     )
     admin_session.commit()
 
@@ -378,3 +410,203 @@ def test_subtopic_progress_requires_course_access(app_client, admin_session, ten
     hh = {**h, "x-csrf-token": app_client.cookies.get("csrf_token") or ""}
     r = app_client.post("/courses/notmine/chapters/1/subtopics/alpha/complete", headers=hh)
     assert r.status_code == 403
+
+
+@pytest.fixture
+def chapter_owner_route(monkeypatch):
+    """Adapter doubles only; installed Learning owns domain SQL/event canaries."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from app.services import settings_store
+    from app.web import learn
+
+    monkeypatch.setattr(settings_store, "get_all", Mock(return_value={}))
+    tenant = SimpleNamespace(id=uuid.uuid4())
+    person = SimpleNamespace(id=uuid.uuid4())
+    course = SimpleNamespace(id=uuid.uuid4(), slug="owner-chapter")
+    chapter = SimpleNamespace(id=uuid.uuid4(), body_html="<h2>Read me</h2>", number=1)
+    request = object()
+    db = Mock()
+    db.scalars.side_effect = [
+        Mock(first=Mock(return_value=course)),
+        Mock(first=Mock(return_value=chapter)),
+    ]
+    gate = Mock()
+    render = Mock(side_effect=lambda _request, _template, context: context)
+    emit = Mock()
+    monkeypatch.setattr(learn, "require_tenant", Mock(return_value=tenant))
+    monkeypatch.setattr(learn, "require_course_open", gate)
+    monkeypatch.setattr(learn.templates, "TemplateResponse", render)
+    monkeypatch.setattr(learn.learning_events, "emit", emit)
+    return SimpleNamespace(
+        learn=learn,
+        tenant=tenant,
+        person=person,
+        course=course,
+        chapter=chapter,
+        request=request,
+        db=db,
+        gate=gate,
+        render=render,
+        emit=emit,
+    )
+
+
+@pytest.mark.parametrize(
+    "done,event_status", [(True, "recorded"), (True, "suppressed"), (True, "failed"), (False, None)]
+)
+def test_chapter_toggle_delegates_one_scoped_owner_command_and_renders_outcome(
+    chapter_owner_route, monkeypatch, caplog, done, event_status
+):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+
+    case = chapter_owner_route
+    event = learning.EventEmission(event_status) if event_status else None
+    owner = Mock(return_value=learning.ChapterReadWrite(done, event))
+    monkeypatch.setattr(learning, "toggle_chapter_read", owner)
+    result = case.learn.chapter_complete(case.course.slug, 1, case.request, person=case.person, db=case.db)
+    case.gate.assert_called_once_with(
+        case.db, tenant_id=case.tenant.id, person_id=case.person.id, course_id=case.course.id
+    )
+    owner.assert_called_once_with(
+        case.db,
+        learning.ChapterReadingCommand(
+            tenant_id=case.tenant.id,
+            person_id=case.person.id,
+            course_id=case.course.id,
+            chapter_id=case.chapter.id,
+        ),
+        local_day_zone=None,
+    )
+    assert result["completed"] is done
+    case.render.assert_called_once_with(
+        case.request,
+        "_mark_complete.html",
+        {"request": case.request, "course": case.course, "chapter": case.chapter, "completed": done},
+    )
+    # The event consequence and persistence are delegated, never duplicated here.
+    case.emit.assert_not_called()
+    case.db.add.assert_not_called()
+    case.db.delete.assert_not_called()
+    case.db.flush.assert_not_called()
+    case.db.execute.assert_not_called()
+    assert case.db.scalars.call_count == 2
+    warnings = [record.getMessage() for record in caplog.records if record.name == case.learn.reading_progress.__name__]
+    assert warnings == (["learning-event emission failed (chapter_completed)"] if event_status == "failed" else [])
+
+
+@pytest.mark.parametrize("route", ["chapter", "chapter_complete"])
+def test_chapter_owner_access_denial_precedes_progress_or_render(chapter_owner_route, monkeypatch, route):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+    from fastapi import HTTPException
+
+    case = chapter_owner_route
+    denied = HTTPException(status_code=403)
+    case.gate.side_effect = denied
+    reader, writer = Mock(), Mock()
+    monkeypatch.setattr(learning, "completed_chapter_ids", reader)
+    monkeypatch.setattr(learning, "toggle_chapter_read", writer)
+    with pytest.raises(HTTPException) as caught:
+        getattr(case.learn, route)(case.course.slug, 1, case.request, person=case.person, db=case.db)
+    assert caught.value is denied
+    assert case.db.scalars.call_count == 1
+    reader.assert_not_called()
+    writer.assert_not_called()
+    case.emit.assert_not_called()
+    case.render.assert_not_called()
+
+
+@pytest.mark.parametrize("route", ["chapter", "chapter_complete"])
+@pytest.mark.parametrize("missing", ["course", "chapter"])
+def test_chapter_owner_missing_reference_keeps_404_before_progress(chapter_owner_route, monkeypatch, route, missing):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+    from fastapi import HTTPException
+
+    case = chapter_owner_route
+    case.db.scalars.side_effect = (
+        [Mock(first=Mock(return_value=None))]
+        if missing == "course"
+        else [Mock(first=Mock(return_value=case.course)), Mock(first=Mock(return_value=None))]
+    )
+    reader, writer = Mock(), Mock()
+    monkeypatch.setattr(learning, "completed_chapter_ids", reader)
+    monkeypatch.setattr(learning, "toggle_chapter_read", writer)
+    with pytest.raises(HTTPException) as caught:
+        getattr(case.learn, route)(case.course.slug, 1, case.request, person=case.person, db=case.db)
+    assert caught.value.status_code == 404
+    assert case.gate.call_count == (0 if missing == "course" else 1)
+    reader.assert_not_called()
+    writer.assert_not_called()
+    case.emit.assert_not_called()
+    case.render.assert_not_called()
+
+
+@pytest.mark.parametrize("current_done", [False, True])
+def test_chapter_get_keeps_sidebar_batch_and_later_current_flag_observations(
+    chapter_owner_route, monkeypatch, current_done
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock, call
+
+    import dotmac_learning as learning
+
+    case = chapter_owner_route
+    other = SimpleNamespace(id=uuid.uuid4(), body_html="<h2>Other</h2>", number=2)
+    chapter_ids = [case.chapter.id, other.id]
+    case.db.scalars.side_effect = [
+        Mock(first=Mock(return_value=case.course)),
+        Mock(first=Mock(return_value=case.chapter)),
+        Mock(all=Mock(return_value=[])),
+        Mock(all=Mock(return_value=[case.chapter, other])),
+        Mock(first=Mock(return_value=None)),
+        Mock(first=Mock(return_value=other)),
+    ]
+    case.db.scalar.return_value = 2
+    # A later READ COMMITTED observation may differ from the earlier sidebar.
+    owner = Mock(side_effect=[{other.id}, {case.chapter.id} if current_done else set()])
+    monkeypatch.setattr(learning, "completed_chapter_ids", owner)
+    monkeypatch.setattr(case.learn.reading_progress, "completed_slugs_by_chapter", Mock(return_value={}))
+    monkeypatch.setattr(case.learn, "best_scores_for", Mock(return_value={}))
+    result = case.learn.chapter(case.course.slug, 1, case.request, person=case.person, db=case.db)
+    assert owner.call_args_list == [
+        call(case.db, tenant_id=case.tenant.id, person_id=case.person.id, chapter_ids=chapter_ids),
+        call(case.db, tenant_id=case.tenant.id, person_id=case.person.id, chapter_ids=[case.chapter.id]),
+    ]
+    assert result["completed_chapter_ids"] == {other.id}
+    assert result["completed_chapters"] == 1
+    assert result["completed"] is current_done
+    assert result["chapter"] is case.chapter and result["course"] is case.course
+    assert result["chapters"] == [case.chapter, other]
+    assert result["next_chapter"] is other and result["previous_chapter"] is None
+    assert result["total_chapters"] == 2
+    assert case.render.call_args.args[:2] == (case.request, "chapter.html")
+    assert case.db.scalars.call_count == 6
+    case.db.scalar.assert_called_once()
+    case.db.execute.assert_not_called()
+    assert [item.kwargs["kind"] for item in case.emit.call_args_list] == ["course_viewed", "chapter_viewed"]
+
+
+def test_chapter_toggle_required_owner_failure_propagates_without_render(chapter_owner_route, monkeypatch):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+
+    case = chapter_owner_route
+    failure = RuntimeError("required persistence failure")
+    owner = Mock(side_effect=failure)
+    monkeypatch.setattr(learning, "toggle_chapter_read", owner)
+    with pytest.raises(RuntimeError) as caught:
+        case.learn.chapter_complete(case.course.slug, 1, case.request, person=case.person, db=case.db)
+    assert caught.value is failure
+    owner.assert_called_once()
+    case.render.assert_not_called()
+    case.emit.assert_not_called()
+    case.db.commit.assert_not_called()
+    case.db.rollback.assert_not_called()

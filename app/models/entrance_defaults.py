@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from dotmac_kernel.models import Tenant
 from sqlalchemy import ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -45,7 +46,7 @@ class TenantEntranceDefaults(Base, TimestampMixin):
     # The tenant IS the key: one row per academy, or none.
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"),
         primary_key=True,
     )
     # No FK to question_banks on purpose: banks are tenant-scoped under RLS and
