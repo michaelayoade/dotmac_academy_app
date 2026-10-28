@@ -3,10 +3,10 @@
 Two-tenant setup: every isolation test gets `tenant_a` and `tenant_b` and a
 `client_for(tenant)` helper that issues requests against the right subdomain.
 
-These tests REQUIRE a real Postgres with RLS — SQLite has no RLS. CI/dev should
-spin up a disposable Postgres (testcontainers, docker compose, or a per-test schema).
+Database tests require a real PostgreSQL with RLS. CI provisions a disposable
+service; development database rehearsals use the dedicated test server.
 
-This skeleton uses `os.getenv("TEST_DATABASE_URL")` — set it before running tests.
+Set `TEST_DATABASE_URL` before running database tests.
 """
 
 from __future__ import annotations
@@ -26,13 +26,12 @@ pytest_plugins = ("tests.canonical_identity_fixtures",)
 
 @pytest.fixture(scope="session")
 def admin_engine():
-    """Migration/superuser connection (postgres in CI), not the worker role.
+    """Migration-authority connection (app_admin in CI).
 
     Bound to ``TEST_MIGRATION_DATABASE_URL`` (falling back to
-    ``TEST_DATABASE_URL``), which in CI authenticates as the ``postgres``
-    superuser used to run migrations — it is not RLS-bypassed via the
-    ``app_admin`` role. Dedicated worker privilege tests use the separate
-    ``lab_worker_engine``/``lab_worker_session`` fixtures below.
+    ``TEST_DATABASE_URL``), which in CI authenticates as the non-superuser
+    ``app_admin`` migration role with BYPASSRLS. Dedicated worker privilege tests
+    use the separate ``lab_worker_engine``/``lab_worker_session`` fixtures below.
     """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
@@ -75,10 +74,10 @@ def _no_real_console_spawn(monkeypatch):
 
 @pytest.fixture
 def admin_session(admin_engine) -> Generator[Session, None, None]:
-    """Migration/superuser session used by fixtures to set up cross-tenant data.
+    """Migration-authority session used by fixtures to set up cross-tenant data.
 
     Bound to ``admin_engine`` — see that fixture's docstring: this is the
-    migration/superuser connection, not an ``app_admin`` connection.
+    ``app_admin`` connection in CI.
     """
     SessionLocal = sessionmaker(bind=admin_engine, autocommit=False, autoflush=False)
     db = SessionLocal()

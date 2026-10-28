@@ -11,7 +11,7 @@ jobs:
 
     services:
       db:
-        image: postgres:16
+        image: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
         env:
           POSTGRES_PASSWORD: academy_super
           POSTGRES_DB: academy
@@ -92,6 +92,24 @@ jobs:
       POETRY_HTTP_BASIC_FORGEJO_PASSWORD: ${{ secrets.FORGEJO_READ_TOKEN }}
 
     steps:
+      - name: Verify immutable PostgreSQL service image
+        env:
+          IMAGE: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
+          SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE" =~ ^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo 'Immutable PostgreSQL service image declaration required' >&2
+            exit 1
+          fi
+          service_image_id=$(docker inspect "$SERVICE_CONTAINER_ID" --format '{{.Image}}')
+          declared_image_id=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          if [[ -z "$service_image_id" || "$service_image_id" != "$declared_image_id" ]]; then
+            echo 'PostgreSQL service image does not match its declaration' >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -126,6 +144,7 @@ jobs:
         run: npm ci
 
       - name: Bootstrap DB roles
+        if: '!cancelled()'
         env:
           PGPASSWORD: academy_super
         run: psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 -f scripts/initdb-roles.sql
@@ -134,6 +153,7 @@ jobs:
       # CREATE; app_admin has no CREATEROLE, and a module migration must never
       # create roles. They must exist before the migration step.
       - name: Bootstrap outbox dispatcher roles
+        if: '!cancelled()'
         env:
           PGPASSWORD: academy_super
         run: |
@@ -148,6 +168,7 @@ jobs:
         run: poetry run python -m app.migration_cli upgrade heads
 
       - name: Bootstrap isolated Kernel entry rehearsal database
+        if: '!cancelled()'
         env:
           PGPASSWORD: academy_super
         run: |
@@ -179,12 +200,14 @@ jobs:
           SQL
 
       - name: Declare hosted environment expectations before profile observation
+        if: '!cancelled()'
         run: poetry run python scripts/declare_retained_hosted_bindings.py
 
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
       # them in one run instead of peeling them off one push at a time.
       - name: Lint (ruff)
+        if: '!cancelled()'
         run: poetry run ruff check .
 
       - name: Type check (mypy)
