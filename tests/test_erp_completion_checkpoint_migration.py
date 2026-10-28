@@ -1,4 +1,4 @@
-"""Hosted CI only: real full-chain 0061/0062 transfer and reversal."""
+"""Hosted CI only: real full-chain 0065/0066 transfer and reversal."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from tests.test_migration_roundtrip import (
     _migration_url,
 )
 
-HEAD = "0062_erp_completion_checkpoint"
-BASE = "0061_lab_completion_grants"
+HEAD = "0066_erp_completion_checkpoint"
+BASE = "0065_erp_progress_projection"
 TABLE = "academy_erp_completion_checkpoints"
 
 
@@ -339,7 +339,7 @@ def _refusal_snapshot(conn):
 
 @pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
 def test_actual_migration_refuses_rls_filtered_inspection_atomically(admin_engine, direction):
-    """Run the actual 0062 body, with DDL-capable owner lacking BYPASSRLS.
+    """Run the actual 0066 body, with DDL-capable owner lacking BYPASSRLS.
 
     The caller owns the root rollback. There are no migration savepoints or
     migration transaction completions; refusal aborts the caller transaction.

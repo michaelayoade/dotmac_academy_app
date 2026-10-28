@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.services import web_auth
-from app.services.roles import role_slugs
+from app.services.facilitator_access import facilitator_access
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
@@ -49,8 +49,8 @@ def login(
             status_code=401,
         )
     token = web_auth.start_session(db, tenant.id, person.id)
-    slugs = role_slugs(db, tenant.id, person.id)
-    redirect_to = "/instructor" if "instructor" in slugs and "admin" not in slugs else "/"
+    access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
+    redirect_to = "/instructor" if access.can_teach and not access.is_admin else "/"
     # No db.commit() here — get_db commits at request end (and a mid-route commit
     # would clear the transaction-scoped app.current_tenant GUC).
     resp = hx_redirect(request, redirect_to, hx_status=204)

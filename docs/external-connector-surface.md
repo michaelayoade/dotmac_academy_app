@@ -27,12 +27,27 @@ Measured-source digest:
 | `webhook_surface` | 0 | — |
 | `provider_credential` | 3 | `app/config.py`, `app/services/email.py`, `app/services/settings_store.py` |
 | `connector_task` | 0 | — |
-| `sync_checkpoint` | 0 | — |
+| `sync_checkpoint` | 2 | `app/models/erp_completion_checkpoint.py`, `app/services/erp_sync.py` |
 | `delivery_retry` | 0 | — |
 
 `outbound_transport` covers the HTTP deliveries to ERP and Academy's SMTP
 delivery. `provider_credential` counts identifiers only; no secret value is
 read or recorded by the detector.
+
+### Transitional checkpoint amendment (2026-10-28)
+
+PR #178 takes the explicitly documented narrow, human-approved transition path
+for separating ERP acknowledgement facts from learning completion before the
+learning-module extraction. The two measured sources above are the complete
+schema-9 finding: the Academy-owned checkpoint model and its sole sender/writer.
+This is a deliberate debt-register increase, not a rename, an exclusion, or a
+claim that transport ownership has moved to Dotmac Integrator.
+
+The checkpoint preserves every historical acknowledgement and gives reversal a
+lossless source while completion storage moves. It remains transitional: the
+Integrator handoff must replace the direct sender with versioned command and
+receipt contracts, preserve these facts, and lower this baseline in the same
+reviewed cutover. Production rollout remains separately authorized.
 
 ## Conserved exclusion
 
@@ -41,7 +56,7 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`b3714e5347c57c1efb3614630de4eb4238b2713a2b2b3d489e28025e0c4fd198`
+`7692b24602b10a7d4c006f251d41e48c34f1550b17651a691c7d3c9ebdbc6ec4`
 
 Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
 implementation itself is unchanged; the fingerprint moved because the module's

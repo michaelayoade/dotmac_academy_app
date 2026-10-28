@@ -8,7 +8,8 @@ so scanners cannot mint label values.
 Gunicorn runs multiple workers, each with its own process registry, so prod
 must set ``PROMETHEUS_MULTIPROC_DIR`` (a per-boot scratch dir, e.g. a systemd
 ``RuntimeDirectory``); the client library then aggregates across workers at
-scrape time. Without the env var (dev, tests, single process) the default
+scrape time (DB-derived snapshot gauges use ``mostrecent``, probe gauges
+``max``; see the comments at each gauge). Without the env var (dev, tests, single process) the default
 in-process registry is used.
 
 The ``/metrics`` endpoint itself lives in ``app.main`` and is inert unless
@@ -69,31 +70,38 @@ LAB_WRONG_HOST_REFUSALS = Counter(
 # traffic or data volume — per the Dotmac metrics-scrape safety rule. Refreshed
 # from ONE cheap grouped COUNT per family, cached, so scrapes carry a fixed
 # query budget rather than scaling with scrape frequency.
+# These gauges are DB snapshots, refreshed (TTL-cached) by whichever gunicorn
+# worker happens to serve a scrape. Every worker's mmap file keeps its last
+# written value, so multiprocess_mode="max" let a worker that last refreshed
+# while a lab was queued report queued=1 forever (false
+# AcademyLabsQueuedNotDraining alert). "mostrecent" takes the value from the
+# most recently written file, i.e. the freshest snapshot. Do not use "max"
+# here; "max" is only right for per-worker probes such as LAB_HOST_UP.
 APPLICANTS_BY_STATUS = Gauge(
     "academy_applicants",
     "Applicants by admissions pipeline status.",
     ("status",),
-    multiprocess_mode="max",
+    multiprocess_mode="mostrecent",
 )
 
 LAB_INSTANCES_BY_STATUS = Gauge(
     "academy_lab_instances",
     "Lab instances by lifecycle status.",
     ("status",),
-    multiprocess_mode="max",
+    multiprocess_mode="mostrecent",
 )
 
 LAB_CAPACITY = Gauge(
     "academy_lab_capacity",
     "Configured maximum concurrent lab instances.",
-    multiprocess_mode="max",
+    multiprocess_mode="mostrecent",
 )
 
 ENTRANCE_SITTINGS = Gauge(
     "academy_entrance_sittings",
     "Graded entrance sittings by validity ('valid', 'invalid').",
     ("validity",),
-    multiprocess_mode="max",
+    multiprocess_mode="mostrecent",
 )
 
 _PROBE_TTL_SECONDS = 30.0

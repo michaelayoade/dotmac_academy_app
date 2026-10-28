@@ -29,6 +29,7 @@ implementations drifts as soon as any of them moves.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -37,6 +38,19 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Activity
 from app.models.attempt import AttemptGrant
 from app.services.audit import write_audit_event
+
+
+class ActivityTerms(Protocol):
+    """The activity setting used by entitlement arithmetic."""
+
+    @property
+    def max_attempts(self) -> int | None: ...
+
+
+class BoundGrantReader(Protocol):
+    """Read the grant total for an already-bound learner and activity."""
+
+    def total(self) -> int: ...
 
 
 @dataclass(frozen=True)
@@ -91,7 +105,7 @@ def granted_by_activity(db: Session, *, tenant_id: UUID, person_id: UUID) -> dic
     return {activity_id: int(n or 0) for activity_id, n in rows}
 
 
-def entitlement(activity: Activity, *, used: int, granted: int = 0) -> Entitlement:
+def entitlement(activity: ActivityTerms, *, used: int, granted: int = 0) -> Entitlement:
     """The pure part: what the limit is, given the counts.
 
     Separate from the queries so callers that have already batched their counts
@@ -102,14 +116,37 @@ def entitlement(activity: Activity, *, used: int, granted: int = 0) -> Entitleme
     return Entitlement(used=used, granted=granted, limit=limit)
 
 
+def entitlement_with_grants(
+    activity: ActivityTerms, *, used: int, reader: BoundGrantReader
+) -> Entitlement:
+    """Apply the shared arithmetic to terms and one bound grant read."""
+    return entitlement(activity, used=used, granted=reader.total())
+
+
+@dataclass(frozen=True)
+class _LearnerGrantReader:
+    db: Session
+    tenant_id: UUID
+    person_id: UUID
+    activity_id: UUID
+
+    def total(self) -> int:
+        return granted_for(
+            self.db,
+            tenant_id=self.tenant_id,
+            person_id=self.person_id,
+            activity_id=self.activity_id,
+        )
+
+
 def for_learner(
     db: Session, *, tenant_id: UUID, person_id: UUID, activity: Activity, used: int
 ) -> Entitlement:
     """The entitlement, fetching this learner's grants."""
-    granted = granted_for(
+    reader = _LearnerGrantReader(
         db, tenant_id=tenant_id, person_id=person_id, activity_id=activity.id
     )
-    return entitlement(activity, used=used, granted=granted)
+    return entitlement_with_grants(activity, used=used, reader=reader)
 
 
 def grant_extra_attempt(

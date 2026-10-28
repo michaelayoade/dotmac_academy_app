@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-17 at Academy `61f69194d6591c6a2d13472a5e38c3a5ecf34454`  
+**Source revalidated:** 2026-10-26 at Academy `f16b1aee684918a5168f9c64f3847188c8243942`
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -19,10 +19,10 @@ boundary is not seven independent import substitutions:
 - `Person`/`PersonRole` are semantic predecessors of kernel
   `Party`/`PartyRole`, and `audit_events.actor_person_id` is another dependent
   identity edge.
-- Twenty-eight Academy columns carry human identity. Twenty-four say `person`
+- Thirty Academy columns carry human identity. Twenty-six say `person`
   in the column name; `attempt_grants.granted_by` and
   `success_queue_entries.assigned_to`/`resolved_by` and
-  `lab_operations.requested_by` are the four semantic aliases. Eleven currently
+  `lab_operations.requested_by` are the four semantic aliases. Thirteen currently
   have physical foreign keys to `people`; seventeen are logical references only.
 - Academy and kernel both ship revision `0001_initial_tenant_schema`. Their DDL
   functions are AST-equivalent, but two files declaring the same revision make
@@ -43,9 +43,14 @@ This refresh continues the accepted design in existing PR #122; it is not a
 new decision awaiting acceptance or an implemented cutover. Its initial commit
 `2d9506f` counted 27 references (11 physical, 16 logical) and ended the Academy
 chain at `0053_entrance_defaults`. The prior source checkpoint at `a99a395e`
-counted 28 and ended at `0060_lab_conditional_ops`. Current revalidation at
-`61f69194` retains 28 references (11 physical, 17 logical) and ends at
-`0061_lab_completion_grants`; PR #177 adds grants over existing identity columns.
+counted 28 and ended at `0060_lab_conditional_ops`. The checkpoint at `61f69194`
+retained 28 references (11 physical, 17 logical) through
+`0061_lab_completion_grants`; PR #177 added grants over existing identity columns.
+Revisions `0062_lab_template_access` and `0063_lab_console_activity` added no
+identity columns. Current revalidation at `f16b1ae` ends at
+`0064_facilitator_nominations`, which adds two strongly constrained human
+references for the nominated person and nominating actor. The current census is
+therefore 30 references (13 physical, 17 logical).
 These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
@@ -211,7 +216,7 @@ assembly: a001_adopt_academy -> a002 -> ...
           depends_on = <that same actually executed Kernel head>
 ```
 
-The existing numeric Academy chain (`0001` ... `0061` at source revalidation,
+The existing numeric Academy chain (`0001` ... `0064` at source revalidation,
 originally `0001` ... `0053` in PR #122, followed by future bridge revisions) is
 a temporary `academy_legacy` lineage. Those recorded IDs are not relabelled or
 reparented. Selecting the installed Kernel file for the shared `0001` ID cannot
@@ -284,7 +289,7 @@ PostgreSQL rehearsals prove all of the following:
 - a published Kernel Party/facet floor is selected and separately validated,
   including the RBAC spelling/catalog and lineage-endpoint reconciliation;
 - exact row/count/hash equivalence for people, names, email, active state,
-  profiles, credentials, sessions, roles, audit actors, and all 28 classified
+  profiles, credentials, sessions, roles, audit actors, and all 30 classified
   person references;
 - zero tenant mismatch, orphan, invalid status, or case-insensitive email
   collision;
@@ -334,3 +339,45 @@ schema mutation is included with this decision. General Vendor P11 completion
 does not satisfy ADR 0017's separate Sub tenant-plane gate or Academy's own
 identity/facet/published-floor gates. Those must pass before Academy activates
 the identity lineage transfer.
+
+## Amendment — 2026-10-17: account state and canonical-entry rehearsal
+
+Academy's account status and Kernel identity activation are separate facts.
+This amendment supersedes the earlier mapping
+`Party.is_active = (people.status = 'active')`. Preserve the exact recognized
+legacy account status in Academy-owned account state keyed by tenant and Party
+UUID. Account suspension continues to govern the existing product policies;
+it must not silently activate or deactivate the canonical identity. Importing
+`Party.is_active` requires explicit, justified identity-activation provenance.
+An absent activation disposition blocks import; neither an implicit active
+default nor an inference from account status satisfies that requirement.
+
+The next canonical-entry rehearsal will preserve the eight colliding legacy
+relations (`tenants`, `tenant_domains`, `people`, `user_credentials`,
+`auth_sessions`, `roles`, `person_roles`, `audit_events`) and their genuine
+`alembic_version` table in a schema owned by the Academy host. The proposed
+fixture uses a caller-owned migration connection and transaction, then executes
+the entire unchanged installed Kernel directory into its canonical namespace
+with new, genuine migration history. It must prove preservation of original
+relation identities, rows, incoming foreign-key targets, privileges and legacy
+version rows, and complete rollback after injected failures. Cluster roles are
+not relocated. Canonical heads alone are insufficient evidence: retain actual
+per-revision execution and immutable migration-source evidence.
+
+This is a rehearsal candidate, not a selected or qualified production entry
+executor. The inventory remains `design_only`, canonical entry remains
+`unresolved`, and the installed historical a38 coordinates remain historical.
+The production Alembic environment, dependency pins, identity writers and
+runtime assembly do not change through this amendment. The actual published
+floor, Sub tenant-plane findings, complete import, catalog-exact reference
+rebinding and populated rollback gates still precede activation.
+
+The fallback must be a named compatibility release whose behavior is proved
+against the resulting schema. Do not promise that the unmodified old binary
+can run after canonical identity entry. A fallback that restores legacy domain
+writers while retaining genuine Kernel identity/auth authority must reconcile
+accepted new inserts, updates, events, ACK state and deletions before the writer
+flip. If identity authority is also reversed, first prove that every accepted
+new canonical fact is representable, including longer names/email, credential
+multiplicity, grants and deletions. Neither an old snapshot nor an insert-only
+copy establishes that safety. No fallback activation or retirement is claimed.

@@ -34,9 +34,7 @@ def recompute_completion(
     now: datetime | None = None,
 ) -> CourseCompletion:
     """Upsert the person's completion record for the course and return it."""
-    rec = ensure_locked_completion(
-        db, tenant_id=tenant_id, person_id=person_id, course_id=course_id
-    )
+    rec = ensure_locked_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
     total = (
         db.scalar(
             select(func.count())
@@ -62,6 +60,22 @@ def recompute_completion(
         rec.completed_at = None
     db.flush()
     if first_completion:
+        # Facilitator eligibility is a consequence of this canonical completion
+        # fact. Reconcile in the same transaction so qualified nominees do not
+        # wait for the scheduled repair sweep before receiving scoped access.
+        from app.services.facilitator_nominations import (
+            ReconcileCompletedCourseCommand,
+            reconcile_completed_course,
+        )
+
+        reconcile_completed_course(
+            db,
+            command=ReconcileCompletedCourseCommand(
+                tenant_id=tenant_id,
+                person_id=person_id,
+                course_id=course_id,
+            ),
+        )
         course = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)).first()
         course_title = course.title if course is not None else "the course"
         # Issue the certificate RECORD + serial immediately on completion,

@@ -35,7 +35,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.person import Person
 from app.models.tenant import Tenant
-from app.services import lab_lifecycle, web_auth
+from app.services import lab_console_activity, lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
 from app.services.lab_content import render_instance_instructions
 from app.services.lab_operations import OPEN_STATES, enqueue
@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 _NO_INSTANCE_INSTRUCTIONS = (
     "<p>Launch the lab to view your instance-specific instructions.</p>"
 )
+
+
+#: Instance states in which the learner has (or is getting) a lab, so the
+#: device logins are useful. ``error`` and ``reaped`` show none.
+_ACCESS_VISIBLE_STATUSES = frozenset({"queued", "provisioning", "resetting", "active"})
 
 
 class _TenantContext(Protocol):
@@ -127,6 +132,24 @@ def _require_instance_entitlement(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
 
 
+def _console_live(instance: LabInstance) -> bool:
+    """The one definition of "this instance's consoles are reachable".
+
+    Stored mgmt IPs / ttyd ports are only meaningful while the instance's own
+    runtime is live; after reap/error/reset they may belong to another learner.
+    Shared by the console gate and the status template so a link is shown only
+    when following it can succeed.
+    """
+    return (
+        instance.status == "active"
+        and instance.error is None
+        and instance.runtime_presence == "present"
+    )
+
+
+templates.env.globals["lab_console_live"] = _console_live
+
+
 def _authorize_console(
     db: Session,
     tenant: _TenantContext,
@@ -137,7 +160,7 @@ def _authorize_console(
     """Security gate shared by the HTTP (and future WebSocket) console paths.
 
     Returns the upstream target URL, or raises:
-      404 — instance not found in this tenant, or node/target missing.
+      404 — instance not found in this tenant, not live, or node/target missing.
       403 — instance exists in-tenant but is owned by another person.
 
     Loads via a tenant-filtered select (never ``db.get(PK)``) so a cross-tenant
@@ -151,10 +174,25 @@ def _authorize_console(
     if instance.person_id != person.id:
         raise HTTPException(status_code=403)
     _require_instance_entitlement(db, tenant, person, instance)
+    if not _console_live(instance):
+        raise HTTPException(status_code=404)
     target = _console_target(instance, node)
     if target is None:
         raise HTTPException(status_code=404)
     return target
+
+
+def _note_console_use(db: Session, tenant: _TenantContext, instance_id: UUID) -> None:
+    """Record console use for the idle reaper; never lets a failure reach the proxy.
+
+    Call only AFTER ``_authorize_console`` succeeded. A savepoint keeps a failed
+    write from poisoning the request's session.
+    """
+    try:
+        with db.begin_nested():
+            lab_console_activity.record(db, tenant_id=tenant.id, instance_id=instance_id)
+    except Exception as exc:
+        lab_console_activity.warn_failure(instance_id, exc)
 
 
 async def _proxy_http(request: Request, target: str) -> Response:
@@ -244,6 +282,72 @@ def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UU
     return inst
 
 
+def _operation_score(
+    db: Session, tenant: Tenant, person: Person, instance: LabInstance, operation: LabOperation
+) -> Score | None:
+    """Read only the durable result inside this worker operation's window."""
+    if (
+        operation.tenant_id != tenant.id or operation.instance_id != instance.id
+        or instance.tenant_id != tenant.id or instance.person_id != person.id
+        or operation.kind != "check" or operation.state != "succeeded"
+        or operation.claimed_at is None or operation.finished_at is None
+        or operation.finished_at < operation.claimed_at
+    ):
+        return None
+    return db.scalars(
+        select(Score)
+        .join(Submission, Score.submission_id == Submission.id)
+        .where(Score.tenant_id == tenant.id)
+        .where(Score.tenant_id == Submission.tenant_id)
+        .where(Submission.tenant_id == tenant.id)
+        .where(Submission.person_id == person.id)
+        .where(Submission.activity_id == instance.activity_id)
+        .where(Submission.answers["instance"].astext == str(instance.id))
+        .where(Submission.created_at >= operation.claimed_at)
+        .where(Submission.created_at <= operation.finished_at)
+        .order_by(Score.created_at.desc(), Score.id.desc())
+    ).first()
+
+
+def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> dict:
+    """Recover current work and the last saved check for this runtime journey.
+
+    A deploy request (including a reset that subsequently fails) invalidates the
+    old live-configuration display. Academic submissions remain untouched.
+    """
+    operations = (
+        select(LabOperation)
+        .where(LabOperation.tenant_id == tenant.id)
+        .where(LabOperation.instance_id == instance.id)
+    )
+    # Open work is authoritative even if terminal requests share a timestamp.
+    latest = db.scalars(operations.where(LabOperation.state.in_(OPEN_STATES))).first()
+    if latest is None:
+        recent = list(db.scalars(operations.order_by(LabOperation.requested_at.desc()).limit(2)))
+        latest = recent[0] if recent else None
+        if len(recent) == 2 and recent[0].requested_at == recent[1].requested_at:
+            latest = None  # UUID order cannot establish which action happened last.
+    deploy = db.scalars(
+        operations.where(LabOperation.kind == "deploy")
+        .order_by(LabOperation.requested_at.desc(), LabOperation.id.desc())
+    ).first()
+    saved_query = operations.where(LabOperation.kind == "check").where(LabOperation.state == "succeeded")
+    if deploy is not None:
+        saved_query = saved_query.where(LabOperation.requested_at > deploy.requested_at)
+    saved_checks = list(db.scalars(saved_query.order_by(LabOperation.requested_at.desc()).limit(2)))
+    saved = saved_checks[0] if saved_checks else None
+    if len(saved_checks) == 2 and saved_checks[0].requested_at == saved_checks[1].requested_at:
+        saved = None  # Never choose a result using random UUID order.
+    score = _operation_score(db, tenant, person, instance, saved) if saved else None
+    return {
+        "recovered_operation": latest if latest is not None and (
+            latest.state in OPEN_STATES or latest.state in ("failed", "cancelled")
+            or (saved is not None and latest.id == saved.id and score is None)
+        ) else None,
+        "saved_score": score,
+    }
+
+
 @router.get("/labs/{activity_id}", response_class=HTMLResponse)
 def lab_detail(
     activity_id: UUID,
@@ -269,6 +373,15 @@ def lab_detail(
             "template": tpl,
             "instance": instance,
             "instructions_html": instructions_html,
+            # Device login info is released only alongside the caller's OWN live
+            # instance (``_current_instance`` is scoped to this person and
+            # tenant), and only the sanitised list the loader validated.
+            "device_access": (
+                (tpl.access or [])
+                if instance is not None and instance.status in _ACCESS_VISIBLE_STATUSES
+                else []
+            ),
+            **(_result_context(db, tenant, person, instance) if instance else {}),
         },
     )
 
@@ -306,7 +419,10 @@ def lab_status(
     """htmx polling target — current instance status + console links when active."""
     tenant = require_tenant(request)
     instance = _owned_instance(db, tenant, person, instance_id)
-    return templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    return templates.TemplateResponse(
+        request, "labs/_status.html",
+        {"request": request, "instance": instance, **_result_context(db, tenant, person, instance)},
+    )
 
 
 @router.post("/labs/instances/{instance_id}/check", response_class=HTMLResponse)
@@ -406,24 +522,21 @@ def lab_operation_status(
     if operation is None:
         raise HTTPException(status_code=404)
     instance = _owned_instance(db, tenant, person, operation.instance_id)
-    score = None
-    if operation.kind == "check" and operation.state == "succeeded":
-        score_query = (
-            select(Score)
-            .join(Submission, Score.submission_id == Submission.id)
-            .where(Submission.tenant_id == tenant.id)
-            .where(Submission.person_id == person.id)
-            .where(Submission.answers["instance"].astext == str(instance.id))
-        )
-        if operation.claimed_at is not None:
-            score_query = score_query.where(Submission.created_at >= operation.claimed_at)
-        if operation.finished_at is not None:
-            score_query = score_query.where(Submission.created_at <= operation.finished_at)
-        score = db.scalars(score_query.order_by(Score.created_at.desc())).first()
+    score = _operation_score(db, tenant, person, instance, operation)
+    # Lifecycle polling owns all of #lab-state. On settlement return the whole
+    # status fragment (including retry controls), never nest it in a poll card.
+    template = (
+        "labs/_status.html"
+        if operation.kind != "check" and operation.state not in OPEN_STATES
+        else "labs/_operation.html"
+    )
     return templates.TemplateResponse(
         request,
-        "labs/_operation.html",
-        {"request": request, "operation": operation, "instance": instance, "score": score},
+        template,
+        {
+            "request": request, "operation": operation, "instance": instance, "score": score,
+            **_result_context(db, tenant, person, instance),
+        },
     )
 
 
@@ -438,6 +551,7 @@ async def console(
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
+    _note_console_use(db, tenant, instance_id)  # opening a console is use
     # ttyd is launched with `-b <base>` so it serves its index UNDER the base path
     # (root 404s); webfig serves at the mgmt root. Reuse _subpath_target("") to
     # land on the correct index for each.
@@ -469,6 +583,9 @@ async def console_subpath(
     """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig)."""
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
+    # Deliberately no heartbeat here: sub-resources are assets, tokens and
+    # WebFig polling, not user action, so an idle open page must not keep a lab
+    # alive. Typing is counted on the ttyd websocket; opening a console above.
     return await _proxy_http(request, _subpath_target(target, instance_id, node, subpath))
 
 
@@ -488,6 +605,11 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
         await websocket.close(code=1011)
         return
 
+    # ttyd command byte "0" is INPUT (keystrokes/paste); resize, pause and
+    # keepalive frames are not user activity, so an idle open tab does not
+    # keep a lab alive.
+    beat = getattr(websocket.state, "console_heartbeat", None)
+
     async def client_to_upstream() -> None:
         try:
             while True:
@@ -495,8 +617,12 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
                 if msg["type"] == "websocket.disconnect":
                     break
                 if msg.get("text") is not None:
+                    if beat is not None and msg["text"][:1] == "0":
+                        await beat()
                     await upstream.send(msg["text"])
                 elif msg.get("bytes") is not None:
+                    if beat is not None and msg["bytes"][:1] == b"0":
+                        await beat()
                     await upstream.send(msg["bytes"])
         except (WebSocketDisconnect, websockets.ConnectionClosed):
             pass
@@ -519,6 +645,25 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
                 logger.debug("client ws close failed: %s", exc)
 
     await asyncio.gather(client_to_upstream(), upstream_to_client())
+
+
+_heartbeat_tasks: set[asyncio.Task] = set()
+
+
+def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
+    """Short-lived session for one heartbeat write; failures are swallowed."""
+    db = SessionLocal()
+    try:
+        db.execute(
+            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
+        db.commit()
+    except Exception as exc:
+        lab_console_activity.warn_failure(instance_id, exc)
+    finally:
+        db.close()
 
 
 @ws_router.websocket("/labs/instances/{instance_id}/console/{node}/ws")
@@ -554,6 +699,21 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
         port = urlsplit(target).port
     finally:
         db.close()
+
+    tenant_id = tenant.id
+
+    async def _heartbeat() -> None:
+        # In-process gate first: keystrokes cost a dict lookup, not a thread.
+        if not lab_console_activity.try_acquire(instance_id):
+            return
+        # Background task: input forwarding must never wait on the database
+        # (a saturated pool would otherwise stall keystrokes for the pool
+        # timeout). The set keeps a reference so the task is not collected.
+        task = asyncio.create_task(asyncio.to_thread(_write_console_heartbeat, tenant_id, instance_id))
+        _heartbeat_tasks.add(task)
+        task.add_done_callback(_heartbeat_tasks.discard)
+
+    websocket.state.console_heartbeat = _heartbeat
 
     upstream_url = f"ws://{settings.lab_console_host}:{port}" f"/labs/instances/{instance_id}/console/{node}/ws"
     await _proxy_ws(websocket, upstream_url)

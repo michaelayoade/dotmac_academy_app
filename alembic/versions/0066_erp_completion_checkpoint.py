@@ -12,8 +12,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import context, op
 
-revision = "0062_erp_completion_checkpoint"
-down_revision = "0061_lab_completion_grants"
+revision = "0066_erp_completion_checkpoint"
+down_revision = "0065_erp_progress_projection"
 branch_labels = None
 depends_on = None
 TABLE = "academy_erp_completion_checkpoints"

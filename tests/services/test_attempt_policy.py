@@ -7,6 +7,8 @@ function they can all reach is what makes that true.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from app.services import attempt_policy
@@ -56,6 +58,87 @@ def test_grants_accumulate():
 def test_a_grant_on_an_uncapped_activity_changes_nothing():
     ent = attempt_policy.entitlement(_Activity(None), used=4, granted=3)
     assert ent.limit is None and ent.exhausted is False
+
+
+@pytest.mark.parametrize(
+    "max_attempts, used, granted, limit, remaining, exhausted",
+    [
+        (3, 2, 0, 3, 1, False),
+        (3, 3, 0, 3, 0, True),
+        (2, 2, 1, 3, 1, False),
+        (1, 1, 2, 3, 2, False),
+        (2, 5, 0, 2, 0, True),
+        (None, 99, 3, None, None, False),
+    ],
+)
+def test_entitlement_with_grants_reads_bound_total_once(
+    max_attempts, used, granted, limit, remaining, exhausted
+):
+    class Reader:
+        calls = 0
+
+        def total(self):
+            self.calls += 1
+            return granted
+
+    reader = Reader()
+    ent = attempt_policy.entitlement_with_grants(
+        _Activity(max_attempts), used=used, reader=reader
+    )
+
+    assert ent == attempt_policy.Entitlement(used=used, granted=granted, limit=limit)
+    assert ent.remaining == remaining
+    assert ent.exhausted is exhausted
+    assert reader.calls == 1
+
+
+def test_entitlement_with_grants_propagates_reader_failure():
+    failure = RuntimeError("grant read failed")
+
+    class Reader:
+        def total(self):
+            raise failure
+
+    with pytest.raises(RuntimeError) as raised:
+        attempt_policy.entitlement_with_grants(_Activity(2), used=1, reader=Reader())
+
+    assert raised.value is failure
+
+
+def test_for_learner_uses_supplied_session_and_exact_grant_scope(monkeypatch):
+    db = object()
+    tenant_id, person_id, activity_id = uuid4(), uuid4(), uuid4()
+    activity = _Activity(2)
+    activity.id = activity_id
+    calls = []
+    narrow_calls = []
+    narrow_entry = attempt_policy.entitlement_with_grants
+
+    def granted_for(supplied_db, *, tenant_id, person_id, activity_id):
+        calls.append((supplied_db, tenant_id, person_id, activity_id))
+        return 3
+
+    def entitlement_with_grants(supplied_activity, *, used, reader):
+        narrow_calls.append((supplied_activity, used))
+        return narrow_entry(supplied_activity, used=used, reader=reader)
+
+    monkeypatch.setattr(attempt_policy, "granted_for", granted_for)
+    monkeypatch.setattr(attempt_policy, "entitlement_with_grants", entitlement_with_grants)
+
+    ent = attempt_policy.for_learner(
+        db, tenant_id=tenant_id, person_id=person_id, activity=activity, used=4
+    )
+
+    assert len(calls) == 1
+    supplied_db, supplied_tenant, supplied_person, supplied_activity = calls[0]
+    assert supplied_db is db
+    assert supplied_tenant is tenant_id
+    assert supplied_person is person_id
+    assert supplied_activity is activity_id
+    assert narrow_calls == [(activity, 4)]
+    assert ent == attempt_policy.Entitlement(used=4, granted=3, limit=5)
+    assert ent.remaining == 1
+    assert ent.exhausted is False
 
 
 def test_grant_requires_a_reason():

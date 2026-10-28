@@ -745,6 +745,9 @@ def destroy_if_present(db: Session, instance: LabInstance, engine: LabEngine) ->
         db.flush()
         return instance
     stop_consoles(instance)
+    # Console specs hold mgmt IPs / ttyd ports that other instances reuse once
+    # this one is gone; never leave them on a non-live row.
+    instance.consoles = {}
     instance.status = "reaped"
     instance.runtime_presence = "absent"
     db.flush()
@@ -949,6 +952,8 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
     except Exception as exc:  # surface any deploy failure onto the row
         instance.status = "error"
         instance.error = str(exc)
+        # Old consoles were stopped above; do not keep stale mgmt/port specs.
+        instance.consoles = {}
         # No presence assignment here: if engine.reset() was never invoked,
         # presence is untouched (still whatever it was before this call); if
         # invocation began, it is already "unknown" from the pre-invocation
@@ -971,6 +976,9 @@ def destroy(db: Session, instance: LabInstance, engine: LabEngine) -> LabInstanc
     instance.runtime_presence = "unknown"
     engine.destroy(instance.instance_name)
     stop_consoles(instance)
+    # Console specs hold mgmt IPs / ttyd ports that other instances reuse once
+    # this one is gone; never leave them on a non-live row.
+    instance.consoles = {}
     instance.status = "reaped"
     instance.runtime_presence = "absent"
     db.flush()

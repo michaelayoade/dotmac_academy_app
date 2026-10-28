@@ -8,6 +8,7 @@ from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
+from app.models.facilitator import FacilitatorNomination
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from tests.web.test_reports import _login, _seed_login
@@ -82,6 +83,14 @@ def _seed_detail(admin_session, tenant):
                 person_id=facilitator.id,
                 role_in_cohort="instructor",
                 status="active",
+            ),
+            FacilitatorNomination(
+                tenant_id=tenant.id,
+                person_id=facilitator.id,
+                scope_type="cohort",
+                cohort_id=cohort.id,
+                status="active",
+                activation_reason="legacy_grandfathered",
             ),
             CourseCompletion(
                 tenant_id=tenant.id,

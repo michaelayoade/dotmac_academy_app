@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
-from app.services.roles import role_slugs
+from app.services.facilitator_access import authorized_cohort_ids, facilitator_access
 from app.services.web_auth import require_web_user
 from app.web.pagination import pagination_context
 from app.web.templating import templates
@@ -36,10 +36,15 @@ def teaching_home(
     offset: int = Query(0, ge=0),
 ):
     tenant = require_tenant(request)
-    if not ({"instructor", "admin"} & role_slugs(db, tenant.id, person.id)):
+    access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
+    if not access.can_teach:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
-    total = int(db.scalar(select(func.count()).select_from(Cohort).where(Cohort.tenant_id == tenant.id)) or 0)
+    visible_cohort_ids = authorized_cohort_ids(db, tenant_id=tenant.id, access=access)
+    cohort_filter = (
+        Cohort.tenant_id == tenant.id if access.has_global_staff_access else Cohort.id.in_(visible_cohort_ids)
+    )
+    total = int(db.scalar(select(func.count()).select_from(Cohort).where(cohort_filter)) or 0)
     rows = db.execute(
         select(Cohort, func.count(Person.id))
         .outerjoin(
@@ -56,6 +61,7 @@ def teaching_home(
             & (Person.status == "active"),
         )
         .where(Cohort.tenant_id == tenant.id)
+        .where(cohort_filter)
         .group_by(Cohort.id)
         .order_by(Cohort.name)
         .limit(limit)
@@ -70,5 +76,7 @@ def teaching_home(
             "request": request,
             "cohorts": cohorts,
             "pagination": pagination_context(total=total, limit=limit, offset=offset),
+            "has_global_staff_access": access.has_global_staff_access,
+            "has_cohort_scope": access.has_global_staff_access or bool(access.cohort_ids),
         },
     )

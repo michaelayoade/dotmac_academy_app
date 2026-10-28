@@ -84,7 +84,30 @@ def area_for_path(path: str) -> str:
     return "learn"
 
 
-def sidebar_for(area_key: str) -> list[dict]:
+def sidebar_for(
+    area_key: str,
+    *,
+    scoped_facilitator: bool = False,
+    has_cohort_scope: bool = True,
+) -> list[dict]:
     """Return the sidebar items for an area, or an empty list if unknown."""
     area = _BY_KEY.get(area_key)
-    return list(area["sidebar"]) if area else []
+    if area is None:
+        return []
+    items = list(area["sidebar"])
+    if area_key != "teaching" or not scoped_facilitator:
+        return items
+    excluded_paths = {
+        "/instructor/announcements",
+        "/success-queue",
+        "/instructor/labs",
+    }
+    if not has_cohort_scope:
+        excluded_paths.update(
+            {
+                "/instructor/cohorts",
+                "/instructor/reports",
+                "/instructor/gradebook",
+            }
+        )
+    return [item for item in items if item["path"] not in excluded_paths]

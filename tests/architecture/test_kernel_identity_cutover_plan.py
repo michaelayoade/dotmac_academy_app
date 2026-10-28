@@ -17,6 +17,7 @@ import re
 import tomllib
 from uuid import UUID
 
+import pytest
 from dotmac_kernel.migrations import versions_dir as kernel_versions_dir
 
 import app.models  # register product metadata for the census
@@ -148,8 +149,8 @@ def test_every_person_identity_column_is_classified_with_its_real_integrity() ->
     }
     assert len(planned) == len(references), "identity reference appears more than once"
     assert planned == _person_columns()
-    assert len(planned) == 28
-    assert list(planned.values()).count("strong") == 11
+    assert len(planned) == 30
+    assert list(planned.values()).count("strong") == 13
     assert list(planned.values()).count("logical") == 17
     assert PERSON_IDENTITY_ALIASES <= set(planned)
 
@@ -346,3 +347,71 @@ def test_design_only_status_forbids_an_early_lineage_or_identity_mutation() -> N
     assert 'create_table("academy_person_profiles"' not in migration_source
     assert 'create_table("academy_login_security"' not in migration_source
     assert not (ROOT / "app" / "migrations" / "kernel_identity_adoption.py").exists()
+
+
+def test_account_status_does_not_supply_identity_activation() -> None:
+    amendment = _inventory()["account_state_amendment"]
+    assert amendment["source"] == "people.status"
+    assert amendment["owner"] == "assembly"
+    assert amendment["preserve_exact_recognized_status"] is True
+    assert amendment["account_status_is_party_activation"] is False
+    assert amendment["explicit_identity_activation_provenance_required"] is True
+    assert amendment["implicit_active_default_allowed"] is False
+
+
+def test_canonical_entry_rehearsal_is_not_runtime_activation() -> None:
+    rehearsal = _inventory()["canonical_entry_rehearsal"]
+    assert rehearsal["status"] == "source_preparation"
+    assert set(rehearsal["legacy_relations"]) == {
+        "tenants",
+        "tenant_domains",
+        "people",
+        "user_credentials",
+        "auth_sessions",
+        "roles",
+        "person_roles",
+        "audit_events",
+    }
+    assert len(rehearsal["legacy_relations"]) == 8
+    assert rehearsal["legacy_version_relation"] == "alembic_version"
+    for requirement in (
+        "caller_owned_connection_and_transaction",
+        "original_relation_and_incoming_fk_oids_preserved",
+        "legacy_version_rows_preserved",
+        "actual_per_revision_execution_evidence_required",
+        "injected_failure_rollback_required",
+    ):
+        assert rehearsal[requirement] is True
+    assert rehearsal["qualified"] is False
+    assert rehearsal["runtime_activation_authorized"] is False
+    assert _inventory()["canonical_kernel_entry"]["status"] == "unresolved"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "account_status_is_party_activation",
+        "implicit_active_default_allowed",
+    ],
+)
+def test_account_activation_ratchet_rejects_a_planted_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    planted = _inventory()
+    planted["account_state_amendment"][field] = True
+    monkeypatch.setitem(globals(), "_inventory", lambda: planted)
+    with pytest.raises(AssertionError):
+        test_account_status_does_not_supply_identity_activation()
+
+
+@pytest.mark.parametrize("field", ["qualified", "runtime_activation_authorized"])
+def test_rehearsal_ratchet_rejects_a_planted_activation_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    planted = _inventory()
+    planted["canonical_entry_rehearsal"][field] = True
+    monkeypatch.setitem(globals(), "_inventory", lambda: planted)
+    with pytest.raises(AssertionError):
+        test_canonical_entry_rehearsal_is_not_runtime_activation()
