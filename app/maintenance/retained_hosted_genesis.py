@@ -79,6 +79,14 @@ def _require_container_identity(actual: tuple[object, ...], expected: tuple[obje
         raise HostedGenesisRefused("Academy hosted container continuity changed: " + ",".join(changed))
 
 
+def _canonical_mounts(mounts: object) -> list[object]:
+    """Conserve every mount field while ignoring Docker's array enumeration order."""
+    _need(type(mounts) is list)
+    records = cast(list[object], mounts)
+    _need(all(type(record) is dict for record in records))
+    return sorted(records, key=lambda record: json.dumps(record, sort_keys=True))
+
+
 def _data(settings: object) -> tuple[tuple[str, object], ...]:
     _need(type(settings) is dict and set(settings) == {_PREFIX + k for k in _FIELDS})
     settings = cast(dict[str, object], settings)
@@ -238,6 +246,10 @@ class _Owner:
             value, end = decoder.raw_decode(raw.lstrip())
             facts.append(value)
             raw = raw.lstrip()[end:]
+        # Mount records identify bindings; their array order is not identity.
+        # Keep every field, duplicate and unknown attribute in the comparison.
+        _need(len(facts) == len(_INSPECT_FIELDS))
+        facts[9] = _canonical_mounts(facts[9])
         return tuple(facts)
 
     def setup(self):

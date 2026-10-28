@@ -1,0 +1,38 @@
+schema_version = 1
+status = "ci_image_inventory_verified"
+academy_schema_qualified = false
+production_database_change = false
+image = "postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962"
+config_digest = "sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f"
+platform = "linux/amd64"
+server_version_num = 160015
+encoding = "UTF8"
+locale_provider = "c"
+lc_collate = "en_US.utf8"
+lc_ctype = "en_US.utf8"
+collation_version = "2.36"
+actual_collation_version = "2.36"
+glibc_version = "2.36"
+
+[source]
+repository = "docker-library/repo-info"
+revision = "1218b6a4b08f5f5be91b116f482989668710594e"
+path = "repos/postgres/remote/16-bookworm.md"
+
+[hosted_image_inventory]
+repository = "michaelayoade/dotmac_academy_app"
+revision = "ef1af8cd933e63f14ed9138e0c747368d31261cb"
+run_id = 40755115876
+job_id = 123051850311
+conclusion = "success"
+evidence = "https://github.com/michaelayoade/dotmac_academy_app/actions/runs/40755115876/job/123051850311"
+# Docker image stores may identify the image by manifest or config digest.
+# The job verifies the fixed manifest's config independently and checks the
+# service image identity against the same immutable image's inspect identity.
+
+[repository_variable_declarations]
+ACADEMY_RETAINED_PG_IMAGE = "postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962"
+ACADEMY_RETAINED_PG_SERVER_VERSION_NUM = "160015"
+ACADEMY_RETAINED_PG_COLLATION_VERSION = "2.36"
+# Entered and visibly verified in Actions Settings before the Academy target
+# profile run. These are nonsecret CI declarations; no production value changes.
