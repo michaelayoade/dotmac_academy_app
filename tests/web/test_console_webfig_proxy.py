@@ -26,6 +26,7 @@ def _seed_ros(admin_session, tenant, person_id, mgmt=MGMT) -> LabInstance:
         instance_name="dal-ros",
         seed={"o": 5},
         status="active",
+        runtime_presence="present",
         consoles={"r1": {"kind": "vr-ros", "mgmt": mgmt}},
     )
     admin_session.add(li)

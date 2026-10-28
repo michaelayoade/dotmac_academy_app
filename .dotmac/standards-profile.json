@@ -64,25 +64,25 @@
         "path": "tests/web/test_console_webfig_proxy.py",
         "symbol": "test_device_redirects_stay_inside_prefix",
         "category": "outbound_transport",
-        "fingerprint": "40d9ee6f5f24862e205e08d82d02069872a1231c0ce757f5c979c4add60cb9bc"
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
       },
       {
         "path": "tests/web/test_console_webfig_proxy.py",
         "symbol": "test_learner_credentials_not_forwarded_and_device_cookie_confined",
         "category": "outbound_transport",
-        "fingerprint": "40d9ee6f5f24862e205e08d82d02069872a1231c0ce757f5c979c4add60cb9bc"
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
       },
       {
         "path": "tests/web/test_console_webfig_proxy.py",
         "symbol": "test_post_jsproxy_passes_through",
         "category": "outbound_transport",
-        "fingerprint": "40d9ee6f5f24862e205e08d82d02069872a1231c0ce757f5c979c4add60cb9bc"
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
       },
       {
         "path": "tests/web/test_console_webfig_proxy.py",
         "symbol": "test_upstream_down_is_502",
         "category": "outbound_transport",
-        "fingerprint": "40d9ee6f5f24862e205e08d82d02069872a1231c0ce757f5c979c4add60cb9bc"
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
       }
     ]
   }

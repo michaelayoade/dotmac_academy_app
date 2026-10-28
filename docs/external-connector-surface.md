@@ -85,7 +85,7 @@ declared explicitly: `test_post_jsproxy_passes_through`,
 `test_device_redirects_stay_inside_prefix`, and `test_upstream_down_is_502`.
 They are test-only fake-upstream witnesses for the reviewed runtime surface;
 they do not add a production connector. Their shared fingerprint is
-`40d9ee6f5f24862e205e08d82d02069872a1231c0ce757f5c979c4add60cb9bc`.
+`4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8`.
 
 ## Review rule
 
