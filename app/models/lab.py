@@ -50,6 +50,13 @@ class LabTemplate(Base, TimestampMixin):
     checks: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     seed_spec: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     limits: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Per-node device access info shown to the instance owner (see
+    # ``lab_content.parse_access``). Documented lab-device defaults only: never
+    # populated from env, settings or secrets. Server default is written by
+    # migration 0062 so rows that predate it read as "no access info".
+    access: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     engine: Mapped[str] = mapped_column(String(20), nullable=False, default="containerlab")
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

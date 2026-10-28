@@ -52,6 +52,10 @@ _NO_INSTANCE_INSTRUCTIONS = (
     "<p>Launch the lab to view your instance-specific instructions.</p>"
 )
 
+#: Instance states in which the learner has (or is getting) a lab, so the
+#: device logins are useful. ``error`` and ``reaped`` show none.
+_ACCESS_VISIBLE_STATUSES = frozenset({"queued", "provisioning", "resetting", "active"})
+
 
 class _TenantContext(Protocol):
     """The common request-tenant shape shared by Academy and kernel models."""
@@ -356,6 +360,14 @@ def lab_detail(
             "template": tpl,
             "instance": instance,
             "instructions_html": instructions_html,
+            # Device login info is released only alongside the caller's OWN live
+            # instance (``_current_instance`` is scoped to this person and
+            # tenant), and only the sanitised list the loader validated.
+            "device_access": (
+                (tpl.access or [])
+                if instance is not None and instance.status in _ACCESS_VISIBLE_STATUSES
+                else []
+            ),
             **(_result_context(db, tenant, person, instance) if instance else {}),
         },
     )
