@@ -39,9 +39,19 @@ logical_references = 17
 # person_roles, user_credentials) are no longer Academy models, so the composed
 # count is 26 = 10 physical + 16 logical. The [[identity_reference]] entries stay
 # as the legacy design baseline. Source coordinates only: status is unchanged.
-[source_revalidation]
+[prior_source_revalidation_2026_10_28]
 academy_revision = "a07e1b13ac501361e62d42ea6c416e07c756ee45"
 academy_head = "a010_facilitator_nominations"
+date = "2026-10-28"
+evidence = "source_only"
+production_cutover_proven = false
+human_references = 26
+physical_references = 10
+logical_references = 16
+
+[source_revalidation]
+academy_revision = "8776f410dc60d35aa1ff3980ffcdc78187fb00e4"
+academy_head = "a011_erp_progress_checkpoint"
 date = "2026-10-28"
 evidence = "source_only"
 production_cutover_proven = false

@@ -417,3 +417,28 @@ This checkpoint does not select replica entry versus exact-0063 historical
 capture, authorize populated production adoption, or supply its committing
 executor/conservation/rollback proof. Those production gates remain open;
 `design_only` and `production_cutover_proven = false` are unchanged.
+
+
+## Source checkpoint — 2026-10-28: ERP progress successor
+
+Source `8776f410dc60d35aa1ff3980ffcdc78187fb00e4` retains Kernel a107
+and Learning a3 and extends the product assembly through
+`a011_erp_progress_checkpoint`. Academy owns ERP acknowledgement, progress and
+imported-key membership; Learning continues to own completions. The preceding
+a001-a010 revisions remain byte-for-byte unchanged. The frozen legacy chain
+still contains exactly 62 files through 0061. Main's populated legacy 0065/0066
+predecessor is unsupported and fails closed; this successor does not authorize
+adopting that state or discarding its acknowledgements.
+
+The independently reviewed source now checks all three owners' catalogs for
+fresh/historical convergence, including function metadata and dependency
+contracts. The temporary source-review transfer hold is removed after zero
+open P1/P2 findings. Strict empty CI entry still refuses before DDL while its
+convergence fingerprint is unset. Discovery remains noncommitting. Pure tests,
+whole-tree collection and standards conformance are source evidence; they do
+not establish PostgreSQL convergence, writer locking, RLS or migration
+roundtrips. Both hosted workflows on the exact integrated head remain due.
+
+The composed human-reference census is unchanged at 26 (10 physical, 16
+logical). The earlier a010 checkpoint above remains historical evidence.
+No production adoption, deployment, rollback or lineage activation is proven.
