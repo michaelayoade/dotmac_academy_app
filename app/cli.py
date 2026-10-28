@@ -336,12 +336,19 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
+    from app.services.facilitator_nominations import SweepFacilitatorsCommand, sweep_pending
     from app.services.reminders import sweep
     from app.services.success_queue import sweep as queue_sweep
 
     with lab_jobs.admin_session() as db:
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
+            facilitator_counts = sweep_pending(
+                db,
+                command=SweepFacilitatorsCommand(tenant_id=tenant.id),
+            )
+            db.commit()
+            print(f"facilitator-sweep[{tenant.slug}]: {facilitator_counts}")
             counts = sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")

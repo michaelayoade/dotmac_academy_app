@@ -2,6 +2,11 @@
 
 The shared actual current_account/sign_in_account chain supplies app_user and
 canonical credentials/sessions. Learning remains the only enrollment writer.
+
+C3 (#188) retired the ``remove`` operation variants: facilitator authority is
+nomination-based now and ``roster.remove_facilitator`` is deleted, so every
+case below exercises the surviving roster-state operation only. The revoke
+lifecycle is covered by tests/services/test_facilitator_nominations.py.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -50,13 +55,12 @@ def _invoke(actors, operation, cid, *, admin=False, db=None, state="dropped", te
     arguments = dict(
         request=actor.request, tenant_id=tenant_id or actors.account.tid, cohort_id=cid, person_id=actors.account.pid
     )
-    if operation == "state":
-        return roster.set_roster_state(actors.db if db is None else db, state=state, **arguments)
-    return roster.remove_facilitator(actors.db if db is None else db, **arguments)
+    assert operation == "state"  # the remove operation retired with #188 (see module docstring)
+    return roster.set_roster_state(actors.db if db is None else db, state=state, **arguments)
 
 
 @pytest.mark.parametrize(
-    "operation,admin,role", [("state", False, "student"), ("state", True, "instructor"), ("remove", True, "instructor")]
+    "operation,admin,role", [("state", False, "student"), ("state", True, "instructor")]
 )
 @pytest.mark.parametrize("target_condition", ["normal", "inactive", "suspended"])
 def test_actual_owner_success_same_session_live_authority_no_invented_audit(
@@ -71,7 +75,7 @@ def test_actual_owner_success_same_session_live_authority_no_invented_audit(
             update(AcademyAccountProfile).where(AcademyAccountProfile.party_id == a.pid).values(status="suspended")
         )
     a.admin.commit()
-    owner = roster.learning.set_roster_state if operation == "state" else roster.learning.remove_facilitator
+    owner = roster.learning.set_roster_state
     seen = []
 
     def observe(db, command, *, authority):
@@ -79,7 +83,7 @@ def test_actual_owner_success_same_session_live_authority_no_invented_audit(
         seen.append((db, command, authority, result))
         return result
 
-    monkeypatch.setattr(roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", observe)
+    monkeypatch.setattr(roster.learning, "set_roster_state", observe)
     root = a.db.get_transaction()
     audits = a.db.scalar(select(text("count(*)")).select_from(AuditEvent))
     result = _invoke(actors, operation, cid, admin=admin)
@@ -91,8 +95,8 @@ def test_actual_owner_success_same_session_live_authority_no_invented_audit(
     assert a.db.scalar(select(text("count(*)")).select_from(AuditEvent)) == audits
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
-def test_live_instructor_cannot_change_nonstudent_or_remove_facilitator(roster_actors, operation):
+@pytest.mark.parametrize("operation", ["state"])
+def test_live_instructor_cannot_change_nonstudent_enrollment_state(roster_actors, operation):
     actors, a = roster_actors, roster_actors.account
     cid, eid = _case(actors, target_role="instructor")
     with pytest.raises(HTTPException) as caught:
@@ -114,25 +118,25 @@ def test_actual_owner_invalid_state_missing_priority_preserved(roster_actors, st
     assert str(caught.value) == detail and caught.value.__suppress_context__ is True
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 @pytest.mark.parametrize("change", ["revocation", "expiry", "inactive", "suspended", "role_loss"])
 def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
     roster_actors, monkeypatch, operation, change
 ):
     actors, a = roster_actors, roster_actors.account
-    actor = actors.admin if operation == "remove" else actors.instructor
-    cid, eid = _case(actors, target_role="instructor" if operation == "remove" else "student")
+    actor = actors.instructor
+    cid, eid = _case(actors, target_role="student")
     a.db.commit()
     sessions = sessionmaker(bind=a.db.get_bind(), autoflush=False)
     locked, started, release = Event(), Event(), Event()
     backend, calls = [], []
-    owner = roster.learning.set_roster_state if operation == "state" else roster.learning.remove_facilitator
+    owner = roster.learning.set_roster_state
 
     def observe(*args, **kwargs):
         calls.append(True)
         return owner(*args, **kwargs)
 
-    monkeypatch.setattr(roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", observe)
+    monkeypatch.setattr(roster.learning, "set_roster_state", observe)
 
     def holder():
         with sessions() as db:
@@ -172,7 +176,7 @@ def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
             backend.append(db.scalar(text("SELECT pg_backend_pid()")))
             started.set()
             with pytest.raises(HTTPException) as caught:
-                _invoke(actors, operation, cid, admin=operation == "remove", db=db)
+                _invoke(actors, operation, cid, admin=False, db=db)
             assert caught.value.status_code == (403 if change == "role_loss" else 303)
             db.commit()
 
@@ -193,7 +197,7 @@ def test_natural_party_wait_rechecks_clock_and_genuine_actor_before_owner(
     assert calls == [] and a.db.get(Enrollment, eid).status == "active"
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 @pytest.mark.parametrize("failure", ["owner", "database", "revocation", "role_loss", "admin_to_instructor"])
 def test_failure_after_actual_owner_caught_outer_commit_restores_operation_preserves_prior_work(
     roster_actors, monkeypatch, operation, failure
@@ -205,7 +209,7 @@ def test_failure_after_actual_owner_caught_outer_commit_restores_operation_prese
         a.admin.commit()
     root = a.db.get_transaction()
     a.db.get(Cohort, cid).name = "Unrelated prior work"
-    owner = roster.learning.set_roster_state if operation == "state" else roster.learning.remove_facilitator
+    owner = roster.learning.set_roster_state
 
     def interrupted(db, *args, **kwargs):
         result = owner(db, *args, **kwargs)
@@ -228,7 +232,7 @@ def test_failure_after_actual_owner_caught_outer_commit_restores_operation_prese
         return result
 
     monkeypatch.setattr(
-        roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", interrupted
+        roster.learning, "set_roster_state", interrupted
     )
     with pytest.raises(boundary.HumanOperationError if failure in {"owner", "database"} else HTTPException):
         _invoke(actors, operation, cid, admin=True)
@@ -249,13 +253,13 @@ def test_failure_after_actual_owner_caught_outer_commit_restores_operation_prese
     assert a.db.scalar(text("SELECT current_setting('app.current_tenant')")) == str(a.tid)
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_typed_learning_transaction_guard_same_instance_after_real_savepoint_rollback(
     roster_actors, monkeypatch, operation
 ):
     actors, a = roster_actors, roster_actors.account
     cid, eid = _case(actors, target_role="instructor")
-    original = roster.learning.set_roster_state if operation == "state" else roster.learning.remove_facilitator
+    original = roster.learning.set_roster_state
     failure = roster.learning.TransactionChanged("required owner transaction guard")
     root = a.db.get_transaction()
 
@@ -264,7 +268,7 @@ def test_typed_learning_transaction_guard_same_instance_after_real_savepoint_rol
         raise failure
 
     monkeypatch.setattr(
-        roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", interrupted
+        roster.learning, "set_roster_state", interrupted
     )
     with pytest.raises(roster.learning.TransactionChanged) as caught:
         _invoke(actors, operation, cid, admin=True)
@@ -275,17 +279,13 @@ def test_typed_learning_transaction_guard_same_instance_after_real_savepoint_rol
     assert a.db.get(Enrollment, eid).status == "active"
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 @pytest.mark.parametrize("field", ["request", "session", "root", "database", "cohort", "person", "state"])
 def test_issued_context_binding_tamper_latches_even_when_caught_and_restored(roster_actors, operation, field):
     actors, a = roster_actors, roster_actors.account
     cid, eid = _case(actors, target_role="instructor")
-    issued = (
-        boundary.change_web_roster_state(
-            a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid, state="dropped"
-        )
-        if operation == "state"
-        else boundary.remove_web_facilitator(a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid)
+    issued = boundary.change_web_roster_state(
+        a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid, state="dropped"
     )
     with sessionmaker(bind=a.db.get_bind(), autoflush=False)() as other:
         set_tenant(other, a.tid)
@@ -319,16 +319,12 @@ def test_issued_context_binding_tamper_latches_even_when_caught_and_restored(ros
     assert a.db.get(Enrollment, eid).status == "active"
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_copied_context_never_authorizes_and_retained_own_frames_clear_requests(roster_actors, operation):
     actors, a = roster_actors, roster_actors.account
     cid, _ = _case(actors)
-    issued = (
-        boundary.change_web_roster_state(
-            a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid, state="dropped"
-        )
-        if operation == "state"
-        else boundary.remove_web_facilitator(a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid)
+    issued = boundary.change_web_roster_state(
+        a.db, request=actors.admin.request, cohort_id=cid, person_id=a.pid, state="dropped"
     )
     with issued as context:
         copied = copy(context)
@@ -343,14 +339,14 @@ def test_copied_context_never_authorizes_and_retained_own_frames_clear_requests(
     assert context.__dict__ == {}
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_wrong_tenant_is_forbidden_without_learning_owner(roster_actors, tenant_b, monkeypatch, operation):
     from unittest.mock import Mock
 
     actors = roster_actors
     cid, _ = _case(actors)
     owner = Mock()
-    monkeypatch.setattr(roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", owner)
+    monkeypatch.setattr(roster.learning, "set_roster_state", owner)
     with pytest.raises(HTTPException) as caught:
         _invoke(actors, operation, cid, admin=True, tenant_id=tenant_b.id)
     assert caught.value.status_code == 403 and caught.value.detail == "Forbidden"
@@ -384,7 +380,7 @@ def test_real_http_web_login_and_state_route_preserve_redirects(roster_actors, a
     assert a.db.get(Enrollment, eid).status == "dropped"
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_same_request_cookie_mutation_refuses_and_latches_even_after_restore(roster_actors, operation):
     from starlette.requests import Request
 
@@ -393,11 +389,7 @@ def test_same_request_cookie_mutation_refuses_and_latches_even_after_restore(ros
     request = Request(
         {"type": "http", "headers": list(actors.admin.request.scope["headers"]), "state": {"tenant": a.tenant}}
     )
-    issued = (
-        boundary.change_web_roster_state(a.db, request=request, cohort_id=cid, person_id=a.pid, state="dropped")
-        if operation == "state"
-        else boundary.remove_web_facilitator(a.db, request=request, cohort_id=cid, person_id=a.pid)
-    )
+    issued = boundary.change_web_roster_state(a.db, request=request, cohort_id=cid, person_id=a.pid, state="dropped")
     with pytest.raises(boundary.HumanOperationError):
         with issued as context:
             original = list(request.scope["headers"])
@@ -412,7 +404,7 @@ def test_same_request_cookie_mutation_refuses_and_latches_even_after_restore(ros
     assert a.db.get(Enrollment, eid).status == "active"
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_invalid_bound_constructor_and_owner_failure_clear_every_owned_request_alias(
     roster_actors, monkeypatch, operation
 ):
@@ -422,7 +414,7 @@ def test_invalid_bound_constructor_and_owner_failure_clear_every_owned_request_a
     def failure(*args, **kwargs):
         raise RuntimeError("injected required owner failure")
 
-    monkeypatch.setattr(roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", failure)
+    monkeypatch.setattr(roster.learning, "set_roster_state", failure)
     with pytest.raises(boundary.HumanOperationError) as caught:
         _invoke(actors, operation, cid, admin=True)
     pending, seen, frames = [caught.value], set(), []
@@ -453,17 +445,11 @@ def test_invalid_bound_constructor_and_owner_failure_clear_every_owned_request_a
         pending.extend(value for value in (error.__cause__, error.__context__) if value is not None)
     assert (
         "_human_operation" in frames
-        and ("set_roster_state" if operation == "state" else "remove_facilitator") in frames
+        and ("set_roster_state") in frames
     )
     with pytest.raises(boundary.HumanOperationError) as invalid:
-        issued = (
-            boundary.change_web_roster_state(
-                a.db, request=actors.admin.request, cohort_id="invalid", person_id=a.pid, state="dropped"
-            )
-            if operation == "state"
-            else boundary.remove_web_facilitator(
-                a.db, request=actors.admin.request, cohort_id="invalid", person_id=a.pid
-            )
+        issued = boundary.change_web_roster_state(
+            a.db, request=actors.admin.request, cohort_id="invalid", person_id=a.pid, state="dropped"
         )
         with issued:
             pytest.fail("invalid bound UUID reached owner handoff")
@@ -476,13 +462,13 @@ def test_invalid_bound_constructor_and_owner_failure_clear_every_owned_request_a
     a.db.commit()
 
 
-@pytest.mark.parametrize("operation", ["state", "remove"])
+@pytest.mark.parametrize("operation", ["state"])
 def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_owner(
     roster_actors, monkeypatch, operation
 ):
     actors, a = roster_actors, roster_actors.account
-    actor = actors.admin if operation == "remove" else actors.instructor
-    cid, eid = _case(actors, target_role="instructor" if operation == "remove" else "student")
+    actor = actors.instructor
+    cid, eid = _case(actors, target_role="student")
     a.admin.execute(
         update(AuthSession)
         .where(AuthSession.id == actor.session_id)
@@ -493,13 +479,13 @@ def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_own
     sessions = sessionmaker(bind=a.db.get_bind(), autoflush=False)
     locked, started, release = Event(), Event(), Event()
     backend, calls = [], []
-    original = roster.learning.set_roster_state if operation == "state" else roster.learning.remove_facilitator
+    original = roster.learning.set_roster_state
 
     def observe(*args, **kwargs):
         calls.append(True)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(roster.learning, "set_roster_state" if operation == "state" else "remove_facilitator", observe)
+    monkeypatch.setattr(roster.learning, "set_roster_state", observe)
 
     def holder():
         with sessions() as db:
@@ -516,7 +502,7 @@ def test_natural_owner_enrollment_wait_expiry_rolls_back_flushed_state_after_own
             db.get(Cohort, cid).name = "Prior work survives owner wait"
             started.set()
             with pytest.raises(HTTPException) as caught:
-                _invoke(actors, operation, cid, admin=operation == "remove", db=db)
+                _invoke(actors, operation, cid, admin=False, db=db)
             assert caught.value.status_code == 303 and caught.value.headers == {"Location": "/login"}
             db.commit()
 

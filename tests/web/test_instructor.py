@@ -10,8 +10,11 @@ from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, 
 from sqlalchemy import select
 
 from app.models.cohort import Cohort, Enrollment
+from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
+from app.models.facilitator import FacilitatorNomination
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
+from app.models.offering import CourseOffering
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
 from tests.services.roster_request_fixtures import roster_actors
@@ -129,12 +132,16 @@ def _person_with_role(admin_session, tenant, *, email, role="instructor", status
     return person
 
 
-def _post_facilitator(app_client, headers, cohort_id, person_id):
+def _post_facilitator(app_client, headers, cohort_id, person_id, *, scope="cohort", offering_id=None):
     csrf = app_client.cookies.get("csrf_token", "")
     return app_client.post(
         f"/instructor/cohorts/{cohort_id}/facilitators",
         headers={**headers, "x-csrf-token": csrf},
-        data={"facilitator_id": str(person_id)},
+        data={
+            "facilitator_id": str(person_id),
+            "scope": scope,
+            "offering_id": str(offering_id) if offering_id else "",
+        },
         follow_redirects=False,
     )
 
@@ -176,51 +183,19 @@ def test_admin_course_preview_renders_imported_html_content(app_client, admin_se
     assert "Resolve customer incidents." in response.text
 
 
-def test_admin_can_assign_and_remove_existing_instructor_facilitator(app_client, admin_session, tenant_a):
+def test_admin_nomination_preserves_student_enrollment_and_revoke(app_client, admin_session, tenant_a):
     headers = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     cohort = Cohort(tenant_id=tenant_a.id, name="Facilitated", discipline="networking", status="active")
-    facilitator = _person_with_role(admin_session, tenant_a, email="facilitator@a.edu")
-    admin_session.add(cohort)
-    admin_session.commit()
-
-    response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
-    assert response.status_code == 303
-    admin_session.expire_all()
-    enrollment = admin_session.scalars(
-        select(Enrollment)
-        .where(Enrollment.tenant_id == tenant_a.id)
-        .where(Enrollment.cohort_id == cohort.id)
-        .where(Enrollment.person_id == facilitator.id)
-    ).one()
-    assert enrollment.role_in_cohort == "instructor"
-    assert enrollment.status == "active"
-
-    csrf = app_client.cookies.get("csrf_token", "")
-    response = app_client.post(
-        f"/instructor/cohorts/{cohort.id}/facilitators/{facilitator.id}/remove",
-        headers={**headers, "x-csrf-token": csrf},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
-    admin_session.expire_all()
-    assert enrollment.status == "dropped"
-
-
-@pytest.mark.parametrize("previous_status", ["dropped", "waitlisted"])
-def test_admin_reactivates_existing_facilitator_enrollment(app_client, admin_session, tenant_a, previous_status):
-    headers = _login_instructor(app_client, admin_session, tenant_a)
-    _grant_admin(admin_session, tenant_a)
-    cohort = Cohort(tenant_id=tenant_a.id, name="Reactivation", discipline="networking", status="active")
-    facilitator = _person_with_role(admin_session, tenant_a, email=f"{previous_status}@a.edu")
+    facilitator = _person_with_role(admin_session, tenant_a, email="facilitator@a.edu", role=None)
     admin_session.add(cohort)
     admin_session.flush()
     enrollment = Enrollment(
         tenant_id=tenant_a.id,
         cohort_id=cohort.id,
         person_id=facilitator.id,
-        role_in_cohort="instructor",
-        status=previous_status,
+        role_in_cohort="student",
+        status="active",
     )
     admin_session.add(enrollment)
     admin_session.commit()
@@ -228,8 +203,68 @@ def test_admin_reactivates_existing_facilitator_enrollment(app_client, admin_ses
     response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
     assert response.status_code == 303
     admin_session.expire_all()
-    assert enrollment.role_in_cohort == "instructor"
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.cohort_id == cohort.id)
+        .where(FacilitatorNomination.person_id == facilitator.id)
+    ).one()
+    assert nomination.status == "pending"
+    assert enrollment.role_in_cohort == "student"
     assert enrollment.status == "active"
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/instructor/facilitators/{nomination.id}/revoke",
+        headers={**headers, "x-csrf-token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    admin_session.expire_all()
+    assert nomination.status == "revoked"
+    assert enrollment.role_in_cohort == "student"
+    assert enrollment.status == "active"
+
+
+def test_admin_nomination_activates_immediately_when_course_already_completed(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Qualified", discipline="networking", status="active")
+    facilitator = _person_with_role(admin_session, tenant_a, email="qualified@a.edu", role=None)
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="qualified-course",
+        title="Qualified Course",
+        discipline="networking",
+        source_ref="test",
+        version=1,
+        status="published",
+    )
+    admin_session.add_all([cohort, course])
+    admin_session.flush()
+    offering = CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course.id, status="active")
+    completion = CourseCompletion(
+        tenant_id=tenant_a.id,
+        person_id=facilitator.id,
+        course_id=course.id,
+        status="completed",
+        pct=1.0,
+    )
+    admin_session.add_all([offering, completion])
+    admin_session.commit()
+
+    response = _post_facilitator(
+        app_client, headers, cohort.id, facilitator.id, scope="course", offering_id=offering.id
+    )
+    assert response.status_code == 303
+    admin_session.expire_all()
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.person_id == facilitator.id)
+    ).one()
+    assert nomination.status == "active"
+    assert nomination.offering_id == offering.id
 
 
 def test_non_admin_instructor_cannot_assign_facilitator(app_client, admin_session, tenant_a):
@@ -242,14 +277,17 @@ def test_non_admin_instructor_cannot_assign_facilitator(app_client, admin_sessio
     response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
     assert response.status_code == 403
     assert (
-        admin_session.query(Enrollment)
-        .filter(Enrollment.cohort_id == cohort.id, Enrollment.person_id == facilitator.id)
+        admin_session.query(FacilitatorNomination)
+        .filter(
+            FacilitatorNomination.cohort_id == cohort.id,
+            FacilitatorNomination.person_id == facilitator.id,
+        )
         .count()
         == 0
     )
 
 
-def test_user_without_instructor_role_cannot_be_facilitator(app_client, admin_session, tenant_a):
+def test_user_without_instructor_role_can_be_nominated(app_client, admin_session, tenant_a):
     headers = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     cohort = Cohort(tenant_id=tenant_a.id, name="Role Gate", discipline="networking", status="active")
@@ -258,8 +296,13 @@ def test_user_without_instructor_role_cannot_be_facilitator(app_client, admin_se
     admin_session.commit()
 
     response = _post_facilitator(app_client, headers, cohort.id, learner.id)
-    assert response.status_code == 400
-    assert "instructor role" in response.text
+    assert response.status_code == 303
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.person_id == learner.id)
+    ).one()
+    assert nomination.status == "pending"
 
 
 def test_facilitator_assignment_preserves_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
@@ -275,7 +318,9 @@ def test_facilitator_assignment_preserves_tenant_isolation(app_client, admin_ses
     assert _post_facilitator(app_client, headers, cohort_a.id, instructor_b.id).status_code == 404
     assert _post_facilitator(app_client, headers, cohort_b.id, instructor_a.id).status_code == 404
     assert (
-        admin_session.query(Enrollment).filter(Enrollment.person_id.in_([instructor_a.id, instructor_b.id])).count()
+        admin_session.query(FacilitatorNomination)
+        .filter(FacilitatorNomination.person_id.in_([instructor_a.id, instructor_b.id]))
+        .count()
         == 0
     )
 
@@ -1244,18 +1289,6 @@ def _genuine_roster_route_case(roster_actors, monkeypatch):
     )
 
 
-@pytest.fixture
-def facilitator_removal_route(roster_actors, monkeypatch):
-    """Actual canonical Request/Session; observe only route and Learning handoff."""
-    from sqlalchemy import event
-
-    case = _genuine_roster_route_case(roster_actors, monkeypatch)
-    try:
-        yield case
-    finally:
-        event.remove(case.db.get_bind(), "before_cursor_execute", case.observer)
-
-
 def _removal_request(case, *, htmx=False):
     from starlette.requests import Request
 
@@ -1297,169 +1330,19 @@ def _state_target(case, role):
     return row
 
 
-@pytest.mark.parametrize("htmx", [False, True])
-def test_facilitator_removal_forwards_authenticated_scope_and_keeps_redirect(
-    facilitator_removal_route, monkeypatch, htmx
-):
-    from unittest.mock import Mock
+# Retired with the enrollment-as-facilitator writer (#188, plan §3.2 roster row):
+# test_facilitator_removal_forwards_authenticated_scope_and_keeps_redirect,
+# test_facilitator_removal_admin_denial_precedes_owner_and_cohort_sql,
+# test_facilitator_removal_preserves_owner_missing_reference_detail,
+# test_facilitator_removal_maps_owner_forbidden_without_redirect,
+# test_facilitator_removal_required_owner_failure_propagates, and
+# test_facilitator_service_forwards_authority_and_preserves_owner_result tested
+# roster.assign_facilitator/remove_facilitator, deleted in C3. Their authority and
+# error-mapping intent is re-proved against the nomination lifecycle by
+# test_admin_nomination_preserves_student_enrollment_and_revoke (web revoke route,
+# admin gate, redirect) and tests/services/test_facilitator_nominations.py
+# (activate/revoke/sweep semantics, tenant isolation, idempotent revoke).
 
-    import dotmac_learning as learning
-
-    case = facilitator_removal_route
-    owner = Mock(return_value=object())
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    response = case.route.remove_cohort_facilitator(
-        case.cohort_id,
-        case.facilitator_id,
-        _removal_request(case, htmx=htmx),
-        person=case.actor,
-        db=case.db,
-    )
-    case.admin.assert_called_once_with(case.db, case.tenant.id, case.actor.id)
-    owner.assert_called_once_with(
-        case.db,
-        learning.RemoveFacilitatorCommand(
-            tenant_id=case.tenant.id, cohort_id=case.cohort_id, person_id=case.facilitator_id
-        ),
-        authority=learning.RosterAuthority(tenant_id=case.tenant.id, actor_is_admin=True),
-    )
-    assert response.status_code == (200 if htmx else 303)
-    assert response.headers["HX-Redirect" if htmx else "location"] == "/instructor/cohorts"
-    case.db.scalars.assert_called()
-    case.db.add.assert_not_called()
-    case.db.delete.assert_not_called()
-    case.db.flush.assert_called()
-    case.db.commit.assert_not_called()
-    case.db.rollback.assert_not_called()
-
-
-def test_facilitator_removal_admin_denial_precedes_owner_and_cohort_sql(facilitator_removal_route, monkeypatch):
-    from unittest.mock import Mock
-
-    import dotmac_learning as learning
-    from fastapi import HTTPException
-
-    case = facilitator_removal_route
-    _use_route_actor(case, case.actors.instructor)
-    owner = Mock()
-    redirect = Mock()
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    monkeypatch.setattr(case.route, "hx_redirect", redirect)
-    with pytest.raises(HTTPException) as caught:
-        case.route.remove_cohort_facilitator(
-            case.cohort_id, case.facilitator_id, _removal_request(case), person=case.actor, db=case.db
-        )
-    assert caught.value.status_code == 403
-    assert caught.value.detail == "Forbidden"
-    owner.assert_not_called()
-    redirect.assert_not_called()
-    assert case.cohort_reads == [] and case.enrollment_reads == []
-    case.db.flush.assert_not_called()
-
-
-@pytest.mark.parametrize("missing", ["cohort", "enrollment", "student_enrollment"])
-def test_facilitator_removal_preserves_owner_missing_reference_detail(facilitator_removal_route, monkeypatch, missing):
-    from unittest.mock import Mock
-
-    import dotmac_learning as learning
-
-    from app.services.exceptions import NotFoundError
-
-    case = facilitator_removal_route
-    detail = "cohort not found for tenant" if missing == "cohort" else "facilitator enrollment not found"
-    owner = Mock(side_effect=learning.ParticipationNotFound(detail))
-    redirect = Mock()
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    monkeypatch.setattr(case.route, "hx_redirect", redirect)
-    with pytest.raises(NotFoundError) as caught:
-        case.route.remove_cohort_facilitator(
-            case.cohort_id, case.facilitator_id, _removal_request(case), person=case.actor, db=case.db
-        )
-    assert str(caught.value) == detail
-    assert caught.value.__suppress_context__ is True
-    owner.assert_called_once()
-    redirect.assert_not_called()
-    case.db.scalars.assert_called()
-    case.db.flush.assert_called()
-
-
-def test_facilitator_removal_maps_owner_forbidden_without_redirect(facilitator_removal_route, monkeypatch):
-    from unittest.mock import Mock
-
-    import dotmac_learning as learning
-    from fastapi import HTTPException
-
-    case = facilitator_removal_route
-    owner = Mock(side_effect=learning.ParticipationForbidden("Forbidden"))
-    redirect = Mock()
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    monkeypatch.setattr(case.route, "hx_redirect", redirect)
-    with pytest.raises(HTTPException) as caught:
-        case.route.remove_cohort_facilitator(
-            case.cohort_id, case.facilitator_id, _removal_request(case), person=case.actor, db=case.db
-        )
-    assert caught.value.status_code == 403 and caught.value.detail == "Forbidden"
-    assert caught.value.__suppress_context__ is True
-    owner.assert_called_once()
-    redirect.assert_not_called()
-
-
-def test_facilitator_removal_required_owner_failure_propagates(facilitator_removal_route, monkeypatch):
-    from unittest.mock import Mock
-
-    import dotmac_learning as learning
-
-    from app.services.audit_context import HumanOperationError
-
-    case = facilitator_removal_route
-    failure = RuntimeError("required roster persistence failure")
-    owner = Mock(side_effect=failure)
-    redirect = Mock()
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    monkeypatch.setattr(case.route, "hx_redirect", redirect)
-    with pytest.raises(HumanOperationError) as caught:
-        case.route.remove_cohort_facilitator(
-            case.cohort_id, case.facilitator_id, _removal_request(case), person=case.actor, db=case.db
-        )
-    assert caught.value.__context__ is failure
-    redirect.assert_not_called()
-    case.db.commit.assert_not_called()
-    case.db.rollback.assert_not_called()
-
-
-@pytest.mark.parametrize("actor_is_admin", [False, True])
-def test_facilitator_service_forwards_authority_and_preserves_owner_result(monkeypatch, actor_is_admin, roster_actors):
-    from unittest.mock import Mock
-
-    import dotmac_learning as learning
-    from fastapi import HTTPException
-
-    from app.services import roster
-
-    tenant, cohort, person = roster_actors.account.tid, uuid4(), roster_actors.account.pid
-    db, fact = roster_actors.db, object()
-    actor = roster_actors.admin if actor_is_admin else roster_actors.instructor
-    owner = (
-        Mock(return_value=fact) if actor_is_admin else Mock(side_effect=learning.ParticipationForbidden("Forbidden"))
-    )
-    monkeypatch.setattr(learning, "remove_facilitator", owner)
-    if actor_is_admin:
-        assert (
-            roster.remove_facilitator(db, tenant_id=tenant, cohort_id=cohort, person_id=person, request=actor.request)
-            is fact
-        )
-    else:
-        with pytest.raises(HTTPException) as caught:
-            roster.remove_facilitator(db, tenant_id=tenant, cohort_id=cohort, person_id=person, request=actor.request)
-        assert caught.value.status_code == 403 and caught.value.detail == "Forbidden"
-    if actor_is_admin:
-        owner.assert_called_once_with(
-            db,
-            learning.RemoveFacilitatorCommand(tenant_id=tenant, cohort_id=cohort, person_id=person),
-            authority=learning.RosterAuthority(tenant_id=tenant, actor_is_admin=actor_is_admin),
-        )
-    else:
-        owner.assert_not_called()
 
 
 @pytest.fixture

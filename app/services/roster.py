@@ -19,7 +19,6 @@ from app.models.identity_extensions import AcademyAccountProfile
 from app.services import audit_context
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.learning_policy import creation_defaults
-from app.services.roles import role_slugs
 from app.services.roster_policy import bulk_enrollment_policy
 
 ROSTER_STATES = frozenset({"active", "waitlisted", "dropped"})
@@ -39,63 +38,9 @@ def _account_presence(tenant_id: UUID) -> learning.AccountPresenceSelection:
     )
 
 
-def _facilitator_eligibility(db, *, tenant_id, person_id):
-    # The shared boundary has already locked all actor/affected Parties in order.
-    # Lock secondary target facts, and sample their current values after waiting.
-    person = db.execute(
-        select(Party.id, Party.is_active, AcademyAccountProfile.status)
-        .join(PartyPerson, PartyPerson.party_id == Party.id)
-        .join(
-            AcademyAccountProfile,
-            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
-        )
-        .where(Party.tenant_id == tenant_id, Party.id == person_id, Party.party_type == PartyType.person)
-        .with_for_update()
-    ).first()
-    if person is None:
-        raise NotFoundError("person not found for tenant")
-    if not person.is_active or person.status != "active":
-        raise BadRequestError("facilitator must be an active user")
-    if "instructor" not in role_slugs(db, tenant_id, person_id):
-        raise BadRequestError("facilitator must have the instructor role")
-    return learning.FacilitatorEligibility(
-        tenant_id=tenant_id, person_id=person_id, has_instructor_role=True, account_is_active=True
-    )
-
-
-def assign_facilitator(
-    db: Session, *, request: Request, tenant_id: UUID, cohort_id: UUID, person_id: UUID
-) -> learning.EnrollmentFact:
-    """Resolve authority from the actual request, never a supplied admin flag."""
-    with audit_context.assign_web_facilitator(db, request=request, cohort_id=cohort_id, person_id=person_id) as human:
-        if human.tenant_id != tenant_id:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not human.actor_is_admin:
-            raise BadRequestError("only an admin can assign a cohort facilitator")
-        if not learning.cohort_exists(db, tenant_id=tenant_id, cohort_id=cohort_id):
-            raise NotFoundError("cohort not found for tenant")
-        eligibility = _facilitator_eligibility(db, tenant_id=tenant_id, person_id=person_id)
-        # Secondary target lock waits may have outlived the actor's session.
-        actor_is_admin = human.actor_is_admin
-        if not actor_is_admin:
-            raise BadRequestError("only an admin can assign a cohort facilitator")
-        try:
-            result = learning.assign_facilitator(
-                db,
-                learning.AssignFacilitatorCommand(tenant_id=tenant_id, cohort_id=cohort_id, person_id=person_id),
-                authority=learning.RosterAuthority(tenant_id=tenant_id, actor_is_admin=actor_is_admin),
-                eligibility=eligibility,
-            )
-        except learning.ParticipationNotFound as exc:
-            raise NotFoundError(str(exc)) from None
-        except learning.ParticipationBadRequest as exc:
-            raise BadRequestError(str(exc)) from None
-        except learning.ParticipationForbidden as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from None
-        _facilitator_eligibility(db, tenant_id=tenant_id, person_id=person_id)
-        if not human.actor_is_admin:
-            raise BadRequestError("only an admin can assign a cohort facilitator")
-        return result
+# Facilitator authority is nomination-based (app/services/facilitator_nominations.py,
+# #188/ADR 0010): there is deliberately no enrollment-rewriting facilitator
+# writer here. Learning's AssignFacilitatorCommand is unused by Academy.
 
 
 def bulk_enroll(
@@ -191,40 +136,3 @@ def set_roster_state(
             return result
     finally:
         db = request = tenant_id = cohort_id = person_id = state = human = result = actor_is_admin = None
-
-
-def remove_facilitator(
-    db: Session,
-    *,
-    request: Request,
-    tenant_id: UUID,
-    cohort_id: UUID,
-    person_id: UUID,
-) -> learning.EnrollmentFact:
-    """Use genuine fresh admin authority; Learning alone removes membership."""
-    human = result = actor_is_admin = None
-    try:
-        with audit_context.remove_web_facilitator(
-            db, request=request, cohort_id=cohort_id, person_id=person_id
-        ) as human:
-            if human.tenant_id != tenant_id:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-            actor_is_admin = human.actor_is_admin
-            try:
-                result = learning.remove_facilitator(
-                    db,
-                    learning.RemoveFacilitatorCommand(
-                        tenant_id=human.tenant_id,
-                        cohort_id=human.resources.cohort_id,
-                        person_id=human.resources.party_id,
-                    ),
-                    authority=learning.RosterAuthority(tenant_id=human.tenant_id, actor_is_admin=actor_is_admin),
-                )
-            except learning.ParticipationNotFound as exc:
-                raise NotFoundError(str(exc)) from None
-            except learning.ParticipationForbidden as exc:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
-            human.revalidate()
-            return result
-    finally:
-        db = request = tenant_id = cohort_id = person_id = human = result = actor_is_admin = None

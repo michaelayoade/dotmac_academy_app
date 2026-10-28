@@ -1,8 +1,12 @@
 # app/web/instructor.py
 """Instructor portal routes.
 
-All routes are gated by require_web_role("instructor") — students and unauthenticated
-users receive 403 or a redirect to /login respectively.
+All routes require an authenticated tenant user. Each handler then authorizes
+either legacy staff access or the exact active facilitator scope it serves:
+per-route ``require_web_role("instructor")`` dependencies preserve the legacy
+staff-only surfaces, bank routes keep their product-admin gates, and every
+other route calls ``_access_or_403`` (or a helper built on it) before reading
+or writing anything.
 
 IMPORTANT: no db.commit() calls inside any handler. The get_db dependency manages the
 transaction: it does SET LOCAL app.current_tenant (transaction-scoped) and commits
@@ -21,7 +25,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.audit import resolve_event_attribution
-from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from dotmac_kernel.web_surfaces import surface_path
 from dotmac_learning import (
     AttemptAuditContext,
@@ -41,6 +45,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
+from app.models.facilitator import FacilitatorNomination
 from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
 from app.services import announcements as ann_svc
@@ -54,6 +59,19 @@ from app.services.canonical_lifecycle import set_account_status
 from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.facilitator_access import (
+    FacilitatorAccess,
+    authorized_cohort_ids,
+    authorized_offering_ids,
+    facilitator_access,
+)
+from app.services.facilitator_nominations import (
+    FacilitatorScope,
+    NominateFacilitatorCommand,
+    RevokeFacilitatorCommand,
+    nominate,
+    revoke,
+)
 from app.services.identity import AcademyCurrentAccount
 from app.services.invitation_issuance import cohort_fact, invite_web_cohort_account, track_fact
 from app.services.localtime import local_to_utc
@@ -66,7 +84,7 @@ from app.services.product_admin_access import (
     require_bank_retire_access,
 )
 from app.services.roles import role_slugs
-from app.services.roster import assign_facilitator, bulk_enroll, remove_facilitator, set_roster_state
+from app.services.roster import bulk_enroll, set_roster_state
 from app.services.security import hash_token
 from app.services.settings_store import effective
 from app.services.web_auth import require_web_role, require_web_user
@@ -76,7 +94,7 @@ from app.web.templating import templates
 
 router = APIRouter(
     prefix="/instructor",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("instructor"))],
+    dependencies=[Depends(require_tenant), Depends(require_web_user)],
 )
 
 
@@ -133,8 +151,19 @@ def cohorts_list(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    is_admin = _is_admin(db, tenant.id, person.id)
-    rows = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id).order_by(Cohort.name)).all()
+    access = _access_or_403(db, tenant_id=tenant.id, person_id=person.id)
+    is_admin = access.is_admin
+    visible_cohort_ids = (
+        authorized_cohort_ids(db, tenant_id=tenant.id, access=access)
+        if access.has_global_staff_access
+        else access.cohort_ids
+    )
+    rows = db.scalars(
+        select(Cohort)
+        .where(Cohort.tenant_id == tenant.id)
+        .where(Cohort.id.in_(visible_cohort_ids))
+        .order_by(Cohort.name)
+    ).all()
     roster_rows = _roster_pairs(
         db.execute(
             _roster_statement()
@@ -147,7 +176,6 @@ def cohorts_list(
     # must stay visible so an instructor can act on it, not disappear silently.
     roster_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
     active_student_counts: dict[UUID, int] = {cohort.id: 0 for cohort in rows}
-    facilitators_by_cohort: dict[UUID, list[_RosterPerson]] = {cohort.id: [] for cohort in rows}
     for enrollment, student in roster_rows:
         if enrollment.cohort_id not in roster_by_cohort:
             continue
@@ -156,10 +184,10 @@ def cohorts_list(
         )
         if is_active_student:
             active_student_counts[enrollment.cohort_id] += 1
-        if enrollment.status == "active" and enrollment.role_in_cohort == "instructor":
-            facilitators_by_cohort[enrollment.cohort_id].append(student)
         roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
-    instructor_candidates = [
+    # Any active user may be nominated (#188): eligibility is the snapshotted
+    # completion requirement, not a pre-held instructor grant.
+    facilitator_candidates = [
         _RosterPerson(*row)
         for row in db.execute(
             select(Party.id, Party.email, PartyPerson.first_name, PartyPerson.last_name, AcademyAccountProfile.status)
@@ -168,19 +196,63 @@ def cohorts_list(
                 AcademyAccountProfile,
                 (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
             )
-            .join(
-                PartyRoleGrant,
-                (PartyRoleGrant.party_id == Party.id) & (PartyRoleGrant.tenant_id == Party.tenant_id),
-            )
-            .join(Role, (Role.id == PartyRoleGrant.role_id) & (Role.tenant_id == PartyRoleGrant.tenant_id))
             .where(Party.tenant_id == tenant.id, Party.party_type == PartyType.person)
             .where(AcademyAccountProfile.status == "active")
-            .where(Role.slug == "instructor")
             .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
-        )
-        .unique(lambda row: row.id)
-        .all()
+        ).all()
     ]
+    nomination_rows = db.execute(
+        select(
+            FacilitatorNomination,
+            Party.id,
+            Party.email,
+            PartyPerson.first_name,
+            PartyPerson.last_name,
+            AcademyAccountProfile.status,
+            CourseOffering,
+            Course,
+        )
+        .join(
+            Party,
+            (Party.id == FacilitatorNomination.person_id) & (Party.tenant_id == FacilitatorNomination.tenant_id),
+        )
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .outerjoin(
+            CourseOffering,
+            (CourseOffering.id == FacilitatorNomination.offering_id)
+            & (CourseOffering.tenant_id == FacilitatorNomination.tenant_id),
+        )
+        .outerjoin(
+            Course,
+            (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
+        )
+        .where(Party.party_type == PartyType.person)
+        .where(FacilitatorNomination.tenant_id == tenant.id)
+        .where(FacilitatorNomination.status.in_(("pending", "active")))
+        .where(
+            (FacilitatorNomination.cohort_id.in_(visible_cohort_ids))
+            | (CourseOffering.cohort_id.in_(visible_cohort_ids))
+        )
+        .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
+    ).all()
+    facilitators_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    for nomination, nominee_id, nominee_email, nominee_first, nominee_last, nominee_status, offering, course in (
+        nomination_rows
+    ):
+        scope_cohort_id = nomination.cohort_id if nomination.scope_type == "cohort" else offering.cohort_id
+        if scope_cohort_id in facilitators_by_cohort:
+            facilitators_by_cohort[scope_cohort_id].append(
+                {
+                    "nomination": nomination,
+                    "person": _RosterPerson(nominee_id, nominee_email, nominee_first, nominee_last, nominee_status),
+                    "offering": offering,
+                    "course": course,
+                }
+            )
     tracks_by_cohort = {
         cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
     }
@@ -206,7 +278,7 @@ def cohorts_list(
         or 0
     )
     offering_rows = db.execute(
-        select(CourseOffering.cohort_id, Course)
+        select(CourseOffering, Course)
         .join(
             Course,
             (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
@@ -215,24 +287,18 @@ def cohorts_list(
         .where(CourseOffering.status == "active")
         .order_by(Course.title)
     ).all()
-    courses_by_cohort: dict[UUID, list[Course]] = {cohort.id: [] for cohort in rows}
-    seen_course_pairs: set[tuple[UUID, UUID]] = set()
-    for cohort_id, course in offering_rows:
-        key = (cohort_id, course.id)
-        if cohort_id in courses_by_cohort and key not in seen_course_pairs:
-            courses_by_cohort[cohort_id].append(course)
-            seen_course_pairs.add(key)
+    offerings_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    for offering, course in offering_rows:
+        if offering.cohort_id in offerings_by_cohort:
+            offerings_by_cohort[offering.cohort_id].append({"offering": offering, "course": course})
     cohort_rows = [
         {
             "cohort": cohort,
             "roster": roster_by_cohort.get(cohort.id, []),
             "active_student_count": active_student_counts.get(cohort.id, 0),
             "facilitators": facilitators_by_cohort.get(cohort.id, []),
-            "available_facilitators": [
-                candidate
-                for candidate in instructor_candidates
-                if candidate.id not in {person.id for person in facilitators_by_cohort.get(cohort.id, [])}
-            ],
+            "available_facilitators": facilitator_candidates,
+            "offerings": offerings_by_cohort.get(cohort.id, []),
             "tracks": tracks_by_cohort.get(cohort.id, []),
             "available_courses": courses,
         }
@@ -249,18 +315,21 @@ def cohorts_list(
             "all_courses": courses,
             "draft_course_count": draft_course_count,
             "is_admin": is_admin,
+            "can_manage_cohorts": access.has_global_staff_access,
         },
     )
 
 
-@router.post("/cohorts")
+@router.post("/cohorts", dependencies=[Depends(require_web_role("instructor"))])
 def create_cohort(
     request: Request,
     name: str = Form(...),
     discipline: str = Form(...),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    _global_staff_or_403(db, tenant_id=tenant.id, person_id=person.id)
     db.add(Cohort(tenant_id=tenant.id, name=name, discipline=discipline, status="active"))
     # No db.commit() here — get_db commits after the response is returned.
     return hx_redirect(request, "/instructor/cohorts")
@@ -279,6 +348,27 @@ def _is_admin(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return "admin" in role_slugs(db, tenant_id, person_id)
 
 
+def _access_or_403(db: Session, *, tenant_id: UUID, person_id: UUID) -> FacilitatorAccess:
+    access = facilitator_access(db, tenant_id=tenant_id, person_id=person_id)
+    if not access.can_teach:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return access
+
+
+def _global_staff_or_403(db: Session, *, tenant_id: UUID, person_id: UUID) -> FacilitatorAccess:
+    access = _access_or_403(db, tenant_id=tenant_id, person_id=person_id)
+    if not access.has_global_staff_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return access
+
+
+def _cohort_access_or_403(db: Session, *, tenant_id: UUID, person_id: UUID, cohort_id: UUID) -> FacilitatorAccess:
+    access = _access_or_403(db, tenant_id=tenant_id, person_id=person_id)
+    if not access.allows_cohort(cohort_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return access
+
+
 def _cohort_action_target(cohort_id: UUID, return_to: str) -> str:
     """Allow membership actions to return only to a known cohort workspace."""
     workspace = f"/instructor/cohorts/{cohort_id}"
@@ -289,12 +379,14 @@ def _cohort_action_target(cohort_id: UUID, return_to: str) -> str:
 def cohort_detail(
     cohort_id: UUID,
     request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
     limit: int = Query(12, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
     """Dedicated cohort workspace with roster progress and curriculum detail."""
     tenant = require_tenant(request)
+    _cohort_access_or_403(db, tenant_id=tenant.id, person_id=person.id, cohort_id=cohort_id)
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
 
     roster_pairs = _roster_pairs(
@@ -391,16 +483,41 @@ def cohort_detail(
     average_progress = sum(row["completion_pct"] for row in active_rows) / len(active_rows) if active_rows else 0.0
     student_rows = student_rows_all[offset : offset + limit]
 
-    facilitator_pairs = _roster_pairs(
-        db.execute(
-            _roster_statement()
-            .where(Enrollment.tenant_id == tenant.id)
-            .where(Enrollment.cohort_id == cohort_id)
-            .where(Enrollment.role_in_cohort == "instructor")
-            .where(Enrollment.status == "active")
+    # Facilitators are active nominations (#188), not instructor enrollments.
+    # The template unpacks (assignment, person) pairs and reads only the
+    # person's display fields, so nominations keep that pair shape.
+    facilitator_pairs = [
+        (nomination, _RosterPerson(nominee_id, nominee_email, nominee_first, nominee_last, nominee_status))
+        for nomination, nominee_id, nominee_email, nominee_first, nominee_last, nominee_status in db.execute(
+            select(
+                FacilitatorNomination,
+                Party.id,
+                Party.email,
+                PartyPerson.first_name,
+                PartyPerson.last_name,
+                AcademyAccountProfile.status,
+            )
+            .join(
+                Party,
+                (Party.id == FacilitatorNomination.person_id) & (Party.tenant_id == FacilitatorNomination.tenant_id),
+            )
+            .join(PartyPerson, PartyPerson.party_id == Party.id)
+            .join(
+                AcademyAccountProfile,
+                (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+            )
+            .outerjoin(
+                CourseOffering,
+                (CourseOffering.id == FacilitatorNomination.offering_id)
+                & (CourseOffering.tenant_id == FacilitatorNomination.tenant_id),
+            )
+            .where(Party.party_type == PartyType.person)
+            .where(FacilitatorNomination.tenant_id == tenant.id)
+            .where(FacilitatorNomination.status == "active")
+            .where((FacilitatorNomination.cohort_id == cohort_id) | (CourseOffering.cohort_id == cohort_id))
             .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
         ).all()
-    )
+    ]
 
     offered_course_ids = [course.id for _, course in offering_pairs]
     chapters_by_course: dict[UUID, list[Chapter]] = {course_id: [] for course_id in offered_course_ids}
@@ -492,7 +609,90 @@ def _hx_error(request: Request, target_id: str, message: str) -> HTMLResponse:
 
 
 def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
-    return set(instructor_assigned_course_ids(db, tenant_id=tenant_id, instructor_id=instructor_id))
+    # Learning owns the legacy enrollment-based assignment projection; active
+    # facilitator nominations (#188) additionally authorize their exact
+    # offerings' courses for authoring. The union preserves every composed
+    # assignment while admitting scoped facilitators to their own courses.
+    assigned = set(instructor_assigned_course_ids(db, tenant_id=tenant_id, instructor_id=instructor_id))
+    access = facilitator_access(db, tenant_id=tenant_id, person_id=instructor_id)
+    offering_ids = authorized_offering_ids(db, tenant_id=tenant_id, access=access)
+    if offering_ids:
+        assigned |= set(
+            db.scalars(
+                select(CourseOffering.course_id)
+                .where(CourseOffering.tenant_id == tenant_id)
+                .where(CourseOffering.id.in_(offering_ids))
+            ).all()
+        )
+    return assigned
+
+
+def _assessment_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
+    """Courses safe for learner-assessment surfaces.
+
+    Learner-level checks additionally intersect these courses with the
+    authorized offering cohorts, so a shared Course row never widens access.
+    """
+    access = _access_or_403(db, tenant_id=tenant_id, person_id=instructor_id)
+    if access.has_global_staff_access:
+        return set(db.scalars(select(Course.id).where(Course.tenant_id == tenant_id)).all())
+    # Submission rows have no offering provenance. Direct course-offering
+    # nominations therefore fail closed on assessment data; otherwise the same
+    # Course used by another cohort would be indistinguishable.
+    offering_ids = access.cohort_offering_ids
+    if not offering_ids:
+        return set()
+    return set(
+        db.scalars(
+            select(CourseOffering.course_id)
+            .where(CourseOffering.tenant_id == tenant_id)
+            .where(CourseOffering.id.in_(offering_ids))
+        ).all()
+    )
+
+
+def _assessment_person_ids_for_course(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    instructor_id: UUID,
+    course_id: UUID,
+) -> frozenset[UUID] | None:
+    """Learners attributable to authorized offerings for one course.
+
+    Legacy global staff retain their existing tenant-wide assessment access.
+    Scoped facilitators are constrained by both course and cohort, which
+    prevents a shared Course row from leaking another cohort's submissions.
+    """
+
+    access = _access_or_403(db, tenant_id=tenant_id, person_id=instructor_id)
+    if access.has_global_staff_access:
+        return None
+    offering_ids = authorized_offering_ids(db, tenant_id=tenant_id, access=access)
+    if not offering_ids:
+        return frozenset()
+    rows = db.execute(
+        select(Enrollment.person_id, CourseOffering.id)
+        .join(
+            CourseOffering,
+            (CourseOffering.tenant_id == Enrollment.tenant_id) & (CourseOffering.cohort_id == Enrollment.cohort_id),
+        )
+        .where(Enrollment.tenant_id == tenant_id)
+        .where(Enrollment.role_in_cohort == "student")
+        .where(Enrollment.status == "active")
+        .where(CourseOffering.status == "active")
+        .where(CourseOffering.course_id == course_id)
+    ).all()
+    offerings_by_person: dict[UUID, set[UUID]] = {}
+    for learner_id, offering_id in rows:
+        offerings_by_person.setdefault(learner_id, set()).add(offering_id)
+    return frozenset(
+        learner_id
+        for learner_id, learner_offering_ids in offerings_by_person.items()
+        if learner_offering_ids
+        and learner_offering_ids.issubset(offering_ids)
+        and not learner_offering_ids.isdisjoint(offering_ids)
+    )
 
 
 def _authorable_courses(db: Session, *, tenant_id: UUID, person_id: UUID) -> list[Course]:
@@ -518,49 +718,72 @@ def _authorable_course_or_404(db: Session, *, tenant_id: UUID, person_id: UUID, 
 
 
 @router.post("/cohorts/{cohort_id}/facilitators")
-def add_cohort_facilitator(
+def nominate_facilitator(
     cohort_id: UUID,
     request: Request,
     facilitator_id: UUID = Form(...),
+    scope: FacilitatorScope = Form(FacilitatorScope.COHORT),
+    offering_id: UUID | None = Form(None),
     person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     if not _is_admin(db, tenant.id, person.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    assign_facilitator(
-        db,
-        tenant_id=tenant.id,
-        cohort_id=cohort_id,
-        person_id=facilitator_id,
-        request=request,
-    )
+    cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    if scope is FacilitatorScope.COURSE:
+        offering = db.scalars(
+            select(CourseOffering)
+            .where(CourseOffering.tenant_id == tenant.id)
+            .where(CourseOffering.id == offering_id)
+            .where(CourseOffering.cohort_id == cohort_id)
+        ).first()
+        if offering is None:
+            raise HTTPException(status_code=404, detail="Course offering not found")
+    try:
+        nominate(
+            db,
+            command=NominateFacilitatorCommand(
+                tenant_id=tenant.id,
+                person_id=facilitator_id,
+                actor_person_id=person.id,
+                scope=scope,
+                cohort_id=cohort_id if scope is FacilitatorScope.COHORT else None,
+                offering_id=offering_id if scope is FacilitatorScope.COURSE else None,
+            ),
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/facilitators/{facilitator_id}/remove")
-def remove_cohort_facilitator(
-    cohort_id: UUID,
-    facilitator_id: UUID,
+@router.post("/facilitators/{nomination_id}/revoke")
+def revoke_facilitator_nomination(
+    nomination_id: UUID,
     request: Request,
     person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    actor_is_admin = _is_admin(db, tenant.id, person.id)
-    if not actor_is_admin:
+    if not _is_admin(db, tenant.id, person.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    remove_facilitator(
-        db,
-        tenant_id=tenant.id,
-        cohort_id=cohort_id,
-        person_id=facilitator_id,
-        request=request,
-    )
+    try:
+        revoke(
+            db,
+            command=RevokeFacilitatorCommand(
+                tenant_id=tenant.id,
+                nomination_id=nomination_id,
+                actor_person_id=person.id,
+            ),
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/enroll")
+@router.post("/cohorts/{cohort_id}/enroll", dependencies=[Depends(require_web_role("instructor"))])
 def enroll_student(
     cohort_id: UUID,
     request: Request,
@@ -615,7 +838,10 @@ def enroll_student(
     return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/cohorts/{cohort_id}/roster/{person_id}/state")
+@router.post(
+    "/cohorts/{cohort_id}/roster/{person_id}/state",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def change_roster_state(
     cohort_id: UUID,
     person_id: UUID,
@@ -679,7 +905,7 @@ async def _positions_from_form(request: Request, course_ids: list[UUID]) -> dict
     return positions
 
 
-@router.post("/cohorts/{cohort_id}/tracks")
+@router.post("/cohorts/{cohort_id}/tracks", dependencies=[Depends(require_web_role("instructor"))])
 async def create_track_for_cohort(
     cohort_id: UUID,
     request: Request,
@@ -703,7 +929,10 @@ async def create_track_for_cohort(
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/tracks/{track_id}/courses")
+@router.post(
+    "/cohorts/{cohort_id}/tracks/{track_id}/courses",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 async def add_courses_to_track(
     cohort_id: UUID,
     track_id: UUID,
@@ -732,7 +961,7 @@ async def add_courses_to_track(
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/tracks/{track_id}/reorder")
+@router.post("/tracks/{track_id}/reorder", dependencies=[Depends(require_web_role("instructor"))])
 async def reorder_track(
     track_id: UUID,
     request: Request,
@@ -743,8 +972,8 @@ async def reorder_track(
 
     A Track is tenant-level, not cohort-scoped (CohortTrack is the join), so
     this route is not nested under a specific cohort. Gated the same as
-    other track-management actions (require_web_role("instructor"), already
-    the router-level default) — this is not the admin-only case.
+    other track-management actions (per-route
+    require_web_role("instructor")) — this is not the admin-only case.
     """
     tenant = require_tenant(request)
     submitted: list[UUID] = [UUID(raw) for raw in course_ids if raw]
@@ -766,7 +995,10 @@ async def reorder_track(
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/roster/{person_id}/track")
+@router.post(
+    "/cohorts/{cohort_id}/roster/{person_id}/track",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def change_roster_track(
     cohort_id: UUID,
     person_id: UUID,
@@ -784,7 +1016,10 @@ def change_roster_track(
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/roster/{person_id}/track/clear")
+@router.post(
+    "/cohorts/{cohort_id}/roster/{person_id}/track/clear",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def clear_roster_track(
     cohort_id: UUID,
     person_id: UUID,
@@ -809,7 +1044,7 @@ def clear_roster_track(
     return hx_redirect(request, "/instructor/cohorts")
 
 
-@router.post("/cohorts/{cohort_id}/invite")
+@router.post("/cohorts/{cohort_id}/invite", dependencies=[Depends(require_web_role("instructor"))])
 def invite_to_cohort(
     cohort_id: UUID,
     request: Request,
@@ -919,9 +1154,15 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 
 @router.get("/cohorts/{cohort_id}/timetable", response_class=HTMLResponse)
-def cohort_timetable(cohort_id: UUID, request: Request, db: Session = Depends(get_db)):
+def cohort_timetable(
+    cohort_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     """A cohort's class-session timetable, with add/cancel controls."""
     tenant = require_tenant(request)
+    _cohort_access_or_403(db, tenant_id=tenant.id, person_id=person.id, cohort_id=cohort_id)
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     sessions = scheduling.list_for_cohort(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
@@ -938,7 +1179,7 @@ def cohort_timetable(cohort_id: UUID, request: Request, db: Session = Depends(ge
     )
 
 
-@router.post("/cohorts/{cohort_id}/sessions")
+@router.post("/cohorts/{cohort_id}/sessions", dependencies=[Depends(require_web_role("instructor"))])
 def create_class_session(
     cohort_id: UUID,
     request: Request,
@@ -974,7 +1215,7 @@ def create_class_session(
     return _timetable_redirect(request, cohort_id)
 
 
-@router.post("/sessions/{session_id}/cancel")
+@router.post("/sessions/{session_id}/cancel", dependencies=[Depends(require_web_role("instructor"))])
 def cancel_class_session(session_id: UUID, request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     try:
@@ -984,7 +1225,11 @@ def cancel_class_session(session_id: UUID, request: Request, db: Session = Depen
     return _timetable_redirect(request, session.cohort_id)
 
 
-@router.get("/sessions/{session_id}/edit", response_class=HTMLResponse)
+@router.get(
+    "/sessions/{session_id}/edit",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def edit_class_session_form(session_id: UUID, request: Request, db: Session = Depends(get_db)):
     """Edit form for a single session (start time shown/edited in academy time)."""
     tenant = require_tenant(request)
@@ -1005,7 +1250,7 @@ def edit_class_session_form(session_id: UUID, request: Request, db: Session = De
     )
 
 
-@router.post("/sessions/{session_id}/edit")
+@router.post("/sessions/{session_id}/edit", dependencies=[Depends(require_web_role("instructor"))])
 def edit_class_session(
     session_id: UUID,
     request: Request,
@@ -1045,7 +1290,10 @@ def edit_class_session(
     return _timetable_redirect(request, session.cohort_id)
 
 
-@router.post("/cohorts/{cohort_id}/delivery-mode")
+@router.post(
+    "/cohorts/{cohort_id}/delivery-mode",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def set_cohort_delivery_mode(
     cohort_id: UUID,
     request: Request,
@@ -1263,10 +1511,15 @@ def set_course_status(
 
 
 @router.get("/results", response_class=HTMLResponse)
-def results(request: Request, db: Session = Depends(get_db)):
+def results(
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     tenant = require_tenant(request)
-    rows = db.execute(
-        select(Party.email, Activity.title, Score)
+    course_ids = _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id)
+    raw_rows = db.execute(
+        select(Party.id, Party.email, Activity.course_id, Activity.title, Score)
         .select_from(Party)
         .join(PartyPerson, PartyPerson.party_id == Party.id)
         .join(
@@ -1286,25 +1539,69 @@ def results(request: Request, db: Session = Depends(get_db)):
             (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id),
         )
         .where(Party.tenant_id == tenant.id, Party.party_type == PartyType.person)
+        .where(Activity.course_id.in_(course_ids))
     ).all()
+    allowed_people: dict[UUID, frozenset[UUID] | None] = {}
+    rows = []
+    for learner_id, email, course_id, title, score in raw_rows:
+        if course_id not in allowed_people:
+            allowed_people[course_id] = _assessment_person_ids_for_course(
+                db,
+                tenant_id=tenant.id,
+                instructor_id=person.id,
+                course_id=course_id,
+            )
+        people = allowed_people[course_id]
+        if people is None or learner_id in people:
+            rows.append((email, title, score))
     return templates.TemplateResponse(request, "instructor/results.html", {"request": request, "rows": rows})
 
 
 @router.get("/grading", response_class=HTMLResponse)
-def grading_queue(request: Request, db: Session = Depends(get_db)):
+def grading_queue(
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     """Manual grading queue: submissions awaiting a score (finding #4)."""
     tenant = require_tenant(request)
-    rows = [
-        {"submission_id": sub.id, "activity_title": act.title, "email": email, "attempt_no": sub.attempt_no}
-        for sub, act, email in pending_grading(db, tenant_id=tenant.id)
-    ]
+    course_ids = _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id)
+    allowed_people: dict[UUID, frozenset[UUID] | None] = {}
+    rows = []
+    for sub, act, email in pending_grading(db, tenant_id=tenant.id):
+        if act.course_id not in course_ids:
+            continue
+        if act.course_id not in allowed_people:
+            allowed_people[act.course_id] = _assessment_person_ids_for_course(
+                db,
+                tenant_id=tenant.id,
+                instructor_id=person.id,
+                course_id=act.course_id,
+            )
+        people = allowed_people[act.course_id]
+        if people is not None and sub.person_id not in people:
+            continue
+        rows.append(
+            {
+                "submission_id": sub.id,
+                "activity_title": act.title,
+                "email": email,
+                "attempt_no": sub.attempt_no,
+            }
+        )
     return templates.TemplateResponse(request, "instructor/grading.html", {"request": request, "rows": rows})
 
 
 @router.get("/dashboard/cohort/{cohort_id}", response_class=HTMLResponse)
-def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(get_db)):
+def cohort_dashboard(
+    cohort_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     """Cohort progress + at-risk learners (finding #9)."""
     tenant = require_tenant(request)
+    _cohort_access_or_403(db, tenant_id=tenant.id, person_id=person.id, cohort_id=cohort_id)
     ov = cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
         request,
@@ -1314,12 +1611,30 @@ def cohort_dashboard(cohort_id: UUID, request: Request, db: Session = Depends(ge
 
 
 @router.get("/items/{activity_id}", response_class=HTMLResponse)
-def item_analytics(activity_id: UUID, request: Request, db: Session = Depends(get_db)):
+def item_analytics(
+    activity_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_web_user),
+    db: Session = Depends(get_db),
+):
     """Per-question difficulty (p-value) for an activity (finding #4/#9)."""
     tenant = require_tenant(request)
     act = db.scalars(select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)).first()
     if act is None:
         raise HTTPException(status_code=404)
+    if act.course_id not in _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    people = _assessment_person_ids_for_course(
+        db,
+        tenant_id=tenant.id,
+        instructor_id=person.id,
+        course_id=act.course_id,
+    )
+    if people is not None:
+        # FAIL CLOSED (plan §3.2 fallback): released Learning item_analysis is
+        # (db, *, tenant_id, activity_id) with no person filter, so a scoped
+        # facilitator can never be served tenant-wide item statistics here.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
     return templates.TemplateResponse(
         request,
@@ -1335,9 +1650,32 @@ def override(
     score_value: float = Form(...),
     max_score: float = Form(...),
     reason: str = Form(...),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    target = db.execute(
+        select(Activity.course_id, Submission.person_id)
+        .join(
+            Submission,
+            (Submission.activity_id == Activity.id) & (Submission.tenant_id == Activity.tenant_id),
+        )
+        .where(Submission.tenant_id == tenant.id)
+        .where(Submission.id == submission_id)
+    ).one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404)
+    course_id, learner_id = target
+    if course_id not in _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    people = _assessment_person_ids_for_course(
+        db,
+        tenant_id=tenant.id,
+        instructor_id=person.id,
+        course_id=course_id,
+    )
+    if people is not None and learner_id not in people:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     override_score(
         db,
         tenant_id=tenant.id,
@@ -1369,6 +1707,16 @@ def grant_attempt(
     act = get_activity(db, tenant_id=tenant.id, activity_id=activity_id)
     if act is None:
         raise HTTPException(status_code=404)
+    if act.course_id not in _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    people = _assessment_person_ids_for_course(
+        db,
+        tenant_id=tenant.id,
+        instructor_id=person.id,
+        course_id=act.course_id,
+    )
+    if people is not None and person_id not in people:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if act.max_attempts is None:
         # Nothing to grant: the activity is already uncapped, and recording a
         # grant against it would imply a limit that does not exist.
@@ -1395,7 +1743,11 @@ def grant_attempt(
     return hx_redirect(request, "/instructor/results")
 
 
-@router.get("/announcements", response_class=HTMLResponse)
+@router.get(
+    "/announcements",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def announcements_list(request: Request, db: Session = Depends(get_db)):
     tenant = require_tenant(request)
     anns = ann_svc.list_for_tenant(db, tenant_id=tenant.id)
@@ -1408,7 +1760,7 @@ def announcements_list(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/announcements")
+@router.post("/announcements", dependencies=[Depends(require_web_role("instructor"))])
 def announcements_create(
     request: Request,
     person: AcademyCurrentAccount = Depends(require_web_user),
@@ -1439,7 +1791,10 @@ def announcements_create(
     return hx_redirect(request, "/instructor/announcements")
 
 
-@router.post("/announcements/{announcement_id}/delete")
+@router.post(
+    "/announcements/{announcement_id}/delete",
+    dependencies=[Depends(require_web_role("instructor"))],
+)
 def announcement_delete(
     announcement_id: UUID,
     request: Request,

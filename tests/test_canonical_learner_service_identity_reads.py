@@ -16,6 +16,8 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.identity_extensions import AcademyAccountProfile
 from app.services import learner_digest, roster, success_queue
 from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.facilitator_nominations import FacilitatorScope, NominateFacilitatorCommand, nominate
+from app.services.roles import role_slugs
 from tests.services.roster_request_fixtures import roster_actors
 from tests.services.test_canonical_current_user import current_account
 
@@ -106,7 +108,7 @@ def test_digest_profile_optout_stops_before_build_and_enqueue(current_account, m
 
 
 @pytest.mark.parametrize("missing", ["profile", "subtype"])
-def test_absent_canonical_part_is_excluded_or_not_found_before_facilitator_role_check(
+def test_absent_canonical_part_is_excluded_or_refused_by_nomination_identity_checks(
     current_account, monkeypatch, missing, roster_actors
 ):
     a = current_account
@@ -121,25 +123,41 @@ def test_absent_canonical_part_is_excluded_or_not_found_before_facilitator_role_
     assert recipients == queued == []
     result = roster.bulk_enroll(a.db, tenant_id=a.tid, cohort_id=cid, emails=[a.email], request=roster_actors.instructor.request)
     assert result["not_found"] == [a.email] and result["enrolled"] == []
-    monkeypatch.setattr(roster, "role_slugs", lambda *args: pytest.fail("missing account precedes role lookup"))
-    with pytest.raises(NotFoundError, match="person not found for tenant"):
-        roster.assign_facilitator(a.db, tenant_id=a.tid, cohort_id=cid, person_id=a.pid, request=roster_actors.admin.request)
+    # Nomination identity checks (#188): the nominee must resolve to a genuine
+    # person party + subtype (404), and an account with no active profile is
+    # not an active user (400). The retired roster writer joined the profile
+    # into its existence check, so both absences were 404 there.
+    command = NominateFacilitatorCommand(
+        tenant_id=a.tid,
+        person_id=a.pid,
+        actor_person_id=roster_actors.admin.pid,
+        scope=FacilitatorScope.COHORT,
+        cohort_id=cid,
+    )
+    if missing == "subtype":
+        with pytest.raises(NotFoundError, match="person not found for tenant"):
+            nominate(a.db, command=command)
+    else:
+        with pytest.raises(BadRequestError, match="facilitator nominee must be an active user"):
+            nominate(a.db, command=command)
 
 
-@pytest.mark.parametrize("status,active", [("suspended", True), ("active", False)])
-def test_facilitator_existing_inactive_refuses_as_bad_request_after_admin_and_cohort(
-    current_account, monkeypatch, status, active, roster_actors
-):
+def test_nomination_of_suspended_account_refuses_as_bad_request(current_account, roster_actors):
     a = current_account
     cid = _cohort(a, person=False)
-    a.admin.execute(update(Party).where(Party.id == a.pid).values(is_active=active))
-    a.admin.execute(update(AcademyAccountProfile).where(AcademyAccountProfile.party_id == a.pid).values(status=status))
+    a.admin.execute(update(AcademyAccountProfile).where(AcademyAccountProfile.party_id == a.pid).values(status="suspended"))
     a.admin.commit()
-    monkeypatch.setattr(roster, "role_slugs", lambda *args: pytest.fail("inactive account precedes role lookup"))
-    with pytest.raises(BadRequestError, match="facilitator must be an active user"):
-        roster.assign_facilitator(a.db, tenant_id=a.tid, cohort_id=cid, person_id=a.pid, request=roster_actors.admin.request)
-    with pytest.raises(BadRequestError, match="only an admin"):
-        roster.assign_facilitator(a.db, tenant_id=a.tid, cohort_id=uuid4(), person_id=a.pid, request=roster_actors.instructor.request)
+    with pytest.raises(BadRequestError, match="facilitator nominee must be an active user"):
+        nominate(
+            a.db,
+            command=NominateFacilitatorCommand(
+                tenant_id=a.tid,
+                person_id=a.pid,
+                actor_person_id=roster_actors.admin.pid,
+                scope=FacilitatorScope.COHORT,
+                cohort_id=cid,
+            ),
+        )
     assert a.db.scalar(select(Enrollment.id).where(Enrollment.cohort_id == cid)) is None
 
 
@@ -191,10 +209,21 @@ def test_success_segment_delegation_keeps_canonical_account_relation_and_raw_mem
     assert captured[0]["cohort_id"] == cid and captured[0]["accounts"].tenant_id == a.tid
 
 
-def test_facilitator_active_account_without_instructor_role_cannot_mutate_roster(current_account, roster_actors):
+def test_nomination_without_instructor_role_creates_no_enrollment(current_account, roster_actors):
+    # #188 inversion of the retired writer's role gate: any active user may be
+    # nominated, and nomination never writes an enrollment.
     a = current_account
     cid = _cohort(a, person=False)
-    assert "instructor" not in roster.role_slugs(a.db, a.tid, a.pid)
-    with pytest.raises(BadRequestError, match="facilitator must have the instructor role"):
-        roster.assign_facilitator(a.db, tenant_id=a.tid, cohort_id=cid, person_id=a.pid, request=roster_actors.admin.request)
+    assert "instructor" not in role_slugs(a.db, a.tid, a.pid)
+    outcome = nominate(
+        a.db,
+        command=NominateFacilitatorCommand(
+            tenant_id=a.tid,
+            person_id=a.pid,
+            actor_person_id=roster_actors.admin.pid,
+            scope=FacilitatorScope.COHORT,
+            cohort_id=cid,
+        ),
+    )
+    assert outcome.status.value == "pending"
     assert a.db.scalar(select(Enrollment.id).where(Enrollment.cohort_id == cid)) is None

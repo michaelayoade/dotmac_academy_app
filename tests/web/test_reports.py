@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
-from app.services.bootstrap import ensure_roles
-from app.services.security import hash_password
+from tests.conftest import make_canonical_account
 
 
 def _seed_login(admin_session, tenant, email, role_slug):
-    roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Log", last_name="In")
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                                     password_hash=hash_password("password1")))
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
+    p = make_canonical_account(
+        admin_session,
+        tenant_id=tenant.id,
+        email=email,
+        first_name="Log",
+        last_name="In",
+        password="password1",
+        role=role_slug,
+    )
     admin_session.commit()
     return p
 
@@ -40,10 +38,14 @@ def _seed_cohort(admin_session, tid):
     admin_session.add(coh)
     admin_session.flush()
     admin_session.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=c.id, status="active"))
-    stu_a = Person(tenant_id=tid, email="a@stu.edu", first_name="Aaa", last_name="Student")
-    stu_b = Person(tenant_id=tid, email="b@stu.edu", first_name="Bbb", last_name="Student")
-    admin_session.add_all([stu_a, stu_b])
-    admin_session.flush()
+    stu_a = make_canonical_account(
+        admin_session, tenant_id=tid, email="a@stu.edu", first_name="Aaa", last_name="Student",
+        password="password1", role="student",
+    )
+    stu_b = make_canonical_account(
+        admin_session, tenant_id=tid, email="b@stu.edu", first_name="Bbb", last_name="Student",
+        password="password1", role="student",
+    )
     for p in (stu_a, stu_b):
         admin_session.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=p.id,
                                      role_in_cohort="student", status="active"))
