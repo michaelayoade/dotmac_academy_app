@@ -40,6 +40,23 @@ def recompute_completion(
         db,
         CompletionCommand(tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now),
     )
+    if result.first_completion:
+        # Facilitator eligibility is a consequence of this canonical completion
+        # fact. Reconcile in the same transaction so qualified nominees do not
+        # wait for the scheduled repair sweep before receiving scoped access.
+        from app.services.facilitator_nominations import (
+            ReconcileCompletedCourseCommand,
+            reconcile_completed_course,
+        )
+
+        reconcile_completed_course(
+            db,
+            command=ReconcileCompletedCourseCommand(
+                tenant_id=tenant_id,
+                person_id=person_id,
+                course_id=course_id,
+            ),
+        )
     deliver_completion_notifications(db, result)
     return result.completion
 
