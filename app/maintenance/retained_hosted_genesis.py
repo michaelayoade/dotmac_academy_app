@@ -55,6 +55,11 @@ _PURPOSES = ("environment", "history", "assembly")
 _HBA = "local all postgres scram-sha-256\nlocal all all reject\nhost all all all reject\n"
 _RUNTIME = ("app_user", "platform_api", "academy_lab_worker", "outbox_dispatcher", "platform_outbox_dispatcher")
 _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+_INSPECT_FIELDS = (
+    "container_id", "image_id", "created", "running", "started_at", "restart_count",
+    "network_mode", "port_bindings", "ports", "mounts", "command", "user",
+    "privileged", "readonly_rootfs", "networks",
+)
 
 
 class HostedGenesisRefused(RuntimeError):
@@ -64,6 +69,14 @@ class HostedGenesisRefused(RuntimeError):
 def _need(condition: bool) -> None:
     if not condition:
         raise HostedGenesisRefused("Academy hosted disposable resource refused")
+
+
+def _require_container_identity(actual: tuple[object, ...], expected: tuple[object, ...]) -> None:
+    """Report only allowlisted field names; never expose inspect values."""
+    _need(len(actual) == len(expected) == len(_INSPECT_FIELDS))
+    changed = [name for name, before, after in zip(_INSPECT_FIELDS, expected, actual, strict=True) if before != after]
+    if changed:
+        raise HostedGenesisRefused("Academy hosted container continuity changed: " + ",".join(changed))
 
 
 def _data(settings: object) -> tuple[tuple[str, object], ...]:
@@ -520,7 +533,7 @@ class _Owner:
     def _live(self):
         _need(not self.poisoned and os.getpid() == self.pid)
         _need(not select.select([cast(int, self.watch)], [], [], 0)[0])
-        _need(self.inspect() == self.identity)
+        _require_container_identity(self.inspect(), self.identity)
         _need(all(not path.is_symlink() and path.read_bytes() == data for path, data in self.configuration))
         _need(_private_directory(cast(Path, self.home)) == self.home_identity)
         for name, identity in self.dirs.items():
