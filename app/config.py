@@ -1,45 +1,50 @@
-"""Application configuration.
-
-Read from environment. Fail-closed in production for required values.
-"""
+"""Academy product configuration layered on the kernel settings contract."""
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotmac_kernel.config import Settings as KernelSettings
+from dotmac_kernel.config import validate_settings as validate_kernel_settings
+from sqlalchemy.engine import make_url
+
+# Academy currently contains inline scripts and WebSocket lab consoles. This
+# product default is declared by app.assembly's ProductSecurityPolicy;
+# CONTENT_SECURITY_POLICY can still override it at deployment time.
+ACADEMY_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+    "form-action 'self'; object-src 'none'; img-src 'self' data:; "
+    "font-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
+)
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+class Settings(KernelSettings):
+    """Kernel settings plus values owned only by the Academy product."""
 
-    environment: str = "dev"
-    database_url: str = ""
-    platform_database_url: str = ""
-    migration_database_url: str = ""
-    platform_root_domain: str = "localhost"
     # IANA zone for instructor-entered wall-clock times (sessions/timetables).
     academy_timezone: str = "Africa/Lagos"
-    # Academy is deployed as one product tenant. The tenant-aware schema and RLS
-    # remain defence-in-depth, but production host resolution must resolve only
-    # this slug unless a future ADR explicitly re-enables multi-tenancy.
-    academy_tenant_slug: str = ""
-    trusted_hosts: str = ""
-    jwt_secret: str = "dev-insecure-change-me"
-    session_hash_secret: str = "dev-insecure-change-me"
-    jwt_ttl_seconds: int = 3600
-    csrf_enabled: bool = True
-    rate_limit_enabled: bool = True
-    rate_limit_requests: int = 120
-    rate_limit_window_seconds: int = 60
-    trust_inbound_request_id: bool = False
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20
+    # 0 inherits the global limit. A distinct positive value is an explicit
+    # fairness policy for any future multi-tenant deployment.
+    max_concurrent_labs_per_tenant: int = 0
     lab_workdir: str = "/home/dotmac/labs"
+    # Containerlab and Docker execution is permitted only on the lab host.
+    lab_host_role: str = "web"
+    # Dedicated continuous-worker identity. Never reuse the migration/superuser
+    # DSN for the long-running worker or reconciler.
+    lab_worker_database_url: str = ""
     lab_idle_minutes: int = 60
-    # Address the ttyd consoles bind to on the LAB host, and the address the app
-    # reaches them at. Same-host deployments keep the loopback default; when the
-    # lab worker runs on a separate KVM host, set this on BOTH sides to that
-    # host's private/tunnel address (e.g. its WireGuard IP).
+    # Address the app DIALS to reach a lab console. Same-host deployments keep the
+    # loopback default; when the lab worker runs on a separate KVM host, set this
+    # to that host's private/tunnel address (e.g. its WireGuard IP).
     lab_console_host: str = "127.0.0.1"
+    # Address ttyd BINDS when this process spawns a console. Deliberately a
+    # SEPARATE knob from ``lab_console_host``: on the app host the dial address is
+    # REMOTE, and ttyd cannot bind an address the local host does not own — it
+    # retries the bind forever at 100% CPU and never listens. Empty means "same as
+    # ``lab_console_host``", which is correct on a single-host deployment and on
+    # the lab host itself, where the tunnel address IS local.
+    lab_console_bind_host: str = ""
     # Port probed on the lab host for the academy_lab_host_up health gauge.
     lab_host_probe_port: int = 22
 
@@ -54,6 +59,16 @@ class Settings(BaseSettings):
     erp_webhook_url: str = ""
     erp_webhook_secret: str = ""
 
+    # ERP -> Academy applicant-assessment registration. Inbound and outbound
+    # secrets are deliberately different trust directions. The public base URL
+    # is used to mint links without trusting the request Host header; allowed
+    # return origins are a comma-separated exact-origin allowlist.
+    erp_inbound_hmac_secret: str = ""
+    erp_assessment_token_secret: str = ""
+    erp_inbound_hmac_max_skew_seconds: int = 300
+    erp_allowed_return_origins: str = ""
+    academy_public_base_url: str = ""
+
     # Email / SMTP (inert by default — empty smtp_host disables sending).
     smtp_host: str = ""
     smtp_port: int = 587
@@ -61,6 +76,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "Dotmac Academy <academy@localhost>"
     smtp_starttls: bool = True
+    management_inquiry_recipient: str = "fiberacademy@dotmac.ng"
 
     # Prometheus /metrics bearer token. Empty (default) = endpoint disabled.
     metrics_token: str = ""
@@ -75,27 +91,53 @@ settings = Settings()
 
 def validate_settings(s: Settings) -> list[str]:
     """Return list of fatal errors (empty if OK). Caller raises if non-empty in prod."""
-    errors: list[str] = []
-    if not s.database_url:
-        errors.append("DATABASE_URL is required")
-    if s.is_production and not s.platform_database_url:
-        errors.append("PLATFORM_DATABASE_URL is required in production")
-    if s.is_production and not s.trusted_hosts:
-        errors.append("TRUSTED_HOSTS is required in production")
-    if s.is_production and s.platform_root_domain in {"localhost", ""}:
-        errors.append("PLATFORM_ROOT_DOMAIN must be a real domain in production")
-    if s.is_production and not s.academy_tenant_slug:
-        errors.append("ACADEMY_TENANT_SLUG is required in production")
-    if s.is_production and s.jwt_secret == "dev-insecure-change-me":  # noqa: S105
-        errors.append("JWT_SECRET must be set in production")
-    if s.is_production and s.session_hash_secret == "dev-insecure-change-me":  # noqa: S105
-        errors.append("SESSION_HASH_SECRET must be set in production")
+    errors = validate_kernel_settings(s)
+    # Single-tenancy is the kernel's control now (TENANCY=single, which makes it
+    # assert at startup that exactly one tenant row exists and bind to it). This
+    # repo used to name the slug itself in ACADEMY_TENANT_SLUG; that duplicated
+    # an identity the database already holds. Production must still declare the
+    # posture, so the requirement moves rather than disappearing.
+    if s.is_production and s.tenancy != "single":
+        errors.append(
+            "TENANCY must be 'single' in production — this is a single-tenant "
+            "deployment and the kernel's startup assertion is what enforces it"
+        )
     if s.is_production and not s.csrf_enabled:
         errors.append("CSRF_ENABLED must be true in production")
     if s.is_production and not s.rate_limit_enabled:
         errors.append("RATE_LIMIT_ENABLED must be true in production")
     if s.rate_limit_requests <= 0 or s.rate_limit_window_seconds <= 0:
         errors.append("rate-limit request and window values must be positive")
+    if s.max_concurrent_labs <= 0:
+        errors.append("MAX_CONCURRENT_LABS must be positive")
+    if s.max_concurrent_labs_per_tenant < 0:
+        errors.append("MAX_CONCURRENT_LABS_PER_TENANT must be zero or positive")
+    lab_role = s.lab_host_role.lower()
+    if lab_role not in {"web", "lab"}:
+        errors.append("LAB_HOST_ROLE must be 'web' or 'lab'")
+    elif lab_role == "lab":
+        if not s.lab_worker_database_url:
+            errors.append("LAB_WORKER_DATABASE_URL is required when LAB_HOST_ROLE=lab")
+        else:
+            try:
+                worker_role = make_url(s.lab_worker_database_url).username
+            except Exception:
+                worker_role = None
+            if worker_role != "academy_lab_worker":
+                errors.append("LAB_WORKER_DATABASE_URL must authenticate as academy_lab_worker")
     if s.is_production and s.smtp_host and not s.smtp_starttls:
         errors.append("SMTP_STARTTLS must be true when SMTP is configured in production")
+    if s.erp_inbound_hmac_max_skew_seconds <= 0:
+        errors.append("ERP_INBOUND_HMAC_MAX_SKEW_SECONDS must be positive")
+    if s.erp_inbound_hmac_secret:
+        if not s.erp_assessment_token_secret:
+            errors.append("ERP_ASSESSMENT_TOKEN_SECRET is required when ERP inbound integration is enabled")
+        if not s.erp_allowed_return_origins:
+            errors.append("ERP_ALLOWED_RETURN_ORIGINS is required when ERP inbound integration is enabled")
+        if not s.academy_public_base_url:
+            errors.append("ACADEMY_PUBLIC_BASE_URL is required when ERP inbound integration is enabled")
+        if s.erp_webhook_secret and s.erp_inbound_hmac_secret == s.erp_webhook_secret:
+            errors.append("ERP inbound and outbound HMAC secrets must be distinct")
+    if s.is_production and s.academy_public_base_url and not s.academy_public_base_url.startswith("https://"):
+        errors.append("ACADEMY_PUBLIC_BASE_URL must use HTTPS in production")
     return errors

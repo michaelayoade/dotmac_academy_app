@@ -23,6 +23,7 @@ from app.api.deps import get_db, require_role, require_tenant
 from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services.audit import write_audit_event
+from app.services.identity import normalize_email
 
 router = APIRouter(
     prefix="/people",
@@ -54,7 +55,7 @@ def create_person(
 ) -> Person:
     person = Person(
         tenant_id=tenant.id,  # never from payload — always from request state
-        email=payload.email,
+        email=normalize_email(str(payload.email)),
         first_name=payload.first_name,
         last_name=payload.last_name,
     )

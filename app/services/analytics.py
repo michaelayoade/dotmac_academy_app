@@ -16,14 +16,22 @@ from sqlalchemy.orm import Session
 from app.models.assessment import Score, Submission
 
 
-def _best_scores_for_activity(db: Session, *, tenant_id: UUID, activity_id: UUID) -> list[Score]:
-    rows = db.execute(
+def _best_scores_for_activity(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    activity_id: UUID,
+    person_ids: frozenset[UUID] | None = None,
+) -> list[Score]:
+    query = (
         select(Submission.person_id, Score)
-        .join(Score, (Score.submission_id == Submission.id)
-              & (Score.tenant_id == Submission.tenant_id))
+        .join(Score, (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id))
         .where(Submission.tenant_id == tenant_id)
         .where(Submission.activity_id == activity_id)
-    ).all()
+    )
+    if person_ids is not None:
+        query = query.where(Submission.person_id.in_(person_ids))
+    rows = db.execute(query).all()
     best: dict[UUID, Score] = {}
     for person_id, score in rows:
         cur = best.get(person_id)
@@ -32,7 +40,13 @@ def _best_scores_for_activity(db: Session, *, tenant_id: UUID, activity_id: UUID
     return list(best.values())
 
 
-def item_analysis(db: Session, *, tenant_id: UUID, activity_id: UUID) -> list[dict]:
+def item_analysis(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    activity_id: UUID,
+    person_ids: frozenset[UUID] | None = None,
+) -> list[dict]:
     """Per-question stats: responses, correct, and p-value (difficulty).
 
     p-value is the fraction answering correctly — high = easy, low = hard.
@@ -40,8 +54,13 @@ def item_analysis(db: Session, *, tenant_id: UUID, activity_id: UUID) -> list[di
     """
     tally: dict[str, list[int]] = {}  # id -> [responses, correct]
     order: list[str] = []
-    for score in _best_scores_for_activity(db, tenant_id=tenant_id, activity_id=activity_id):
-        for item in (score.per_item or []):
+    for score in _best_scores_for_activity(
+        db,
+        tenant_id=tenant_id,
+        activity_id=activity_id,
+        person_ids=person_ids,
+    ):
+        for item in score.per_item or []:
             qid = item.get("id")
             if qid is None:
                 continue

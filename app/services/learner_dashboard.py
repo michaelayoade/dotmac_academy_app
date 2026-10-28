@@ -30,7 +30,7 @@ from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.models.reading import ChapterRead
-from app.services import scheduling
+from app.services import attempt_policy, scheduling
 from app.services.assessment import (
     attempts_used_by_person,
     best_scores_for,
@@ -55,7 +55,7 @@ def _entitled_courses(db: Session, tenant_id: UUID, person_id: UUID) -> list[tup
     if not allowed:
         return []
     rows = db.execute(
-        select(Course, CourseOffering)
+        select(Course, CourseOffering, Enrollment.access_ends_at)
         .join(
             CourseOffering,
             (CourseOffering.course_id == Course.id)
@@ -74,13 +74,17 @@ def _entitled_courses(db: Session, tenant_id: UUID, person_id: UUID) -> list[tup
         .order_by(Course.title)
     ).all()
     chosen: dict[UUID, tuple[Course, CourseOffering]] = {}
-    for course, offering in rows:
+    for course, offering, access_ends_at in rows:
+        if access_ends_at is not None and (offering.ends_at is None or access_ends_at > offering.ends_at):
+            offering.effective_ends_at = access_ends_at
+        else:
+            offering.effective_ends_at = offering.ends_at
         held = chosen.get(course.id)
         if held is None:
             chosen[course.id] = (course, offering)
             continue
-        held_end = held[1].ends_at
-        this_end = offering.ends_at
+        held_end = getattr(held[1], "effective_ends_at", held[1].ends_at)
+        this_end = getattr(offering, "effective_ends_at", offering.ends_at)
         if this_end is not None and (held_end is None or this_end < held_end):
             chosen[course.id] = (course, offering)
     return sorted(chosen.values(), key=lambda pair: pair[0].title)
@@ -427,10 +431,9 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
             state = "upcoming"
         elif completion is not None and completion.status == "completed":
             state = "completed"
-        elif offering.ends_at is not None and offering.ends_at < now:
-            state = "expired"
         else:
-            state = "in_progress"
+            effective_ends_at = getattr(offering, "effective_ends_at", offering.ends_at)
+            state = "expired" if effective_ends_at is not None and effective_ends_at < now else "in_progress"
         counts[state] += 1
 
         next_activity = next((a for a in activities if a.id not in best or not best[a.id].passed), None)
@@ -468,7 +471,11 @@ def course_cards(db: Session, *, tenant_id: UUID, person_id: UUID, now: datetime
                 "grade_pct": grade["pct"],
                 "final_threshold_pct": int(round(final_threshold * 100)),
                 "next_activity": next_activity,
-                "next_deadline": _next_deadline_from(due_by_offering.get(offering.id, []), offering.ends_at, now),
+                "next_deadline": _next_deadline_from(
+                    due_by_offering.get(offering.id, []),
+                    getattr(offering, "effective_ends_at", offering.ends_at),
+                    now,
+                ),
                 "starts_at": offering.starts_at,
                 "last_read": (
                     {"number": read_row[0], "title": read_row[1]}
@@ -508,6 +515,9 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
     activities_by_course = _activities_by_course(db, tenant_id, course_ids)
     best = best_scores_for_person(db, tenant_id=tenant_id, person_id=person_id, course_ids=course_ids)
     attempts_by_activity = attempts_used_by_person(db, tenant_id=tenant_id, person_id=person_id)
+    grants_by_activity = attempt_policy.granted_by_activity(
+        db, tenant_id=tenant_id, person_id=person_id
+    )
     due_rows_by_offering = _due_by_offering(db, tenant_id, offering_ids)
     completions = {
         c.course_id: c
@@ -553,7 +563,10 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
         for a in activities:
             score = best.get(a.id)
             used = attempts_by_activity.get(a.id, 0)
-            remaining = None if a.max_attempts is None else max(a.max_attempts - used, 0)
+            ent = attempt_policy.entitlement(
+                a, used=used, granted=grants_by_activity.get(a.id, 0)
+            )
+            remaining = ent.remaining
             due = due_by_activity.get(a.id) or offering.ends_at
             is_passed = score is not None and score.passed
             is_overdue = due is not None and due < now and not is_passed
@@ -565,11 +578,15 @@ def progress_overview(db: Session, *, tenant_id: UUID, person_id: UUID, now: dat
                 "passed": is_passed,
                 "threshold_pct": int(round(a.pass_threshold * 100)),
                 "attempts_used": used,
-                "max_attempts": a.max_attempts,
+                "max_attempts": ent.limit,
                 "attempts_left": remaining,
+                "attempts_granted": ent.granted,
                 "feedback_available": (
                     score is not None
-                    and reveal_feedback(a, passed=score.passed, attempts_used=used)
+                    and reveal_feedback(
+                        a, passed=score.passed, attempts_used=used,
+                        attempts_granted=ent.granted,
+                    )
                 ),
                 "due_at": due,
                 "overdue": is_overdue,

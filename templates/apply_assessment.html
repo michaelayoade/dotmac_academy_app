@@ -1,31 +1,19 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Entrance assessment — {{ branding_name | default("Dotmac Academy") }}</title>
-  <script>
-    (function () {
-      try {
-        var key = "dotmac:theme";
-        var theme = window.localStorage.getItem(key);
-        if (theme !== "light" && theme !== "dark") {
-          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (e) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
-  </script>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/app.css?v=7">
+  {% include "_dotmac_ui_head.html" %}
+  <link rel="stylesheet" href="/static/app.css?v=9">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
-  <section class="flex items-center justify-center px-6 py-12 sm:px-12">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <main id="main-content" class="flex items-center justify-center px-6 py-12 sm:px-12">
     <div class="w-full max-w-2xl">
-      <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Dotmac Academy</p>
+      <p class="page-eyebrow">Dotmac Academy</p>
       <h1 class="mt-2 font-display text-3xl font-[560] tracking-tight text-ink">Entrance assessment</h1>
 
       {% if notice %}
@@ -62,11 +50,11 @@
       {% if remaining_seconds is not none %}
       <div id="exam-timer" data-remaining="{{ remaining_seconds }}"
            class="sticky top-2 z-10 mt-4 rounded-lg bg-sand-200 px-4 py-2 text-sm font-semibold text-ink">
-        Time remaining: <span id="timer-display" class="font-mono tabular-nums">--:--</span>
+        Time remaining: <span id="timer-display" role="timer" aria-live="off" aria-label="Assessment time remaining" class="font-mono tabular-nums">--:--</span>
         <span class="font-normal text-ink-soft">— the assessment submits automatically when time runs out.</span>
       </div>
       {% endif %}
-      <div id="exam-result">
+      <div id="exam-result" role="status" aria-live="polite" aria-atomic="true">
         <form hx-post="/apply/assessment" hx-target="#exam-result" hx-swap="outerHTML" class="mt-6 space-y-6">
           <input type="hidden" name="token" value="{{ token }}">
           {% for q in questions %}
@@ -89,7 +77,7 @@
       </div>
       {% endif %}
     </div>
-  </section>
+  </main>
 
   <script>
     // Public form CSRF: copy the double-submit cookie into the header htmx sends.

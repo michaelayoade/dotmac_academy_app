@@ -26,8 +26,10 @@ def _enqueue(db, tenant_id, *, key="message-1", kind="generic", payload=None):
 
 
 def test_enqueue_is_idempotent_in_the_caller_transaction(admin_session, tenant_a):
-    assert _enqueue(admin_session, tenant_a.id)
-    assert _enqueue(admin_session, tenant_a.id)
+    # True means "this call created the row"; the duplicate returns False so a
+    # caller counting sends reports one send, not two attempts.
+    assert _enqueue(admin_session, tenant_a.id) is True
+    assert _enqueue(admin_session, tenant_a.id) is False
 
     count = admin_session.scalar(
         select(func.count())
@@ -44,7 +46,12 @@ def test_delivery_records_retry_then_terminal_failure(
     tenant_a,
     monkeypatch,
 ):
-    _enqueue(admin_session, tenant_a.id)
+    _enqueue(
+        admin_session,
+        tenant_a.id,
+        key="failed-account-invite",
+        kind="account_invite",
+    )
     row = admin_session.scalars(
         select(EmailOutbox).where(EmailOutbox.tenant_id == tenant_a.id)
     ).one()

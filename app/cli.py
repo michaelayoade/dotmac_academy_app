@@ -19,8 +19,16 @@ such as the migration/superuser URL, e.g.::
 from __future__ import annotations
 
 import argparse
+import signal
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+
+from dotmac_kernel.db import platform_session, tenant_session_by_slug
+from dotmac_kernel.exceptions import NotFoundError
+from dotmac_kernel.models import Tenant as KernelTenant
+from sqlalchemy.orm import Session
 
 _DEFAULT_CHAPTERS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/chapters")
 _DEFAULT_FIGURES_DIR = Path("/home/dotmac/projects/dotmac-academy/figures/final")
@@ -28,12 +36,35 @@ _DEFAULT_BANKS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-found
 _DEFAULT_LABS_DIR = Path("/home/dotmac/projects/dotmac-academy/manuals/00-foundation/labs")
 
 
+@contextmanager
+def _tenant_session(slug: str) -> Iterator[tuple[Session, KernelTenant]]:
+    """`tenant_session_by_slug` with the CLI's error convention.
+
+    Yields the KERNEL's `Tenant`, not `app.models.tenant.Tenant`: the kernel
+    resolves the slug against its own model. Both map the `tenants` table, and
+    the CLI only reads `.id`/`.slug`, so this works — but two mapped classes for
+    one table is exactly the duplication that adopting the kernel's `Tenant`
+    outright would remove. Annotated honestly rather than cast to ours.
+
+    The kernel raises `NotFoundError`; a command-line tool should exit with a
+    message, not a traceback. Wrapping it here keeps that translation in one
+    place instead of six.
+    """
+    try:
+        with tenant_session_by_slug(slug) as (db, tenant):
+            yield db, tenant
+    except NotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _bootstrap(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
     from app.services.bootstrap import bootstrap_tenant
 
-    db = SessionLocal()
-    try:
+    # The one command that cannot be tenant-scoped: it is CREATING the tenant,
+    # so there is nothing to scope to yet. Creating a tenant is a platform
+    # operation, which is what `platform_session` is for. Its small pool is
+    # irrelevant here — this is a one-shot command, not a request path.
+    with platform_session() as db:
         t = bootstrap_tenant(
             db,
             slug=args.slug,
@@ -41,10 +72,7 @@ def _bootstrap(args: argparse.Namespace) -> None:
             admin_email=args.admin_email,
             admin_password=args.admin_password,
         )
-        db.commit()
         print(f"tenant {t.slug} ({t.id}) created")
-    finally:
-        db.close()
 
 
 def _email_outbox(args: argparse.Namespace) -> None:
@@ -64,15 +92,9 @@ def _email_outbox(args: argparse.Namespace) -> None:
 
 
 def _import_foundation(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
-    from app.models.tenant import Tenant
     from app.services.content_import import import_foundation, sync_figures
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         course = import_foundation(
             db,
             tenant_id=tenant.id,
@@ -88,20 +110,12 @@ def _import_foundation(args: argparse.Namespace) -> None:
             f"foundation course '{course.slug}' ({course.id}) v{course.version} imported; "
             f"{copied} figure(s) synced to static/figures/"
         )
-    finally:
-        db.close()
 
 
 def _import_manual(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
-    from app.models.tenant import Tenant
     from app.services.content_import import import_manual, sync_figures
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         course = import_manual(
             db,
             tenant_id=tenant.id,
@@ -120,23 +134,63 @@ def _import_manual(args: argparse.Namespace) -> None:
             f"course '{course.slug}' ({course.id}) v{course.version} imported; "
             f"{copied} figure(s) synced to static/figures/"
         )
-    finally:
-        db.close()
+
+
+def _audit_banks(args: argparse.Namespace) -> None:
+    """Check every bank already live in the database against lint_bank.
+
+    load-banks enforces the rules on the way in, which leaves a gap: a bank
+    loaded before a rule existed stays live and non-compliant, and nothing
+    says so. This closes it — the same linter, pointed at the projection.
+    """
+    from app.models.assessment import QuestionBank
+    from app.models.course import Course
+    from app.services.bank_loader import doc_from_db, lint_bank
+
+    with _tenant_session(args.tenant_slug) as (db, tenant):
+        q = (
+            db.query(QuestionBank, Course)
+            .join(Course, Course.id == QuestionBank.course_id)
+            .filter(QuestionBank.tenant_id == tenant.id)
+        )
+        if args.discipline:
+            q = q.filter(Course.discipline == args.discipline)
+        if args.course:
+            q = q.filter(Course.slug == args.course)
+        rows = q.order_by(Course.discipline, Course.slug, QuestionBank.chapter_number).all()
+
+        banks = failing = 0
+        per_discipline: dict[str, list[int]] = {}
+        for bank, course in rows:
+            banks += 1
+            doc = doc_from_db(db, bank=bank, course_slug=course.slug)
+            violations = lint_bank(doc)
+            tally = per_discipline.setdefault(course.discipline, [0, 0])
+            tally[0] += 1
+            if violations:
+                failing += 1
+                tally[1] += 1
+                label = f"ch{bank.chapter_number}" if bank.chapter_number else bank.kind
+                print(f"{course.slug} [{label}] {len(doc.questions)}q")
+                for v in violations:
+                    print(f"    {v}")
+
+        print()
+        print(f"{'discipline':32} {'banks':>6} {'failing':>8}")
+        for discipline, (total, bad) in sorted(per_discipline.items()):
+            print(f"{discipline:32} {total:>6} {bad:>8}")
+        print(f"{'TOTAL':32} {banks:>6} {failing:>8}")
+
+        if failing and args.fail_on_violations:
+            raise SystemExit(1)
 
 
 def _load_banks(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
     from app.models.assessment import Activity
     from app.models.course import Course
-    from app.models.tenant import Tenant
     from app.services.bank_loader import lint_bank, load_bank, parse_bank
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         banks_dir = Path(args.banks_dir)
         if not banks_dir.is_dir():
             raise SystemExit(f"Banks directory not found: {banks_dir}")
@@ -165,11 +219,14 @@ def _load_banks(args: argparse.Namespace) -> None:
             bank = load_bank(db, tenant_id=tenant.id, course_id=course.id, doc=doc)
 
             # Upsert Activity for this chapter bank
-            pass_threshold = {
-                "chapter": 0.0,
-                "mid": 0.60,
-                "final": 0.70,
-            }.get(doc.kind, 0.0)
+            # The bank may set its own pass mark; the per-kind values are the
+            # default for banks that do not. Activity.pass_threshold is a real
+            # column, and hardcoding it here silently reverted anything set
+            # elsewhere on every import.
+            pass_threshold = doc.policy.get(
+                "pass_threshold",
+                {"chapter": 0.0, "mid": 0.60, "final": 0.70}.get(doc.kind, 0.0),
+            )
             title = f"Chapter {doc.chapter} test" if doc.kind == "chapter" else f"{doc.kind.title()} assessment"
             activity = (
                 db.query(Activity)
@@ -195,27 +252,33 @@ def _load_banks(args: argparse.Namespace) -> None:
                 activity.title = title
                 activity.pass_threshold = pass_threshold
 
+            # Assessment policy declared in the bank. Only keys the author
+            # actually set are applied, so a bank without a policy block leaves
+            # the activity exactly as it was.
+            policy_applied = []
+            if "pool" in doc.policy:
+                activity.question_count = doc.policy["pool"]
+                policy_applied.append(f"pool={doc.policy['pool']}")
+            if "max_attempts" in doc.policy:
+                activity.max_attempts = doc.policy["max_attempts"]
+                policy_applied.append(f"max_attempts={doc.policy['max_attempts']}")
+            if "mode" in doc.policy:
+                activity.assessment_mode = doc.policy["mode"]
+                policy_applied.append(f"mode={doc.policy['mode']}")
+
             db.commit()
-            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'")
+            suffix = f", policy: {' '.join(policy_applied)}" if policy_applied else ""
+            print(f"Loaded {yaml_path.name}: bank {bank.id}, activity '{title}'{suffix}")
             loaded += 1
 
         print(f"Done — {loaded}/{len(yaml_files)} bank(s) loaded.")
-    finally:
-        db.close()
 
 
 def _import_labs(args: argparse.Namespace) -> None:
-    from app.db import SessionLocal
     from app.models.course import Course
-    from app.models.tenant import Tenant
     from app.services.lab_content import import_labs
 
-    db = SessionLocal()
-    try:
-        tenant = db.query(Tenant).filter(Tenant.slug == args.tenant_slug).first()
-        if tenant is None:
-            raise SystemExit(f"Tenant with slug '{args.tenant_slug}' not found.")
-
+    with _tenant_session(args.tenant_slug) as (db, tenant):
         course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
             raise SystemExit(
@@ -238,8 +301,6 @@ def _import_labs(args: argparse.Namespace) -> None:
         for t in templates:
             print(f"lab '{t.slug}' -> activity {t.activity_id} v{t.version}")
         print(f"Done — {len(templates)} lab(s) imported for course '{course.slug}' and tenant '{args.tenant_slug}'.")
-    finally:
-        db.close()
 
 
 def _reminders_sweep(args: argparse.Namespace) -> None:
@@ -253,18 +314,143 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
+    from app.services.facilitator_nominations import SweepFacilitatorsCommand, sweep_pending
     from app.services.reminders import sweep
     from app.services.success_queue import sweep as queue_sweep
 
     with lab_jobs.admin_session() as db:
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
+            facilitator_counts = sweep_pending(
+                db,
+                command=SweepFacilitatorsCommand(tenant_id=tenant.id),
+            )
+            db.commit()
+            print(f"facilitator-sweep[{tenant.slug}]: {facilitator_counts}")
             counts = sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")
             qcounts = queue_sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"success-queue[{tenant.slug}]: {qcounts}")
+
+
+def _learner_digest(args: argparse.Namespace) -> None:
+    """Queue each learner's weekly progress email.
+
+    Distinct from ``email-digest``, which is the *instructor* cohort matrix.
+    Gated by its own ``learner_digest_enabled`` Academy setting, off by default:
+    this mails every active learner, so it must be switched on deliberately
+    rather than start sending the moment it deploys.
+    """
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs, learner_digest
+    from app.services.settings_store import effective
+
+    with lab_jobs.admin_session() as db:
+        cfg = effective(db)
+        if not bool(cfg.get("learner_digest_enabled", False)) and not args.force:
+            print("learner-digest: disabled via Academy settings; skipping (use --force to override)")
+            return
+        base_url = str(cfg.get("academy_base_url", args.base_url)).rstrip("/")
+        branding = str(cfg.get("branding_name", "Dotmac Academy"))
+        totals = {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
+        for tenant in db.scalars(select(Tenant)).all():
+            counts = learner_digest.send_weekly_digests(db, tenant_id=tenant.id, base_url=base_url, branding=branding)
+            for key, n in counts.items():
+                totals[key] += n
+        if args.dry_run:
+            db.rollback()
+            print(f"DRY RUN — nothing queued. Would be: {totals}")
+            return
+        db.commit()
+    print(
+        f"learner-digest: queued={totals['queued']} "
+        f"opted-out={totals['skipped_optout']} no-live-course={totals['skipped_no_courses']}"
+    )
+
+
+def _classify_audience(args: argparse.Namespace) -> None:
+    """Mark enrolments staff/external from an ERP roster export (ADR 0004).
+
+    The roster is CSV ``work_email,employee_ref`` — ERP's answer, not a guess.
+    Anything absent stays unclassified unless --assume-roster-complete says the
+    export covers every employee, which is a claim only an operator can make.
+    """
+    import csv
+
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import audience, lab_jobs
+
+    roster: dict[str, str] = {}
+    with open(args.roster_file, newline="", encoding="utf-8") as fh:
+        for row in csv.reader(fh):
+            if len(row) >= 2 and row[0].strip() and not row[0].lstrip().startswith("#"):
+                roster[row[0].strip()] = row[1].strip()
+    if not roster:
+        raise SystemExit(f"No usable rows in {args.roster_file} (expected: work_email,employee_ref)")
+
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+        counts = audience.classify_from_roster(
+            db,
+            tenant_id=tenant.id,
+            roster=roster,
+            mark_rest_external=args.assume_roster_complete,
+        )
+        split = audience.counts_by_audience(db, tenant_id=tenant.id)
+        pending = audience.unclassified(db, tenant_id=tenant.id)
+        if args.dry_run:
+            db.rollback()
+            print(f"DRY RUN — nothing written. Would be: {counts}")
+        else:
+            db.commit()
+            print(f"classify-audience: {counts}")
+        print(f"roster now: {split}")
+        if pending:
+            print(f"\n{len(pending)} learner(s) still unclassified — review rather than guess:")
+            for email, name in pending[:20]:
+                print(f"  {email}  {name}")
+            if len(pending) > 20:
+                print(f"  ... and {len(pending) - 20} more")
+
+
+def _hr_report(args: argparse.Namespace) -> None:
+    """Email HR the staff-only training roll-up."""
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import hr_digest, lab_jobs
+    from app.services.settings_store import effective
+
+    recipients = [r for r in (args.to or "").split(",") if r.strip()]
+    if not recipients:
+        raise SystemExit("No recipients: pass --to hr@dotmac.ng")
+
+    queued = 0
+    with lab_jobs.admin_session() as db:
+        branding = str(effective(db).get("branding_name", "Dotmac Academy"))
+        for tenant in db.scalars(select(Tenant)).all():
+            if args.dry_run:
+                from datetime import UTC, datetime, timedelta
+
+                snap = hr_digest.snapshot(db, tenant_id=tenant.id, since=datetime.now(UTC) - timedelta(days=args.days))
+                print(f"DRY RUN [{tenant.slug}] {hr_digest.render(snap, branding=branding)[1]}")
+                continue
+            queued += hr_digest.send_hr_report(
+                db, tenant_id=tenant.id, recipients=recipients, days=args.days, branding=branding
+            )
+        if args.dry_run:
+            db.rollback()
+            return
+        db.commit()
+    print(f"hr-report: queued {queued} message(s) to {', '.join(recipients)}")
 
 
 def _email_digest(args: argparse.Namespace) -> None:
@@ -314,9 +500,7 @@ def _email_digest(args: argparse.Namespace) -> None:
                     if enqueue_email(
                         db,
                         tenant_id=tenant.id,
-                        idempotency_key=(
-                            f"weekly-digest:{period}:{cohort.id}:{instructor.id}"
-                        ),
+                        idempotency_key=(f"weekly-digest:{period}:{cohort.id}:{instructor.id}"),
                         kind="weekly_digest",
                         recipient=instructor.email,
                         subject=f"Weekly progress digest — {cohort.name}",
@@ -369,12 +553,23 @@ def _erp_training_sync(args: argparse.Namespace) -> None:
     from app.models.tenant import Tenant
     from app.services import erp_sync, lab_jobs
 
-    pushed = 0
+    totals = {erp_sync.SYNCED: 0, erp_sync.UNMATCHED: 0, erp_sync.FAILED: 0}
     with lab_jobs.admin_session() as db:
         for tenant in db.scalars(select(Tenant)).all():
-            pushed += erp_sync.sync_pending(db, tenant_id=tenant.id)
+            for outcome, n in erp_sync.sync_pending(db, tenant_id=tenant.id).items():
+                totals[outcome] += n
         db.commit()
-    print(f"erp-training-sync: pushed {pushed} completion(s)")
+    print(
+        f"erp-training-sync: synced={totals[erp_sync.SYNCED]} "
+        f"unmatched={totals[erp_sync.UNMATCHED]} failed={totals[erp_sync.FAILED]}"
+    )
+    if totals[erp_sync.UNMATCHED]:
+        # Unmatched will not clear by retrying — the learner's Academy email
+        # matches no ERP employee. Say so where an operator will see it.
+        print(
+            f"NOTE: {totals[erp_sync.UNMATCHED]} completion(s) reached ERP but were not recorded "
+            "(no matching employee). These stay unsynced until the identity link is fixed."
+        )
 
 
 def _set_entrance_bank(args: argparse.Namespace) -> None:
@@ -415,6 +610,42 @@ def _admin_report(args: argparse.Namespace) -> None:
     print(f"admin-report: sent {sent} email(s)")
 
 
+def _reinvite_stranded(args: argparse.Namespace) -> None:
+    """Re-issue activation links to enrolled learners who never set a password.
+
+    These learners cannot act on any other message we send them, so this is the
+    one wave that has to precede a re-engagement campaign, not follow it.
+    """
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services import lab_jobs, reengagement
+
+    cohort_id = uuid.UUID(args.cohort_id) if args.cohort_id else None
+    with lab_jobs.admin_session() as db:
+        tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
+        if tenant is None:
+            raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
+
+        targets = reengagement.stranded_learners(db, tenant_id=tenant.id, cohort_id=cohort_id)
+        print(f"{len(targets)} stranded learner(s) — enrolled, no password, never signed in (base {args.base_url})")
+        if args.dry_run:
+            for p in targets[:20]:
+                print(f"  DRY-RUN would email {p.email}")
+            if len(targets) > 20:
+                print(f"  ... and {len(targets) - 20} more")
+            print("\nDRY RUN — no tokens minted and no email queued.")
+            return
+
+        res = reengagement.reinvite_stranded(db, tenant_id=tenant.id, base_url=args.base_url, cohort_id=cohort_id)
+        db.commit()
+        print(f"\nqueued: {res['queued']}   queue failures: {res['failed']}")
+        if res["failed"]:
+            print("NOTE: queue failures did not expose or print activation tokens.")
+
+
 def _set_auto_accept(args: argparse.Namespace) -> None:
     """Set (or clear) a cohort's auto-accept threshold for entrance sittings."""
     import uuid
@@ -444,16 +675,20 @@ def _set_default_entrance_bank(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
+    from app.services.entrance_exam import set_academy_defaults
 
     with lab_jobs.admin_session() as db:
         tenant = db.scalars(select(Tenant).where(Tenant.slug == args.tenant_slug)).first()
         if tenant is None:
             raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
-        tenant.default_entrance_bank_id = uuid.UUID(args.bank_id)
-        if args.time_limit_minutes is not None:
-            tenant.default_entrance_time_limit_minutes = args.time_limit_minutes or None
+        row = set_academy_defaults(
+            db,
+            tenant_id=tenant.id,
+            bank_id=uuid.UUID(args.bank_id),
+            time_limit_minutes=(args.time_limit_minutes or None),
+        )
         db.commit()
-        limit = tenant.default_entrance_time_limit_minutes
+        limit = row.default_time_limit_minutes
         print(
             f"academy '{tenant.slug}' default entrance bank set to {args.bank_id}"
             + (f" (time limit {limit} min)" if limit else " (untimed)")
@@ -615,36 +850,274 @@ def _recompute_entrance_levels(args: argparse.Namespace) -> None:
             band = "beginner" if score <= p25 else "advanced" if score >= p75 else "intermediate"
             if a.assessment_level != band:
                 a.assessment_level = band
+                a.assessment_result_version = (a.assessment_result_version or 0) + 1
+                a.assessment_erp_synced_at = None
                 changed += 1
         db.commit()
         print(f"re-banded {changed} applicant(s) by percentile (bottom 25% / middle / top 25%).")
 
 
+class _WorkerShutdownRequested(BaseException):
+    """Raised by the lab worker's own SIGTERM handler (see
+    :func:`_sigterm_raises_shutdown_requested`).
+
+    Subclasses ``BaseException``, not ``Exception`` — mirroring
+    ``KeyboardInterrupt``/``SystemExit``'s own convention — for two reasons:
+    it must never be accidentally swallowed by a bare ``except Exception:``
+    anywhere in the call stack (e.g. a containerlab call site's
+    ``RuntimeError`` handling), and it must be caught and re-raised by
+    ``_run_contained``'s existing ``except BaseException:`` cleanup path
+    exactly like it already handles ``KeyboardInterrupt`` today.
+    """
+
+
+@contextmanager
+def _sigterm_raises_shutdown_requested() -> Iterator[None]:
+    """Convert a received SIGTERM into a Python-level exception.
+
+    Python's default SIGTERM disposition terminates the process immediately
+    with no exception raised anywhere — unlike SIGINT, which Python's own
+    default handling turns into ``KeyboardInterrupt``. Without this, a bare
+    ``kill <pid>`` against a manually-launched worker bypasses every cleanup
+    path in this process (the singleton lock's own ``with``-block teardown,
+    ``_run_contained``'s process-group cleanup) because the process simply
+    dies mid-instruction, leaking a detached ``start_new_session=True``
+    subprocess tree that the systemd-managed worker's cgroup-wide
+    ``KillMode=control-group`` backstop never covers for a manual invocation.
+
+    Restores whatever SIGTERM handler was previously installed on exit, for
+    any reason — including when :class:`_WorkerShutdownRequested` itself is
+    the reason for exiting. This matters both for real-world correctness
+    (repeat calls to ``_lab_worker`` in the same process must not stack
+    handlers) and because tests call ``_lab_worker`` in-process: leaving a
+    real SIGTERM handler installed in the pytest process itself would be a
+    hazard for the rest of that run.
+    """
+
+    def _handler(signum: int, frame: object) -> None:
+        raise _WorkerShutdownRequested()
+
+    previous = signal.signal(signal.SIGTERM, _handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _lab_worker(args: argparse.Namespace) -> None:
-    from app.config import settings
-    from app.services import lab_jobs
+    import shutil
+
+    from app.config import settings, validate_settings
+    from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
     from app.services.labengine.containerlab import ContainerlabEngine
 
-    engine = ContainerlabEngine(settings.lab_workdir)
-    print("lab-worker started; draining pending labs every 5s")
-    while True:
-        with lab_jobs.admin_session() as db:
-            n = lab_jobs.drain_once(db, engine)
-        if n:
-            print(f"provisioned {n} lab(s)")
-        time.sleep(5)
+    if settings.lab_host_role.lower() != "lab":
+        raise SystemExit("lab-worker requires LAB_HOST_ROLE=lab")
+    if shutil.which("containerlab") is None:
+        raise SystemExit("lab-worker requires containerlab on PATH")
+    errors = validate_settings(settings)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-worker")
+    # The singleton lock is held for this whole process's lifetime (acquired
+    # before any database session or reclaim/drain work), not per-iteration
+    # like host_lock — see worker_singleton_lock's docstring. A second worker
+    # process racing this one (manual invocation, or two systemd instances)
+    # fails fast here instead of both later contending on every containerlab
+    # call. The SIGTERM handler is installed around it (early, before the
+    # lock is even attempted) so that a bare `kill` against a manually
+    # launched worker unwinds through the lock's own `with`-block teardown
+    # instead of killing the process with no cleanup running at all.
+    try:
+        with _sigterm_raises_shutdown_requested(), worker_singleton_lock():
+            # Startup restart-reclaim: exactly once, immediately after the
+            # singleton lock is held and before any ordinary poll iteration.
+            # Computed once here and passed explicitly into every later
+            # drain_once() call below, so the identity used to reclaim this
+            # host's own previous-epoch claims is the exact same value later
+            # used to make this process's own claims — never recomputed.
+            identity = lab_operations.worker_identity_parts()
+            with lab_jobs.lab_worker_session() as db:
+                try:
+                    reclaimed = lab_operations.reclaim_previous_epoch(db, host=identity.host, epoch=identity.epoch)
+                    db.commit()
+                except BaseException:
+                    # Includes _WorkerShutdownRequested (a SIGTERM arriving
+                    # mid-reclaim), which deliberately subclasses
+                    # BaseException rather than Exception. Postgres
+                    # transactions are atomic, so an interrupted commit
+                    # either fully lands or not at all — either outcome here
+                    # is safe. Re-raised so the outer
+                    # except _WorkerShutdownRequested: handler below still
+                    # catches it with no further changes needed there.
+                    db.rollback()
+                    raise
+            if reclaimed:
+                print(f"reclaimed {reclaimed} operation(s) from a previous worker " "epoch on this host")
+            print("lab-worker started; draining durable operations every 5s")
+            while True:
+                with lab_jobs.lab_worker_session() as db:
+                    repaired = lab_operations.reconcile_stuck(db)
+                    db.commit()
+                    recovered = lab_jobs.recover_missing_consoles(db, engine)
+                    db.commit()
+                    n = lab_jobs.drain_once(
+                        db,
+                        engine,
+                        claimed_by=identity.claimed_by,
+                        claimed_host=identity.host,
+                        claimed_epoch=identity.epoch,
+                    )
+                if repaired:
+                    print(f"reconciled {repaired} lab operation(s)")
+                if recovered:
+                    print(f"recovered {recovered} missing lab console(s)")
+                if n:
+                    print(f"provisioned {n} lab(s)")
+                time.sleep(5)
+    except HostLockUnavailable as exc:
+        raise SystemExit(f"lab-worker: {exc}") from exc
+    except _WorkerShutdownRequested:
+        print("lab-worker: SIGTERM received; shutting down")
 
 
 def _reap_labs(args: argparse.Namespace) -> None:
-    from app.config import settings
     from app.services import lab_jobs
+
+    with lab_jobs.admin_session() as db:
+        requested = lab_jobs.request_idle_reaps(db)
+    print(f"enqueued {requested} idle lab destroy operation(s)")
+
+
+def _lab_reconcile(args: argparse.Namespace) -> None:
+    import shutil
+
+    from app.config import settings, validate_settings
+    from app.services import lab_jobs, lab_operations
+    from app.services.host_lock import HostLockUnavailable
     from app.services.labengine.containerlab import ContainerlabEngine
 
-    engine = ContainerlabEngine(settings.lab_workdir)
-    with lab_jobs.admin_session() as db:
-        reaped = lab_jobs.reap_idle(db, engine)
-        provisioned = lab_jobs.drain_once(db, engine)
-    print(f"reaped {reaped} idle lab(s); provisioned {provisioned} pending lab(s)")
+    if settings.lab_host_role.lower() != "lab":
+        raise SystemExit("lab-reconcile requires LAB_HOST_ROLE=lab")
+    if shutil.which("containerlab") is None:
+        raise SystemExit("lab-reconcile requires containerlab on PATH")
+    errors = validate_settings(settings)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    engine = ContainerlabEngine(settings.lab_workdir, lock_label="academy-lab-reconcile")
+    with lab_jobs.lab_worker_session() as db:
+        requeued = lab_operations.reconcile_stuck(db)
+        # Commit the stuck-claim reconciliation in its own short transaction —
+        # its FOR UPDATE SKIP LOCKED scan takes a row lock on every currently
+        # claimed operation (not just the stuck ones; "stuck" is decided in
+        # Python after the rows are already locked), so holding it open through
+        # reconcile_runtime's live containerlab inspect/destroy calls would
+        # block a healthy worker's heartbeat()/_settle() UPDATE on those same
+        # rows for the duration of that external work. _lab_worker's loop
+        # already commits between reconcile_stuck and drain_once for the same
+        # reason.
+        db.commit()
+        try:
+            runtime_repairs, destroyed_orphans = lab_jobs.reconcile_runtime(db, engine)
+        except HostLockUnavailable as exc:
+            # reconcile_runtime makes no database writes before it can raise
+            # this (see its phase breakdown), so there is nothing this pass
+            # wrote that needs undoing — the rollback below is still explicit
+            # rather than assumed. Skip the console sweep and its commit too:
+            # this whole pass is abandoned, and the 1-minute timer will retry
+            # it from scratch on its own.
+            db.rollback()
+            print(f"lab-reconcile: skipped this pass — {exc}")
+            return
+        orphans = lab_jobs.sweep_orphan_consoles(db)
+        db.commit()
+    print(
+        f"reconciled {requeued} expired/cutover operation(s); "
+        f"queued {runtime_repairs} runtime repair(s); "
+        f"destroyed {destroyed_orphans} rowless lab(s); "
+        f"killed {orphans} orphan console(s)"
+    )
+
+
+def _load_curriculum(args: argparse.Namespace) -> None:
+    """Apply a CURRICULUM.yaml's prerequisite graph. The canonical writer.
+
+    ``CoursePrerequisite`` is read by ``entitlements`` in two places and was
+    written in none, so prerequisites were enforceable and uncreatable. The file
+    is authoritative and the table is a projection of it: rows for the
+    discipline that the file no longer declares are removed, so re-running after
+    deleting an edge actually deletes it.
+    """
+    import yaml
+
+    from app.models.course import Course
+    from app.models.prerequisite import CoursePrerequisite
+
+    doc = yaml.safe_load(args.file.read_text())["curriculum"]
+    declared = doc.get("prerequisites") or []
+
+    with _tenant_session(args.tenant_slug) as (db, tenant):
+        courses = {c.slug: c for c in db.query(Course).filter(Course.tenant_id == tenant.id).all()}
+
+        wanted: set[tuple] = set()
+        missing: list[str] = []
+        for entry in declared:
+            slug = entry["course"]
+            for req in entry.get("requires") or []:
+                for name in (slug, req):
+                    if name not in courses:
+                        missing.append(name)
+                if slug in courses and req in courses:
+                    if slug == req:
+                        raise SystemExit(f"{slug} cannot require itself")
+                    wanted.add((courses[slug].id, courses[req].id))
+
+        if missing:
+            # Fail rather than silently skip: a typo'd slug would otherwise look
+            # exactly like a successful run that enforced nothing.
+            raise SystemExit(
+                "These courses are declared in the file but not imported: " + ", ".join(sorted(set(missing)))
+            )
+
+        # A cycle would lock every course in it permanently unreachable.
+        edges: dict = {}
+        for course_id, requires_id in wanted:
+            edges.setdefault(course_id, set()).add(requires_id)
+        state: dict = {}
+
+        def _walk(node) -> None:
+            state[node] = 1
+            for nxt in edges.get(node, ()):
+                if state.get(nxt) == 1:
+                    raise SystemExit("prerequisite cycle detected; refusing to write")
+                if not state.get(nxt):
+                    _walk(nxt)
+            state[node] = 2
+
+        for node in list(edges):
+            if not state.get(node):
+                _walk(node)
+
+        existing_rows = db.query(CoursePrerequisite).filter(CoursePrerequisite.tenant_id == tenant.id).all()
+        scoped = {c.id for c in courses.values() if c.discipline == doc.get("discipline")}
+        existing = {(r.course_id, r.requires_course_id): r for r in existing_rows}
+
+        added = removed = 0
+        for pair in wanted - set(existing):
+            db.add(CoursePrerequisite(tenant_id=tenant.id, course_id=pair[0], requires_course_id=pair[1]))
+            added += 1
+        for pair, row in existing.items():
+            if pair not in wanted and pair[0] in scoped:
+                db.delete(row)
+                removed += 1
+
+        if args.dry_run:
+            db.rollback()
+            print(f"[dry-run] would add {added}, remove {removed}")
+            return
+        db.commit()
+        print(f"prerequisites: {added} added, {removed} removed, {len(wanted)} declared")
 
 
 def main() -> None:
@@ -752,6 +1225,42 @@ def main() -> None:
     )
     lb.set_defaults(func=_load_banks)
 
+    lc = sub.add_parser(
+        "load-curriculum",
+        help="Apply a CURRICULUM.yaml prerequisite graph for a tenant.",
+        description=(
+            "The canonical writer for CoursePrerequisite, which entitlements enforces "
+            "but nothing previously created. The file is authoritative: declared edges "
+            "are added, and edges no longer declared are removed, so the table stays a "
+            "projection of the file. Refuses to write on an unknown slug or a cycle."
+        ),
+    )
+    lc.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    lc.add_argument("--file", type=Path, required=True, help="Path to CURRICULUM.yaml")
+    lc.add_argument("--dry-run", action="store_true", help="Report changes without writing")
+    lc.set_defaults(func=_load_curriculum)
+
+    ab = sub.add_parser(
+        "audit-banks",
+        help="Lint every question bank already live in the database.",
+        description=(
+            "load-banks enforces the bank rules on the way in. That leaves banks "
+            "loaded before a rule existed live and non-compliant with nothing to "
+            "say so. This runs the same lint_bank over the database, so the state "
+            "of the estate is a question anyone can answer rather than a query "
+            "someone has to write."
+        ),
+    )
+    ab.add_argument("--tenant-slug", required=True, help="Slug of the target tenant")
+    ab.add_argument("--discipline", default=None, help="Restrict to one discipline")
+    ab.add_argument("--course", default=None, help="Restrict to one course slug")
+    ab.add_argument(
+        "--fail-on-violations",
+        action="store_true",
+        help="Exit 1 if any bank fails, for use as a scheduled check.",
+    )
+    ab.set_defaults(func=_audit_banks)
+
     il = sub.add_parser(
         "import-labs",
         help="Load labs-as-code (lab.yaml dirs) as Activity(type='lab')+LabTemplate.",
@@ -785,11 +1294,11 @@ def main() -> None:
 
     lw = sub.add_parser(
         "lab-worker",
-        help="Run the cross-tenant provisioning worker loop (deploys pending labs).",
+        help="Run the cross-tenant durable lab-operation worker.",
         description=(
-            "Long-running background worker: every ~5s, opens an app_admin "
-            "(BYPASSRLS) session and deploys the oldest queued/provisioning lab "
-            "instances across all tenants, up to MAX_CONCURRENT_LABS. Intended to "
+            "Long-running background worker: every ~5s, opens an academy_lab_worker "
+            "(BYPASSRLS) session and claims queued lab operations across all tenants. "
+            "It must run with LAB_HOST_ROLE=lab on the containerlab host. Intended to "
             "run under systemd (academy-lab-worker.service, Restart=always)."
         ),
     )
@@ -797,20 +1306,26 @@ def main() -> None:
 
     rl = sub.add_parser(
         "reap-labs",
-        help="One-shot: destroy idle lab instances, then drain pending ones.",
+        help="One-shot: enqueue destroy operations for idle lab instances.",
         description=(
-            "Reap active lab instances idle longer than LAB_IDLE_MINUTES (marking "
-            "them 'reaped'), then drain any pending instances. Intended to run on a "
-            "timer (academy-reap-labs.timer → academy-reap-labs.service oneshot)."
+            "Find active lab instances idle longer than LAB_IDLE_MINUTES and enqueue "
+            "worker-owned destroy intents. This command never imports or invokes the "
+            "containerlab engine and is safe on the web host."
         ),
     )
     rl.set_defaults(func=_reap_labs)
+
+    lr = sub.add_parser(
+        "lab-reconcile",
+        help="One-shot lab-host recovery: repair expired claims and runtime drift.",
+    )
+    lr.set_defaults(func=_lab_reconcile)
 
     ed = sub.add_parser(
         "email-digest",
         help="One-shot: email each cohort's instructor(s) a progress digest.",
         description=(
-            "Cross-tenant: open an app_admin (BYPASSRLS) session, build the "
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session, build the "
             "cohort progress matrix for every cohort in every tenant, and email "
             "each cohort's enrolled instructor(s) a summary. Email failures are "
             "non-fatal. Intended to run on a timer "
@@ -818,6 +1333,63 @@ def main() -> None:
         ),
     )
     ed.set_defaults(func=_email_digest)
+
+    ld = sub.add_parser(
+        "learner-digest",
+        help="One-shot: email each learner their weekly progress summary.",
+        description=(
+            "Cross-tenant: open an offline app_admin (BYPASSRLS) session and queue one "
+            "weekly progress email per active student learner — what they did, "
+            "where they are, what is next. Distinct from email-digest, which is "
+            "the instructor cohort matrix. Idempotent per ISO week. Gated by the "
+            "learner_digest_enabled Academy setting, which is OFF by default."
+        ),
+    )
+    ld.add_argument(
+        "--base-url",
+        default="https://academy.dotmac.io",
+        help="Fallback public base URL when academy_base_url is unset",
+    )
+    ld.add_argument("--dry-run", action="store_true", help="Count recipients without queueing")
+    ld.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even when learner_digest_enabled is off (use with --dry-run to preview)",
+    )
+    ld.set_defaults(func=_learner_digest)
+    ca = sub.add_parser(
+        "classify-audience",
+        help="Mark enrolments staff/external from an ERP roster export (ADR 0004)",
+        description=(
+            "Reads CSV 'work_email,employee_ref' — ERP's answer, not a guess. "
+            "Matches are marked staff and carry their employee reference; "
+            "anything absent stays unclassified and is listed for review, "
+            "because audience is never inferred from an email domain."
+        ),
+    )
+    ca.add_argument("--tenant-slug", required=True)
+    ca.add_argument("--roster-file", required=True, help="CSV: work_email,employee_ref")
+    ca.add_argument(
+        "--assume-roster-complete",
+        action="store_true",
+        help="Mark every non-match as external (only if the export covers ALL employees)",
+    )
+    ca.add_argument("--dry-run", action="store_true")
+    ca.set_defaults(func=_classify_audience)
+
+    hr = sub.add_parser(
+        "hr-report",
+        help="Email HR the staff-only training roll-up",
+        description=(
+            "Counts only enrolments explicitly marked staff. Unclassified "
+            "learners are excluded and the count of them is stated in the mail, "
+            "so a partial roster cannot be mistaken for a complete picture."
+        ),
+    )
+    hr.add_argument("--to", required=True, help="Comma-separated recipients, e.g. hr@dotmac.ng")
+    hr.add_argument("--days", type=int, default=7, help="Reporting window (default 7)")
+    hr.add_argument("--dry-run", action="store_true", help="Print the report without queueing")
+    hr.set_defaults(func=_hr_report)
 
     eo = sub.add_parser(
         "email-outbox",
@@ -837,7 +1409,7 @@ def main() -> None:
     ar = sub.add_parser(
         "at-risk-sweep",
         help="DEPRECATED: superseded by the Success Queue (runs inside "
-             "reminders-sweep); now only sends legacy in-app nudges",
+        "reminders-sweep); now only sends legacy in-app nudges",
     )
     ar.set_defaults(func=_at_risk_sweep)
 
@@ -889,6 +1461,18 @@ def main() -> None:
     )
     inv.add_argument("--dry-run", action="store_true")
     inv.set_defaults(func=_invite_applicants)
+
+    ris = sub.add_parser(
+        "reinvite-stranded",
+        help="Re-issue activation links to enrolled learners who never set a password",
+    )
+    ris.add_argument("--tenant-slug", required=True)
+    ris.add_argument(
+        "--base-url", default="https://academy.dotmac.io", help="Public base URL used to build the activation link"
+    )
+    ris.add_argument("--cohort-id", default=None, help="Limit to one cohort")
+    ris.add_argument("--dry-run", action="store_true")
+    ris.set_defaults(func=_reinvite_stranded)
 
     rex = sub.add_parser(
         "reset-entrance-exam",

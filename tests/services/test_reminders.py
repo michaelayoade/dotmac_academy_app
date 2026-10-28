@@ -171,3 +171,112 @@ def test_resend_requeues_and_audits(admin_session, tenant_a):
     assert len(_outbox_rows(admin_session, tenant_a)) == before + 1
     events = list_events(admin_session, tenant_id=tenant_a.id, action="reminder.resend")
     assert events and str(log.id) in (events[0].entity_id or "")
+
+
+# ---------------------------------------------------------------------------
+# Inactivity nudges escalate, then stop
+# ---------------------------------------------------------------------------
+
+
+def _backdate_enrolment(admin_session, tenant, person, *, days):
+    """Make the learner look dormant since `days` ago with no ledger activity."""
+    admin_session.execute(
+        Enrollment.__table__.update()
+        .where(Enrollment.tenant_id == tenant.id)
+        .where(Enrollment.person_id == person.id)
+        .values(created_at=datetime.now(UTC) - timedelta(days=days))
+    )
+    admin_session.commit()
+
+
+def _inactivity_keys(db, tenant, person):
+    return sorted(
+        r.occurrence_key for r in _log_rows(db, tenant, person) if r.event_kind == "inactivity"
+    )
+
+
+def test_inactivity_nudge_repeats_once_per_window(admin_session, tenant_a):
+    """Regression: the occurrence key was the bare anchor date, which never moves
+    for a dormant learner, so ReminderLog suppressed every sweep after the first.
+    192 nudges went out in July 2026 and none afterwards."""
+    person, *_ = _seed(admin_session, tenant_a, email="inact-esc@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=40)
+    base = datetime.now(UTC)
+
+    # Three sweeps a week apart: each elapsed window is its own occurrence.
+    for week in range(3):
+        reminders.sweep(admin_session, tenant_id=tenant_a.id, now=base + timedelta(days=7 * week))
+    admin_session.commit()
+
+    keys = _inactivity_keys(admin_session, tenant_a, person)
+    assert len(keys) == 3, keys
+    assert len(set(keys)) == 3  # distinct occurrences, not one repeated
+    assert all(":w" in k for k in keys)
+
+
+def test_inactivity_nudge_fires_once_within_a_single_window(admin_session, tenant_a):
+    """Escalation must not become a nudge per sweep — the timer runs every 5 min."""
+    person, *_ = _seed(admin_session, tenant_a, email="inact-same@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=10)
+    base = datetime.now(UTC)
+
+    for minutes in (0, 5, 10, 60):
+        reminders.sweep(admin_session, tenant_id=tenant_a.id, now=base + timedelta(minutes=minutes))
+    admin_session.commit()
+
+    assert len(_inactivity_keys(admin_session, tenant_a, person)) == 1
+
+
+def test_inactivity_nudges_stop_at_the_cap(admin_session, tenant_a):
+    """Bounded on purpose: a learner who has ignored four is telling us something."""
+    person, *_ = _seed(admin_session, tenant_a, email="inact-cap@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=40)
+    base = datetime.now(UTC)
+
+    for week in range(10):  # far past the cap of 4
+        reminders.sweep(admin_session, tenant_id=tenant_a.id, now=base + timedelta(days=7 * week))
+    admin_session.commit()
+
+    keys = _inactivity_keys(admin_session, tenant_a, person)
+    assert len(keys) == reminders.DEFAULT_INACTIVITY_MAX_NUDGES
+
+
+def test_long_dormant_learner_is_still_reachable(admin_session, tenant_a):
+    """The cap counts nudges already sent for the spell, not the window number.
+    A learner dormant since before this change has a high window number but few
+    nudges, and must not be written off by arithmetic."""
+    person, *_ = _seed(admin_session, tenant_a, email="inact-old@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=400)
+
+    reminders.sweep(admin_session, tenant_id=tenant_a.id, now=datetime.now(UTC))
+    admin_session.commit()
+
+    assert len(_inactivity_keys(admin_session, tenant_a, person)) == 1
+
+
+def test_final_inactivity_nudge_says_it_is_the_last(admin_session, tenant_a):
+    """Silence after the cap should read as a decision, not as losing interest."""
+    person, *_ = _seed(admin_session, tenant_a, email="inact-final@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=40)
+    base = datetime.now(UTC)
+
+    for week in range(reminders.DEFAULT_INACTIVITY_MAX_NUDGES):
+        reminders.sweep(admin_session, tenant_id=tenant_a.id, now=base + timedelta(days=7 * week))
+    admin_session.commit()
+
+    titles = [
+        r.title for r in _log_rows(admin_session, tenant_a, person) if r.event_kind == "inactivity"
+    ]
+    assert len(titles) == reminders.DEFAULT_INACTIVITY_MAX_NUDGES
+    assert sum("Last reminder" in t for t in titles) == 1
+    assert "Last reminder" in titles[-1]
+
+
+def test_active_learner_draws_no_inactivity_nudge(admin_session, tenant_a):
+    person, *_ = _seed(admin_session, tenant_a, email="inact-active@a.edu")
+    _backdate_enrolment(admin_session, tenant_a, person, days=1)
+
+    reminders.sweep(admin_session, tenant_id=tenant_a.id, now=datetime.now(UTC))
+    admin_session.commit()
+
+    assert _inactivity_keys(admin_session, tenant_a, person) == []

@@ -150,7 +150,11 @@ def test_open_attempt_emits_started_once_per_attempt(admin_session, tenant_a):
 def test_weekly_buckets_math(admin_session, tenant_a):
     tid = tenant_a.id
     p = _person(admin_session, tid, email="weeks@a.edu")
-    now = datetime.now(UTC)
+    # Anchored at midday, not "right now". weekly_buckets compares .date()
+    # boundaries while the events are placed with hour offsets, so a run in the
+    # small hours pushed events back over midnight and out of their bucket —
+    # this test failed at 01:53 UTC and passed at every other hour.
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
     for weeks_ago, n in [(1, 3), (2, 1)]:
         for i in range(n):
             learning_events.record(

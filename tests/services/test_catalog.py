@@ -275,3 +275,84 @@ def test_course_structure_not_locked_without_prereq(admin_session, tenant_a):
     locked = structure["locked"]
     admin_session.rollback()
     assert locked is False
+
+
+# ---------------------------------------------------------------------------
+# Course-level activities (mid/final assessments carry no chapter_number)
+# ---------------------------------------------------------------------------
+
+
+def _seed_course_activity(db, tid, course_id, title, *, type_="mcq_test"):
+    """An activity with chapter_number = NULL — a whole-course assessment."""
+    bank = None
+    if type_ == "mcq_test":
+        bank = QuestionBank(tenant_id=tid, course_id=course_id, chapter_number=None, kind="final", version=1)
+        db.add(bank)
+        db.flush()
+        db.add(Question(tenant_id=tid, bank_id=bank.id, ext_id="f1", stem="Q?", type="single",
+                        options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1))
+    act = Activity(tenant_id=tid, course_id=course_id, chapter_number=None, type=type_,
+                   bank_id=bank.id if bank is not None else None, title=title, pass_threshold=0.6)
+    db.add(act)
+    db.flush()
+    return act
+
+
+def test_course_structure_surfaces_chapterless_activities(admin_session, tenant_a):
+    """Regression: mid/final assessments were rendered nowhere and so were
+    unreachable, while still counting towards completion — every affected
+    course was impossible to finish."""
+    tid = tenant_a.id
+    person = Person(tenant_id=tid, email="cat_final@a.edu", first_name="F", last_name="A")
+    admin_session.add(person)
+    c = _seed_course(admin_session, tid, "cat-final", "Final Course")
+    admin_session.flush()
+    _seed_chapter(admin_session, tid, c.id, 1)
+    _seed_activity(admin_session, tid, c.id, 1, title="Chapter 1 test")
+    _seed_course_activity(admin_session, tid, c.id, "Final assessment")
+    _seed_course_activity(admin_session, tid, c.id, "Mid assessment")
+
+    structure = course_structure(admin_session, tenant_id=tid, person_id=person.id, course=c)
+    titles = [ci["activity"].title for ci in structure["course_activities"]]
+    chapter_titles = [
+        a["activity"].title
+        for part in structure["parts"] for ch in part["chapters"] for a in ch["activities"]
+    ]
+    admin_session.rollback()
+
+    assert titles == ["Final assessment", "Mid assessment"]  # sorted by title
+    # They belong to the course, never smuggled into a chapter card.
+    assert chapter_titles == ["Chapter 1 test"]
+
+
+def test_course_structure_course_activities_empty_without_any(admin_session, tenant_a):
+    tid = tenant_a.id
+    person = Person(tenant_id=tid, email="cat_nofinal@a.edu", first_name="N", last_name="F")
+    admin_session.add(person)
+    c = _seed_course(admin_session, tid, "cat-nofinal", "No Final Course")
+    admin_session.flush()
+    _seed_chapter(admin_session, tid, c.id, 1)
+    _seed_activity(admin_session, tid, c.id, 1)
+
+    structure = course_structure(admin_session, tenant_id=tid, person_id=person.id, course=c)
+    course_acts = structure["course_activities"]
+    admin_session.rollback()
+    assert course_acts == []
+
+
+def test_course_structure_course_activity_reports_pass_state(admin_session, tenant_a):
+    tid = tenant_a.id
+    person = Person(tenant_id=tid, email="cat_finalpass@a.edu", first_name="P", last_name="S")
+    admin_session.add(person)
+    c = _seed_course(admin_session, tid, "cat-finalpass", "Final Pass Course")
+    admin_session.flush()
+    final = _seed_course_activity(admin_session, tid, c.id, "Final assessment")
+    submit_activity(admin_session, tenant_id=tid, person_id=person.id, activity=final,
+                    answers={"f1": ["A"]})
+
+    structure = course_structure(admin_session, tenant_id=tid, person_id=person.id, course=c)
+    entry = structure["course_activities"][0]
+    passed, pct = entry["passed"], entry["pct"]
+    admin_session.rollback()
+    assert passed is True
+    assert pct == 100

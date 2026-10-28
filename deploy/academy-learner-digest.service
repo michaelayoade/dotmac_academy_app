@@ -1,0 +1,13 @@
+[Unit]
+Description=Dotmac Academy weekly learner progress email (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+# Inert unless learner_digest_enabled is on; idempotent per ISO week, so a
+# missed run caught up by Persistent=true cannot double-send.
+ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli learner-digest

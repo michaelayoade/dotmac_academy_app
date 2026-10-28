@@ -7,6 +7,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     services:
       db:
@@ -29,10 +30,34 @@ jobs:
       # conftest fixture can patch it), so it must be present in the job env too.
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
+      # Separate disposable database: canonical-entry rehearsals must never move
+      # relations in the database used by the application tests.
+      KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
+      RETAINED_SCHEMA_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_schema
+      RETAINED_ENVIRONMENT_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_environment
+      # Explicit non-secret hosted protocol declarations, before observation.
+      ACADEMY_RETAINED_EXPECTED_TARGET_DATABASE: academy_retained_environment
+      ACADEMY_RETAINED_EXPECTED_SETUP_SESSION: postgres
+      ACADEMY_RETAINED_EXPECTED_ENCODING: UTF8
+      ACADEMY_RETAINED_EXPECTED_LOCALE_PROVIDER: c
+      ACADEMY_RETAINED_EXPECTED_LC_COLLATE: en_US.utf8
+      ACADEMY_RETAINED_EXPECTED_LC_CTYPE: en_US.utf8
+      ACADEMY_RETAINED_EXPECTED_EXTENSION_VERSIONS: '[ ["plpgsql", "1.0"] ]'
+      # Real dedicated-role evidence for lab-worker privilege tests (see
+      # tests/services/test_lab_worker_privileges.py) — distinct from the
+      # migration/superuser DSN above.
+      TEST_LAB_WORKER_DATABASE_URL: postgresql+psycopg://academy_lab_worker:academy_lab_worker@localhost:5437/academy
       # Platform-scoped writes (e.g. admin settings) run as the platform_api role,
       # which holds INSERT/UPDATE on platform_settings; app_user is SELECT-only there.
       PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy
       PLATFORM_ROOT_DOMAIN: localhost
+      # `dotmac-kernel` and `dotmac-ui` are published to the private Dotmac
+      # index, not PyPI, so `poetry install` needs credentials for `forgejo` in
+      # pyproject.toml. Only the secret NAME appears here; the value is a repo
+      # secret whose source of record is OpenBao (secret/dotmac/forgejo/read-token).
+      # Same shape as dotmac_erp and dotmac_sub use.
+      POETRY_HTTP_BASIC_FORGEJO_USERNAME: ci-reader
+      POETRY_HTTP_BASIC_FORGEJO_PASSWORD: ${{ secrets.FORGEJO_READ_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +66,32 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Kernel composition observations
+        uses: michaelayoade/dotmac_starter_mt/.github/actions/verify-composition-observations@8b4b6d4b42e650c47fe4c04a679a5ccb51c4b2cd
+        with:
+          product: academy
+
+      # PINNED, and it must stay in step with deploy/install.sh's production
+      # version check. CI owns this installation; production resolves Poetry
+      # from the operator's PATH and verifies the version rather than assuming
+      # a host-specific executable location.
+      # Unpinned, CI floats to the latest Poetry and writes a poetry.lock the
+      # host's Poetry cannot read — which fails as "pyproject.toml changed
+      # significantly since poetry.lock was last generated", blaming the repo
+      # rather than the toolchain. Bump both sides together or not at all.
       - name: Install Poetry
-        run: pipx install poetry
+        run: pipx install poetry==2.4.1
 
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install CSS build dependencies
+        run: npm ci
 
       - name: Bootstrap DB roles
         env:
@@ -54,6 +100,32 @@ jobs:
 
       - name: Run migrations
         run: poetry run alembic upgrade head
+
+      - name: Bootstrap isolated Kernel entry rehearsal database
+        env:
+          PGPASSWORD: academy_super
+        run: |
+          psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE DATABASE academy_kernel_entry OWNER app_admin;
+          CREATE DATABASE academy_retained_schema OWNER app_admin;
+          CREATE DATABASE academy_retained_environment OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
+          CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_schema -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_environment -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+
+      - name: Declare hosted environment expectations before profile observation
+        env:
+          ACADEMY_RETAINED_SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
+        run: poetry run python scripts/declare_retained_hosted_bindings.py
 
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
@@ -65,10 +137,25 @@ jobs:
         if: '!cancelled()'
         run: poetry run mypy
 
+      - name: Shared UI preset and compiled CSS freshness
+        if: '!cancelled()'
+        run: |
+          npm run build:css
+          git diff --exit-code -- static/app.css
+
       - name: Dependency audit
         if: '!cancelled()'
         run: poetry run pip-audit
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -q
+        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
+
+      - name: Retain hosted rehearsal execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: academy-hosted-tests-${{ github.run_id }}
+          path: artifacts/pytest.xml
+          if-no-files-found: error
+          retention-days: 30

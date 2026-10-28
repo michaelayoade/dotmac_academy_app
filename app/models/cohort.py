@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Float, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,3 +63,12 @@ class Enrollment(Base, TimestampMixin):
     track_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
     role_in_cohort: Mapped[str] = mapped_column(String(20), nullable=False, default="student")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    # ADR 0004. NULL means "not yet classified", which is an honest state: the
+    # Academy has no ERP read path, so audience is set from an explicit roster
+    # and never inferred from an email domain. A 'staff' row must carry the ERP
+    # employee reference — identity between the systems is that reference.
+    audience: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    employee_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Per-learner extension only. CourseOffering.ends_at remains the cohort
+    # schedule; this nullable override can extend, but never shorten, access.
+    access_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

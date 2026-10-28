@@ -93,7 +93,7 @@ def main() -> int:
     if not isinstance(rows, list):
         sys.exit("input must be a JSON array")
 
-    from app.db import SessionLocal
+    from dotmac_kernel.db import SessionLocal
 
     db = SessionLocal()
     try:

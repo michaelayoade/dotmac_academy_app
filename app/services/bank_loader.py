@@ -1,106 +1,60 @@
-"""Question-bank loader: parse, lint, and persist YAML MCQ banks.
+"""Loading question banks into the database.
 
-Usage
------
-    from app.services.bank_loader import parse_bank, lint_bank, load_bank
-
-    doc = parse_bank("/path/to/banks/foundation-ch3.yaml")
-    violations = lint_bank(doc)
-    if violations:
-        for v in violations:
-            print(v)
-    else:
-        bank = load_bank(db, tenant_id=tid, course_id=cid, doc=doc)
+The *rules* live in :mod:`app.services.bank_lint`, which has no database or
+application imports so the content repository can run them in its own CI.
+Everything from there is re-exported here, so existing callers are unchanged.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-
-import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import Question, QuestionBank
-
-_TARGET = {"recall": 0.20, "application": 0.50, "analysis": 0.30}
-_TOL = 0.10
-
-
-@dataclass
-class BankDoc:
-    course: str
-    chapter: int | None
-    kind: str
-    version: int
-    questions: list[dict]
+from app.services.bank_lint import (  # noqa: F401 — re-exported for existing callers
+    BankDoc,
+    _competency_of,
+    lint_bank,
+    parse_bank,
+)
 
 
-def parse_bank(path) -> BankDoc:
-    """Load and parse a bank YAML file into a BankDoc dataclass."""
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))["bank"]
-    return BankDoc(
-        course=data["course"],
-        chapter=data.get("chapter"),
-        kind=data["kind"],
-        version=int(data.get("version", 1)),
-        questions=list(data["questions"]),
-    )
+def doc_from_db(db: Session, *, bank: QuestionBank, course_slug: str) -> BankDoc:
+    """Rebuild a BankDoc from a bank already in the database.
 
-
-def lint_bank(doc: BankDoc) -> list[str]:
-    """Validate a BankDoc against rubric-mix and correct-in-options rules.
-
-    Returns a (possibly empty) list of human-readable violation strings.
-    An empty list means the bank is clean.
-
-    Rules:
-    - Bank must not be empty.
-    - Each question must have a valid rubric_category (recall/application/analysis).
-    - For non-truefalse questions, every entry in `correct` must appear in `options`.
-    - The overall rubric mix must be 20% recall / 50% application / 30% analysis
-      within ±10 percentage points.
+    So the live estate can be checked with :func:`lint_bank` itself rather than
+    a second implementation of the rules in SQL. Two implementations of the same
+    decision drift the moment a threshold moves; this keeps one.
     """
-    out: list[str] = []
-    n = len(doc.questions)
-    if n == 0:
-        return ["bank has no questions"]
-
-    counts: dict[str, int] = {k: 0 for k in _TARGET}
-
-    for q in doc.questions:
-        cat = q.get("rubric_category")
-        if cat not in _TARGET:
-            out.append(f"{q.get('id')}: invalid rubric_category {cat!r}")
-            continue
-        counts[cat] += 1
-        qtype = q.get("type")
-        if qtype == "numeric":
-            try:
-                float(q.get("correct", ""))
-            except (ValueError, TypeError):
-                out.append(f"{q.get('id')}: numeric correct must be a parseable number")
-        elif qtype == "short_text":
-            accepted = q.get("correct", [])
-            if not isinstance(accepted, list) or len(accepted) == 0:
-                out.append(f"{q.get('id')}: short_text correct must be a non-empty list")
-        elif qtype != "truefalse":
-            opts = set(q.get("options", []))
-            for c in q.get("correct", []):
-                if c not in opts:
-                    out.append(f"{q.get('id')}: correct {c!r} not in options")
-
-    for cat, target in _TARGET.items():
-        frac = counts[cat] / n
-        # +1e-9 epsilon: a mix exactly at the tolerance edge (e.g. analysis 40%
-        # vs target 30% ±10%) must pass — bare float subtraction yields
-        # 0.4-0.3==0.10000000000000003 and would wrongly reject a compliant bank.
-        if abs(frac - target) > _TOL + 1e-9:
-            out.append(
-                f"rubric mix off: {cat} {frac:.0%} (target {target:.0%} ±{_TOL:.0%})"
-            )
-
-    return out
+    rows = db.scalars(
+        select(Question)
+        .where(Question.tenant_id == bank.tenant_id)
+        .where(Question.bank_id == bank.id)
+        .order_by(Question.ext_id)
+    ).all()
+    return BankDoc(
+        course=course_slug,
+        chapter=bank.chapter_number,
+        kind=bank.kind,
+        version=bank.version,
+        questions=[
+            {
+                "id": q.ext_id,
+                "stem": q.stem,
+                "type": q.type,
+                "options": q.options,
+                "correct": q.correct,
+                "rubric_category": q.rubric_category,
+                "category": q.category,
+                "explanation": q.explanation,
+                "weight": q.weight,
+            }
+            for q in rows
+        ],
+        # Policy lives on the Activity once loaded, not on the bank, so a
+        # database-sourced doc carries none — and lint_bank skips an empty one.
+        policy={},
+    )
 
 
 def load_bank(db: Session, *, tenant_id, course_id, doc: BankDoc) -> QuestionBank:
@@ -144,7 +98,7 @@ def load_bank(db: Session, *, tenant_id, course_id, doc: BankDoc) -> QuestionBan
                 options=q.get("options", []),
                 correct=q.get("correct", []),
                 rubric_category=q["rubric_category"],
-                category=q.get("category"),
+                category=_competency_of(q),
                 explanation=q.get("explanation", ""),
                 weight=int(q.get("weight", 1)),
             )

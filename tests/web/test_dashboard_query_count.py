@@ -9,9 +9,9 @@ per-course query, the near-flat delta assertion fails.
 
 from __future__ import annotations
 
+import dotmac_kernel.db as app_db
 from sqlalchemy import event
 
-import app.db as app_db
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment

@@ -40,7 +40,7 @@ def _cohort_with_exam(admin_session, tenant):
                 ext_id=ext,
                 stem="Pick A",
                 type="single",
-                options=["A", "B"],
+                options=["A", "B", "C", "D"],
                 correct=["A"],
                 rubric_category="recall",
                 category=cat,

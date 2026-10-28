@@ -30,7 +30,7 @@ from app.models.learning_event import (
 )
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.services import learning_events
+from app.services import attempt_policy, learning_events
 from app.services.assessment import (
     attempts_used,
     best_scores_by_course_for_person,
@@ -158,7 +158,9 @@ def _current_blocker(db: Session, tenant_id: UUID, person_id: UUID, now: datetim
         if activity is None or activity.max_attempts is None:
             continue
         used = attempts_used(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity_id)
-        if used >= activity.max_attempts:
+        if attempt_policy.for_learner(
+            db, tenant_id=tenant_id, person_id=person_id, activity=activity, used=used
+        ).exhausted:
             return {
                 "activity_id": activity_id,
                 "title": activity.title,

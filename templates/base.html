@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,39 +9,28 @@
   <meta property="og:description" content="Field-grade training for the engineers keeping the network running — courses, assessments, and hands-on labs.">
   <meta property="og:image" content="/static/img/og-card.webp">
   <meta property="og:type" content="website">
-  <script>
-    (function () {
-      try {
-        var key = "dotmac:theme";
-        var theme = window.localStorage.getItem(key);
-        if (theme !== "light" && theme !== "dark") {
-          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (e) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
-  </script>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <!-- Compiled Tailwind v3 build + self-hosted fonts (Fraunces/Manrope via @font-face). Bump ?v= on css change. -->
-  <link rel="stylesheet" href="/static/app.css?v=7">
+  {% include "_dotmac_ui_head.html" %}
+  <!-- Compiled Tailwind v3 build + self-hosted Academic Modernist fonts. Bump ?v= on css change. -->
+  <link rel="stylesheet" href="/static/app.css?v=10">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
 
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
 {% if current_person %}
   {% include "shell/_topbar.html" %}
 
-  <div class="mx-auto flex max-w-6xl flex-col md:flex-row">
+  <div class="shell-layout {% block shell_layout_class %}{% endblock %}">
     {% block shell_sidebar %}{% include "shell/_sidebar.html" %}{% endblock %}
 
-    <main class="min-w-0 flex-1 px-4 py-8 sm:px-6 sm:py-10">
-      <div class="mx-auto max-w-3xl">
+    <main id="main-content" class="shell-main min-w-0 flex-1 px-4 py-7 sm:px-7 sm:py-9 lg:px-10">
+      <div class="mx-auto w-full {% block content_width %}max-w-[1360px]{% endblock %}">
 {% else %}
   {# Unauthenticated fallback — base is not normally hit unauthenticated (login is
      standalone), but render a bare <main> so nothing breaks if it ever is. #}
-  <main class="mx-auto max-w-3xl px-6 py-10 sm:py-12">
+  <main id="main-content" class="mx-auto max-w-3xl px-6 py-10 sm:py-12">
 {% endif %}
 
         {% block content %}{% endblock %}
@@ -51,7 +40,7 @@
     </main>
   </div>
 
-  <footer class="mx-auto max-w-6xl px-4 pb-10 pt-2 sm:px-6">
+  <footer class="shell-footer {% block shell_footer_class %}{% endblock %} px-4 pb-8 pt-2 sm:px-7 lg:px-10">
     <p class="text-xs text-ink-soft/80">{{ branding_name | default("Dotmac Academy") }} — learn the network, hands on.</p>
   </footer>
 {% else %}
@@ -63,6 +52,107 @@
       var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
       if (m) { evt.detail.headers['x-csrf-token'] = m[1]; }
     });
+    (function () {
+      var toggle = document.querySelector('[data-sidebar-toggle]');
+      var sidebar = document.getElementById('academy-sidebar');
+      var dismissers = document.querySelectorAll('[data-sidebar-dismiss]');
+      var lastFocused = null;
+      if (!toggle || !sidebar) return;
+
+      function focusableItems() {
+        return Array.prototype.slice.call(sidebar.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ));
+      }
+
+      function setSidebar(open, restoreFocus) {
+        var mobile = window.innerWidth < 768;
+        var shouldOpen = mobile && open;
+        document.body.classList.toggle('sidebar-open', shouldOpen);
+        toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+
+        if (!mobile) {
+          sidebar.removeAttribute('inert');
+          sidebar.removeAttribute('aria-hidden');
+          lastFocused = null;
+          return;
+        }
+
+        sidebar.toggleAttribute('inert', !shouldOpen);
+        sidebar.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
+        if (shouldOpen) {
+          lastFocused = document.activeElement;
+          var items = focusableItems();
+          if (items.length) items[0].focus();
+        } else if (restoreFocus && lastFocused) {
+          toggle.focus();
+          lastFocused = null;
+        }
+      }
+
+      toggle.addEventListener('click', function () {
+        setSidebar(!document.body.classList.contains('sidebar-open'), true);
+      });
+      dismissers.forEach(function (item) {
+        item.addEventListener('click', function () { setSidebar(false, true); });
+      });
+      document.addEventListener('keydown', function (event) {
+        if (!document.body.classList.contains('sidebar-open')) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setSidebar(false, true);
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        var items = focusableItems();
+        if (!items.length) return;
+        var first = items[0];
+        var last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+      window.addEventListener('resize', function () { setSidebar(false, false); });
+      setSidebar(false, false);
+    }());
+    (function () {
+      var academySearch = document.querySelector('.shell-search input[type="search"]');
+      if (!academySearch) return;
+      document.addEventListener('keydown', function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+          event.preventDefault();
+          academySearch.focus();
+          academySearch.select();
+        }
+      });
+    }());
+    (function () {
+      var liveSelector = '[id*="result"], [id$="-flash"], [id*="-error"]';
+      function prepareRegion(region) {
+        if (!region.hasAttribute('role')) region.setAttribute('role', 'status');
+        if (!region.hasAttribute('aria-live')) region.setAttribute('aria-live', 'polite');
+        region.setAttribute('aria-atomic', 'true');
+      }
+      function prepareLiveRegions(root) {
+        if (root.matches && root.matches(liveSelector)) prepareRegion(root);
+        var regions = root.querySelectorAll ? root.querySelectorAll(liveSelector) : [];
+        regions.forEach(prepareRegion);
+      }
+      prepareLiveRegions(document);
+      document.body.addEventListener('htmx:beforeRequest', function (event) {
+        event.detail.elt.setAttribute('aria-busy', 'true');
+      });
+      document.body.addEventListener('htmx:afterRequest', function (event) {
+        event.detail.elt.removeAttribute('aria-busy');
+      });
+      document.body.addEventListener('htmx:afterSwap', function (event) {
+        prepareLiveRegions(event.detail.target || document);
+      });
+    }());
   </script>
 </body>
 </html>

@@ -33,6 +33,23 @@ fpdf2 = "^2.8.7"
 prometheus-client = "^0.26.0"
 sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 
+# The platform kernel. Pinned exactly, never a caret range: adopting a kernel
+# release is a deliberate act with a changelog to read, not something a lockfile
+# refresh should do on our behalf.
+#
+# 0.1.0a38 is the first release that supports Academy's complete product
+# assembly contract: FastAPI 0.140 lazy-router guard validation, explicit
+# platform-surface omission, product startup checks/hooks, and typed
+# CSP/COOP/CORP policy. Earlier releases require local runtime adapters and can
+# silently skip included-route permission/capability validation on FastAPI 0.140.
+dotmac-kernel = { version = "0.1.0a38", source = "forgejo" }
+
+# Shared presentation contract. Pinned exactly for the same reason as the
+# kernel: token/API adoption is reviewed deliberately, never pulled in by an
+# unrelated lock refresh. a3 is the first release whose Tailwind preset keeps
+# opacity modifiers working against channel-form colour tokens.
+dotmac-ui = { version = "0.1.0a3", source = "forgejo" }
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 pytest-asyncio = "^1.4.0"
@@ -42,6 +59,14 @@ mypy = "^1.11"
 types-pyyaml = "^6.0.12.20260518"
 types-markdown = "^3.10.2.20260518"
 pip-audit = "^2.10.1"
+
+
+# Private Dotmac package index (Forgejo). URL only — credentials live in the CI
+# environment, sourced from OpenBao, and never in Git.
+[[tool.poetry.source]]
+name = "forgejo"
+url = "https://registry.dotmac.io/api/packages/dotmac/pypi/simple/"
+priority = "explicit"
 
 [tool.ruff]
 line-length = 120
@@ -66,7 +91,7 @@ ignore = [
 "app/services/lab_jobs.py" = ["S603"]
 "app/services/lab_seed.py" = ["S311"]
 "app/services/attempts.py" = ["S311"]  # question-pool shuffle is not security-sensitive
-"app/services/entrance_exam.py" = ["S311"]  # per-applicant option shuffle is not security-sensitive
+"app/services/exam_engine.py" = ["S311"]  # per-sitter shuffle is presentation, not a secret
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,6 +1,6 @@
 [Unit]
-Description=Dotmac Academy idle-lab reaper (one-shot)
-After=network-online.target docker.service
+Description=Dotmac Academy idle-lab enqueue timer (one-shot, engine-free)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -8,4 +8,5 @@ Type=oneshot
 User=dotmac
 WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
 EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+Environment=LAB_HOST_ROLE=web
 ExecStart=/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli reap-labs

@@ -14,12 +14,33 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.track import CohortTrack, Track, TrackCourse
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.lookups import cohort_or_404
+
+
+def _ordered_by_position(course_ids: list[UUID], positions: dict[UUID, int] | None) -> list[UUID]:
+    """Order ``course_ids`` by an optional client-supplied position hint.
+
+    Any course with a supplied position sorts by that value (ties broken by
+    original submission order); every course with no position hint is
+    appended afterward, in submission order. The caller is responsible for
+    turning the result into a dense ``1..N`` ``order_index`` sequence — a
+    client-supplied numeric value is never stored directly, since duplicate
+    or gapped values would silently fall back to the ``Course.title``
+    tiebreak used elsewhere (``entitlements.py``'s ``_entitled_course_rows``).
+    """
+    positions = positions or {}
+    positioned = sorted(
+        ((positions[cid], idx, cid) for idx, cid in enumerate(course_ids) if cid in positions),
+        key=lambda t: (t[0], t[1]),
+    )
+    unpositioned = [cid for cid in course_ids if cid not in positions]
+    return [cid for _, _, cid in positioned] + unpositioned
 
 
 def _slugify(value: str) -> str:
@@ -50,14 +71,38 @@ def list_cohort_tracks(db: Session, *, tenant_id: UUID, cohort_id: UUID) -> list
     ).all()
     out: list[dict] = []
     for cohort_track, track in rows:
-        courses = db.scalars(
-            select(Course)
-            .join(TrackCourse, (TrackCourse.course_id == Course.id) & (TrackCourse.tenant_id == Course.tenant_id))
-            .where(TrackCourse.tenant_id == tenant_id)
-            .where(TrackCourse.track_id == track.id)
-            .order_by(TrackCourse.order_index, Course.title)
-        ).all()
-        out.append({"cohort_track": cohort_track, "track": track, "courses": list(courses)})
+        courses = list(
+            db.scalars(
+                select(Course)
+                .join(TrackCourse, (TrackCourse.course_id == Course.id) & (TrackCourse.tenant_id == Course.tenant_id))
+                .where(TrackCourse.tenant_id == tenant_id)
+                .where(TrackCourse.track_id == track.id)
+                .order_by(TrackCourse.order_index, Course.title)
+            ).all()
+        )
+        # Computed live (not just once, at track-creation time) so a course that
+        # had its activities removed, or a draft published later with none, is
+        # still caught — see "1c" in the enrollment-authority brief. Warning
+        # only: this never blocks track creation, add-courses, or publishing.
+        course_ids = [course.id for course in courses]
+        with_activities: set[UUID] = set()
+        if course_ids:
+            with_activities = set(
+                db.scalars(
+                    select(Activity.course_id)
+                    .where(Activity.tenant_id == tenant_id)
+                    .where(Activity.course_id.in_(course_ids))
+                ).all()
+            )
+        zero_activity_course_ids = {course.id for course in courses if course.id not in with_activities}
+        out.append(
+            {
+                "cohort_track": cohort_track,
+                "track": track,
+                "courses": courses,
+                "zero_activity_course_ids": zero_activity_course_ids,
+            }
+        )
     return out
 
 
@@ -86,6 +131,7 @@ def create_cohort_track(
     cohort_id: UUID,
     name: str,
     course_ids: list[UUID],
+    positions: dict[UUID, int] | None = None,
 ) -> Track:
     cohort_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id)
     clean_name = (name or "").strip()
@@ -103,6 +149,8 @@ def create_cohort_track(
     if found != set(seen):
         raise NotFoundError("one or more courses were not found")
 
+    ordered = _ordered_by_position(seen, positions)
+
     track = Track(
         tenant_id=tenant_id,
         slug=_unique_track_slug(db, tenant_id=tenant_id, name=clean_name),
@@ -111,7 +159,7 @@ def create_cohort_track(
     db.add(track)
     db.flush()
     db.add(CohortTrack(tenant_id=tenant_id, cohort_id=cohort_id, track_id=track.id, status="active"))
-    for idx, course_id in enumerate(seen, start=1):
+    for idx, course_id in enumerate(ordered, start=1):
         db.add(TrackCourse(tenant_id=tenant_id, track_id=track.id, course_id=course_id, order_index=idx))
     db.flush()
     ensure_track_offerings(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track.id)
@@ -125,6 +173,7 @@ def add_courses_to_cohort_track(
     cohort_id: UUID,
     track_id: UUID,
     course_ids: list[UUID],
+    positions: dict[UUID, int] | None = None,
 ) -> Track:
     cohort_track_or_404(db, tenant_id=tenant_id, cohort_id=cohort_id, track_id=track_id)
     if not course_ids:
@@ -156,10 +205,13 @@ def add_courses_to_cohort_track(
         )
         or 0
     )
+    # Position hints only order the newly-added courses relative to each
+    # other; an existing track's already-dense order_index sequence is left
+    # untouched — reordering existing membership is reorder_track_courses.
+    to_add = [course_id for course_id in seen if course_id not in existing]
+    ordered_new = _ordered_by_position(to_add, positions)
     next_order = max_order + 1
-    for course_id in seen:
-        if course_id in existing:
-            continue
+    for course_id in ordered_new:
         db.add(
             TrackCourse(
                 tenant_id=tenant_id,
@@ -174,6 +226,40 @@ def add_courses_to_cohort_track(
     track = db.scalars(select(Track).where(Track.tenant_id == tenant_id).where(Track.id == track_id)).first()
     if track is None:
         raise NotFoundError("track not found")
+    return track
+
+
+def reorder_track_courses(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    track_id: UUID,
+    ordered_course_ids: list[UUID],
+) -> Track:
+    """Reassign a dense ``1..N`` order to an EXISTING track's courses.
+
+    Unlike create/add-courses (which only affect a track scoped to one
+    cohort's create/add forms), a ``Track`` is tenant-level — ``CohortTrack``
+    is the per-cohort join — so this is a track-level operation, not nested
+    under a specific cohort.
+    """
+    track = db.scalars(select(Track).where(Track.tenant_id == tenant_id).where(Track.id == track_id)).first()
+    if track is None:
+        raise NotFoundError("track not found")
+
+    if len(ordered_course_ids) != len(set(ordered_course_ids)):
+        raise BadRequestError("duplicate course id in reorder request")
+
+    rows = db.scalars(
+        select(TrackCourse).where(TrackCourse.tenant_id == tenant_id).where(TrackCourse.track_id == track_id)
+    ).all()
+    by_course_id = {row.course_id: row for row in rows}
+    if set(ordered_course_ids) != set(by_course_id):
+        raise BadRequestError("ordered_course_ids must match the track's current course membership exactly")
+
+    for idx, course_id in enumerate(ordered_course_ids, start=1):
+        by_course_id[course_id].order_index = idx
+    db.flush()
     return track
 
 
@@ -230,6 +316,35 @@ def assign_enrollment_track(
     if enrollment is None:
         raise NotFoundError("enrollment not found")
     enrollment.track_id = track_id
+    db.flush()
+    return enrollment
+
+
+def clear_enrollment_track(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    cohort_id: UUID,
+    person_id: UUID,
+) -> Enrollment:
+    """Recovery path for a learner stuck behind a broken/blocking track.
+
+    Nulls ``Enrollment.track_id`` rather than fabricating a course
+    completion — a fabricated completion would trigger completion.py's real
+    certificate-issuance side effect for a course the learner never actually
+    finished. This does not remove any CourseOffering rows, so the learner
+    falls back to full cohort-wide access via the existing null-track code
+    path in entitlements.py — that is the intended behavior.
+    """
+    enrollment = db.scalars(
+        select(Enrollment)
+        .where(Enrollment.tenant_id == tenant_id)
+        .where(Enrollment.cohort_id == cohort_id)
+        .where(Enrollment.person_id == person_id)
+    ).first()
+    if enrollment is None:
+        raise NotFoundError("enrollment not found")
+    enrollment.track_id = None
     db.flush()
     return enrollment
 

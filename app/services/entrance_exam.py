@@ -9,8 +9,6 @@ all run on.
 
 from __future__ import annotations
 
-import hashlib
-import random
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -22,7 +20,8 @@ from sqlalchemy.orm import Session
 from app.models.admissions import Applicant
 from app.models.assessment import Question
 from app.models.cohort import Cohort
-from app.models.tenant import Tenant
+from app.models.entrance_defaults import TenantEntranceDefaults
+from app.services import exam_engine
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.grading import grade_submission
 from app.services.security import hash_token
@@ -54,20 +53,13 @@ def level_for(fraction: float, levels: tuple[tuple[str, float], ...] = LEVELS) -
 # With 4 options the guessing baseline is 25%; a score at or below a third is
 # indistinguishable from clicking at random. And nobody engages with a 30-question
 # assessment in under six minutes.
-MIN_VALID_FRACTION = 1.0 / 3.0  # <= this is at/near chance
-MIN_DURATION_SECONDS = 6 * 60  # faster than this = did not engage
+MIN_VALID_FRACTION = exam_engine.MIN_VALID_FRACTION
+MIN_DURATION_SECONDS = exam_engine.MIN_DURATION_SECONDS
 
-INVALID_NEAR_CHANCE = "near_chance"
-INVALID_TOO_FAST = "too_fast"
+INVALID_NEAR_CHANCE = exam_engine.INVALID_NEAR_CHANCE
+INVALID_TOO_FAST = exam_engine.INVALID_TOO_FAST
 
-
-def check_validity(fraction: float, duration_seconds: float | None) -> tuple[bool, str | None]:
-    """Is this sitting real signal? Returns (valid, reason_if_not)."""
-    if fraction <= MIN_VALID_FRACTION + 1e-9:
-        return False, INVALID_NEAR_CHANCE
-    if duration_seconds is None or duration_seconds < MIN_DURATION_SECONDS:
-        return False, INVALID_TOO_FAST
-    return True, None
+check_validity = exam_engine.check_validity
 
 
 def options_for(applicant: Applicant, question) -> list[str]:
@@ -81,11 +73,34 @@ def options_for(applicant: Applicant, question) -> list[str]:
     against the wrong options. Safe because answers are posted by option TEXT, not
     by index, so grading is order-independent.
     """
-    opts = list(question.options or [])
-    seed = f"{applicant.id}:{question.ext_id}"
-    rng = random.Random(hashlib.sha256(seed.encode()).hexdigest())
-    rng.shuffle(opts)
-    return opts
+    return exam_engine.present_options(applicant, question)
+
+
+def questions_per_category(db: Session) -> int:
+    """How many questions to draw from each category; 0 means the whole bank."""
+    from app.services import settings_store
+
+    raw = settings_store.effective(db).get("entrance_questions_per_category", 0)
+    if raw is None or isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw
+    try:
+        return int(str(raw))
+    except ValueError:
+        return 0
+
+
+def sample_for(applicant: Applicant, questions: list, per_category: int) -> list:
+    """A stratified per-applicant subset of the bank, or all of it.
+
+    Thin adapter over :func:`exam_engine.select`. Kept as a named function
+    because the entrance flow and its tests refer to it, but the decision now
+    belongs to the engine so the course path cannot drift from it.
+    """
+    return exam_engine.select(
+        applicant, questions, exam_engine.SelectionPolicy(per_category=max(per_category, 0))
+    )
 
 
 def issue_token(db: Session, *, applicant: Applicant) -> str:
@@ -119,16 +134,56 @@ def applicant_for_token(
     return db.scalars(stmt).first()
 
 
+def academy_default_bank_id(db: Session, *, tenant_id: UUID) -> UUID | None:
+    """The academy-wide default bank, or None if none is configured.
+
+    The last tier of the precedence chain, and the only reader of
+    `tenant_entrance_defaults` outside this module's setter. No row means no
+    default — a valid state, not an error.
+    """
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    return row.default_bank_id if row is not None else None
+
+
+def academy_default_time_limit(db: Session, *, tenant_id: UUID) -> int | None:
+    """The academy-wide default sitting limit in minutes (None = untimed)."""
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    return row.default_time_limit_minutes if row is not None else None
+
+
+def set_academy_defaults(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    bank_id: UUID,
+    time_limit_minutes: int | None = None,
+) -> TenantEntranceDefaults:
+    """Upsert the academy-wide defaults. The ONE writer of this table.
+
+    Kept here rather than in the CLI so the row has an owner: the service that
+    resolves a default is the service that sets it.
+    """
+    row = db.get(TenantEntranceDefaults, tenant_id)
+    if row is None:
+        row = TenantEntranceDefaults(tenant_id=tenant_id)
+        db.add(row)
+    row.default_bank_id = bank_id
+    row.default_time_limit_minutes = time_limit_minutes
+    db.flush()
+    return row
+
+
 def resolve_bank_id(db: Session, *, applicant: Applicant) -> UUID:
-    """The entrance bank for this applicant: the cohort's override, else the
-    academy-wide default (so every applicant sits an entrance exam)."""
+    """Per-applicant snapshot, then cohort override, then Academy default."""
+    if applicant.assessment_bank_id is not None:
+        return applicant.assessment_bank_id
     if applicant.cohort_id is not None:
         cohort = db.get(Cohort, applicant.cohort_id)
         if cohort is not None and cohort.entrance_bank_id is not None:
             return cohort.entrance_bank_id
-    tenant = db.get(Tenant, applicant.tenant_id)
-    if tenant is not None and tenant.default_entrance_bank_id is not None:
-        return tenant.default_entrance_bank_id
+    default_bank_id = academy_default_bank_id(db, tenant_id=applicant.tenant_id)
+    if default_bank_id is not None:
+        return default_bank_id
     raise BadRequestError("No entrance assessment is configured for this cohort or academy.")
 
 
@@ -153,8 +208,7 @@ def time_limit_minutes(db: Session, *, applicant: Applicant) -> int | None:
         cohort = db.get(Cohort, applicant.cohort_id)
         if cohort is not None and cohort.entrance_time_limit_minutes is not None:
             return cohort.entrance_time_limit_minutes
-    tenant = db.get(Tenant, applicant.tenant_id)
-    return tenant.default_entrance_time_limit_minutes if tenant is not None else None
+    return academy_default_time_limit(db, tenant_id=applicant.tenant_id)
 
 
 def start_exam(db: Session, *, applicant: Applicant, now: datetime | None = None) -> dict:
@@ -290,6 +344,7 @@ def reset_exam(db: Session, *, applicant: Applicant) -> str:
     applicant.assessment_invalid_reason = None
     applicant.assessment_time_exceeded = False
     applicant.assessment_deadline = None
+    applicant.assessment_erp_synced_at = None
     applicant.assessment_reset_count = (applicant.assessment_reset_count or 0) + 1
     return issue_token(db, applicant=applicant)
 
@@ -347,12 +402,16 @@ def grade_and_record(
         raise BadRequestError("Entrance assessment has not been started.")
     record_elapsed(db, applicant=applicant, now=now)
     bank_id = bank_id or resolve_bank_id(db, applicant=applicant)
+    applicant.assessment_bank_id = bank_id
 
     questions = list(
         db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
     )
     if not questions:
         raise NotFoundError("Entrance assessment has no questions.")
+    # Grade the subset this applicant was actually shown, not the whole bank —
+    # sample_for is deterministic, so this reproduces the same paper.
+    questions = sample_for(applicant, questions, questions_per_category(db))
 
     q_dicts = [
         {"ext_id": q.ext_id, "type": q.type, "correct": q.correct, "weight": q.weight, "options": q.options}
@@ -377,7 +436,7 @@ def grade_and_record(
 
     # Validity gate: is this a real measurement, or an absence of data?
     duration = float(applicant.assessment_elapsed_seconds)
-    valid, reason = check_validity(overall, duration)
+    valid, reason = check_validity(overall, duration, questions=questions)
 
     applicant.assessment_score = overall
     applicant.assessment_level = level
@@ -386,6 +445,8 @@ def grade_and_record(
     applicant.assessment_invalid_reason = reason
     applicant.assessment_time_exceeded = _time_exceeded(db, applicant, now)
     applicant.assessment_taken_at = now
+    applicant.assessment_result_version = (applicant.assessment_result_version or 0) + 1
+    applicant.assessment_erp_synced_at = None
     applicant.assessment_answers = None  # graded; drop the autosave scratchpad
     db.flush()
     return {

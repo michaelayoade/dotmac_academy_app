@@ -24,8 +24,9 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.person import Person
 from app.models.reminder import EVENT_KINDS
 from app.services import reminders as reminders_service
+from app.services.lifecycle import set_account_password
 from app.services.roles import role_slugs
-from app.services.security import hash_password, verify_password
+from app.services.security import verify_password
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
@@ -143,8 +144,12 @@ def password_change(
     if len(new_password) < 8:
         return _flash(request, False, "New password must be at least 8 characters.")
 
-    cred.password_hash = hash_password(new_password)
-    db.flush()
+    set_account_password(
+        db,
+        tenant_id=tenant.id,
+        person_id=person.id,
+        new_password=new_password,
+    )
     # No db.commit() here — get_db commits after the response is returned.
     return _flash(request, True, "Password updated.")
 

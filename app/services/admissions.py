@@ -10,10 +10,11 @@ Tenant scoping is enforced by RLS; we still pass ``tenant_id`` on writes so the
 from __future__ import annotations
 
 import secrets
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,8 @@ ADMIN_ACTION_LABELS = {
     "accept": "Accept and invite to onboarding",
     "waitlist": "Move to waitlist",
     "reject": "Reject application",
+    "resend_invitation": "Resend invitation",
+    "extend_access": "Extend access",
     "reinvite_assessment": "Send a new assessment invitation",
     "reset_assessment": "Reset sitting and send a new invitation",
 }
@@ -119,8 +122,7 @@ def submit_application(
             )
             .join(
                 Cohort,
-                (Cohort.tenant_id == CohortTrack.tenant_id)
-                & (Cohort.id == CohortTrack.cohort_id),
+                (Cohort.tenant_id == CohortTrack.tenant_id) & (Cohort.id == CohortTrack.cohort_id),
             )
             .where(Track.tenant_id == tenant_id)
             .where(Track.id == track_id)
@@ -132,9 +134,12 @@ def submit_application(
         if selected_track is None:
             raise BadRequestError("That training track is not open for the selected cohort.")
         program = selected_track.name
-    existing = db.scalar(
-        select(Applicant).where(Applicant.email == email)  # RLS scopes to tenant
+    lookup = (
+        select(Applicant).where(Applicant.external_ref == external_ref)
+        if external_ref
+        else select(Applicant).where(Applicant.email == email).where(Applicant.external_ref.is_(None))
     )
+    existing = db.scalar(lookup)
     if existing is not None:
         existing.first_name = first_name.strip()
         existing.last_name = last_name.strip()
@@ -176,6 +181,73 @@ def submit_application(
     return applicant
 
 
+def submit_external_application(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    external_ref: str,
+    email: str,
+    first_name: str,
+    last_name: str,
+    source: str,
+    applied_on: date | None = None,
+) -> tuple[Applicant, bool]:
+    """Create (or find) an applicant owned by an external system's application.
+
+    The second identity rule for intake, and the reason this belongs here rather
+    than in the caller. ``submit_application`` is idempotent on *(tenant, email)*
+    — one applicant per person — which is right for public intake. An external
+    system's applications are not people: the same individual may apply for two
+    jobs and must get two applicants, two sittings and two results. So this is
+    idempotent on *(tenant, external_ref)* instead.
+
+    Both rules are intake decisions, so both live with the intake owner. A
+    caller that inserted ``Applicant`` rows itself to get the second rule would
+    be a second writer of intake, and the two would drift the moment either
+    changed — the failure ``docs/adr/0005-assessment-engine-owns-exam-logic.md``
+    records one layer up.
+
+    Returns the applicant and whether this call created it, because callers
+    need to distinguish a first registration from a replay.
+    """
+    canonical = email.strip().lower()
+
+    created = db.execute(
+        insert(Applicant)
+        .values(
+            tenant_id=tenant_id,
+            email=canonical,
+            first_name=first_name.strip(),
+            last_name=last_name.strip(),
+            status="applied",
+            source=source,
+            external_ref=external_ref,
+            applied_on=applied_on or date.today(),
+        )
+        .on_conflict_do_nothing(
+            index_elements=[Applicant.tenant_id, Applicant.external_ref],
+            index_where=Applicant.external_ref.is_not(None),
+        )
+        .returning(Applicant.id)
+    ).first()
+
+    applicant = db.scalars(
+        select(Applicant)
+        .where(Applicant.tenant_id == tenant_id)
+        .where(Applicant.external_ref == external_ref)
+        .with_for_update()
+    ).first()
+    if applicant is None:
+        # Insert did nothing and the row is not there: the external_ref lost a
+        # race with a conflicting write, or the partial index is missing.
+        raise ConflictError("Could not establish an applicant for that external reference.")
+
+    if applicant.email != canonical:
+        raise ConflictError("That external reference is already registered to a different email address.")
+
+    return applicant, created is not None
+
+
 def list_applicants(
     db: Session,
     *,
@@ -186,6 +258,8 @@ def list_applicants(
     applied_to: date | None = None,
     rank_by_score: bool = False,
     include_invalid: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[Applicant]:
     """List applicants (RLS scopes to the current tenant).
 
@@ -224,7 +298,43 @@ def list_applicants(
         stmt = stmt.order_by(Applicant.assessment_score.desc().nullslast(), Applicant.created_at.desc())
     else:
         stmt = stmt.order_by(Applicant.applied_on.desc(), Applicant.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit).offset(offset)
     return list(db.scalars(stmt).all())
+
+
+def count_applicants(
+    db: Session,
+    *,
+    status: str | None = None,
+    search: str | None = None,
+    applied_from: date | None = None,
+    applied_to: date | None = None,
+    rank_by_score: bool = False,
+    include_invalid: bool = False,
+) -> int:
+    """Count applicants using the same filters as ``list_applicants``."""
+    stmt = select(func.count()).select_from(Applicant)
+    if status is not None:
+        if status not in VALID_STATUSES:
+            raise BadRequestError(f"Unknown status: {status}")
+        stmt = stmt.where(Applicant.status == status)
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        stmt = stmt.where(
+            or_(
+                Applicant.first_name.ilike(pattern),
+                Applicant.last_name.ilike(pattern),
+                (Applicant.first_name + " " + Applicant.last_name).ilike(pattern),
+            )
+        )
+    if applied_from is not None:
+        stmt = stmt.where(Applicant.applied_on >= applied_from)
+    if applied_to is not None:
+        stmt = stmt.where(Applicant.applied_on <= applied_to)
+    if rank_by_score and not include_invalid:
+        stmt = stmt.where(Applicant.assessment_valid.is_not(False))
+    return int(db.scalar(stmt) or 0)
 
 
 def get_applicant(db: Session, *, applicant_id: UUID) -> Applicant:
@@ -240,13 +350,11 @@ def active_intake_choices(db: Session, *, tenant_id: UUID) -> list[dict[str, obj
         select(Cohort, Track)
         .join(
             CohortTrack,
-            (CohortTrack.tenant_id == Cohort.tenant_id)
-            & (CohortTrack.cohort_id == Cohort.id),
+            (CohortTrack.tenant_id == Cohort.tenant_id) & (CohortTrack.cohort_id == Cohort.id),
         )
         .join(
             Track,
-            (Track.tenant_id == CohortTrack.tenant_id)
-            & (Track.id == CohortTrack.track_id),
+            (Track.tenant_id == CohortTrack.tenant_id) & (Track.id == CohortTrack.track_id),
         )
         .where(Cohort.tenant_id == tenant_id)
         .where(Cohort.status == "active")
@@ -279,13 +387,11 @@ def _active_intake_track(
         select(Track)
         .join(
             CohortTrack,
-            (CohortTrack.tenant_id == Track.tenant_id)
-            & (CohortTrack.track_id == Track.id),
+            (CohortTrack.tenant_id == Track.tenant_id) & (CohortTrack.track_id == Track.id),
         )
         .join(
             Cohort,
-            (Cohort.tenant_id == CohortTrack.tenant_id)
-            & (Cohort.id == CohortTrack.cohort_id),
+            (Cohort.tenant_id == CohortTrack.tenant_id) & (Cohort.id == CohortTrack.cohort_id),
         )
         .where(Track.tenant_id == tenant_id)
         .where(Track.id == track_id)
@@ -318,9 +424,7 @@ def assign_applicant_intake(
     reason: str | None = None,
 ) -> Applicant:
     """Assign the canonical cohort/track pair and audit the correction."""
-    applicant = db.scalars(
-        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
-    ).first()
+    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
     if applicant is None:
         raise NotFoundError("Applicant not found.")
     track = _active_intake_track(
@@ -375,7 +479,8 @@ def admin_review_actions(
     if applicant.assessment_taken_at is not None or applicant.assessment_started_at is not None:
         actions.append("reset_assessment")
     elif applicant.assessment_token_hash is not None:
-        actions.append("reinvite_assessment")
+        actions.append("resend_invitation")
+        actions.append("extend_access")
     return [
         {
             "key": action,
@@ -403,6 +508,8 @@ def applicant_transition_history(db: Session, *, applicant: Applicant) -> list:
                         "applicant.transition_baseline",
                         "applicant.assessment_reset",
                         "applicant.assessment_reinvite",
+                        "applicant.invitation_resent",
+                        "applicant.access_extended",
                         "applicant.intake_assigned",
                     )
                 )
@@ -410,6 +517,101 @@ def applicant_transition_history(db: Session, *, applicant: Applicant) -> list:
             .order_by(AuditEvent.created_at.desc())
         ).all()
     )
+
+
+def resend_applicant_invitation(
+    db: Session,
+    *,
+    applicant_id: UUID,
+    actor_person_id: UUID,
+    base_url: str,
+    extend_access: bool = False,
+    reason: str | None = None,
+) -> Applicant:
+    """Resend an external applicant's current invitation through existing services.
+
+    For applicants who have not completed the entrance assessment, the entrance
+    assessment invitation is the active access artifact. Reissuing it replaces
+    the stored token hash, so older links stop resolving and audit history stays
+    append-only.
+    """
+    from app.services import entrance_exam
+
+    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
+    if applicant.assessment_taken_at is not None:
+        raise BadRequestError("This applicant has already completed the assessment.")
+    if not entrance_exam.has_entrance_exam(db, applicant=applicant):
+        raise BadRequestError("No entrance assessment is configured for this applicant.")
+
+    previous_deadline = applicant.assessment_deadline
+    should_extend = extend_access or previous_deadline is None or entrance_exam.past_deadline(applicant)
+    if should_extend:
+        entrance_exam.invite(db, applicant=applicant, base_url=base_url)
+    else:
+        from urllib.parse import quote
+
+        from app.services import applicant_email
+
+        raw = entrance_exam.issue_token(db, applicant=applicant)
+        applicant_email.send_exam_invite(
+            db,
+            applicant=applicant,
+            url=f"{base_url.rstrip("/")}/apply/assessment?token={quote(raw)}",
+            minutes=entrance_exam.time_limit_minutes(db, applicant=applicant),
+        )
+    write_audit_event(
+        db,
+        tenant_id=applicant.tenant_id,
+        actor_person_id=actor_person_id,
+        action="applicant.invitation_resent",
+        entity_type="applicant",
+        entity_id=str(applicant.id),
+        details={
+            "reason": reason or "",
+            "source": "admin_web",
+            "extended_access": bool(should_extend),
+            "previous_assessment_deadline": previous_deadline.isoformat() if previous_deadline else "",
+            "assessment_deadline": applicant.assessment_deadline.isoformat() if applicant.assessment_deadline else "",
+        },
+    )
+    return applicant
+
+
+def extend_applicant_access(
+    db: Session,
+    *,
+    applicant_id: UUID,
+    actor_person_id: UUID,
+    reason: str | None = None,
+) -> Applicant:
+    """Extend an uncompleted applicant assessment without changing completed work."""
+    from app.services import entrance_exam
+
+    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
+    if applicant.assessment_taken_at is not None:
+        raise BadRequestError("This applicant has already completed the assessment.")
+    previous = applicant.assessment_deadline
+    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=entrance_exam.DEFAULT_DEADLINE_DAYS)
+    db.flush()
+    write_audit_event(
+        db,
+        tenant_id=applicant.tenant_id,
+        actor_person_id=actor_person_id,
+        action="applicant.access_extended",
+        entity_type="applicant",
+        entity_id=str(applicant.id),
+        details={
+            "reason": reason or "",
+            "source": "admin_web",
+            "previous_assessment_deadline": previous.isoformat() if previous else "",
+            "assessment_deadline": applicant.assessment_deadline.isoformat() if applicant.assessment_deadline else "",
+        },
+    )
+    return applicant
 
 
 def apply_admin_review_action(
@@ -422,9 +624,7 @@ def apply_admin_review_action(
     reason: str | None = None,
 ) -> Applicant:
     """Canonical writer for all applicant-detail actions."""
-    applicant = db.scalars(
-        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
-    ).first()
+    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
     if applicant is None:
         raise NotFoundError("Applicant not found.")
     eligible = {
@@ -436,6 +636,24 @@ def apply_admin_review_action(
     }
     if action not in eligible:
         raise BadRequestError("That action is not available for the applicant's current state.")
+
+    if action == "resend_invitation":
+        return resend_applicant_invitation(
+            db,
+            applicant_id=applicant_id,
+            actor_person_id=actor_person_id,
+            base_url=base_url,
+            extend_access=False,
+            reason=reason,
+        )
+
+    if action == "extend_access":
+        return extend_applicant_access(
+            db,
+            applicant_id=applicant_id,
+            actor_person_id=actor_person_id,
+            reason=reason,
+        )
 
     if action == "reset_assessment":
         from app.services import entrance_exam
@@ -517,9 +735,7 @@ def transition_applicant(
     if to_status not in VALID_STATUSES:
         raise BadRequestError(f"Unknown status: {to_status}")
 
-    applicant = db.scalars(
-        select(Applicant).where(Applicant.id == applicant_id).with_for_update()
-    ).first()
+    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
     if applicant is None:
         raise NotFoundError("Applicant not found.")
     current = applicant.status
@@ -531,9 +747,7 @@ def transition_applicant(
         db,
         applicant=applicant,
     ):
-        raise BadRequestError(
-            "Assign an active cohort and canonical training track before accepting this applicant."
-        )
+        raise BadRequestError("Assign an active cohort and canonical training track before accepting this applicant.")
 
     applicant.status = to_status
     if notes:

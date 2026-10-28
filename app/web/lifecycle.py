@@ -20,20 +20,13 @@ from app.services import lifecycle
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, ConflictError
 from app.services.security import hash_token
+from app.ui import UI_STYLESHEET_URL, UI_THEME, UI_THEME_ATTRIBUTE
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 # Shared CSRF snippet so htmx form POSTs carry the double-submit token.
-_THEME_BOOTSTRAP_JS = (
-    "<script>(function(){try{var k='dotmac:theme',t=localStorage.getItem(k);"
-    "if(t!=='light'&&t!=='dark'){t=window.matchMedia&&window.matchMedia("
-    "'(prefers-color-scheme: dark)').matches?'dark':'light';}"
-    "document.documentElement.dataset.theme=t;}catch(e){"
-    "document.documentElement.dataset.theme='light';}})();</script>"
-)
-
 _CSRF_JS = (
     "<script>document.body.addEventListener('htmx:configRequest',function(e){"
     "var m=document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);"
@@ -43,9 +36,10 @@ _CSRF_JS = (
 
 def _page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f"<!doctype html><html lang=en {UI_THEME_ATTRIBUTE}='{UI_THEME}'><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title>{_THEME_BOOTSTRAP_JS}<link rel=stylesheet href='/static/app.css?v=7'>"
+        f"<title>{title}</title><link rel=stylesheet href='{UI_STYLESHEET_URL}'>"
+        f"<link rel=stylesheet href='/static/app.css?v=2'>"
         f"<script src='/static/htmx.min.js' defer></script></head>"
         f"<body class='min-h-screen bg-sand-100 text-ink'>"
         f"<main class='mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12'>"
@@ -101,7 +95,11 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
                 text_body=f"Reset your password: {link}\n",
             )
         except Exception as exc:
-            logger.debug("password-reset email send failed: %s", exc)
+            logger.warning(
+                "password-reset outbox enqueue failed for tenant %s (%s)",
+                tenant.id,
+                type(exc).__name__,
+            )
     # Identical response whether or not the email exists (anti-enumeration).
     return HTMLResponse(
         "<div class='rounded-lg bg-brand-100 p-4 text-brand-800'>"

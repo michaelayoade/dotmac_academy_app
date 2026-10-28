@@ -20,7 +20,9 @@ without improving the single-Academy product.
 
 The application has exactly one configured Academy tenant in production.
 
-- `ACADEMY_TENANT_SLUG` names the only tenant host the resolver may accept.
+- `TENANCY=single` declares the topology. The kernel startup assertion requires
+  exactly one tenant row and binds that database-owned slug; configuration does
+  not carry a second copy of the tenant identity.
 - Tenant provisioning is offline through the bootstrap command. There is no
   request-path `/platform/tenants` control plane.
 - There is no public `/auth/register`. Academy admins invite accounts; accepted
@@ -79,12 +81,26 @@ placement.
 
 ## Operational consequences
 
-- Production startup fails if the Academy slug, host restrictions, secrets,
+- Production startup fails if single-tenancy, host restrictions, secrets,
   CSRF, or rate limiting are not configured safely.
 - `academy-email-outbox.timer` must be enabled anywhere email is expected.
   Failed rows retain sanitized error classes and can be requeued without
   exposing message tokens in CLI output.
-- Browser responses include CSP, clickjacking, MIME-sniffing, referrer,
-  permissions, cross-origin, and production HSTS headers.
+- The kernel-owned security middleware writes CSP, clickjacking, MIME-sniffing,
+  referrer, permissions, HTTPS HSTS, and the Academy-declared COOP/CORP policy
+  from kernel a38's `ProductSecurityPolicy` contract.
 - The remaining cross-tenant tests are deliberate database isolation canaries,
   not a statement that the product currently supports multiple tenants.
+
+## Amendment — 2026-09-11: production dependencies have one checked-in profile
+
+Academy's checked-in systemd processes use the repository-local `.venv`.
+`deploy/install.sh` is the authoritative supported operator recipe for
+building that environment: it resolves Poetry from the operator's `PATH`,
+requires Poetry 2.4.1, and synchronizes only the resolved `main` dependency
+group.
+
+The recipe owns dependency installation only. Migrations, service restarts,
+environment binding, and secret materialization remain separately authorized
+deployment operations. CI's broader dependency installation is test tooling,
+not evidence of what production installs.

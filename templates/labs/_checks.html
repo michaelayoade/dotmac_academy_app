@@ -18,8 +18,15 @@
       <span class="mt-0.5 inline-flex items-center rounded-full bg-clay-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-clay-600">fail</span>
       {% endif %}
       <div class="min-w-0">
-        <p class="font-mono text-sm text-ink">{{ item.id }}</p>
-        <p class="mt-0.5 text-sm text-ink-soft">actual: <span class="font-mono">{{ item.actual }}</span>; expected: <span class="font-mono">{{ item.expected }}</span></p>
+        <p class="text-sm font-medium text-ink">{{ item.label or item.id }}</p>
+        {% if item.detail %}
+        <p class="mt-0.5 text-sm text-ink-soft">{{ item.detail }}</p>
+        {% else %}
+        <p class="mt-0.5 text-sm text-ink-soft">actual: <span class="font-mono">{{ item.actual if item.actual is not none else "not readable" }}</span>; expected: <span class="font-mono">{{ item.expected }}</span></p>
+        {% endif %}
+        {% if item.hint %}
+        <p class="mt-1 text-sm text-brand-800">{{ item.hint }}</p>
+        {% endif %}
       </div>
     </li>
   {% endfor %}

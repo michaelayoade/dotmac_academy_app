@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
+from sqlalchemy import select
+
+from app.models.auth import AuthSession, UserCredential
 from app.models.person import Person
 from app.services.security import hash_password
 
@@ -77,7 +79,7 @@ def test_password_wrong_current_rejected(app_client, admin_session, tenant_a):
 
 
 def test_password_change_success(app_client, admin_session, tenant_a):
-    _p, h, csrf = _login(app_client, admin_session, tenant_a)
+    person, h, csrf = _login(app_client, admin_session, tenant_a)
 
     r = app_client.post(
         "/account/password",
@@ -90,6 +92,13 @@ def test_password_change_success(app_client, admin_session, tenant_a):
     )
     assert r.status_code == 200
     assert "updated" in r.text.lower() or "success" in r.text.lower()
+
+    admin_session.rollback()
+    sessions = admin_session.scalars(
+        select(AuthSession).where(AuthSession.tenant_id == tenant_a.id).where(AuthSession.person_id == person.id)
+    ).all()
+    assert sessions and all(session.revoked_at is not None for session in sessions)
+    assert app_client.get("/account", headers=h, follow_redirects=False).status_code == 303
 
     # New password works; old does not.
     assert _can_login(app_client, h, csrf, "brandnew2") is True

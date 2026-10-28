@@ -1,0 +1,13 @@
+[Unit]
+Description=Dotmac Academy staff training report to HR (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dotmac
+WorkingDirectory=/home/dotmac/projects/dotmac_academy_app
+EnvironmentFile=/home/dotmac/projects/dotmac_academy_app/.env
+# Recipients are an operational fact, not a code fact: override ACADEMY_HR_RECIPIENTS
+# in .env rather than editing this unit.
+ExecStart=/bin/sh -c '/home/dotmac/projects/dotmac_academy_app/.venv/bin/python -m app.cli hr-report --to "${ACADEMY_HR_RECIPIENTS:-hr@dotmac.ng}"'

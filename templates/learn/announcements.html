@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Announcements — {{ branding_name | default("Technical Academy") }}{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Announcements</h1>
+<p class="page-eyebrow">{{ branding_name | default("Technical Academy") }}</p>
+<h1 class="page-title">Announcements</h1>
 
 {% if announcements %}
 <div class="mt-8 space-y-6">

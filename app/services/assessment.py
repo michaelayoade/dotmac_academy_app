@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import Activity, Question, Score, Submission
 from app.models.person import Person
-from app.services import learning_events
-from app.services.exceptions import ConflictError
+from app.services import attempt_policy, learning_events
+from app.services.exceptions import BadRequestError, ConflictError
 from app.services.grading import grade_submission
 
 logger = logging.getLogger(__name__)
@@ -39,17 +39,31 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
 
     only_ext_ids (a randomized attempt's question subset) restricts grading to
     exactly those questions; None grades the whole bank.
+
+    Question-graded activities only. A lab carries no question bank, so grading
+    one here yields an empty 0/0 fail with no per-item feedback — a permanent
+    failed attempt the learner cannot interpret or appeal. Labs are graded
+    against their live instance by ``lab_lifecycle.grade``, which is the sole
+    writer of a lab Score.
     """
+    if activity.type != "mcq_test":
+        raise BadRequestError(
+            f"{activity.type!r} activities are not graded here; use the lab workspace to submit this activity."
+        )
     person = db.scalars(
         select(Person)
         .where(Person.tenant_id == tenant_id)
         .where(Person.id == person_id)
-        .with_for_update()
+        # Serialize admission while permitting People foreign-key KEY SHARE
+        # checks from a writer already holding the completion aggregate lock.
+        .with_for_update(key_share=True, read=False)
     ).first()
     if person is None:
         raise ConflictError("Learner account no longer exists.")
     used = attempts_used(db, tenant_id=tenant_id, person_id=person_id, activity_id=activity.id)
-    if activity.max_attempts is not None and used >= activity.max_attempts:
+    if attempt_policy.for_learner(
+        db, tenant_id=tenant_id, person_id=person_id, activity=activity, used=used
+    ).exhausted:
         raise ConflictError("No attempts remaining.")
     qs = _questions_for(db, tenant_id, activity.bank_id, only_ext_ids) if activity.bank_id else []
     prev = db.scalar(select(func.coalesce(func.max(Submission.attempt_no), 0))
@@ -124,7 +138,9 @@ def attempts_used(db: Session, *, tenant_id, person_id, activity_id) -> int:
     ) or 0)
 
 
-def reveal_feedback(activity: Activity, *, passed: bool, attempts_used: int) -> bool:
+def reveal_feedback(
+    activity: Activity, *, passed: bool, attempts_used: int, attempts_granted: int = 0
+) -> bool:
     """Whether to show per-question feedback (correct/incorrect, explanations,
     expected answers) for this activity, given the learner's current state.
 
@@ -141,7 +157,12 @@ def reveal_feedback(activity: Activity, *, passed: bool, attempts_used: int) -> 
     if mode == "exam":
         return False
     # graded
-    exhausted = activity.max_attempts is not None and attempts_used >= activity.max_attempts
+    # Granted attempts move this: revealing the key at the old limit and *then*
+    # granting a retake hands the learner the answers to the attempt they are
+    # about to sit.
+    exhausted = attempt_policy.entitlement(
+        activity, used=attempts_used, granted=attempts_granted
+    ).exhausted
     return passed or exhausted
 
 

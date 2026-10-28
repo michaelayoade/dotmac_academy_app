@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import html
 from itertools import groupby
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.person import Person
 from app.services import announcements as ann_svc
-from app.services import learning_events
+from app.services import learning_events, management_inquiries
 from app.services.agenda import upcoming_for_person
 from app.services.catalog import (
     all_courses,
@@ -28,6 +29,7 @@ from app.services.catalog import (
 from app.services.entitlements import course_access_states, open_course_ids
 from app.services.localtime import to_local
 from app.services.roles import role_slugs
+from app.services.settings_store import effective
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
@@ -55,7 +57,12 @@ def courses_list(
         tech = [i for i in listed if i["course"].discipline != "management"]
         return templates.TemplateResponse(
             request, "public/courses.html",
-            {"courses": listed, "tech": tech, "mgmt": mgmt},
+            {
+                "courses": listed,
+                "tech": tech,
+                "mgmt": mgmt,
+                "management_contact_email": effective(db).management_inquiry_recipient,
+            },
         )
     staff = _is_staff(db, tenant.id, person.id)
 
@@ -87,6 +94,70 @@ def courses_list(
             "all_courses": all_,
             "is_staff": staff,
         },
+    )
+
+
+@router.get("/management-enrollment", response_class=HTMLResponse)
+def management_enrollment_form(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    tenant = require_tenant(request)
+    listed = public_catalog(db, tenant_id=tenant.id)
+    mgmt = [i for i in listed if i["course"].discipline == "management"]
+    return templates.TemplateResponse(
+        request,
+        "public/management_enrollment.html",
+        {
+            "request": request,
+            "mgmt": mgmt,
+            "management_contact_email": effective(db).management_inquiry_recipient,
+        },
+    )
+
+
+@router.post("/management-enrollment", response_class=HTMLResponse)
+def submit_management_enrollment(
+    request: Request,
+    first_name: str = Form(...),
+    last_name: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(default=""),
+    learner_type: str = Form(default=""),
+    course_interest: str = Form(default=""),
+    message: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    tenant = require_tenant(request)
+    queued = management_inquiries.queue_management_inquiry(
+        db,
+        tenant_id=tenant.id,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        learner_type=learner_type,
+        course_interest=course_interest,
+        message=message,
+    )
+    result_id = 'id="management-enrollment-result"'
+    if queued:
+        result_class = 'class="mt-6 rounded-lg border border-brand-200 bg-brand-50 p-6"'
+        return HTMLResponse(
+            f'<div {result_id} {result_class} role="status">'
+            '<h2 class="font-display text-xl font-[560] text-ink">Inquiry received</h2>'
+            '<p class="mt-2 text-sm text-ink-soft">'
+            'Thanks. We will review your management-course request and reply by email.'
+            '</p>'
+            '</div>'
+        )
+    contact_email = html.escape(str(effective(db).management_inquiry_recipient), quote=True)
+    result_class = 'class="mt-6 rounded-lg border border-clay-500/30 bg-clay-500/10 p-6"'
+    return HTMLResponse(
+        f'<div {result_id} {result_class} role="status">'
+        '<h2 class="font-display text-xl font-[560] text-ink">Inquiry not sent</h2>'
+        f'<p class="mt-2 text-sm text-ink-soft">Please email {contact_email} and we will help you enroll.</p>'
+        '</div>'
     )
 
 

@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -50,7 +51,23 @@ APPLICANT_STATUSES = (
 class Applicant(Base, TimestampMixin):
     __tablename__ = "applicants"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "email", name="uq_applicants_tenant_email"),
+        # Public/local intake remains one row per email. ERP-originated rows are
+        # one row per external application so the same person may apply for two
+        # jobs without sharing a sitting or result between them.
+        Index(
+            "uq_applicants_tenant_local_email",
+            "tenant_id",
+            "email",
+            unique=True,
+            postgresql_where=text("external_ref IS NULL"),
+        ),
+        Index(
+            "uq_applicants_tenant_external_ref",
+            "tenant_id",
+            "external_ref",
+            unique=True,
+            postgresql_where=text("external_ref IS NOT NULL"),
+        ),
         Index("ix_applicants_status", "tenant_id", "status"),
         # Parallels the other tables' (tenant_id, id) unique so future children
         # can reference an applicant via a tenant-consistent composite FK.
@@ -59,6 +76,11 @@ class Applicant(Base, TimestampMixin):
             ["tenant_id", "cohort_id", "track_id"],
             ["cohort_tracks.tenant_id", "cohort_tracks.cohort_id", "cohort_tracks.track_id"],
             name="fk_applicants_tenant_cohort_track",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "assessment_bank_id"],
+            ["question_banks.tenant_id", "question_banks.id"],
+            name="fk_applicants_tenant_assessment_bank",
         ),
     )
 
@@ -106,6 +128,17 @@ class Applicant(Base, TimestampMixin):
     assessment_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     assessment_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     assessment_taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A per-application bank snapshot/override. Null retains the historical
+    # cohort -> tenant fallback for ordinary Academy intake.
+    assessment_bank_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    # Validated browser destination supplied by the ERP. It is navigational
+    # only; authoritative result delivery is the signed server webhook.
+    assessment_return_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Durable state-derived webhook queue marker and monotonic result revision.
+    assessment_erp_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assessment_result_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     # HMAC of the self-serve entrance-exam access token (the raw is emailed once).
     assessment_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Timed sitting: server-stamped when explicitly started. All duration and

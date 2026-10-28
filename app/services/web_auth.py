@@ -10,13 +10,14 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.auth import AuthSession, UserCredential
 from app.models.person import Person
 from app.models.rbac import PersonRole, Role
+from app.services.identity import normalize_email, sync_credential_emails
 from app.services.security import hash_token, issue_access_token, verify_password
 
 COOKIE = "session"
@@ -32,14 +33,19 @@ def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Per
     failed attempt, allowing the request transaction to commit the counter.
     """
     now = datetime.now(UTC)
-    cred = db.scalars(
-        select(UserCredential)
+    row = db.execute(
+        select(UserCredential, Person)
+        .join(
+            Person,
+            (Person.tenant_id == UserCredential.tenant_id) & (Person.id == UserCredential.person_id),
+        )
         .where(UserCredential.tenant_id == tenant_id)
-        .where(UserCredential.email == email)
-        .with_for_update()
+        .where(func.lower(func.btrim(Person.email)) == normalize_email(email))
+        .with_for_update(of=UserCredential)
     ).first()
-    if cred is None:
+    if row is None:
         return None
+    cred, person = row
     if cred.locked_until is not None and cred.locked_until > now:
         return None
     if not verify_password(password, cred.password_hash):
@@ -50,10 +56,9 @@ def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Per
         return None
     cred.failed_login_attempts = 0
     cred.locked_until = None
+    sync_credential_emails(db, person=person)
     db.flush()
-    person = db.scalars(select(Person).where(Person.id == cred.person_id)
-                        .where(Person.tenant_id == tenant_id)).first()
-    if person is None or person.status != "active":
+    if person.status != "active":
         return None  # suspended accounts cannot authenticate
     return person
 
@@ -101,8 +106,9 @@ def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person |
     ).first()
     if session is None:
         return None
-    person = db.scalars(select(Person).where(Person.id == session.person_id)
-                        .where(Person.tenant_id == tenant_id)).first()
+    person = db.scalars(
+        select(Person).where(Person.id == session.person_id).where(Person.tenant_id == tenant_id)
+    ).first()
     if person is None or person.status != "active":
         return None  # suspended mid-session → treated as logged out
     return person

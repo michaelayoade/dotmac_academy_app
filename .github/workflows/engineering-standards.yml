@@ -1,0 +1,57 @@
+name: Engineering standards
+
+# Academy's adoption of the Governance-owned conformance engine
+# (dotmac_governance ADR 0006), at profile schema version 9, which includes the
+# accepted external-connector-surface ratchet (dotmac_governance ADR 0011).
+#
+# The exact pin is repeated in the environment, action ref and profile because
+# GitHub does not allow an expression in `uses:`. The preflight below is the one
+# owner of their equality and refuses moving refs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+env:
+  # The one pin, mirrored into `uses:` below because GitHub forbids an
+  # expression in `uses:`. scripts/check_governance_pin.py owns the rule that
+  # keeps this value, that ref, and the profile's revision identical, and
+  # tests/architecture/test_engineering_standards_adoption.py proves it bites.
+  GOVERNANCE_REF: "4f6fbf98c25f7cfbb3dacc4f3d2f5fd7e473f193"
+
+jobs:
+  pin-preflight:
+    name: Governance pin is a real approved revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the evaluated product revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Runs before the standards job so the failure a reviewer reads names the
+      # missing approval, rather than GitHub's opaque "unable to resolve action".
+      # Standard library only: no install step can be trusted to run before the
+      # gate that decides whether this adoption is armed at all.
+      - name: Refuse a placeholder or moving Governance pin
+        run: python3 scripts/check_governance_pin.py
+
+  standards:
+    name: Dotmac engineering standards
+    needs: [pin-preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the evaluated product revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keep in step with GOVERNANCE_REF above and governance_model.revision in
+      # .dotmac/standards-profile.json.
+      - name: Enforce the accepted Dotmac engineering standards
+        uses: michaelayoade/dotmac_governance/.github/actions/standards-check@4f6fbf98c25f7cfbb3dacc4f3d2f5fd7e473f193
+        with:
+          default-branch: ${{ github.event.repository.default_branch }}

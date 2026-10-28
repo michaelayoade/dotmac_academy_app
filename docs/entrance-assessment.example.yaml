@@ -8,6 +8,37 @@
 # `category` (skill domain) is separate from `rubric_category` (cognitive level:
 # recall / application / analysis) — set both.
 #
+# WRITING THE DISTRACTORS — this is a scoring requirement, not a style note.
+#
+# The wrong options must be the same *shape* as the right one. The natural way
+# to write a question is to make the answer the careful full sentence and the
+# three distractors short dismissals — and a candidate can then score highly by
+# picking the longest option in every question without reading anything.
+#
+# That breaks admissions specifically. `check_validity` in
+# app/services/entrance_exam.py rejects a sitting at or below 1/3 as
+# `near_chance`, on the stated basis that "with 4 options the guessing baseline
+# is 25%". That is only true while the options are balanced. On a bank where the
+# answer is reliably the longest string, the real guessing baseline is ~90%: the
+# validity gate passes the guesser, and they enter the ranking as a strong
+# candidate.
+#
+# `lint_bank` enforces this. The answer may be the strictly longest — or
+# strictly shortest — option in at most 40% of single-answer questions, and
+# correct options must average 0.77x-1.30x the length of their distractors.
+# `load-banks` SKIPS a bank that fails, printing the reason; it does not abort,
+# so read the output.
+#
+# Practical rules while authoring:
+#   - Keep all four options within a few words of each other.
+#   - Make every distractor a thing a plausible candidate might actually believe.
+#     "The billing system" for a cable fault is free marks.
+#   - Vary which option is longest. Roughly a quarter of answers should be the
+#     longest, a quarter the shortest, the rest in between.
+#   - Under five comparable questions the lint check does not run at all, so a
+#     short sample bank tells you nothing. Write the real bank long enough to
+#     be measured (30 questions is the assumed length in the validity gate).
+#
 # To use a real bank:
 #   1. Create an "intake" course (any slug), e.g. via the CLI/bootstrap.
 #   2. Load the bank:   python -m app.cli load-banks --tenant-slug <t> --banks-dir <dir>
@@ -18,7 +49,7 @@ bank:
   course: intake            # slug of the course the bank is loaded into
   kind: entrance
   chapter: null
-  version: 1
+  version: 2
   questions:
     - id: num1
       stem: "A drum holds 500 m of fibre. After 3 pulls of 120 m each, how much is left?"
@@ -27,35 +58,115 @@ bank:
       correct: ["140 m"]
       rubric_category: application
       category: numeracy
-      explanation: "500 − 3×120 = 140."
+      explanation: "500 − 3×120 = 140. The distractors are the results of the three most likely arithmetic slips."
+      weight: 1
+
+    - id: num2
+      stem: "A splice tray holds 12 fibres. You have 74 fibres to house. How many trays do you need?"
+      type: single
+      options: ["7 trays", "6 trays", "8 trays", "9 trays"]
+      correct: ["7 trays"]
+      rubric_category: application
+      category: numeracy
+      explanation: "74 ÷ 12 = 6.17, and a part-full tray is still a tray, so 7. Six is the error of rounding down."
+      weight: 1
+
+    - id: num3
+      stem: "A job is quoted at 6 hours for 2 technicians. At the same rate, how long for 3 technicians?"
+      type: single
+      options: ["4 hours", "3 hours", "9 hours", "6 hours"]
+      correct: ["4 hours"]
+      rubric_category: application
+      category: numeracy
+      explanation: "12 technician-hours ÷ 3 = 4. Three hours halves it wrongly; nine multiplies instead of dividing."
       weight: 1
 
     - id: read1
       stem: "A work order says 'terminate at the ODP, then test both directions'. What must you do after terminating?"
       type: single
-      options: ["Nothing further", "Test in both directions", "Only test upstream", "Return the ODP"]
+      options: ["Test in both directions", "Nothing further is required", "Test the upstream side only", "Return the ODP to stores"]
       correct: ["Test in both directions"]
       rubric_category: recall
       category: reading
-      explanation: "Following written instructions."
+      explanation: "Following a written instruction exactly. Each distractor is a partial or inverted reading of the same line."
+      weight: 1
+
+    - id: read2
+      stem: "The instruction reads: 'Do not energise the link until the customer has signed the handover.' The customer is out and has not signed. What do you do?"
+      type: single
+      options: ["Leave the link unenergised", "Energise it and get the signature later", "Energise it if the work all tested clean", "Ask a neighbour to sign on their behalf"]
+      correct: ["Leave the link unenergised"]
+      rubric_category: recall
+      category: reading
+      explanation: "A precondition is not a preference. The distractors are the three usual ways people talk themselves past one."
       weight: 1
 
     - id: safe1
       stem: "You must work at height on a pole. What do you check first?"
       type: single
-      options: ["The weather forecast", "Your fall-arrest harness and anchor", "Your phone battery", "The house number"]
+      options: ["Your fall-arrest harness and anchor", "The weather forecast for the day", "That your phone is fully charged", "The house number on the property"]
       correct: ["Your fall-arrest harness and anchor"]
+      rubric_category: recall
+      category: safety
+      explanation: "PPE and anchor before any work at height. Weather matters, but not before the harness."
+      weight: 1
+
+    - id: safe2
+      stem: "Halfway up a ladder you notice the footing has shifted on soft ground. What do you do?"
+      type: single
+      options: ["Come down and re-set the footing", "Finish quickly and come down", "Ask a colleague to hold it steady", "Shift your weight to the firm side"]
+      correct: ["Come down and re-set the footing"]
       rubric_category: application
       category: safety
-      explanation: "PPE and anchor before any work at height."
+      explanation: "Every distractor is a way of continuing to work on an unstable ladder, which is the thing that must not happen."
+      weight: 1
+
+    - id: safe3
+      stem: "A cable you are about to cut is not the one on your work order, but it looks disused. What do you do?"
+      type: single
+      options: ["Confirm it is dead before cutting", "Cut it, since it is clearly disused", "Trace it back later and cut now", "Cut it and label the ends clearly"]
+      correct: ["Confirm it is dead before cutting"]
+      rubric_category: application
+      category: safety
+      explanation: "'Looks disused' is an inference, not a test. The three distractors all cut first."
       weight: 1
 
     - id: reason1
-      stem: "Two homes on the same street report no service; a third is fine. The fault is most likely at…"
+      stem: "Two homes on the same street report no service; a third is fine. The fault is most likely at:"
       type: single
-      options: ["Each home's router", "A shared upstream point", "The third home", "The billing system"]
-      correct: ["A shared upstream point"]
+      options: ["A point shared by the two", "Each affected home's router", "The third home's connection", "The billing system's records"]
+      correct: ["A point shared by the two"]
       rubric_category: analysis
       category: reasoning
-      explanation: "A shared symptom points upstream of the common branch."
+      explanation: "A shared symptom points upstream of the common branch; the working third home bounds where."
+      weight: 1
+
+    - id: reason2
+      stem: "A link fails every afternoon and recovers overnight, with no work done on it. What does the pattern most suggest?"
+      type: single
+      options: ["Something that varies with the time of day", "A fibre break that has not been located", "A configuration error made at install", "A fault in the customer's own equipment"]
+      correct: ["Something that varies with the time of day"]
+      rubric_category: analysis
+      category: reasoning
+      explanation: "Heat and load both track the clock. A break would not heal itself overnight; a config error would not have a daily rhythm."
+      weight: 1
+
+    - id: reason3
+      stem: "You replaced a faulty module and the fault cleared. A week later it returns on the same link. What is the most reasonable conclusion?"
+      type: single
+      options: ["The module was a symptom, not the cause", "The replacement module was also faulty", "The link needs replacing along its length", "The fault is intermittent and will pass"]
+      correct: ["The module was a symptom, not the cause"]
+      rubric_category: analysis
+      category: reasoning
+      explanation: "Recurrence after a fix means the cause survived it. Two faulty modules in a row is possible but is the less likely reading."
+      weight: 1
+
+    - id: tech1
+      stem: "An optical power reading is far lower than expected on a newly spliced link. What is checked first?"
+      type: single
+      options: ["The splice and the connectors", "The customer's service plan", "The core count of the cable", "The length recorded on the drum"]
+      correct: ["The splice and the connectors"]
+      rubric_category: application
+      category: technical
+      explanation: "Loss on a new link starts at the joints you just made. No prior fibre knowledge is needed to reason to that."
       weight: 1

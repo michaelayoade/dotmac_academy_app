@@ -8,17 +8,17 @@ areas, a request path → its area, and an area → its sidebar items.
 from __future__ import annotations
 
 # Ordered top-level areas. `required` gates visibility:
-#   None        → always visible (Learn)
+#   None        → always visible (Learning)
 #   "instructor"→ instructor OR admin
 #   "admin"     → admin only
 AREAS: list[dict] = [
     {
         "key": "learn",
-        "label": "Learn",
-        "home": "/",
+        "label": "Learning",
+        "home": "/learn",
         "required": None,
         "sidebar": [
-            {"label": "Home", "path": "/"},
+            {"label": "Home", "path": "/learn"},
             {"label": "To-Do", "path": "/todo"},
             {"label": "Courses", "path": "/courses"},
             {"label": "Calendar", "path": "/calendar"},
@@ -67,8 +67,7 @@ def areas_for_roles(is_instructor: bool, is_admin: bool) -> list[dict]:
     for area in AREAS:
         required = area["required"]
         if required is None:
-            if not (is_instructor and not is_admin):
-                visible.append(area)
+            visible.append(area)
         elif required == "instructor" and (is_instructor or is_admin):
             visible.append(area)
         elif required == "admin" and is_admin:
@@ -85,7 +84,30 @@ def area_for_path(path: str) -> str:
     return "learn"
 
 
-def sidebar_for(area_key: str) -> list[dict]:
+def sidebar_for(
+    area_key: str,
+    *,
+    scoped_facilitator: bool = False,
+    has_cohort_scope: bool = True,
+) -> list[dict]:
     """Return the sidebar items for an area, or an empty list if unknown."""
     area = _BY_KEY.get(area_key)
-    return list(area["sidebar"]) if area else []
+    if area is None:
+        return []
+    items = list(area["sidebar"])
+    if area_key != "teaching" or not scoped_facilitator:
+        return items
+    excluded_paths = {
+        "/instructor/announcements",
+        "/success-queue",
+        "/instructor/labs",
+    }
+    if not has_cohort_scope:
+        excluded_paths.update(
+            {
+                "/instructor/cohorts",
+                "/instructor/reports",
+                "/instructor/gradebook",
+            }
+        )
+    return [item for item in items if item["path"] not in excluded_paths]

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block title %}Timetable — {{ cohort.name }} — Dotmac Academy{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Instructor</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Timetable</h1>
-<p class="mt-2 text-ink-soft">
+<p class="page-eyebrow">Instructor</p>
+<h1 class="page-title">Timetable</h1>
+<p class="page-intro">
   Class sessions for <span class="font-semibold text-ink">{{ cohort.name }}</span>.
   Scheduling a session moves a self-paced cohort to blended automatically.
 </p>
@@ -27,17 +28,17 @@
 <section class="card mt-6 p-5">
   <h2 class="text-lg">Scheduled sessions</h2>
   {% if sessions %}
-  <div class="mt-4 overflow-x-auto rounded-lg border border-sand-200">
-    <table class="min-w-full divide-y divide-sand-200 text-sm">
+  <div class="table-frame mt-4 rounded-lg border border-sand-200" role="region" aria-label="Scheduled sessions table; scroll horizontally to see all columns" tabindex="0">
+    <table class="data-table min-w-full divide-y divide-sand-200 text-sm">
       <thead class="bg-sand-100 text-left text-xs font-semibold uppercase tracking-wide text-ink-soft">
         <tr>
-          <th class="px-3 py-2">Session</th>
-          <th class="px-3 py-2">Type</th>
-          <th class="px-3 py-2">Starts</th>
-          <th class="px-3 py-2">Ends</th>
-          <th class="px-3 py-2">Where / join</th>
-          <th class="px-3 py-2">Status</th>
-          <th class="px-3 py-2"></th>
+          <th scope="col" class="px-3 py-2">Session</th>
+          <th scope="col" class="px-3 py-2">Type</th>
+          <th scope="col" class="px-3 py-2">Starts</th>
+          <th scope="col" class="px-3 py-2">Ends</th>
+          <th scope="col" class="px-3 py-2">Where / join</th>
+          <th scope="col" class="px-3 py-2">Status</th>
+          <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-sand-200 bg-white">

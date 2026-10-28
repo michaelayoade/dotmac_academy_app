@@ -1,28 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Courses — {{ branding_name | default("Dotmac Academy") }}</title>
   <meta name="description" content="The full Dotmac Academy catalog: technical training for network careers and management short courses for professionals — chaptered, assessed, certified.">
-  <script>
-    (function () {
-      try {
-        var key = "dotmac:theme";
-        var theme = window.localStorage.getItem(key);
-        if (theme !== "light" && theme !== "dark") {
-          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (e) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
-  </script>
   <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
-  <link rel="stylesheet" href="/static/public.css?v=3">
+  {% include "_dotmac_ui_head.html" %}
+  <link rel="stylesheet" href="/static/public.css?v=4">
 </head>
 <body class="pub">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <nav class="nav" aria-label="Main navigation">
     <div class="wrap">
@@ -48,7 +36,7 @@
     </div>
   </header>
 
-  <main class="section">
+  <main id="main-content" class="section">
     <div class="wrap">
 
       <div class="group-head" id="technical">
@@ -63,7 +51,7 @@
       </p>
       {% if tech %}
       <div class="row-wrap"><div class="row-nav"><button type="button" data-dir="-1" aria-label="Scroll back">&#8592;</button><button type="button" data-dir="1" aria-label="Scroll forward">&#8594;</button></div>
-      <div class="cards row-scroll">
+      <div class="cards row-scroll" role="region" aria-label="Technical courses; scroll horizontally for more" tabindex="0">
         {% for item in tech %}
         <article class="card">
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
@@ -84,12 +72,12 @@
       </div>
       <p class="group-note">
         Short, self-paced courses for supervisors, managers and professionals —
-        industry-neutral, five to six chapters each. Enrolment for teams and
-        individuals: <a href="mailto:fiberacademy@dotmac.ng" style="color:var(--g3);font-weight:700">fiberacademy@dotmac.ng</a>.
+        industry-neutral, five to six chapters each. Enrollment for teams and
+        individuals: <a href="mailto:{{ management_contact_email | default("fiberacademy@dotmac.ng") }}" style="color:var(--g3);font-weight:700">{{ management_contact_email | default("fiberacademy@dotmac.ng") }}</a>.
       </p>
       {% if mgmt %}
       <div class="row-wrap"><div class="row-nav"><button type="button" data-dir="-1" aria-label="Scroll back">&#8592;</button><button type="button" data-dir="1" aria-label="Scroll forward">&#8594;</button></div>
-      <div class="cards row-scroll">
+      <div class="cards row-scroll" role="region" aria-label="Management courses; scroll horizontally for more" tabindex="0">
         {% for item in mgmt %}
         <article class="card">
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
@@ -107,11 +95,11 @@
       <div class="cta" style="margin-top:64px">
         <div>
           <h2>Found your starting point?</h2>
-          <p>Technical: apply and sit the placement assessment. Management: write to us and we'll set up enrolment.</p>
+          <p>Technical: apply and sit the placement assessment. Management: write to us and we'll set up enrollment.</p>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <a href="/apply" class="btn btn-orange">Apply — Technical</a>
-          <a href="mailto:fiberacademy@dotmac.ng" class="btn btn-mint">Enrol — Management</a>
+          <a href="/management-enrollment" class="btn btn-mint">Enroll — Management</a>
         </div>
       </div>
     </div>
@@ -129,7 +117,7 @@
   document.querySelectorAll('.row-wrap').forEach(function(w){
     var row=w.querySelector('.row-scroll');
     w.querySelectorAll('.row-nav button').forEach(function(b){
-      b.onclick=function(){row.scrollBy({left:(row.clientWidth*0.9)*parseInt(b.dataset.dir),behavior:'smooth'});};
+      b.onclick=function(){var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;row.scrollBy({left:(row.clientWidth*0.9)*parseInt(b.dataset.dir),behavior:reduce?'auto':'smooth'});};
     });
   });
 })();
