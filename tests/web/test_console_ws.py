@@ -12,7 +12,10 @@ URL, not that bytes were shuttled to a live terminal.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
+from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
 from app.models.assessment import Activity
@@ -23,6 +26,7 @@ from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.services.security import hash_password
+from app.web.labs import _console_target
 
 
 def _entitled_activity(admin_session, tenant, person_id):
@@ -66,15 +70,20 @@ def _login(app_client, email: str) -> None:
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
 
 
-def _seed_instance(admin_session, tenant, person_id) -> LabInstance:
+def _seed_instance(
+    admin_session, tenant, person_id, *, status="active", runtime_presence="present",
+    error=None, name="dal-x", consoles=None, activity_id=None,
+) -> LabInstance:
     li = LabInstance(
         tenant_id=tenant.id,
-        activity_id=_entitled_activity(admin_session, tenant, person_id),
+        activity_id=activity_id or _entitled_activity(admin_session, tenant, person_id),
         person_id=person_id,
-        instance_name="dal-x",
+        instance_name=name,
         seed={"o": 5},
-        status="active",
-        consoles={"r1": {"kind": "linux", "port": 9001}},
+        status=status,
+        runtime_presence=runtime_presence,
+        error=error,
+        consoles={"r1": {"kind": "linux", "port": 9001}} if consoles is None else consoles,
     )
     admin_session.add(li)
     admin_session.commit()
@@ -157,3 +166,87 @@ def test_owner_ws_passes_gate(app_client, admin_session, tenant_a, monkeypatch):
         assert ws.receive_text() == "ok"
 
     assert captured["url"] == f"ws://127.0.0.1:9001/labs/instances/{li.id}/console/r1/ws"
+
+
+# --- non-live instances must never reach a console (security hotfix) --------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "reaped", "runtime_presence": "absent"},
+        {"status": "reaped"},
+        {"status": "error", "error": "boom"},
+        {"status": "active", "error": "boom"},
+        {"status": "active", "runtime_presence": "absent"},
+        {"status": "active", "runtime_presence": "unknown"},
+        {"status": "active", "runtime_presence": "present", "error": "uncertain runtime"},
+        {"status": "resetting"},
+    ],
+)
+def test_non_live_instance_ws_rejected(app_client, admin_session, tenant_a, monkeypatch, kwargs):
+    p = _make_person(admin_session, tenant_a, "nl@a.edu")
+    li = _seed_instance(admin_session, tenant_a, p.id, **kwargs)
+    _login(app_client, "nl@a.edu")
+
+    async def _must_not_pump(websocket, upstream_url):  # pragma: no cover - failure path
+        raise AssertionError(f"pumped a non-live instance to {upstream_url}")
+
+    monkeypatch.setattr("app.web.labs._proxy_ws", _must_not_pump)
+
+    with pytest.raises(WebSocketDisconnect) as ei:
+        with app_client.websocket_connect(_ws_url(li), headers=H) as ws:
+            ws.receive_text()
+    assert ei.value.code == 1008
+
+
+def test_reaped_instance_ws_cannot_reach_port_now_owned_by_another_instance(
+    app_client, admin_session, tenant_a, monkeypatch
+):
+    attacker = _make_person(admin_session, tenant_a, "attacker@a.edu")
+    victim = _make_person(admin_session, tenant_a, "victim@a.edu")
+    old = _seed_instance(
+        admin_session, tenant_a, attacker.id, status="reaped", runtime_presence="absent",
+        name="dal-old",
+    )
+    coh = admin_session.scalars(select(Cohort).where(Cohort.tenant_id == tenant_a.id)).first()
+    admin_session.add(Enrollment(tenant_id=tenant_a.id, cohort_id=coh.id, person_id=victim.id,
+                                 role_in_cohort="student", status="active"))
+    admin_session.commit()
+    live = _seed_instance(
+        admin_session, tenant_a, victim.id, name="dal-live", activity_id=old.activity_id
+    )
+    assert urlsplit(_console_target(old, "r1")).netloc == urlsplit(_console_target(live, "r1")).netloc
+
+    captured: list[str] = []
+
+    async def _record(websocket, upstream_url):
+        captured.append(upstream_url)
+        await websocket.accept()
+        await websocket.send_text("ok")
+        await websocket.close()
+
+    monkeypatch.setattr("app.web.labs._proxy_ws", _record)
+
+    # Positive control: the victim's owner reaches the live socket.
+    _login(app_client, "victim@a.edu")
+    with app_client.websocket_connect(_ws_url(live), headers=H) as ws:
+        assert ws.receive_text() == "ok"
+    assert len(captured) == 1
+    assert urlsplit(captured[0]).netloc == "127.0.0.1:9001"
+
+    # The reaped owner is closed 1008 and nothing is pumped.
+    app_client.cookies.clear()
+    _login(app_client, "attacker@a.edu")
+    with pytest.raises(WebSocketDisconnect) as ei:
+        with app_client.websocket_connect(_ws_url(old), headers=H) as ws:
+            ws.receive_text()
+    assert ei.value.code == 1008
+    assert len(captured) == 1
+
+    # The denial is the liveness gate: the same row, made live, is pumped.
+    old.status, old.runtime_presence = "active", "present"
+    admin_session.commit()
+    with app_client.websocket_connect(_ws_url(old), headers=H) as ws:
+        assert ws.receive_text() == "ok"
+    assert urlsplit(captured[-1]).netloc == "127.0.0.1:9001"

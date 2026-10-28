@@ -116,7 +116,18 @@ class ConsoleProxyCsrfBridge:
         if request.headers.get("sec-fetch-site", "same-origin").lower() != "same-origin":
             return scope
         try:
-            if urlsplit(origin).netloc.lower() != host.lower():
+            parsed_origin = urlsplit(origin)
+            forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+            request_scheme = forwarded_scheme if forwarded_scheme in {"http", "https"} else request.url.scheme.lower()
+            if (
+                parsed_origin.scheme.lower() != request_scheme
+                or parsed_origin.netloc.lower() != host.lower()
+                or parsed_origin.username is not None
+                or parsed_origin.password is not None
+                or parsed_origin.path not in ("", "/")
+                or parsed_origin.query
+                or parsed_origin.fragment
+            ):
                 return scope
         except ValueError:
             return scope

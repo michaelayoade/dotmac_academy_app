@@ -278,6 +278,9 @@ def test_device_redirects_stay_inside_prefix(app_client, owned, upstream):
     upstream.respond = lambda req: httpx.Response(302, headers={"location": "http://evil.test/"})
     r = app_client.get(_url(li, "x"), headers=h, follow_redirects=False)
     assert "location" not in r.headers
+    upstream.respond = lambda req: httpx.Response(302, headers={"location": "../../../../login?next=1"})
+    r = app_client.get(_url(li, "nested/x"), headers=h, follow_redirects=False)
+    assert r.headers["location"] == f"{pre}/login?next=1"
 
 
 def test_upstream_down_is_502(app_client, owned, upstream):
@@ -301,7 +304,13 @@ def test_post_without_origin_still_csrf_rejected(app_client, owned, upstream):
 
 @pytest.mark.parametrize(
     "extra",
-    [{"Origin": "http://evil.test"}, {**ORIGIN, "Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}],
+    [
+        {"Origin": "http://evil.test"},
+        {**ORIGIN, "Sec-Fetch-Site": "cross-site"},
+        {"Origin": "null"},
+        {"Origin": "https://alpha.localhost"},
+        {"Origin": "http://alpha.localhost/path"},
+    ],
 )
 def test_cross_site_post_csrf_rejected(app_client, owned, upstream, extra):
     li, h = owned

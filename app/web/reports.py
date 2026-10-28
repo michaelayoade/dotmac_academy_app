@@ -25,10 +25,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
 from app.models.person import Person
-from app.models.rbac import PersonRole, Role
 from app.services import csv_reports, insights
 from app.services.email import render_cohort_html, render_transcript_html
 from app.services.email_outbox import enqueue_email
+from app.services.facilitator_access import FacilitatorAccess, allows_person, facilitator_access
 from app.services.reports import cohort_matrix, student_transcript
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -36,22 +36,34 @@ from app.web.templating import templates
 router = APIRouter(prefix="/instructor", dependencies=[Depends(require_tenant)])
 
 
-def _role_slugs(db: Session, tenant_id: UUID, person_id: UUID) -> set[str]:
-    """Return the set of role slugs held by the person within the tenant."""
-    rows = db.scalars(
-        select(Role.slug)
-        .join(
-            PersonRole,
-            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
-        )
-        .where(PersonRole.tenant_id == tenant_id)
-        .where(PersonRole.person_id == person_id)
-    ).all()
-    return set(rows)
+def _require_teaching_access(db: Session, *, tenant_id: UUID, person_id: UUID) -> FacilitatorAccess:
+    access = facilitator_access(db, tenant_id=tenant_id, person_id=person_id)
+    if not access.can_teach:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return access
 
 
-def _require_instructor_or_admin(db: Session, tenant_id: UUID, person_id: UUID) -> None:
-    if not ({"instructor", "admin"} & _role_slugs(db, tenant_id, person_id)):
+def _require_cohort_access(db: Session, *, tenant_id: UUID, cohort_id: UUID, access: FacilitatorAccess) -> Cohort:
+    cohort = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant_id).where(Cohort.id == cohort_id)).first()
+    if cohort is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
+    if not access.allows_cohort(cohort.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return cohort
+
+
+def _require_person_access(db: Session, *, tenant_id: UUID, target_person_id: UUID, access: FacilitatorAccess) -> None:
+    exists = db.scalar(
+        select(Person.id).where(Person.tenant_id == tenant_id).where(Person.id == target_person_id).limit(1)
+    )
+    if exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+    if not allows_person(
+        db,
+        tenant_id=tenant_id,
+        access=access,
+        target_person_id=target_person_id,
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
@@ -62,9 +74,14 @@ def reports_index(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
-    cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
-    comparison = insights.cohorts_comparison(db, tenant_id=tenant.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    if not access.has_global_staff_access and not access.cohort_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    query = select(Cohort).where(Cohort.tenant_id == tenant.id)
+    if not access.has_global_staff_access:
+        query = query.where(Cohort.id.in_(access.cohort_ids))
+    cohorts = db.scalars(query.order_by(Cohort.name)).all()
+    comparison = insights.cohorts_comparison(db, tenant_id=tenant.id) if access.has_global_staff_access else []
     return templates.TemplateResponse(
         request,
         "instructor/reports_index.html",
@@ -81,12 +98,8 @@ def cohort_analytics(
 ):
     """Cohort insight projection (roadmap P3a): ledger + score derivations."""
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cohort_id)
-    ).first()
-    if cohort is None:
-        raise HTTPException(status_code=404)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    cohort = _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     ov = insights.cohort_overview(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
         request,
@@ -106,21 +119,27 @@ def reports_cohort_csv(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
     activities = matrix["activities"]
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([csv_reports.sanitize_cell(c)
-                     for c in ["name", "email", *[a.title for a in activities], "completion_pct"]])
+    writer.writerow(
+        [csv_reports.sanitize_cell(c) for c in ["name", "email", *[a.title for a in activities], "completion_pct"]]
+    )
     for row in matrix["rows"]:
         cells = []
         for a in activities:
             score = row["cells"].get(a.id)
             cells.append(f"{score.fraction:.2f}" if score is not None else "")
-        writer.writerow([csv_reports.sanitize_cell(c)
-                         for c in [row["name"], row["email"], *cells, f"{row['completion'] * 100:.0f}"]])
+        writer.writerow(
+            [
+                csv_reports.sanitize_cell(c)
+                for c in [row["name"], row["email"], *cells, f"{row['completion'] * 100:.0f}"]
+            ]
+        )
 
     return Response(
         content=buf.getvalue(),
@@ -137,12 +156,10 @@ def reports_cohort(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
-    return templates.TemplateResponse(
-        request,
-        "instructor/reports_cohort.html", {"request": request, **matrix}
-    )
+    return templates.TemplateResponse(request, "instructor/reports_cohort.html", {"request": request, **matrix})
 
 
 @router.post("/reports/student/{person_id}/email", response_class=HTMLResponse)
@@ -154,7 +171,8 @@ def reports_student_email(
 ):
     """Email the student their transcript; return an htmx flash partial."""
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_person_access(db, tenant_id=tenant.id, target_person_id=person_id, access=access)
     transcript = student_transcript(db, tenant_id=tenant.id, person_id=person_id)
     student = transcript["person"]
     sent = enqueue_email(
@@ -182,7 +200,8 @@ def reports_cohort_email(
 ):
     """Email the requesting instructor the cohort summary; return a flash partial."""
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     matrix = cohort_matrix(db, tenant_id=tenant.id, cohort_id=cohort_id)
     sent = enqueue_email(
         db,
@@ -208,12 +227,11 @@ def reports_student(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_person_access(db, tenant_id=tenant.id, target_person_id=person_id, access=access)
     transcript = student_transcript(db, tenant_id=tenant.id, person_id=person_id)
-    return templates.TemplateResponse(
-        request,
-        "instructor/reports_student.html", {"request": request, **transcript}
-    )
+    return templates.TemplateResponse(request, "instructor/reports_student.html", {"request": request, **transcript})
+
 
 @router.get("/reports/cohort/{cohort_id}/roster.csv")
 def reports_roster_csv(
@@ -223,13 +241,15 @@ def reports_roster_csv(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     try:
         name, text = csv_reports.cohort_roster_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
     except ValueError:
         raise HTTPException(status_code=404) from None
-    return Response(content=text, media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(
+        content=text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )
 
 
 @router.get("/reports/cohort/{cohort_id}/funnel.csv")
@@ -240,13 +260,15 @@ def reports_funnel_csv(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    _require_cohort_access(db, tenant_id=tenant.id, cohort_id=cohort_id, access=access)
     try:
         name, text = csv_reports.cohort_funnel_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
     except ValueError:
         raise HTTPException(status_code=404) from None
-    return Response(content=text, media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(
+        content=text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )
 
 
 @router.get("/reports/cohort/{cohort_id}/queue.csv")
@@ -257,10 +279,13 @@ def reports_queue_csv(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    if not access.has_global_staff_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     name, text = csv_reports.queue_summary_csv(db, tenant_id=tenant.id, cohort_id=cohort_id)
-    return Response(content=text, media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(
+        content=text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )
 
 
 @router.get("/reports/academy-summary.csv")
@@ -270,7 +295,10 @@ def reports_academy_csv(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    _require_instructor_or_admin(db, tenant.id, person.id)
+    access = _require_teaching_access(db, tenant_id=tenant.id, person_id=person.id)
+    if not access.has_global_staff_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     name, text = csv_reports.academy_summary_csv(db, tenant_id=tenant.id)
-    return Response(content=text, media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(
+        content=text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )

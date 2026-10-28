@@ -75,7 +75,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # below stop silently assuming an earlier revision is head once a later one
 # exists — mirroring how the 0058->0059 transition itself updated this same
 # constant last time, rather than the fixed boundary constants below it.
-HEAD_REVISION = "0061_lab_completion_grants"
+HEAD_REVISION = "0065_erp_progress_projection"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -489,10 +489,7 @@ def _insert_tenant(conn, slug: str) -> str:
     ``tests/conftest.py``'s ``_make_tenant`` does."""
     conn.execute(text("DELETE FROM tenants WHERE slug = :slug"), {"slug": slug})
     row = conn.execute(
-        text(
-            "INSERT INTO tenants (id, slug, name) "
-            "VALUES (gen_random_uuid(), :slug, :name) RETURNING id"
-        ),
+        text("INSERT INTO tenants (id, slug, name) " "VALUES (gen_random_uuid(), :slug, :name) RETURNING id"),
         {"slug": slug, "name": slug},
     ).first()
     conn.commit()
@@ -555,9 +552,9 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         try:
             command.downgrade(cfg, DOWN_REVISION_0057)
             with admin_engine.connect() as conn:
-                assert _instance_name_index_snapshot(conn) is None, (
-                    "downgrade must drop the unique index, not just rename it"
-                )
+                assert (
+                    _instance_name_index_snapshot(conn) is None
+                ), "downgrade must drop the unique index, not just rename it"
             command.upgrade(cfg, TARGET_REVISION_0057)
             command.downgrade(cfg, DOWN_REVISION_0057)
             with admin_engine.connect() as conn:
@@ -594,13 +591,9 @@ def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
         tenant_id = _insert_tenant(conn, "roundtrip-0057-legacy")
-        instance_row = conn.execute(
-            text("SELECT gen_random_uuid()")
-        ).scalar()
+        instance_row = conn.execute(text("SELECT gen_random_uuid()")).scalar()
         instance_id = str(instance_row)
-        _insert_lab_instance(
-            conn, instance_id=instance_id, tenant_id=tenant_id, instance_name=legacy_name
-        )
+        _insert_lab_instance(conn, instance_id=instance_id, tenant_id=tenant_id, instance_name=legacy_name)
 
     try:
         with _migration_env(url):
@@ -620,8 +613,7 @@ def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
             assert row is not None, "the migration cycle must not delete the pre-existing row"
             assert str(row[0]) == instance_id
             assert row[1] == legacy_name, (
-                "0057 must never rewrite an existing instance_name, even the "
-                "old count-derived format"
+                "0057 must never rewrite an existing instance_name, even the " "old count-derived format"
             )
     finally:
         with admin_engine.connect() as conn:
@@ -652,12 +644,8 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
             with admin_engine.connect() as conn:
                 first_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
                 second_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-                _insert_lab_instance(
-                    conn, instance_id=first_id, tenant_id=tenant_id, instance_name=dup_name
-                )
-                _insert_lab_instance(
-                    conn, instance_id=second_id, tenant_id=tenant_id, instance_name=dup_name
-                )
+                _insert_lab_instance(conn, instance_id=first_id, tenant_id=tenant_id, instance_name=dup_name)
+                _insert_lab_instance(conn, instance_id=second_id, tenant_id=tenant_id, instance_name=dup_name)
 
             with pytest.raises(Exception) as excinfo:
                 command.upgrade(cfg, TARGET_REVISION_0057)
@@ -674,12 +662,12 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
             )
 
             with admin_engine.connect() as conn:
-                assert _current_version(conn) == DOWN_REVISION_0057, (
-                    "a failed upgrade must not leave alembic_version at 0057"
-                )
-                assert _instance_name_index_snapshot(conn) is None, (
-                    "a failed upgrade must not leave the unique index behind"
-                )
+                assert (
+                    _current_version(conn) == DOWN_REVISION_0057
+                ), "a failed upgrade must not leave alembic_version at 0057"
+                assert (
+                    _instance_name_index_snapshot(conn) is None
+                ), "a failed upgrade must not leave the unique index behind"
 
             # Remove one of the two duplicates and retry — must now succeed.
             with admin_engine.connect() as conn:
@@ -751,10 +739,7 @@ def _runtime_presence_grant_snapshot(conn) -> dict[tuple[str, str], bool]:
         for privilege in RUNTIME_PRESENCE_PRIVILEGES:
             result[(role, privilege)] = bool(
                 conn.execute(
-                    text(
-                        "SELECT has_column_privilege(:role, 'lab_instances', "
-                        "'runtime_presence', :priv)"
-                    ),
+                    text("SELECT has_column_privilege(:role, 'lab_instances', " "'runtime_presence', :priv)"),
                     {"role": role, "priv": privilege},
                 ).scalar()
             )
@@ -811,9 +796,9 @@ def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         try:
             command.downgrade(cfg, DOWN_REVISION_0058)
             with admin_engine.connect() as conn:
-                assert _runtime_presence_column_snapshot(conn) is None, (
-                    "downgrade must drop the column, not just rename it"
-                )
+                assert (
+                    _runtime_presence_column_snapshot(conn) is None
+                ), "downgrade must drop the column, not just rename it"
                 assert _runtime_presence_constraint_snapshot(conn) is None
             command.upgrade(cfg, TARGET_REVISION_0058)
             command.downgrade(cfg, DOWN_REVISION_0058)
@@ -878,13 +863,13 @@ def test_0058_backfill_is_exact_for_reaped_vs_every_other_status(admin_engine):
 
                 with admin_engine.connect() as conn:
                     for status in reaped_statuses:
-                        assert _select_runtime_presence(conn, ids_by_status[status]) == "absent", (
-                            f"status={status!r} must backfill to 'absent'"
-                        )
+                        assert (
+                            _select_runtime_presence(conn, ids_by_status[status]) == "absent"
+                        ), f"status={status!r} must backfill to 'absent'"
                     for status in non_reaped_statuses:
-                        assert _select_runtime_presence(conn, ids_by_status[status]) == "unknown", (
-                            f"status={status!r} must backfill to 'unknown'"
-                        )
+                        assert (
+                            _select_runtime_presence(conn, ids_by_status[status]) == "unknown"
+                        ), f"status={status!r} must backfill to 'unknown'"
             finally:
                 command.upgrade(cfg, "head")
     finally:
@@ -902,9 +887,7 @@ def test_0058_new_insert_omitting_column_defaults_to_absent(admin_engine):
     try:
         with admin_engine.connect() as conn:
             instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-            _insert_lab_instance(
-                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0058-default"
-            )
+            _insert_lab_instance(conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0058-default")
             assert _select_runtime_presence(conn, instance_id) == "absent"
     finally:
         with admin_engine.connect() as conn:
@@ -975,11 +958,7 @@ def _claim_ownership_column_snapshot(conn) -> dict[str, dict[str, object] | None
             ),
             {"column": column},
         ).first()
-        result[column] = (
-            None
-            if row is None
-            else {"nullable": row[0], "default": row[1], "length": row[2]}
-        )
+        result[column] = None if row is None else {"nullable": row[0], "default": row[1], "length": row[2]}
     return result
 
 
@@ -996,10 +975,7 @@ def _claim_ownership_grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
             for privilege in CLAIM_OWNERSHIP_PRIVILEGES:
                 result[(column, role, privilege)] = bool(
                     conn.execute(
-                        text(
-                            "SELECT has_column_privilege(:role, 'lab_operations', "
-                            ":column, :priv)"
-                        ),
+                        text("SELECT has_column_privilege(:role, 'lab_operations', " ":column, :priv)"),
                         {"role": role, "column": column, "priv": privilege},
                     ).scalar()
                 )
@@ -1032,12 +1008,10 @@ def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         baseline = _claim_ownership_full_snapshot(conn)
         for column in CLAIM_OWNERSHIP_COLUMNS:
             assert baseline["columns"][column] is not None
-            assert baseline["columns"][column]["nullable"] == "YES", (
-                f"{column} must be nullable — no backfill, no NOT NULL"
-            )
-            assert baseline["columns"][column]["default"] is None, (
-                f"{column} must have no DDL default"
-            )
+            assert (
+                baseline["columns"][column]["nullable"] == "YES"
+            ), f"{column} must be nullable — no backfill, no NOT NULL"
+            assert baseline["columns"][column]["default"] is None, f"{column} must have no DDL default"
             assert baseline["columns"][column]["length"] == CLAIM_OWNERSHIP_LENGTHS[column]
         for column in CLAIM_OWNERSHIP_COLUMNS:
             assert baseline["grants"][(column, "app_user", "SELECT")] is True
@@ -1055,12 +1029,8 @@ def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
             command.downgrade(cfg, DOWN_REVISION_0059)
             with admin_engine.connect() as conn:
                 dropped = _claim_ownership_column_snapshot(conn)
-                assert dropped["claimed_host"] is None, (
-                    "downgrade must drop claimed_host, not just rename it"
-                )
-                assert dropped["claimed_epoch"] is None, (
-                    "downgrade must drop claimed_epoch, not just rename it"
-                )
+                assert dropped["claimed_host"] is None, "downgrade must drop claimed_host, not just rename it"
+                assert dropped["claimed_epoch"] is None, "downgrade must drop claimed_epoch, not just rename it"
             command.upgrade(cfg, TARGET_REVISION_0059)
             command.downgrade(cfg, DOWN_REVISION_0059)
             with admin_engine.connect() as conn:
@@ -1101,15 +1071,9 @@ def test_0059_grant_posture_matches_ownership_boundary(admin_engine):
     )
     for column in CLAIM_OWNERSHIP_COLUMNS:
         for role in ("app_user", "platform_api"):
-            assert (
-                grants[(column, role, "SELECT")] is True
-            ), f"{role} should be able to SELECT {column}"
-            assert (
-                grants[(column, role, "INSERT")] is False
-            ), f"{role} must not INSERT {column}"
-            assert (
-                grants[(column, role, "UPDATE")] is False
-            ), f"{role} must not UPDATE {column}"
+            assert grants[(column, role, "SELECT")] is True, f"{role} should be able to SELECT {column}"
+            assert grants[(column, role, "INSERT")] is False, f"{role} must not INSERT {column}"
+            assert grants[(column, role, "UPDATE")] is False, f"{role} must not UPDATE {column}"
         assert grants[(column, "academy_lab_worker", "SELECT")] is True
         assert grants[(column, "academy_lab_worker", "UPDATE")] is True
 
@@ -1137,11 +1101,7 @@ def _conditional_column_snapshot(conn) -> dict[str, dict[str, object] | None]:
             ),
             {"column": column},
         ).first()
-        result[column] = (
-            None
-            if row is None
-            else {"nullable": row[0], "default": row[1], "length": row[2]}
-        )
+        result[column] = None if row is None else {"nullable": row[0], "default": row[1], "length": row[2]}
     return result
 
 
@@ -1170,10 +1130,7 @@ def _conditional_grant_snapshot(conn) -> dict[tuple[str, str, str], bool]:
             for privilege in CONDITIONAL_PRIVILEGES:
                 result[(column, role, privilege)] = bool(
                     conn.execute(
-                        text(
-                            "SELECT has_column_privilege(:role, 'lab_operations', "
-                            ":column, :priv)"
-                        ),
+                        text("SELECT has_column_privilege(:role, 'lab_operations', " ":column, :priv)"),
                         {"role": role, "column": column, "priv": privilege},
                     ).scalar()
                 )
@@ -1237,12 +1194,10 @@ def test_0060_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         baseline = _conditional_full_snapshot(conn)
         for column in CONDITIONAL_COLUMNS:
             assert baseline["columns"][column] is not None
-            assert baseline["columns"][column]["nullable"] == "YES", (
-                f"{column} must be nullable — no backfill, no NOT NULL"
-            )
-            assert baseline["columns"][column]["default"] is None, (
-                f"{column} must have no DDL default"
-            )
+            assert (
+                baseline["columns"][column]["nullable"] == "YES"
+            ), f"{column} must be nullable — no backfill, no NOT NULL"
+            assert baseline["columns"][column]["default"] is None, f"{column} must have no DDL default"
             assert baseline["columns"][column]["length"] == CONDITIONAL_LENGTHS[column]
         assert baseline["constraint"] is not None
         assert baseline["constraint"]["validated"] is True
@@ -1320,28 +1275,36 @@ def test_0060_check_constraint_accepts_ordinary_and_both_valid_conditional_tuple
     try:
         with admin_engine.connect() as conn:
             instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-            _insert_lab_instance(
-                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-accept"
-            )
+            _insert_lab_instance(conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-accept")
             # Ordinary (both NULL).
             _insert_lab_operation(
                 conn,
                 operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
-                tenant_id=tenant_id, instance_id=instance_id, kind="deploy",
+                tenant_id=tenant_id,
+                instance_id=instance_id,
+                kind="deploy",
             )
             # Valid conditional deploy tuple.
             _insert_lab_operation(
                 conn,
                 operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
-                tenant_id=tenant_id, instance_id=instance_id, kind="deploy",
-                state="failed", origin="runtime_repair", runtime_precondition="absent",
+                tenant_id=tenant_id,
+                instance_id=instance_id,
+                kind="deploy",
+                state="failed",
+                origin="runtime_repair",
+                runtime_precondition="absent",
             )
             # Valid conditional destroy tuple.
             _insert_lab_operation(
                 conn,
                 operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
-                tenant_id=tenant_id, instance_id=instance_id, kind="destroy",
-                state="failed", origin="runtime_cleanup", runtime_precondition="present",
+                tenant_id=tenant_id,
+                instance_id=instance_id,
+                kind="destroy",
+                state="failed",
+                origin="runtime_cleanup",
+                runtime_precondition="present",
             )
     finally:
         with admin_engine.connect() as conn:
@@ -1381,15 +1344,16 @@ def test_0060_check_constraint_rejects_half_null_and_mismatched_tuples(
     try:
         with admin_engine.connect() as conn:
             instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-            _insert_lab_instance(
-                conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-reject"
-            )
+            _insert_lab_instance(conn, instance_id=instance_id, tenant_id=tenant_id, instance_name="dal-0060-reject")
             with pytest.raises(Exception) as excinfo:
                 _insert_lab_operation(
                     conn,
                     operation_id=str(conn.execute(text("SELECT gen_random_uuid()")).scalar()),
-                    tenant_id=tenant_id, instance_id=instance_id, kind=kind,
-                    origin=origin, runtime_precondition=runtime_precondition,
+                    tenant_id=tenant_id,
+                    instance_id=instance_id,
+                    kind=kind,
+                    origin=origin,
+                    runtime_precondition=runtime_precondition,
                 )
             assert CONDITIONAL_CHECK in str(excinfo.value)
             conn.rollback()
@@ -1413,7 +1377,9 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
         tenant_id = _insert_tenant(conn, f"roundtrip-0060-refuse-{state}")
         instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
         _insert_lab_instance(
-            conn, instance_id=instance_id, tenant_id=tenant_id,
+            conn,
+            instance_id=instance_id,
+            tenant_id=tenant_id,
             instance_name=f"dal-0060-refuse-{state}",
         )
         operation_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
@@ -1422,8 +1388,12 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
         with admin_engine.connect() as conn:
             _insert_lab_operation(
                 conn,
-                operation_id=operation_id, tenant_id=tenant_id, instance_id=instance_id,
-                kind="deploy", state=state, origin="runtime_repair",
+                operation_id=operation_id,
+                tenant_id=tenant_id,
+                instance_id=instance_id,
+                kind="deploy",
+                state=state,
+                origin="runtime_repair",
                 runtime_precondition="absent",
             )
             baseline = _conditional_full_snapshot(conn)
@@ -1433,19 +1403,14 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
                 command.downgrade(cfg, DOWN_REVISION_0060)
 
         with admin_engine.connect() as conn:
-            assert _current_version(conn) == HEAD_REVISION, (
-                "a refused downgrade must leave alembic_version untouched"
-            )
+            assert _current_version(conn) == HEAD_REVISION, "a refused downgrade must leave alembic_version untouched"
             after_refusal = _conditional_full_snapshot(conn)
         assert after_refusal == baseline, (
-            "a refused downgrade must leave the schema/constraint/columns "
-            "completely intact"
+            "a refused downgrade must leave the schema/constraint/columns " "completely intact"
         )
     finally:
         with admin_engine.connect() as conn:
-            conn.execute(
-                text("DELETE FROM lab_operations WHERE tenant_id = :id"), {"id": tenant_id}
-            )
+            conn.execute(text("DELETE FROM lab_operations WHERE tenant_id = :id"), {"id": tenant_id})
             conn.commit()
             conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
             conn.commit()
@@ -1479,11 +1444,9 @@ def test_0060_downgrade_refuses_offline_sql_generation_outright(admin_engine):
         # live ``alembic_version`` for Alembic to read a starting point
         # from, since offline mode never opens a connection at all.
         with pytest.raises(RuntimeError, match="refusing to generate offline SQL"):
-            command.downgrade(
-                cfg, f"{HEAD_REVISION}:{DOWN_REVISION_0060}", sql=True
-            )
+            command.downgrade(cfg, f"{HEAD_REVISION}:{DOWN_REVISION_0060}", sql=True)
 
     with admin_engine.connect() as conn:
-        assert _current_version(conn) == HEAD_REVISION, (
-            "a refused offline-SQL generation must never touch alembic_version"
-        )
+        assert (
+            _current_version(conn) == HEAD_REVISION
+        ), "a refused offline-SQL generation must never touch alembic_version"

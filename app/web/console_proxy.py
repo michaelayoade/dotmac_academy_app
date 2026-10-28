@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 from fastapi import HTTPException, Request
 
@@ -85,14 +85,12 @@ def rewrite_set_cookie(raw: str, prefix: str, secure: bool) -> str | None:
 def rewrite_location(location: str, target: str, prefix: str) -> str | None:
     """Keep a device redirect inside the proxy prefix; drop foreign redirects."""
     base = urlsplit(target)
-    loc = urlsplit(location)
-    if loc.scheme or loc.netloc:
-        if loc.scheme != base.scheme or loc.netloc != base.netloc:
-            return None
+    # Resolve relative and dot-segment redirects against the device URL first;
+    # returning them unchanged would let ``../../`` escape the proxy prefix in
+    # the learner's browser even though the upstream host itself was safe.
+    loc = urlsplit(urljoin(target, location))
+    if loc.scheme != base.scheme or loc.netloc != base.netloc:
+        return None
     path = loc.path or "/"
-    if not path.startswith("/"):
-        return location  # relative: resolves under the proxy prefix on its own
-    if path.startswith(prefix + "/"):
-        return location if not (loc.scheme or loc.netloc) else path
-    out = prefix + path
+    out = prefix + (path if path.startswith("/") else f"/{path}")
     return out + (f"?{loc.query}" if loc.query else "")

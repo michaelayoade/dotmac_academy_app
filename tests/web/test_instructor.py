@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
 from sqlalchemy import select
 
 from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
+from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
+from app.models.facilitator import FacilitatorNomination
+from app.models.offering import CourseOffering
 from app.models.person import Person
 from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
@@ -31,9 +33,7 @@ def _login_instructor(app_client, admin_session, tenant):
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["instructor"].id)
-    )
+    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["instructor"].id))
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -56,17 +56,13 @@ def _grant_admin(admin_session, tenant):
     person = admin_session.scalars(
         select(Person).where(Person.tenant_id == tenant.id).where(Person.email == "i@a.edu")
     ).first()
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles["admin"].id)
-    )
+    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles["admin"].id))
     admin_session.commit()
 
 
 def _person_with_role(admin_session, tenant, *, email, role="instructor", status="active"):
     roles = ensure_roles(admin_session, tenant.id)
-    person = Person(
-        tenant_id=tenant.id, email=email, first_name="Test", last_name="Instructor", status=status
-    )
+    person = Person(tenant_id=tenant.id, email=email, first_name="Test", last_name="Instructor", status=status)
     admin_session.add(person)
     admin_session.flush()
     if role is not None:
@@ -74,12 +70,16 @@ def _person_with_role(admin_session, tenant, *, email, role="instructor", status
     return person
 
 
-def _post_facilitator(app_client, headers, cohort_id, person_id):
+def _post_facilitator(app_client, headers, cohort_id, person_id, *, scope="cohort", offering_id=None):
     csrf = app_client.cookies.get("csrf_token", "")
     return app_client.post(
         f"/instructor/cohorts/{cohort_id}/facilitators",
         headers={**headers, "x-csrf-token": csrf},
-        data={"facilitator_id": str(person_id)},
+        data={
+            "facilitator_id": str(person_id),
+            "scope": scope,
+            "offering_id": str(offering_id) if offering_id else "",
+        },
         follow_redirects=False,
     )
 
@@ -121,50 +121,19 @@ def test_admin_course_preview_renders_imported_html_content(app_client, admin_se
     assert "Resolve customer incidents." in response.text
 
 
-def test_admin_can_assign_and_remove_existing_instructor_facilitator(app_client, admin_session, tenant_a):
+def test_admin_nomination_preserves_student_enrollment_and_revoke(app_client, admin_session, tenant_a):
     headers = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     cohort = Cohort(tenant_id=tenant_a.id, name="Facilitated", discipline="networking", status="active")
-    facilitator = _person_with_role(admin_session, tenant_a, email="facilitator@a.edu")
-    admin_session.add(cohort)
-    admin_session.commit()
-
-    response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
-    assert response.status_code == 303
-    admin_session.expire_all()
-    enrollment = admin_session.scalars(
-        select(Enrollment)
-        .where(Enrollment.tenant_id == tenant_a.id)
-        .where(Enrollment.cohort_id == cohort.id)
-        .where(Enrollment.person_id == facilitator.id)
-    ).one()
-    assert enrollment.role_in_cohort == "instructor"
-    assert enrollment.status == "active"
-
-    csrf = app_client.cookies.get("csrf_token", "")
-    response = app_client.post(
-        f"/instructor/cohorts/{cohort.id}/facilitators/{facilitator.id}/remove",
-        headers={**headers, "x-csrf-token": csrf},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
-    admin_session.expire_all()
-    assert enrollment.status == "dropped"
-
-
-@pytest.mark.parametrize("previous_status", ["dropped", "waitlisted"])
-def test_admin_reactivates_existing_facilitator_enrollment(
-    app_client, admin_session, tenant_a, previous_status
-):
-    headers = _login_instructor(app_client, admin_session, tenant_a)
-    _grant_admin(admin_session, tenant_a)
-    cohort = Cohort(tenant_id=tenant_a.id, name="Reactivation", discipline="networking", status="active")
-    facilitator = _person_with_role(admin_session, tenant_a, email=f"{previous_status}@a.edu")
+    facilitator = _person_with_role(admin_session, tenant_a, email="facilitator@a.edu", role=None)
     admin_session.add(cohort)
     admin_session.flush()
     enrollment = Enrollment(
-        tenant_id=tenant_a.id, cohort_id=cohort.id, person_id=facilitator.id,
-        role_in_cohort="instructor", status=previous_status,
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        person_id=facilitator.id,
+        role_in_cohort="student",
+        status="active",
     )
     admin_session.add(enrollment)
     admin_session.commit()
@@ -172,8 +141,68 @@ def test_admin_reactivates_existing_facilitator_enrollment(
     response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
     assert response.status_code == 303
     admin_session.expire_all()
-    assert enrollment.role_in_cohort == "instructor"
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.cohort_id == cohort.id)
+        .where(FacilitatorNomination.person_id == facilitator.id)
+    ).one()
+    assert nomination.status == "pending"
+    assert enrollment.role_in_cohort == "student"
     assert enrollment.status == "active"
+
+    csrf = app_client.cookies.get("csrf_token", "")
+    response = app_client.post(
+        f"/instructor/facilitators/{nomination.id}/revoke",
+        headers={**headers, "x-csrf-token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    admin_session.expire_all()
+    assert nomination.status == "revoked"
+    assert enrollment.role_in_cohort == "student"
+    assert enrollment.status == "active"
+
+
+def test_admin_nomination_activates_immediately_when_course_already_completed(app_client, admin_session, tenant_a):
+    headers = _login_instructor(app_client, admin_session, tenant_a)
+    _grant_admin(admin_session, tenant_a)
+    cohort = Cohort(tenant_id=tenant_a.id, name="Qualified", discipline="networking", status="active")
+    facilitator = _person_with_role(admin_session, tenant_a, email="qualified@a.edu", role=None)
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="qualified-course",
+        title="Qualified Course",
+        discipline="networking",
+        source_ref="test",
+        version=1,
+        status="published",
+    )
+    admin_session.add_all([cohort, course])
+    admin_session.flush()
+    offering = CourseOffering(tenant_id=tenant_a.id, cohort_id=cohort.id, course_id=course.id, status="active")
+    completion = CourseCompletion(
+        tenant_id=tenant_a.id,
+        person_id=facilitator.id,
+        course_id=course.id,
+        status="completed",
+        pct=1.0,
+    )
+    admin_session.add_all([offering, completion])
+    admin_session.commit()
+
+    response = _post_facilitator(
+        app_client, headers, cohort.id, facilitator.id, scope="course", offering_id=offering.id
+    )
+    assert response.status_code == 303
+    admin_session.expire_all()
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.person_id == facilitator.id)
+    ).one()
+    assert nomination.status == "active"
+    assert nomination.offering_id == offering.id
 
 
 def test_non_admin_instructor_cannot_assign_facilitator(app_client, admin_session, tenant_a):
@@ -185,12 +214,18 @@ def test_non_admin_instructor_cannot_assign_facilitator(app_client, admin_sessio
 
     response = _post_facilitator(app_client, headers, cohort.id, facilitator.id)
     assert response.status_code == 403
-    assert admin_session.query(Enrollment).filter(
-        Enrollment.cohort_id == cohort.id, Enrollment.person_id == facilitator.id
-    ).count() == 0
+    assert (
+        admin_session.query(FacilitatorNomination)
+        .filter(
+            FacilitatorNomination.cohort_id == cohort.id,
+            FacilitatorNomination.person_id == facilitator.id,
+        )
+        .count()
+        == 0
+    )
 
 
-def test_user_without_instructor_role_cannot_be_facilitator(app_client, admin_session, tenant_a):
+def test_user_without_instructor_role_can_be_nominated(app_client, admin_session, tenant_a):
     headers = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     cohort = Cohort(tenant_id=tenant_a.id, name="Role Gate", discipline="networking", status="active")
@@ -199,8 +234,13 @@ def test_user_without_instructor_role_cannot_be_facilitator(app_client, admin_se
     admin_session.commit()
 
     response = _post_facilitator(app_client, headers, cohort.id, learner.id)
-    assert response.status_code == 400
-    assert "instructor role" in response.text
+    assert response.status_code == 303
+    nomination = admin_session.scalars(
+        select(FacilitatorNomination)
+        .where(FacilitatorNomination.tenant_id == tenant_a.id)
+        .where(FacilitatorNomination.person_id == learner.id)
+    ).one()
+    assert nomination.status == "pending"
 
 
 def test_facilitator_assignment_preserves_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
@@ -215,9 +255,13 @@ def test_facilitator_assignment_preserves_tenant_isolation(app_client, admin_ses
 
     assert _post_facilitator(app_client, headers, cohort_a.id, instructor_b.id).status_code == 404
     assert _post_facilitator(app_client, headers, cohort_b.id, instructor_a.id).status_code == 404
-    assert admin_session.query(Enrollment).filter(
-        Enrollment.person_id.in_([instructor_a.id, instructor_b.id])
-    ).count() == 0
+    assert (
+        admin_session.query(FacilitatorNomination)
+        .filter(FacilitatorNomination.person_id.in_([instructor_a.id, instructor_b.id]))
+        .count()
+        == 0
+    )
+
 
 def test_instructor_can_create_cohort(app_client, admin_session, tenant_a):
     """An instructor can POST to create a cohort; the row lands in the DB."""
@@ -234,9 +278,7 @@ def test_instructor_can_create_cohort(app_client, admin_session, tenant_a):
     )
     assert r.status_code == 303
     # admin_session bypasses RLS; the Cohort committed by get_db is visible here.
-    assert (
-        admin_session.query(Cohort).filter(Cohort.tenant_id == tenant_a.id).count() == 1
-    )
+    assert admin_session.query(Cohort).filter(Cohort.tenant_id == tenant_a.id).count() == 1
 
 
 def test_enroll_cross_tenant_404(app_client, admin_session, tenant_a, tenant_b):
@@ -280,8 +322,8 @@ def test_bulk_enroll_surfaces_unknown_emails(app_client, admin_session, tenant_a
     assert "Enrolled 1" in r.text
     assert "ghost@a.edu" in r.text  # unknown email surfaced
     from app.models.cohort import Enrollment
-    n = admin_session.query(Enrollment).filter(
-        Enrollment.cohort_id == coh.id, Enrollment.status == "active").count()
+
+    n = admin_session.query(Enrollment).filter(Enrollment.cohort_id == coh.id, Enrollment.status == "active").count()
     assert n == 1
 
 
@@ -298,7 +340,10 @@ def test_enroll_route_reports_non_admin_reactivation_refusal_without_erroring(ap
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=peer.id, role_in_cohort="instructor",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=peer.id,
+            role_in_cohort="instructor",
             status="dropped",
         )
     )
@@ -333,7 +378,10 @@ def test_enroll_route_processes_rest_of_batch_after_a_refused_reactivation(app_c
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=peer.id, role_in_cohort="instructor",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=peer.id,
+            role_in_cohort="instructor",
             status="dropped",
         )
     )
@@ -370,7 +418,10 @@ def test_enroll_route_summary_separates_enrolled_from_reactivated(app_client, ad
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=dropped.id, role_in_cohort="student",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=dropped.id,
+            role_in_cohort="student",
             status="dropped",
         )
     )
@@ -397,7 +448,10 @@ def test_invite_route_refuses_non_admin_reactivating_instructor_enrollment(app_c
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=peer.id, role_in_cohort="instructor",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=peer.id,
+            role_in_cohort="instructor",
             status="dropped",
         )
     )
@@ -428,7 +482,10 @@ def test_invite_route_surfaces_reactivation_description(app_client, admin_sessio
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=stu.id,
+            role_in_cohort="student",
             status="dropped",
         )
     )
@@ -451,16 +508,23 @@ def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
 
     h = _login_instructor(app_client, admin_session, tenant_a)
     learner = Person(tenant_id=tenant_a.id, email="learner@a.edu", first_name="Le", last_name="Ar")
-    course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking",
-                    source_ref="x", version=1)
+    course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking", source_ref="x", version=1)
     admin_session.add_all([learner, course])
     admin_session.flush()
-    act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test",
-                   title="Essay Q", pass_threshold=0.6, grading="manual")
+    act = Activity(
+        tenant_id=tenant_a.id,
+        course_id=course.id,
+        chapter_number=1,
+        type="mcq_test",
+        title="Essay Q",
+        pass_threshold=0.6,
+        grading="manual",
+    )
     admin_session.add(act)
     admin_session.flush()
-    admin_session.add(Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id,
-                                 answers={}, attempt_no=1))  # no Score = pending
+    admin_session.add(
+        Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id, answers={}, attempt_no=1)
+    )  # no Score = pending
     admin_session.commit()
 
     r = app_client.get("/instructor/grading", headers=h)
@@ -476,21 +540,34 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
 
     h = _login_instructor(app_client, admin_session, tenant_a)
     learner = Person(tenant_id=tenant_a.id, email="il@a.edu", first_name="Il", last_name="A")
-    course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking",
-                    source_ref="x", version=1)
+    course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking", source_ref="x", version=1)
     admin_session.add_all([learner, course])
     admin_session.flush()
-    act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test",
-                   title="Analytics Quiz", pass_threshold=0.6)
+    act = Activity(
+        tenant_id=tenant_a.id,
+        course_id=course.id,
+        chapter_number=1,
+        type="mcq_test",
+        title="Analytics Quiz",
+        pass_threshold=0.6,
+    )
     admin_session.add(act)
     admin_session.flush()
-    sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id,
-                     answers={}, attempt_no=1)
+    sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=learner.id, answers={}, attempt_no=1)
     admin_session.add(sub)
     admin_session.flush()
-    admin_session.add(Score(tenant_id=tenant_a.id, submission_id=sub.id, score=10, max_score=10,
-                            fraction=1.0, passed=True, source="auto",
-                            per_item=[{"id": "q1", "correct": True}]))
+    admin_session.add(
+        Score(
+            tenant_id=tenant_a.id,
+            submission_id=sub.id,
+            score=10,
+            max_score=10,
+            fraction=1.0,
+            passed=True,
+            source="auto",
+            per_item=[{"id": "q1", "correct": True}],
+        )
+    )
     admin_session.commit()
 
     r = app_client.get(f"/instructor/items/{act.id}", headers=h)
@@ -507,24 +584,26 @@ def test_authoring_create_course_and_chapter(app_client, admin_session, tenant_a
     _grant_admin(admin_session, tenant_a)
     csrf = app_client.cookies.get("csrf_token", "")
     # Create a draft course.
-    r = app_client.post("/instructor/courses",
-                        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
-                        data={"slug": "authored", "title": "Authored", "discipline": "networking"})
+    r = app_client.post(
+        "/instructor/courses",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"slug": "authored", "title": "Authored", "discipline": "networking"},
+    )
     assert r.status_code == 200
     course = admin_session.scalars(
-        __import__("sqlalchemy").select(Course)
-        .where(Course.tenant_id == tenant_a.id).where(Course.slug == "authored")
+        __import__("sqlalchemy").select(Course).where(Course.tenant_id == tenant_a.id).where(Course.slug == "authored")
     ).first()
     assert course is not None and course.status == "draft"
 
     # Author a chapter in markdown.
-    r2 = app_client.post(f"/instructor/courses/{course.id}/chapters",
-                         headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
-                         data={"number": "1", "title": "Intro", "body_md": "# Welcome"})
+    r2 = app_client.post(
+        f"/instructor/courses/{course.id}/chapters",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"number": "1", "title": "Intro", "body_md": "# Welcome"},
+    )
     assert r2.status_code == 200
     ch = admin_session.scalars(
-        __import__("sqlalchemy").select(Chapter)
-        .where(Chapter.course_id == course.id).where(Chapter.number == 1)
+        __import__("sqlalchemy").select(Chapter).where(Chapter.course_id == course.id).where(Chapter.number == 1)
     ).first()
     assert ch is not None
     assert "<h1>Welcome</h1>" in ch.body_html
@@ -537,16 +616,25 @@ def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
 
     h = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
-    course = Course(tenant_id=tenant_a.id, slug="pub", title="Pub", discipline="networking",
-                    source_ref="x", version=1, status="draft")
+    course = Course(
+        tenant_id=tenant_a.id,
+        slug="pub",
+        title="Pub",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="draft",
+    )
     admin_session.add(course)
     admin_session.commit()
     admin_session.refresh(course)
 
     csrf = app_client.cookies.get("csrf_token", "")
-    r = app_client.post(f"/instructor/courses/{course.id}/status",
-                        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
-                        data={"status_value": "published"})
+    r = app_client.post(
+        f"/instructor/courses/{course.id}/status",
+        headers={**h, "x-csrf-token": csrf, "HX-Request": "true"},
+        data={"status_value": "published"},
+    )
     assert r.status_code == 200
     admin_session.expire(course)
     assert admin_session.get(Course, course.id).status == "published"
@@ -566,9 +654,7 @@ def test_student_forbidden(app_client, admin_session, tenant_a):
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(
-        PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["student"].id)
-    )
+    admin_session.add(PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["student"].id))
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -598,9 +684,7 @@ def test_create_track_error_renders_inline_message_not_raw_400(app_client, admin
     # No track was actually created.
     from app.models.track import Track
 
-    assert (
-        admin_session.query(Track).filter(Track.tenant_id == tenant_a.id, Track.name == "Empty Track").count() == 0
-    )
+    assert admin_session.query(Track).filter(Track.tenant_id == tenant_a.id, Track.name == "Empty Track").count() == 0
 
 
 def test_add_courses_to_track_error_renders_inline_message(app_client, admin_session, tenant_a):
@@ -608,7 +692,12 @@ def test_add_courses_to_track_error_renders_inline_message(app_client, admin_ses
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="Errs2", discipline="networking", status="active")
     course = Course(
-        tenant_id=tenant_a.id, slug="c1", title="C1", discipline="networking", source_ref="x", version=1,
+        tenant_id=tenant_a.id,
+        slug="c1",
+        title="C1",
+        discipline="networking",
+        source_ref="x",
+        version=1,
         status="published",
     )
     admin_session.add_all([coh, course])
@@ -661,12 +750,22 @@ def test_draft_courses_excluded_from_track_checkbox_lists(app_client, admin_sess
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="DraftTest", discipline="networking", status="active")
     draft = Course(
-        tenant_id=tenant_a.id, slug="draft-c", title="Draft Course Title", discipline="networking",
-        source_ref="x", version=1, status="draft",
+        tenant_id=tenant_a.id,
+        slug="draft-c",
+        title="Draft Course Title",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="draft",
     )
     published = Course(
-        tenant_id=tenant_a.id, slug="pub-c", title="Published Course Title", discipline="networking",
-        source_ref="x", version=1, status="published",
+        tenant_id=tenant_a.id,
+        slug="pub-c",
+        title="Published Course Title",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="published",
     )
     admin_session.add_all([coh, draft, published])
     admin_session.commit()
@@ -688,13 +787,19 @@ def test_roster_shows_dropped_and_waitlisted_enrollments(app_client, admin_sessi
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=dropped_p.id, role_in_cohort="student",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=dropped_p.id,
+            role_in_cohort="student",
             status="dropped",
         )
     )
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=waitlisted_p.id, role_in_cohort="student",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=waitlisted_p.id,
+            role_in_cohort="student",
             status="waitlisted",
         )
     )
@@ -718,7 +823,10 @@ def test_non_admin_instructor_forbidden_from_changing_instructor_role_enrollment
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=other_instructor.id, role_in_cohort="instructor",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=other_instructor.id,
+            role_in_cohort="instructor",
             status="active",
         )
     )
@@ -749,7 +857,10 @@ def test_admin_can_change_instructor_role_enrollment_state(app_client, admin_ses
     admin_session.flush()
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=other_instructor.id, role_in_cohort="instructor",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=other_instructor.id,
+            role_in_cohort="instructor",
             status="active",
         )
     )
@@ -778,11 +889,21 @@ def test_reorder_track_courses_route_updates_order(app_client, admin_session, te
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ReorderRoute", discipline="networking", status="active")
     course_a = Course(
-        tenant_id=tenant_a.id, slug="rr-a", title="RR A", discipline="networking", source_ref="x", version=1,
+        tenant_id=tenant_a.id,
+        slug="rr-a",
+        title="RR A",
+        discipline="networking",
+        source_ref="x",
+        version=1,
         status="published",
     )
     course_b = Course(
-        tenant_id=tenant_a.id, slug="rr-b", title="RR B", discipline="networking", source_ref="x", version=1,
+        tenant_id=tenant_a.id,
+        slug="rr-b",
+        title="RR B",
+        discipline="networking",
+        source_ref="x",
+        version=1,
         status="published",
     )
     admin_session.add_all([coh, course_a, course_b])
@@ -822,7 +943,12 @@ def test_reorder_track_courses_route_rejects_mismatched_membership(app_client, a
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ReorderReject", discipline="networking", status="active")
     course = Course(
-        tenant_id=tenant_a.id, slug="rr-only", title="RR Only", discipline="networking", source_ref="x", version=1,
+        tenant_id=tenant_a.id,
+        slug="rr-only",
+        title="RR Only",
+        discipline="networking",
+        source_ref="x",
+        version=1,
         status="published",
     )
     admin_session.add_all([coh, course])
@@ -850,7 +976,12 @@ def test_clear_roster_track_forbidden_for_non_admin_instructor(app_client, admin
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ClearForbidden", discipline="networking", status="active")
     course = Course(
-        tenant_id=tenant_a.id, slug="clear-c", title="Clear C", discipline="networking", source_ref="x", version=1,
+        tenant_id=tenant_a.id,
+        slug="clear-c",
+        title="Clear C",
+        discipline="networking",
+        source_ref="x",
+        version=1,
         status="published",
     )
     stu = Person(tenant_id=tenant_a.id, email="clear-stu@a.edu", first_name="C", last_name="S")
@@ -861,7 +992,11 @@ def test_clear_roster_track_forbidden_for_non_admin_instructor(app_client, admin
     )
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=stu.id,
+            role_in_cohort="student",
+            status="active",
             track_id=track.id,
         )
     )
@@ -888,8 +1023,13 @@ def test_admin_can_clear_a_learners_stuck_track(app_client, admin_session, tenan
     _grant_admin(admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ClearAdmin", discipline="networking", status="active")
     course = Course(
-        tenant_id=tenant_a.id, slug="clear-a-c", title="Clear Admin C", discipline="networking", source_ref="x",
-        version=1, status="published",
+        tenant_id=tenant_a.id,
+        slug="clear-a-c",
+        title="Clear Admin C",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="published",
     )
     stu = Person(tenant_id=tenant_a.id, email="clear-admin-stu@a.edu", first_name="C", last_name="A")
     admin_session.add_all([coh, course, stu])
@@ -899,7 +1039,11 @@ def test_admin_can_clear_a_learners_stuck_track(app_client, admin_session, tenan
     )
     admin_session.add(
         Enrollment(
-            tenant_id=tenant_a.id, cohort_id=coh.id, person_id=stu.id, role_in_cohort="student", status="active",
+            tenant_id=tenant_a.id,
+            cohort_id=coh.id,
+            person_id=stu.id,
+            role_in_cohort="student",
+            status="active",
             track_id=track.id,
         )
     )
@@ -947,8 +1091,13 @@ def test_cohorts_page_shows_zero_activity_course_warning(app_client, admin_sessi
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ActivityWarning", discipline="networking", status="active")
     course = Course(
-        tenant_id=tenant_a.id, slug="warn-c", title="Warn Course", discipline="networking", source_ref="x",
-        version=1, status="published",
+        tenant_id=tenant_a.id,
+        slug="warn-c",
+        title="Warn Course",
+        discipline="networking",
+        source_ref="x",
+        version=1,
+        status="published",
     )
     admin_session.add_all([coh, course])
     admin_session.flush()

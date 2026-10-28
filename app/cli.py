@@ -148,7 +148,6 @@ def _audit_banks(args: argparse.Namespace) -> None:
     from app.services.bank_loader import doc_from_db, lint_bank
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
-
         q = (
             db.query(QuestionBank, Course)
             .join(Course, Course.id == QuestionBank.course_id)
@@ -192,7 +191,6 @@ def _load_banks(args: argparse.Namespace) -> None:
     from app.services.bank_loader import lint_bank, load_bank, parse_bank
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
-
         banks_dir = Path(args.banks_dir)
         if not banks_dir.is_dir():
             raise SystemExit(f"Banks directory not found: {banks_dir}")
@@ -281,7 +279,6 @@ def _import_labs(args: argparse.Namespace) -> None:
     from app.services.lab_content import import_labs
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
-
         course = db.query(Course).filter(Course.tenant_id == tenant.id, Course.slug == args.course_slug).first()
         if course is None:
             raise SystemExit(
@@ -317,12 +314,19 @@ def _reminders_sweep(args: argparse.Namespace) -> None:
 
     from app.models.tenant import Tenant
     from app.services import lab_jobs
+    from app.services.facilitator_nominations import SweepFacilitatorsCommand, sweep_pending
     from app.services.reminders import sweep
     from app.services.success_queue import sweep as queue_sweep
 
     with lab_jobs.admin_session() as db:
         tenants = db.scalars(select(Tenant)).all()
         for tenant in tenants:
+            facilitator_counts = sweep_pending(
+                db,
+                command=SweepFacilitatorsCommand(tenant_id=tenant.id),
+            )
+            db.commit()
+            print(f"facilitator-sweep[{tenant.slug}]: {facilitator_counts}")
             counts = sweep(db, tenant_id=tenant.id)
             db.commit()
             print(f"reminders-sweep[{tenant.slug}]: {counts}")
@@ -354,9 +358,7 @@ def _learner_digest(args: argparse.Namespace) -> None:
         branding = str(cfg.get("branding_name", "Dotmac Academy"))
         totals = {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
         for tenant in db.scalars(select(Tenant)).all():
-            counts = learner_digest.send_weekly_digests(
-                db, tenant_id=tenant.id, base_url=base_url, branding=branding
-            )
+            counts = learner_digest.send_weekly_digests(db, tenant_id=tenant.id, base_url=base_url, branding=branding)
             for key, n in counts.items():
                 totals[key] += n
         if args.dry_run:
@@ -368,6 +370,8 @@ def _learner_digest(args: argparse.Namespace) -> None:
         f"learner-digest: queued={totals['queued']} "
         f"opted-out={totals['skipped_optout']} no-live-course={totals['skipped_no_courses']}"
     )
+
+
 def _classify_audience(args: argparse.Namespace) -> None:
     """Mark enrolments staff/external from an ERP roster export (ADR 0004).
 
@@ -395,7 +399,9 @@ def _classify_audience(args: argparse.Namespace) -> None:
         if tenant is None:
             raise SystemExit(f"Tenant '{args.tenant_slug}' not found.")
         counts = audience.classify_from_roster(
-            db, tenant_id=tenant.id, roster=roster,
+            db,
+            tenant_id=tenant.id,
+            roster=roster,
             mark_rest_external=args.assume_roster_complete,
         )
         split = audience.counts_by_audience(db, tenant_id=tenant.id)
@@ -434,9 +440,7 @@ def _hr_report(args: argparse.Namespace) -> None:
             if args.dry_run:
                 from datetime import UTC, datetime, timedelta
 
-                snap = hr_digest.snapshot(
-                    db, tenant_id=tenant.id, since=datetime.now(UTC) - timedelta(days=args.days)
-                )
+                snap = hr_digest.snapshot(db, tenant_id=tenant.id, since=datetime.now(UTC) - timedelta(days=args.days))
                 print(f"DRY RUN [{tenant.slug}] {hr_digest.render(snap, branding=branding)[1]}")
                 continue
             queued += hr_digest.send_hr_report(
@@ -496,9 +500,7 @@ def _email_digest(args: argparse.Namespace) -> None:
                     if enqueue_email(
                         db,
                         tenant_id=tenant.id,
-                        idempotency_key=(
-                            f"weekly-digest:{period}:{cohort.id}:{instructor.id}"
-                        ),
+                        idempotency_key=(f"weekly-digest:{period}:{cohort.id}:{instructor.id}"),
                         kind="weekly_digest",
                         recipient=instructor.email,
                         subject=f"Weekly progress digest — {cohort.name}",
@@ -540,7 +542,7 @@ def _at_risk_sweep(args: argparse.Namespace) -> None:
 
 
 def _erp_training_sync(args: argparse.Namespace) -> None:
-    """Cross-tenant: push completed courses to dotmac_erp HR (training reports).
+    """Cross-tenant: project changed staff course progress to dotmac_erp HR.
 
     BYPASSRLS admin session; idempotent — only unsynced completions are pushed
     and ERP dedups on the certificate ref, so re-runs are safe. Inert unless
@@ -637,9 +639,7 @@ def _reinvite_stranded(args: argparse.Namespace) -> None:
             print("\nDRY RUN — no tokens minted and no email queued.")
             return
 
-        res = reengagement.reinvite_stranded(
-            db, tenant_id=tenant.id, base_url=args.base_url, cohort_id=cohort_id
-        )
+        res = reengagement.reinvite_stranded(db, tenant_id=tenant.id, base_url=args.base_url, cohort_id=cohort_id)
         db.commit()
         print(f"\nqueued: {res['queued']}   queue failures: {res['failed']}")
         if res["failed"]:
@@ -940,9 +940,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
             identity = lab_operations.worker_identity_parts()
             with lab_jobs.lab_worker_session() as db:
                 try:
-                    reclaimed = lab_operations.reclaim_previous_epoch(
-                        db, host=identity.host, epoch=identity.epoch
-                    )
+                    reclaimed = lab_operations.reclaim_previous_epoch(db, host=identity.host, epoch=identity.epoch)
                     db.commit()
                 except BaseException:
                     # Includes _WorkerShutdownRequested (a SIGTERM arriving
@@ -956,10 +954,7 @@ def _lab_worker(args: argparse.Namespace) -> None:
                     db.rollback()
                     raise
             if reclaimed:
-                print(
-                    f"reclaimed {reclaimed} operation(s) from a previous worker "
-                    "epoch on this host"
-                )
+                print(f"reclaimed {reclaimed} operation(s) from a previous worker " "epoch on this host")
             print("lab-worker started; draining durable operations every 5s")
             while True:
                 with lab_jobs.lab_worker_session() as db:
@@ -1063,11 +1058,7 @@ def _load_curriculum(args: argparse.Namespace) -> None:
     declared = doc.get("prerequisites") or []
 
     with _tenant_session(args.tenant_slug) as (db, tenant):
-
-        courses = {
-            c.slug: c
-            for c in db.query(Course).filter(Course.tenant_id == tenant.id).all()
-        }
+        courses = {c.slug: c for c in db.query(Course).filter(Course.tenant_id == tenant.id).all()}
 
         wanted: set[tuple] = set()
         missing: list[str] = []
@@ -1086,8 +1077,7 @@ def _load_curriculum(args: argparse.Namespace) -> None:
             # Fail rather than silently skip: a typo'd slug would otherwise look
             # exactly like a successful run that enforced nothing.
             raise SystemExit(
-                "These courses are declared in the file but not imported: "
-                + ", ".join(sorted(set(missing)))
+                "These courses are declared in the file but not imported: " + ", ".join(sorted(set(missing)))
             )
 
         # A cycle would lock every course in it permanently unreachable.
@@ -1109,21 +1099,13 @@ def _load_curriculum(args: argparse.Namespace) -> None:
             if not state.get(node):
                 _walk(node)
 
-        existing_rows = (
-            db.query(CoursePrerequisite)
-            .filter(CoursePrerequisite.tenant_id == tenant.id)
-            .all()
-        )
+        existing_rows = db.query(CoursePrerequisite).filter(CoursePrerequisite.tenant_id == tenant.id).all()
         scoped = {c.id for c in courses.values() if c.discipline == doc.get("discipline")}
         existing = {(r.course_id, r.requires_course_id): r for r in existing_rows}
 
         added = removed = 0
         for pair in wanted - set(existing):
-            db.add(
-                CoursePrerequisite(
-                    tenant_id=tenant.id, course_id=pair[0], requires_course_id=pair[1]
-                )
-            )
+            db.add(CoursePrerequisite(tenant_id=tenant.id, course_id=pair[0], requires_course_id=pair[1]))
             added += 1
         for pair, row in existing.items():
             if pair not in wanted and pair[0] in scoped:
@@ -1427,11 +1409,11 @@ def main() -> None:
     ar = sub.add_parser(
         "at-risk-sweep",
         help="DEPRECATED: superseded by the Success Queue (runs inside "
-             "reminders-sweep); now only sends legacy in-app nudges",
+        "reminders-sweep); now only sends legacy in-app nudges",
     )
     ar.set_defaults(func=_at_risk_sweep)
 
-    ets = sub.add_parser("erp-training-sync", help="Push completed courses to dotmac_erp HR")
+    ets = sub.add_parser("erp-training-sync", help="Project staff training progress to dotmac_erp HR")
     ets.set_defaults(func=_erp_training_sync)
 
     seb = sub.add_parser("set-entrance-bank", help="Designate a cohort's entrance-assessment bank")
