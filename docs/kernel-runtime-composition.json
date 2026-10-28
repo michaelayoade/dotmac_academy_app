@@ -60,9 +60,9 @@
     {
       "id": "kernel-runtime-entry-point",
       "source_path": "app/kernel_runtime.py",
-      "source_blob_sha256": "ea49e8118afce36048124888ded01a251cbe2273b1e380d32f62b173c3393ddd",
+      "source_blob_sha256": "9cfcbd4a4f20123ce8bb1066d0b3aad4dcfda8d2d6a267115e99cc243226f0c8",
       "selector": "whole-file.v1",
-      "extract_sha256": "ea49e8118afce36048124888ded01a251cbe2273b1e380d32f62b173c3393ddd"
+      "extract_sha256": "9cfcbd4a4f20123ce8bb1066d0b3aad4dcfda8d2d6a267115e99cc243226f0c8"
     },
     {
       "id": "migration-config",

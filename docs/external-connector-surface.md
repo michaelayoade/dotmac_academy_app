@@ -56,7 +56,7 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`7692b24602b10a7d4c006f251d41e48c34f1550b17651a691c7d3c9ebdbc6ec4`
+`690589825c55266bc59cd498bd8a7ba8c06f5b2c9fabb3fe64a4faaab5063bec`
 
 Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
 implementation itself is unchanged; the fingerprint moved because the module's
@@ -68,6 +68,24 @@ reverse proxy, not a newly accepted connector or broader egress path.
 This is not a claim that the proxy is test code or harmless. If reachability
 changes, the fingerprint changes, or the surface is deleted, the conservation
 ratchet fails until this record is reviewed in the same change.
+
+Re-reviewed on 2026-10-28 for the WebFig method bridge. The proxy now admits
+the bounded POST surface RouterOS WebFig requires, while retaining the existing
+authenticated tenant, instance-owner and console-entitlement gates. Request
+headers remain allow-listed, request bodies are capped, device credentials are
+never forwarded, cookies are namespaced and path-confined, and redirects are
+resolved and remapped beneath the instance console prefix. Cross-origin or
+malformed-origin POST requests fail closed. This is an expansion of the
+existing console transport, not an Integrator cutover or a general-purpose
+egress path.
+
+Four conserved findings in `tests/web/test_console_webfig_proxy.py` are also
+declared explicitly: `test_post_jsproxy_passes_through`,
+`test_learner_credentials_not_forwarded_and_device_cookie_confined`,
+`test_device_redirects_stay_inside_prefix`, and `test_upstream_down_is_502`.
+They are test-only fake-upstream witnesses for the reviewed runtime surface;
+they do not add a production connector. Their shared fingerprint is
+`4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8`.
 
 ## Review rule
 
