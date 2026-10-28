@@ -31,9 +31,14 @@ from dotmac_learning import (
     AttemptAuditContext,
     BankLifecycleError,
     ChapterFact,
+    CoursePatch,
+    CreateCohortCommand,
+    ReferenceNotFound,
     authoring_chapters,
     get_activity,
+    patch_course,
 )
+from dotmac_learning import create_cohort as create_learning_cohort
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
@@ -329,7 +334,7 @@ def create_cohort(
 ):
     tenant = require_tenant(request)
     _global_staff_or_403(db, tenant_id=tenant.id, person_id=person.id)
-    db.add(Cohort(tenant_id=tenant.id, name=name, discipline=discipline, status="active"))
+    create_learning_cohort(db, CreateCohortCommand(tenant_id=tenant.id, name=name, discipline=discipline))
     # No db.commit() here — get_db commits after the response is returned.
     return hx_redirect(request, "/instructor/cohorts")
 
@@ -1498,8 +1503,14 @@ def set_course_status(
     tenant = require_tenant(request)
     if status_value not in ("draft", "published", "completed"):
         raise HTTPException(status_code=400, detail="invalid status")
-    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    course.status = status_value
+    _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    # The owner re-reads the authorized row; retain the source's staging-only
+    # behavior rather than flushing pending caller work on that extra SELECT.
+    try:
+        with db.no_autoflush:
+            patch_course(db, CoursePatch(id=course_id, tenant_id=tenant.id, status=status_value))
+    except ReferenceNotFound as exc:
+        raise HTTPException(status_code=404) from exc
     target = f"/instructor/courses/{course_id}/edit"
     return hx_redirect(request, target)
 
