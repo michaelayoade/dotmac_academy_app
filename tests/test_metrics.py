@@ -248,3 +248,5 @@ def test_pipeline_counts_never_come_from_worker_files_across_processes(tmp_path)
     )
     payload, _ = metrics.render(snapshot=snapshot)
     assert b'academy_lab_instances{status="queued"} 3.0' in payload
+    # Exactly one queued series: the snapshot value, never a worker-file duplicate.
+    assert payload.count(b'academy_lab_instances{status="queued"}') == 1
