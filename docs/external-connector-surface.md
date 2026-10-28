@@ -56,7 +56,7 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`d3f92e8c87bcbd761cc1c6968249934b61a6e18472601b284399cd14ce8642d4`
+`b36fbbc016c9b148ed08703aa2ada7371126bf7b825cd996e9e8e054f954629b`
 
 Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
 implementation itself is unchanged; the fingerprint moved because the module's
@@ -96,6 +96,15 @@ bounded-overlap rewriter that retains the authenticated instance/node prefix;
 binary WebFig protocol bodies remain byte-for-byte unchanged. Because decoded
 text bytes can change, stale content encodings, range metadata, digests and
 entity tags are removed from rewritten responses.
+
+Re-reviewed again on 2026-10-28 after production showed WebFig loading and then
+disconnecting back to the Academy dashboard. Current RouterOS keeps one
+authenticated `/jsproxy` notification request open indefinitely; the proxy's
+30-second read timeout terminated that request and caused WebFig to disconnect.
+Upstream connect, write and pool acquisition remain bounded at 30 seconds, while
+only the response read timeout is disabled. The request remains behind the same
+tenant, owner and entitlement gates, and this does not broaden the destination
+or accepted method surface.
 
 ## Review rule
 

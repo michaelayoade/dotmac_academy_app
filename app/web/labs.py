@@ -43,6 +43,7 @@ from app.services.web_auth import require_web_user
 from app.web.console_proxy import (
     MAX_DEVICE_COOKIES,
     WebFigRootRewriter,
+    console_upstream_timeout,
     device_cookie_header,
     rewrite_location,
     rewrite_set_cookie,
@@ -215,8 +216,8 @@ _FORWARD_REQUEST_HEADERS = frozenset(
 )
 
 def _new_upstream_client() -> httpx.AsyncClient:
-    """Upstream HTTP client. Redirects are never followed (SSRF); tests patch this."""
-    return httpx.AsyncClient(timeout=30.0, follow_redirects=False)
+    """Upstream client with bounded setup and WebFig-compatible long polling."""
+    return httpx.AsyncClient(timeout=console_upstream_timeout(), follow_redirects=False)
 
 
 async def _read_capped_body(request: Request) -> bytes:
