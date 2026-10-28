@@ -213,8 +213,8 @@ def _load_banks(args: argparse.Namespace) -> None:
         for yaml_path in yaml_files:
             try:
                 doc = parse_bank(yaml_path)
-            except Exception as exc:  # unparseable file: report, keep going
-                print(f"SKIP {yaml_path.name}: could not parse — {exc}")
+            except Exception:  # unparseable file: report, keep going
+                print(f"SKIP {yaml_path.name}: could not parse bank document")
                 continue
             course = db.scalars(
                 select(Course).where(Course.tenant_id == tenant.id).where(Course.slug == doc.course)

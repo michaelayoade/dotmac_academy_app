@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import dotmac_learning as learning
 import pytest
+import yaml
 
 from app import cli
 from app.services import settings_store
@@ -228,9 +229,73 @@ def test_parse_error_skips_file_without_owner(tmp_path, caller, monkeypatch, cap
     )
     cli._load_banks(args(tmp_path))
     assert session.events == []
-    out = capsys.readouterr().out
-    assert out.startswith("SKIP bad.yaml: could not parse — ")
-    assert out.endswith("Done — 0/1 bank(s) imported as drafts (none published).\n")
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "SKIP bad.yaml: could not parse bank document\n"
+        "Done — 0/1 bank(s) imported as drafts (none published).\n"
+    )
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"bank:\n  correct: [PRIVATE_ANSWER_KEY_PARSE_7c93, }\n",
+        b"bank:\n  correct: PRIVATE_ANSWER_KEY_PARSE_7c93\xff\n",
+    ],
+    ids=["malformed-yaml", "invalid-utf8"],
+)
+def test_parse_failure_hides_source_and_continues(tmp_path, caller, monkeypatch, capsys, payload):
+    from app.services.bank_loader import parse_bank
+
+    session, _tenant, _course = caller
+    bad_path = tmp_path / "a.yaml"
+    bad_path.write_bytes(payload)
+    write_bank(tmp_path / "b.yaml")
+    # Exercise the genuine decoder; malformed YAML includes the answer key
+    # in its exception's source excerpt before the CLI suppresses that detail.
+    with pytest.raises((UnicodeDecodeError, yaml.YAMLError)) as failure:
+        parse_bank(bad_path)
+    raw_error = str(failure.value)
+    if payload.isascii():
+        assert "PRIVATE_ANSWER_KEY_PARSE_7c93" in raw_error
+        assert "[PRIVATE_ANSWER_KEY_PARSE_7c93," in raw_error
+
+    lookups = []
+    course_lookup = session.scalars
+
+    def scalars(statement):
+        lookups.append(statement)
+        return course_lookup(statement)
+
+    monkeypatch.setattr(session, "scalars", scalars)
+    calls = []
+    report = _report()
+
+    def owner(db, command, *, audit_context):
+        assert db is session
+        assert session.events == []  # The failed parse neither commits nor rolls back.
+        assert len(lookups) == 1  # Only the valid bank reaches the course lookup.
+        assert command.doc.course == "source"
+        calls.append(command)
+        return report
+
+    monkeypatch.setattr(learning, "import_bank_document_as_draft", owner)
+    cli._load_banks(args(tmp_path))
+    assert len(calls) == 1
+    assert session.events == ["commit"]
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "SKIP a.yaml: could not parse bank document\n"
+        f"Imported b.yaml as draft: outcome=created bank={report.bank_id} "
+        f"version={report.version_id} questions=10 lint_violations=0\n"
+        "Done — 1/2 bank(s) imported as drafts (none published).\n"
+    )
+    assert captured.err == ""
+    output = captured.out + captured.err
+    assert "PRIVATE_ANSWER_KEY_PARSE_7c93" not in output
+    assert raw_error not in output
+    assert "correct:" not in output
 
 
 def test_empty_and_missing_directories_keep_source_messages(tmp_path, caller, capsys):
