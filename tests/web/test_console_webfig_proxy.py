@@ -14,7 +14,7 @@ from app.models.lab import LabInstance
 from app.models.person import Person
 from tests.web.test_console_proxy import _entitled_activity, _login, _make_person
 
-MGMT = "192.0.2.10"  # RFC 5737 documentation range (is_private in the stdlib)
+MGMT = "10.123.0.10"  # RFC 1918 fake device; private on every supported Python
 ORIGIN = {"Origin": "http://alpha.localhost"}
 
 
