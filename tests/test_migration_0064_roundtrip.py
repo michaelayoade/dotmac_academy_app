@@ -7,7 +7,8 @@ from uuid import uuid4
 from sqlalchemy import create_engine, text
 
 from alembic import command
-from tests.test_migration_roundtrip import _head_revision, _make_config, _migration_env, _migration_url
+from alembic.script import ScriptDirectory
+from tests.test_migration_roundtrip import _make_config, _migration_env, _migration_url
 
 REVISION = "0064_facilitator_nominations"
 DOWN_REVISION = "0063_lab_console_activity"
@@ -32,7 +33,7 @@ def _activation_capability_exists(conn) -> bool:
 def test_0064_roundtrip_backfills_active_legacy_facilitator_without_mutating_enrollment():
     url = _migration_url()
     cfg = _make_config()
-    assert _head_revision(cfg) == REVISION
+    assert ScriptDirectory.from_config(cfg).get_revision(REVISION) is not None
     engine = create_engine(url, future=True)
     tenant_id = uuid4()
     person_id = uuid4()
