@@ -27,4 +27,4 @@ boot:direct=0:transitive=yes
 api_deps:direct=1:transitive=yes
 cli:direct=1:transitive=yes
 web:direct=2:transitive=yes
-scripts_tasks:direct=0:transitive=no
+scripts_tasks:direct=0:transitive=yes
