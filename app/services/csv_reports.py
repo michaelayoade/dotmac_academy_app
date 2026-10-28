@@ -42,8 +42,8 @@ def cohort_roster_csv(db: Session, *, tenant_id: UUID, cohort_id: UUID,
     """Per-learner progress: completion, grade, last activity, open queue reasons."""
     fact = learning.cohort_roster_progress(db, tenant_id=tenant_id, cohort_id=cohort_id, now=now)
     cohort = fact.cohort
-    rows = [["name", "email", "courses", "avg_completion_pct", "avg_grade_pct",
-             "last_activity_at", "days_inactive", "open_queue_reasons"]]
+    rows: list[list] = [["name", "email", "courses", "avg_completion_pct", "avg_grade_pct",
+                         "last_activity_at", "days_inactive", "open_queue_reasons"]]
     for row in fact.rows:
         rows.append([
             f"{row.person.first_name} {row.person.last_name}".strip(), row.person.email,

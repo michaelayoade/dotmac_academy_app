@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 import sqlalchemy as sa
+
 from app.maintenance import learning_history as history
 from app.maintenance import retained_schema as schema
 

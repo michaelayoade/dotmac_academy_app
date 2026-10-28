@@ -9,6 +9,7 @@ from copy import copy
 
 import pytest
 import sqlalchemy as sa
+
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.config import settings

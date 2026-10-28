@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 import sqlalchemy as sa
+
 from app.maintenance import learning_history as history
 from app.maintenance import retained_schema as schema
 from app.maintenance import retained_transition as retained

@@ -6,9 +6,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
-from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.services.security import hash_password
 from dotmac_kernel.models import Party, PartyPerson, PartyType, UserCredential
 from dotmac_learning import (
     ActivityWrite,
@@ -20,6 +17,10 @@ from dotmac_learning import (
 )
 from dotmac_learning.models import Score, Submission
 from dotmac_learning.participation_models import Cohort, CourseOffering, Enrollment
+
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
+from app.models.lab import LabInstance, LabOperation, LabTemplate
+from app.services.security import hash_password
 
 
 def _make_party(admin_session, tenant, email: str, *, first_name="S", last_name="L") -> Party:

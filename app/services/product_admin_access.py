@@ -41,7 +41,7 @@ def _require_bank_roles(
 ) -> AcademyCurrentAccount:
     tenant = require_tenant(request)
     policy = effective(db, require_store=True)
-    if not set(policy[key]).intersection(role_slugs(db, tenant.id, account.id)):  # type: ignore[index]
+    if not set(policy[key]).intersection(role_slugs(db, tenant.id, account.id)):
         raise HTTPException(status_code=403, detail="Forbidden")
     return account
 

@@ -16,6 +16,10 @@ from weakref import WeakKeyDictionary, ref
 
 import dotmac_learning as learning
 import sqlalchemy as sa
+from dotmac_kernel.migrations import versions_dir as kernel_versions
+from dotmac_learning.migrations import versions_dir as learning_versions
+from sqlalchemy.engine import Connection
+
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.maintenance import account_token_identity as tokens
@@ -28,9 +32,6 @@ from app.maintenance import retained_hosted_genesis as hosted
 from app.maintenance import retained_transition as transition
 from app.maintenance.identity_history import _connection_preflight
 from app.migration_graph import ordinary_migration_config
-from dotmac_kernel.migrations import versions_dir as kernel_versions
-from dotmac_learning.migrations import versions_dir as learning_versions
-from sqlalchemy.engine import Connection
 
 
 class ProductAdoptionRefused(RuntimeError):

@@ -1,8 +1,9 @@
 from uuid import uuid4
 
-from app.models.lab import LabInstance, LabTemplate
 from dotmac_kernel.models import Party, PartyPerson, PartyType
 from dotmac_learning import ActivityWrite, CourseWrite, create_activity, create_course
+
+from app.models.lab import LabInstance, LabTemplate
 
 
 def test_create_template_and_instance(admin_session, tenant_a):

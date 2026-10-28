@@ -10,6 +10,8 @@ from copy import copy
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
+
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.maintenance import checkpoint_transition as checkpoint
@@ -18,7 +20,6 @@ from app.maintenance import learning_history as history
 from app.maintenance import product_adoption as product
 from app.maintenance import retained_history as retained_rows
 from app.maintenance import retained_transition as transition
-from sqlalchemy.exc import IntegrityError
 from tests import test_academy_erp_checkpoint_adoption as checkpoint_tests
 from tests import test_academy_product_adoption as product_tests
 from tests import test_academy_retained_adoption as retained_tests

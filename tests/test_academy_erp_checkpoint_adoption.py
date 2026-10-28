@@ -10,6 +10,7 @@ from copy import copy
 
 import pytest
 import sqlalchemy as sa
+
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.maintenance import checkpoint_transition as checkpoint

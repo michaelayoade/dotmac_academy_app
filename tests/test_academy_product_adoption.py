@@ -11,13 +11,6 @@ from types import SimpleNamespace
 import dotmac_learning as learning
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from app.maintenance import account_token_identity as tokens
-from app.maintenance import learning_history as history
-from app.maintenance import product_adoption as product
-from app.maintenance import retained_history as retained
-from app.maintenance import retained_hosted_genesis as hosted
-from app.maintenance.identity_history import IdentityHistoryImportRefused, import_academy_identity_history
 from dotmac_kernel.migrations import versions_dir as kernel_versions
 from dotmac_kernel.prerequisites import (
     MODULE_DATABASE_ROLES_V1,
@@ -29,6 +22,14 @@ from dotmac_kernel.prerequisites import (
     installed_bindings,
 )
 from dotmac_learning.migrations import versions_dir as learning_versions
+
+from alembic import command
+from app.maintenance import account_token_identity as tokens
+from app.maintenance import learning_history as history
+from app.maintenance import product_adoption as product
+from app.maintenance import retained_history as retained
+from app.maintenance import retained_hosted_genesis as hosted
+from app.maintenance.identity_history import IdentityHistoryImportRefused, import_academy_identity_history
 from tests import test_academy_identity_history as identity_tests
 from tests import test_academy_learning_history as learning_tests
 from tests.fixtures import product_adoption_entry as entry
@@ -52,8 +53,9 @@ def _actual_bindings():
 def _actual_application_object():
     # Ordinary fixture evaluation precedes every test and every resource creation.
     # Retain the plain app only; no client, lifespan entry, HTTP or DSN retarget.
-    from app.kernel_runtime import create_academy_app
     from dotmac_kernel import audit_actions
+
+    from app.kernel_runtime import create_academy_app
 
     app = create_academy_app()
     registry = audit_actions.active_audit_actions()

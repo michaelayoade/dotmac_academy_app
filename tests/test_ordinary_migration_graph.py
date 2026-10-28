@@ -13,15 +13,16 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from dotmac_kernel.modules import ModuleRegistry
+from dotmac_kernel.prerequisites import installed_bindings, resolve_depends_on
+from sqlalchemy import create_engine, event, text
+
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.config import settings
 from app.migration_bindings import ASSEMBLY_PREREQUISITE_BINDINGS
 from app.migration_graph import ordinary_migration_config
 from app.owner_composition import compose_migration_owner_declarations
-from dotmac_kernel.modules import ModuleRegistry
-from dotmac_kernel.prerequisites import installed_bindings, resolve_depends_on
-from sqlalchemy import create_engine, event, text
 
 
 def test_graph_commands_have_complete_config_and_bindings_before_env(monkeypatch):
@@ -68,10 +69,11 @@ def test_graph_commands_have_complete_config_and_bindings_before_env(monkeypatch
 
 
 def test_disabled_owner_still_contributes_exact_location():
-    from app.assembly import assembly
-    from app.migration_graph import IDENTITY_VERSIONS, build_migration_config
     from dotmac_kernel.migrations import versions_dir as kernel_versions
     from dotmac_learning.migrations import versions_dir as learning_versions
+
+    from app.assembly import assembly
+    from app.migration_graph import IDENTITY_VERSIONS, build_migration_config
 
     locators = {"kernel": kernel_versions, "learning": learning_versions, "assembly": lambda: IDENTITY_VERSIONS}
     disabled = replace(assembly, disabled_modules=frozenset({"learning", "academy"}))

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import sqlalchemy as sa
+
 from app.maintenance import checkpoint_transition as checkpoint
 from app.maintenance import learning_history as history
 from app.maintenance import retained_history as retained_rows
