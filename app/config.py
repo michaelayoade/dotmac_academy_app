@@ -17,14 +17,15 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
-# Academy currently contains inline scripts and WebSocket lab consoles. This
-# product default is declared by app.assembly's ProductSecurityPolicy;
-# CONTENT_SECURITY_POLICY can still override it at deployment time.
+# Kernel-baseline policy: first-party pages need no inline script and make
+# no WebSocket connections. The proxied ttyd/webfig console documents are
+# served under a path-scoped policy (kernel capsule, deploy gate) — see
+# CSP addendum 2026-10-27. CONTENT_SECURITY_POLICY may only tighten this.
 ACADEMY_CONTENT_SECURITY_POLICY = (
     "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
     "form-action 'self'; object-src 'none'; img-src 'self' data:; "
     "font-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
+    "script-src 'self'; connect-src 'self'"
 )
 
 

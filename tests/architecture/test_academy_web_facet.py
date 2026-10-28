@@ -130,18 +130,21 @@ def test_registry_yields_one_legacy_surface_with_exact_entry_routes() -> None:
 
 
 def test_constructed_app_has_websocket_route_and_qualified_web_names() -> None:
-    from fastapi.routing import APIWebSocketRoute
-
     from app.main import app
 
-    ws_paths = {route.path for route in app.routes if isinstance(route, APIWebSocketRoute)}
-    assert "/labs/instances/{instance_id}/console/{node}/ws" in ws_paths
-
-    qualified = [route.name for route in app.routes if route.name.startswith("web:staff_admin:academy:legacy:")]
-    assert qualified
-    assert "web:staff_admin:academy:legacy:login_form" in qualified
-    assert "web:staff_admin:academy:legacy:home" in qualified
-    assert "web:staff_admin:academy:legacy:learn_home" in qualified
+    # url_path_for is the public route-registry probe: it resolves only when a
+    # route with that exact (qualified) name is mounted on the constructed app.
+    assert str(app.url_path_for("web:staff_admin:academy:legacy:login_form")) == "/login"
+    assert str(app.url_path_for("web:staff_admin:academy:legacy:home")) == "/"
+    assert str(app.url_path_for("web:staff_admin:academy:legacy:learn_home")) == "/learn"
+    ws_path = str(
+        app.url_path_for(
+            "console_ws",
+            instance_id="00000000-0000-0000-0000-000000000001",
+            node="node-1",
+        )
+    )
+    assert ws_path == "/labs/instances/00000000-0000-0000-0000-000000000001/console/node-1/ws"
 
     registry = app.state.web_surface_registry
     assert {ref.route_name for ref in registry.facet("staff_admin").entry_routes} == ENTRY_ROUTES

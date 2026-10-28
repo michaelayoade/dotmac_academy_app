@@ -54,7 +54,7 @@
       <div class="cards row-scroll" role="region" aria-label="Technical courses; scroll horizontally for more" tabindex="0">
         {% for item in tech %}
         <article class="card">
-          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
+          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" data-hide-on-error>
           <div class="card-body">
             <h3>{{ item.course.title }}</h3>
             <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
@@ -80,7 +80,7 @@
       <div class="cards row-scroll" role="region" aria-label="Management courses; scroll horizontally for more" tabindex="0">
         {% for item in mgmt %}
         <article class="card">
-          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" onerror="this.style.display='none'">
+          <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" data-hide-on-error>
           <div class="card-body">
             <h3>{{ item.course.title }}</h3>
             <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
@@ -112,15 +112,6 @@
     </div>
   </footer>
 
-<script>
-(function(){
-  document.querySelectorAll('.row-wrap').forEach(function(w){
-    var row=w.querySelector('.row-scroll');
-    w.querySelectorAll('.row-nav button').forEach(function(b){
-      b.onclick=function(){var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;row.scrollBy({left:(row.clientWidth*0.9)*parseInt(b.dataset.dir),behavior:reduce?'auto':'smooth'});};
-    });
-  });
-})();
-</script>
+<script src="/static/public_courses.js?v=1"></script>
 </body>
 </html>

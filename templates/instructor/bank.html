@@ -61,7 +61,7 @@
   {% for activity in activities %}
   <form class="mt-3 flex flex-wrap items-center gap-2" method="post"
         action="/instructor/courses/{{ course.id }}/banks/{{ bank.id }}/versions/__VERSION__/repoint"
-        onsubmit="this.action = this.action.replace('__VERSION__', this.version_id.value)">
+        data-version-action-form>
     <span class="text-sm">{{ activity.title }}</span>
     <input type="hidden" name="activity_id" value="{{ activity.id }}">
     <select name="version_id" class="px-2 py-1.5 text-sm">
@@ -86,7 +86,7 @@
       <button class="btn-primary px-3.5 py-2 text-sm" type="submit">Publish version</button>
     </form>
     <form method="post" action="/instructor/courses/{{ course.id }}/banks/{{ bank.id }}/draft/discard"
-          onsubmit="return confirm('Discard this draft? Published versions are untouched.')">
+          data-confirm-submit="Discard this draft? Published versions are untouched.">
       <button class="btn-ghost px-3.5 py-2 text-sm" type="submit">Discard draft</button>
     </form>
   </div>

@@ -35,7 +35,7 @@
 
   <div class="min-w-0">
     <section class="coursework-hero">
-      <img src="/static/img/cover-{{ course.slug }}.webp" alt="" class="coursework-hero-img" loading="lazy" onerror="this.style.display='none'">
+      <img src="/static/img/cover-{{ course.slug }}.webp" alt="" class="coursework-hero-img" loading="lazy" data-hide-on-error>
       <div class="coursework-hero-content">
         <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-100">{{ course.title }}</p>
         <p class="mt-3 font-mono text-sm tabular-nums text-sand-100/85">Chapter {{ chapter.number }} of {{ chapters|length }} &middot; ~{{ reading_minutes }} min read</p>

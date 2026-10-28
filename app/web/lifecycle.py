@@ -33,12 +33,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
-# Shared CSRF snippet so htmx form POSTs carry the double-submit token.
-_CSRF_JS = (
-    "<script>document.body.addEventListener('htmx:configRequest',function(e){"
-    "var m=document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);"
-    "if(m){e.detail.headers['x-csrf-token']=m[1];}});</script>"
-)
+# Shared page scripts: CSRF double-submit lift + swapped-fragment redirect.
+_PAGE_JS = "<script src='/static/csrf.js?v=1'></script><script src='/static/lifecycle.js?v=1'></script>"
 
 
 def _page(title: str, body: str) -> HTMLResponse:
@@ -52,7 +48,7 @@ def _page(title: str, body: str) -> HTMLResponse:
         f"<main class='mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12'>"
         f"<a href='/login' class='mb-8 text-sm font-semibold text-brand-700'>Dotmac Academy</a>"
         f"<section class='card p-6'><h1 class='font-display text-2xl mb-4'>{title}</h1>"
-        f"{body}</section></main>{_CSRF_JS}</body></html>"
+        f"{body}</section></main>{_PAGE_JS}</body></html>"
     )
 
 
@@ -119,12 +115,12 @@ def forgot_submit(request: Request, email: str = Form(...), db: Session = Depend
             )
     # Identical response whether or not the email exists (anti-enumeration).
     return HTMLResponse(
-        "<div class='rounded-lg bg-brand-100 p-4 text-brand-800'>"
+        "<div class='rounded-lg bg-brand-100 p-4 text-brand-800' "
+        "data-redirect-after='3000' data-redirect-href='/login'>"
         "<p class='font-semibold'>Reset link requested</p>"
         "<p class='mt-1'>If that email has an account, a reset link is on its way.</p>"
         "<p class='mt-2 text-xs'>Returning to login...</p>"
         "<a class='mt-3 inline-flex text-sm font-semibold underline' href='/login'>Go to login</a>"
-        "<script>setTimeout(function(){window.location.href='/login';},3000);</script>"
         "</div>"
     )
 
