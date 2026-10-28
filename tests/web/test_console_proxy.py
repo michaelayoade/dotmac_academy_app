@@ -8,21 +8,18 @@ request through (non-403/404), not that bytes were shuttled.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import pytest
-from dotmac_kernel.models import Party, PartyPerson, PartyType, UserCredential
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from fastapi import Response
 from sqlalchemy import select
 
 from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
-from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
-from app.services.security import hash_password
 from app.web.labs import _console_target
 
 
@@ -46,37 +43,28 @@ def _entitled_activity(admin_session, tenant, person_id):
 
 
 def _make_person(admin_session, tenant, email: str) -> Party:
-    # Genuine canonical fixture records, following sign_in_account setup.
-    now = datetime.now(UTC)
-    p = Party(
-        tenant_id=tenant.id, party_type=PartyType.person,
-        display_name="S L", email=email, is_active=True,
+    from tests.conftest import make_canonical_account
+
+    p = make_canonical_account(
+        admin_session, tenant_id=tenant.id, email=email, first_name="S", last_name="L",
+        password="password1", role="student",
     )
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(PartyPerson(party_id=p.id, first_name="S", last_name="L"))
-    admin_session.flush()
-    admin_session.add(AcademyAccountProfile(
-        tenant_id=tenant.id, party_id=p.id, status="active", prefs={},
-        created_at=now, updated_at=now,
-    ))
-    credential = UserCredential(
-        tenant_id=tenant.id, party_id=p.id, password_hash=hash_password("password1"),
-    )
-    admin_session.add(credential)
-    admin_session.flush()
-    admin_session.add(AcademyCredentialPolicy(
-        tenant_id=tenant.id, credential_id=credential.id, email=email,
-        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
-        reset_required=False, created_at=now, updated_at=now,
-    ))
     admin_session.commit()
     return p
 
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    app_client.get("/login", headers=h)
+    token = app_client.cookies.get("csrf_token")
+    assert token
+    response = app_client.post(
+        "/login", headers={**h, "x-csrf-token": token},
+        data={"email": email, "password": "password1"}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    # The authenticated browser token is bound to its new session cookie.
+    app_client.get("/", headers=h)
     return h
 
 

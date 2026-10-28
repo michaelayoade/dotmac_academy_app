@@ -1503,6 +1503,7 @@ class Settings(KernelSettings):
     # loopback default; when the lab worker runs on a separate KVM host, set this
     # to that host's private/tunnel address (e.g. its WireGuard IP).
     lab_console_host: str = "127.0.0.1"
+    lab_console_max_body_bytes: int = 1_048_576
     # Address ttyd BINDS when this process spawns a console. Deliberately a
     # SEPARATE knob from ``lab_console_host``: on the app host the dial address is
     # REMOTE, and ttyd cannot bind an address the local host does not own — it

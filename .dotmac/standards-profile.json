@@ -58,7 +58,43 @@
         "path": "app/web/labs.py",
         "symbol": "_proxy_http",
         "category": "outbound_transport",
-        "fingerprint": "0e0c244ed0894eb13c7c4014afc2251fb1b67ba794b31388dc2445791de8d313"
+        "fingerprint": "2c328231a93ddd1bd861da9a32a325523d176432dca6b3706b87589717c4ad06"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_device_redirects_stay_inside_prefix",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_javascript_root_redirect_stays_inside_console_prefix",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_learner_credentials_not_forwarded_and_device_cookie_confined",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_post_jsproxy_passes_through",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_signed_proxy_rewrites_stream_and_drops_stale_validators",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_upstream_down_is_502",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
       }
     ]
   }
