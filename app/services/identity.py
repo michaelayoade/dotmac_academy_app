@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.identity import normalize_email as normalize_identity_email
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 
 def normalize_email(email: str | None) -> str:
-    """Return the canonical representation used for account identity."""
-    return (email or "").strip().lower()
+    """Retain Academy trimming and delegate identity casing to its Kernel owner."""
+    return normalize_identity_email((email or "").strip())
 
 
 def canonical_party_for_email(db: Session, *, tenant_id: UUID, email: str, lock: bool = False):

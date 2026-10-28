@@ -25,7 +25,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.exceptions import BadRequestError, ForbiddenError
-from dotmac_kernel.identity_storage import ensure_grant, lock_grants, lock_parties, remove_grants
+from dotmac_kernel.identity_storage import ensure_grant, lock_grants, remove_grants
 from dotmac_kernel.models import Party, PartyPerson, PartyType
 from dotmac_kernel.transactions import conflict_savepoint
 from dotmac_kernel.web_surfaces import surface_path
@@ -42,7 +42,7 @@ from app.models.offering import CourseOffering
 from app.services import tracks as track_svc
 from app.services.account_invitations import CohortAssignment
 from app.services.bootstrap import ensure_roles
-from app.services.canonical_lifecycle import request_password_reset, set_account_status
+from app.services.canonical_lifecycle import request_password_reset, set_web_account_status
 from app.services.credential_assignment import create_web_user
 from app.services.email_outbox import enqueue_email
 from app.services.identity import AcademyCurrentAccount
@@ -55,6 +55,11 @@ from app.services.invitation_issuance import (
 )
 from app.services.roles import role_slugs
 from app.services.security import hash_token
+from app.services.web_account_authority import (
+    lock_web_admin_write,
+    require_clean_account_write,
+    revalidate_web_admin_write,
+)
 from app.services.web_auth import require_web_user
 from app.web.responses import hx_redirect
 from app.web.templating import templates
@@ -463,49 +468,41 @@ def users_role(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    require_clean_account_write(db)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change roles")
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    # Hold both principals in the canonical Party-first order and recheck
-    # authority before locking the role catalog or inventorying grants.
-    parties = lock_parties(db, tenant_id=tenant.id, party_ids=(actor.id, person_id))
-    by_id = {party.id: party for party in parties}
-    actor_party = by_id.get(actor.id)
-    if (
-        actor_party is None
-        or actor_party.party_type != PartyType.person
-        or "admin" not in _role_slugs(db, tenant.id, actor.id)
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change roles")
-    target = by_id.get(person_id)
-    if target is None or target.party_type != PartyType.person:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if target.id == actor.id and role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot remove your own admin role here",
-        )
-
-    roles = ensure_roles(db, tenant.id)
-    standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
-    target_role_id = roles[role].id
-    existing_grants = lock_grants(db, tenant_id=tenant.id, party_ids=(target.id,))
-    obsolete = tuple(
-        grant for grant in existing_grants if grant.role_id in standard_role_ids and grant.role_id != target_role_id
-    )
-    has_target_role = any(grant.role_id == target_role_id for grant in existing_grants)
     with conflict_savepoint(db):
-        # Materialize the real SAVEPOINT before immediate-Core storage enters.
         db.connection()
+        actor_id, target = lock_web_admin_write(
+            db, request, target_id=person_id, forbidden_detail="Only admins can change roles",
+        )
+        if target is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        if target.id == actor_id and role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot remove your own admin role here",
+            )
+        roles = ensure_roles(db, tenant.id)
+        standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
+        target_role_id = roles[role].id
+        existing_grants = lock_grants(db, tenant_id=tenant.id, party_ids=(target.id,))
+        obsolete = tuple(
+            grant for grant in existing_grants if grant.role_id in standard_role_ids and grant.role_id != target_role_id
+        )
+        has_target_role = any(grant.role_id == target_role_id for grant in existing_grants)
+        # Role provisioning and the final grant lock can wait past cookie expiry.
+        revalidate_web_admin_write(db, request, actor_id=actor_id, forbidden_detail="Only admins can change roles")
         remove_grants(db, tenant_id=tenant.id, party_id=target.id, expected=obsolete)
         if not has_target_role:
             ensure_grant(
                 db, tenant_id=tenant.id, party_id=target.id, role_id=target_role_id,
                 new_grant_id=None, created_at=None, updated_at=None,
             )
-    db.flush()
+        db.flush()
     return hx_redirect(request, "/admin/users")
 
 
@@ -518,10 +515,13 @@ def users_status(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    require_clean_account_write(db)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can manage accounts")
-    set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
+    set_web_account_status(
+        db, request, person_id=person_id, status=status_value, forbidden_detail="Only admins can manage accounts",
+    )
     label = "suspended" if status_value == "suspended" else "reactivated"
     return HTMLResponse(
         (

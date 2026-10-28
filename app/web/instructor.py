@@ -59,7 +59,7 @@ from app.services import tracks as track_svc
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
-from app.services.canonical_lifecycle import set_account_status
+from app.services.canonical_lifecycle import set_web_account_status
 from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
@@ -1325,8 +1325,7 @@ def change_account_status(
     Admin-only: account suspension is privileged, so a plain instructor cannot
     suspend admins or peer instructors (the whole route requires the admin role).
     """
-    tenant = require_tenant(request)
-    set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
+    set_web_account_status(db, request, person_id=person_id, status=status_value, forbidden_detail="Forbidden")
     return hx_redirect(request, "/instructor/cohorts")
 
 
