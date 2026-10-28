@@ -33,10 +33,13 @@ jobs:
           set -euo pipefail
           actual_id=$(docker inspect "$SERVICE_CONTAINER_ID" --format '{{.Image}}')
           expected_id=$(docker image inspect "$IMAGE" --format '{{.Id}}')
-          test "$actual_id" = "$expected_id"
-          test "$actual_id" = sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f
           echo "ACADEMY_IMAGE_ID=$actual_id"
+          echo "ACADEMY_INSPECT_IMAGE_ID=$expected_id"
+          docker buildx imagetools inspect "$IMAGE" --raw | jq '{mediaType,config}'
           docker exec "$SERVICE_CONTAINER_ID" uname -m
           docker exec "$SERVICE_CONTAINER_ID" getconf GNU_LIBC_VERSION
           docker exec "$SERVICE_CONTAINER_ID" psql -U postgres -d academy_image_profile -v ON_ERROR_STOP=1 -Atc "SELECT json_build_object('server_version_num', current_setting('server_version_num'), 'encoding', pg_encoding_to_char(encoding), 'locale_provider', datlocprovider, 'lc_collate', datcollate, 'lc_ctype', datctype, 'collation_version', datcollversion, 'actual_collation_version', pg_database_collation_actual_version(oid)) FROM pg_database WHERE datname=current_database()"
           test "$(docker exec "$SERVICE_CONTAINER_ID" psql -U postgres -d academy_image_profile -Atc 'SHOW server_version_num')" = 160015
+
+          test "$actual_id" = "$expected_id"
+          test "$actual_id" = sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f
