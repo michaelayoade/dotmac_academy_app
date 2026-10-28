@@ -11,6 +11,7 @@ import ipaddress
 import re
 from urllib.parse import quote, urljoin, urlsplit
 
+import httpx
 from fastapi import HTTPException, Request
 
 
@@ -40,6 +41,11 @@ MAX_DEVICE_COOKIES = 8
 
 _WEBFIG_ROOT = b"/webfig/"
 _WEBFIG_SCRIPT_TYPES = frozenset({"application/javascript", "application/x-javascript"})
+
+
+def console_upstream_timeout() -> httpx.Timeout:
+    """Bound connection work but permit WebFig's indefinite notification poll."""
+    return httpx.Timeout(30.0, read=None)
 
 
 def should_rewrite_webfig_body(content_type: str | None) -> bool:

@@ -1,6 +1,20 @@
 """Pure regression tests for WebFig response-body path confinement."""
 
-from app.web.console_proxy import WebFigRootRewriter, should_rewrite_webfig_body
+from app.web.console_proxy import (
+    WebFigRootRewriter,
+    console_upstream_timeout,
+    should_rewrite_webfig_body,
+)
+
+
+def test_webfig_notification_long_poll_has_no_read_timeout() -> None:
+    """RouterOS keeps one authenticated ``jsproxy`` request open indefinitely."""
+    timeout = console_upstream_timeout()
+
+    assert timeout.read is None
+    assert timeout.connect == 30.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 30.0
 
 
 def test_webfig_root_redirect_is_rewritten_inside_console_prefix() -> None:
