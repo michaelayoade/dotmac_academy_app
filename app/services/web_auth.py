@@ -24,12 +24,17 @@ COOKIE = "session"
 
 def revoke_session(db: Session, tenant_id: UUID, token: str | None) -> None:
     """Lock the genuine principal before refreshing/revoking this exact session."""
+    from dotmac_kernel.identity_storage import revoke_party_sessions
     from dotmac_kernel.models import AuthSession as CanonicalSession
     from dotmac_kernel.models import Party
-    from dotmac_kernel.transactions import conflict_savepoint
+    from dotmac_kernel.transactions import ConflictSavepointProtocolError, conflict_savepoint
 
     if not token:
         return
+    # begin_nested() preflushes before establishing the public SAVEPOINT. Logout
+    # must never flush unrelated caller work merely to admit the storage owner.
+    if db.new or db.dirty or db.deleted:
+        raise ConflictSavepointProtocolError("logout requires clean pending state")
     digest = hash_token(token)
     with conflict_savepoint(db):
         candidate = db.scalars(
@@ -60,8 +65,17 @@ def revoke_session(db: Session, tenant_id: UUID, token: str | None) -> None:
             .execution_options(populate_existing=True)
         ).first()
         if session is not None and session.revoked_at is None:
-            session.revoked_at = datetime.now(UTC)
-            db.flush()
+            changed = revoke_party_sessions(
+                db,
+                tenant_id=tenant_id,
+                party_id=party_id,
+                session_ids=(session_id,),
+                revoked_at=datetime.now(UTC),
+            )
+            if session_id in changed:
+                # The owner uses Core DML. Refresh only its persisted fields on
+                # the already locked row so immediate identity-map reads agree.
+                db.refresh(session, attribute_names=["revoked_at", "updated_at"])
 
 
 def _current_person(db: Session, tenant_id: UUID, token: str | None) -> AcademyCurrentAccount | None:
