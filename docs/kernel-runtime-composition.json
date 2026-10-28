@@ -11,16 +11,16 @@
     {
       "id": "dependency-manifest",
       "source_path": "pyproject.toml",
-      "source_blob_sha256": "25cd1a7860aa7ee6004e56c1c356c1a915d07aee89928260af0d9074a45c32d6",
+      "source_blob_sha256": "bbdc7b4227f80570996503e2cc6f3ee9bbbe510a8c8fca0a08c8b41d57765ddc",
       "selector": "whole-file.v1",
-      "extract_sha256": "25cd1a7860aa7ee6004e56c1c356c1a915d07aee89928260af0d9074a45c32d6"
+      "extract_sha256": "bbdc7b4227f80570996503e2cc6f3ee9bbbe510a8c8fca0a08c8b41d57765ddc"
     },
     {
       "id": "dependency-lock",
       "source_path": "poetry.lock",
-      "source_blob_sha256": "61e93cb04a6f58e4eb603ad85fdfe8cdbd6ca13dcddfea9fa77d2ad86630db17",
+      "source_blob_sha256": "59b48152b04f3b314a48f2f7ef008274c9dd832e30f03da2b52efcd14f2cb0a0",
       "selector": "whole-file.v1",
-      "extract_sha256": "61e93cb04a6f58e4eb603ad85fdfe8cdbd6ca13dcddfea9fa77d2ad86630db17"
+      "extract_sha256": "59b48152b04f3b314a48f2f7ef008274c9dd832e30f03da2b52efcd14f2cb0a0"
     },
     {
       "id": "production-install",
@@ -32,23 +32,23 @@
     {
       "id": "product-assembly-source",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "82cd054da1e35742585e636d0ced8642fd8993da823235c999ab132373afabbf",
+      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
       "selector": "whole-file.v1",
-      "extract_sha256": "82cd054da1e35742585e636d0ced8642fd8993da823235c999ab132373afabbf"
+      "extract_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa"
     },
     {
       "id": "product-identity",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "82cd054da1e35742585e636d0ced8642fd8993da823235c999ab132373afabbf",
+      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
       "selector": "python-string-assignment.v1/PRODUCT_ID",
       "extract_sha256": "c17754e120b42081f6019a0aa47346ce37b01133c11cb1f30dc3adcfc2466b7b"
     },
     {
       "id": "module-registration",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "82cd054da1e35742585e636d0ced8642fd8993da823235c999ab132373afabbf",
+      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
       "selector": "python-assignment-keyword.v1/assembly/ProductAssemblySpec/modules",
-      "extract_sha256": "d05d960a5b614b684da2519ac89287bffacea5148c388676a8d188bbbb049f15"
+      "extract_sha256": "f73a71a2684dc2245419ac70137ff558e8ea557515cb5f89dd97654ef18eab6b"
     },
     {
       "id": "boot-entry-point",
@@ -60,16 +60,16 @@
     {
       "id": "kernel-runtime-entry-point",
       "source_path": "app/kernel_runtime.py",
-      "source_blob_sha256": "ea49e8118afce36048124888ded01a251cbe2273b1e380d32f62b173c3393ddd",
+      "source_blob_sha256": "19c846f96d5c808caf152abe226621e1dac05eeae40574752aedd4b68caed0c0",
       "selector": "whole-file.v1",
-      "extract_sha256": "ea49e8118afce36048124888ded01a251cbe2273b1e380d32f62b173c3393ddd"
+      "extract_sha256": "19c846f96d5c808caf152abe226621e1dac05eeae40574752aedd4b68caed0c0"
     },
     {
       "id": "migration-config",
       "source_path": "alembic.ini",
-      "source_blob_sha256": "8b70906ecf875985942a0c47da939ef125a90a496185d8b94f086f181dfd7cc4",
+      "source_blob_sha256": "82cce68f10fba8daf771128e22eb6f4c119a0a9eea9e5d75238ac63560733be3",
       "selector": "whole-file.v1",
-      "extract_sha256": "8b70906ecf875985942a0c47da939ef125a90a496185d8b94f086f181dfd7cc4"
+      "extract_sha256": "82cce68f10fba8daf771128e22eb6f4c119a0a9eea9e5d75238ac63560733be3"
     }
   ]
 }
