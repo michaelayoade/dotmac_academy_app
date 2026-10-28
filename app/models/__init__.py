@@ -11,6 +11,7 @@ from app.models.completion import CourseCompletion  # noqa: F401
 from app.models.course import Chapter, Course  # noqa: F401
 from app.models.email_outbox import EmailOutbox  # noqa: F401
 from app.models.entrance_defaults import TenantEntranceDefaults  # noqa: F401
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint  # noqa: F401
 from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement  # noqa: F401
 from app.models.lab import LabConsoleActivity, LabInstance, LabOperation, LabTemplate  # noqa: F401
 from app.models.learning_event import LearningEvent  # noqa: F401

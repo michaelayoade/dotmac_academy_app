@@ -2,7 +2,8 @@
 
 The hourly state-derived sweep sends changed percentages using the stable ERP
 employee reference carried by a staff enrolment. Accepted snapshots advance
-the persisted sync markers so unchanged state is not resent.
+the persisted progress marker so unchanged state is not resent. Completed-course
+delivery acknowledgement lives in Academy's ERP checkpoint, not learning state.
 """
 
 from __future__ import annotations
@@ -16,12 +17,14 @@ from uuid import UUID
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
 from app.models.offering import CourseOffering
 
 logger = logging.getLogger(__name__)
@@ -117,6 +120,37 @@ def _outcome(resp: httpx.Response) -> str:
     return SYNCED
 
 
+class ERPCheckpointInvariantError(RuntimeError):
+    """Delivery history cannot safely be inferred from an absent checkpoint."""
+
+
+def _locked_checkpoint(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    completion: CourseCompletion,
+) -> ERPCompletionCheckpoint:
+    if completion.tenant_id != tenant_id:
+        raise ERPCheckpointInvariantError("completion belongs to another tenant")
+    checkpoint = db.get(ERPCompletionCheckpoint, (tenant_id, completion.id))
+    if checkpoint is None and completion.erp_synced_at is not None:
+        raise ERPCheckpointInvariantError("missing checkpoint for legacy acknowledged completion")
+    # Concurrent first senders converge on one key; INSERT waits for the other
+    # transaction before the lock/read. The caller owns commit and lock release.
+    db.execute(
+        insert(ERPCompletionCheckpoint)
+        .values(tenant_id=tenant_id, completion_id=completion.id)
+        .on_conflict_do_nothing(index_elements=["tenant_id", "completion_id"])
+    )
+    return db.scalars(
+        select(ERPCompletionCheckpoint)
+        .where(ERPCompletionCheckpoint.tenant_id == tenant_id)
+        .where(ERPCompletionCheckpoint.completion_id == completion.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+
+
 def push_completion(
     db: Session,
     *,
@@ -127,12 +161,20 @@ def push_completion(
 ) -> str:
     """Push one completion to ERP. Returns SYNCED / UNMATCHED / FAILED.
 
-    ``erp_synced_at`` is stamped only on SYNCED — an event ERP declined to
+    Checkpoint ``erp_synced_at`` is stamped only on SYNCED — an event ERP declined to
     record is not delivered, and leaving it unstamped keeps it in the backlog
-    where it is visible and retried. Best-effort: never raises.
+    where it is visible and retried. Network errors return FAILED; broken
+    checkpoint invariants raise ERPCheckpointInvariantError. Caller owns commit.
     """
     if not settings.erp_webhook_url:
         return FAILED
+    checkpoint = _locked_checkpoint(db, tenant_id=tenant_id, completion=completion)
+    if completion.status == "completed" and checkpoint.erp_synced_at is not None:
+        # 0066 preserves acknowledgements that predate the v2 progress marker.
+        # Converge that marker without replaying a completion ERP already accepted.
+        completion.erp_synced_pct = completion.pct
+        db.flush()
+        return SYNCED
     course = db.get(Course, completion.course_id)
     if enrollment is None:
         enrollment = db.scalar(
@@ -178,14 +220,12 @@ def push_completion(
         )
         return UNMATCHED
     if outcome == FAILED:
-        logger.warning(
-            "erp training push rejected (%s) for completion %s", resp.status_code, completion.id
-        )
+        logger.warning("erp training push rejected (%s) for completion %s", resp.status_code, completion.id)
         return FAILED
 
     completion.erp_synced_pct = completion.pct
     if completion.status == "completed":
-        completion.erp_synced_at = now or datetime.now(UTC)
+        checkpoint.erp_synced_at = now or datetime.now(UTC)
     db.flush()
     return SYNCED
 
@@ -235,8 +275,6 @@ def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -
         counts[outcome] += 1
     from app.services import erp_assessment_sync
 
-    for outcome, amount in erp_assessment_sync.sync_pending(
-        db, tenant_id=tenant_id, now=now
-    ).items():
+    for outcome, amount in erp_assessment_sync.sync_pending(db, tenant_id=tenant_id, now=now).items():
         counts[outcome] += amount
     return counts
