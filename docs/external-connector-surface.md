@@ -56,7 +56,7 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`690589825c55266bc59cd498bd8a7ba8c06f5b2c9fabb3fe64a4faaab5063bec`
+`d3f92e8c87bcbd761cc1c6968249934b61a6e18472601b284399cd14ce8642d4`
 
 Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
 implementation itself is unchanged; the fingerprint moved because the module's
@@ -79,13 +79,23 @@ malformed-origin POST requests fail closed. This is an expansion of the
 existing console transport, not an Integrator cutover or a general-purpose
 egress path.
 
-Four conserved findings in `tests/web/test_console_webfig_proxy.py` are also
+Five conserved findings in `tests/web/test_console_webfig_proxy.py` are also
 declared explicitly: `test_post_jsproxy_passes_through`,
 `test_learner_credentials_not_forwarded_and_device_cookie_confined`,
-`test_device_redirects_stay_inside_prefix`, and `test_upstream_down_is_502`.
+`test_device_redirects_stay_inside_prefix`,
+`test_javascript_root_redirect_stays_inside_console_prefix`, and
+`test_upstream_down_is_502`.
 They are test-only fake-upstream witnesses for the reviewed runtime surface;
 they do not add a production connector. Their shared fingerprint is
-`4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8`.
+`eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619`.
+
+Re-reviewed on 2026-10-28 after production showed RouterOS completing login
+with a JavaScript root-relative `/webfig/` navigation rather than an HTTP
+`Location` header. Text and JavaScript response bodies now stream through a
+bounded-overlap rewriter that retains the authenticated instance/node prefix;
+binary WebFig protocol bodies remain byte-for-byte unchanged. Because decoded
+text bytes can change, stale content encodings, range metadata, digests and
+entity tags are removed from rewritten responses.
 
 ## Review rule
 

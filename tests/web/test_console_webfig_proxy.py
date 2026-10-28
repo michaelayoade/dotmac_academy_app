@@ -284,6 +284,34 @@ def test_device_redirects_stay_inside_prefix(app_client, owned, upstream):
     assert r.headers["location"] == f"{pre}/login?next=1"
 
 
+def test_javascript_root_redirect_stays_inside_console_prefix(app_client, owned, upstream):
+    li, h = owned
+    pre = f"/labs/instances/{li.id}/console/r1"
+    body = b'window.location = "/webfig/";'
+    upstream.respond = lambda req: httpx.Response(
+        200,
+        content=body,
+        headers={
+            "content-type": "application/javascript; charset=utf-8",
+            "etag": '"device-script-v1"',
+        },
+    )
+
+    r = app_client.get(_url(li, "assets/script.js"), headers=h)
+
+    assert r.status_code == 200
+    assert r.content == b'window.location = "' + pre.encode() + b'/webfig/";'
+    assert "etag" not in r.headers
+
+    upstream.respond = lambda req: httpx.Response(
+        200,
+        content=b"binary:/webfig/:payload",
+        headers={"content-type": "application/octet-stream"},
+    )
+    binary = app_client.get(_url(li, "jsproxy"), headers=h)
+    assert binary.content == b"binary:/webfig/:payload"
+
+
 def test_upstream_down_is_502(app_client, owned, upstream):
     li, h = owned
 

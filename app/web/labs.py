@@ -42,11 +42,13 @@ from app.services.lab_operations import OPEN_STATES, enqueue
 from app.services.web_auth import require_web_user
 from app.web.console_proxy import (
     MAX_DEVICE_COOKIES,
+    WebFigRootRewriter,
     device_cookie_header,
     rewrite_location,
     rewrite_set_cookie,
     safe_mgmt_address,
     safe_subpath,
+    should_rewrite_webfig_body,
 )
 from app.web.templating import templates
 
@@ -287,10 +289,30 @@ async def _proxy_http(request: Request, target: str) -> Response:
         if rewritten is not None:
             resp_headers["location"] = rewritten
 
+    rewrite_body = upstream.status_code != 206 and should_rewrite_webfig_body(
+        upstream.headers.get("content-type")
+    )
+    if rewrite_body:
+        # ``aiter_bytes`` decodes transfer/content encodings before the path
+        # rewrite, so validators for the device's original bytes cannot survive.
+        for header in ("accept-ranges", "content-encoding", "content-md5", "content-range", "digest", "etag"):
+            resp_headers.pop(header, None)
+
     async def _body_iter():
         try:
-            async for chunk in upstream.aiter_raw():
-                yield chunk
+            if not rewrite_body:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+                return
+
+            rewriter = WebFigRootRewriter(prefix)
+            async for chunk in upstream.aiter_bytes():
+                rewritten_chunk = rewriter.feed(chunk)
+                if rewritten_chunk:
+                    yield rewritten_chunk
+            final_chunk = rewriter.finish()
+            if final_chunk:
+                yield final_chunk
         finally:
             await upstream.aclose()
             await client.aclose()

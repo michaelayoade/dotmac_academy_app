@@ -38,6 +38,52 @@ COOKIE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 COOKIE_VALUE_RE = re.compile(r"^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]{0,2048}$")
 MAX_DEVICE_COOKIES = 8
 
+_WEBFIG_ROOT = b"/webfig/"
+_WEBFIG_SCRIPT_TYPES = frozenset({"application/javascript", "application/x-javascript"})
+
+
+def should_rewrite_webfig_body(content_type: str | None) -> bool:
+    """Return whether a response can contain browser-visible WebFig paths."""
+    if content_type is None:
+        return False
+    media_type = content_type.partition(";")[0].strip().lower()
+    return media_type.startswith("text/") or media_type in _WEBFIG_SCRIPT_TYPES
+
+
+class WebFigRootRewriter:
+    """Rewrite root-relative WebFig paths without buffering the response body."""
+
+    def __init__(self, prefix: str) -> None:
+        if not prefix.startswith("/") or prefix.endswith("/"):
+            raise ValueError("console prefix must be an absolute path without a trailing slash")
+        self._replacement = prefix.encode("utf-8") + _WEBFIG_ROOT
+        self._pending = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        """Rewrite complete matches and retain only a possible split match."""
+        data = self._pending + chunk
+        output = bytearray()
+        while True:
+            match = data.find(_WEBFIG_ROOT)
+            if match >= 0:
+                output.extend(data[:match])
+                output.extend(self._replacement)
+                data = data[match + len(_WEBFIG_ROOT) :]
+                continue
+
+            keep = len(_WEBFIG_ROOT) - 1
+            if len(data) > keep:
+                output.extend(data[:-keep])
+                data = data[-keep:]
+            self._pending = data
+            return bytes(output)
+
+    def finish(self) -> bytes:
+        """Return the final bytes once the upstream response is exhausted."""
+        pending = self._pending
+        self._pending = b""
+        return pending
+
 
 def safe_subpath(subpath: str) -> str:
     """Validate and percent-encode a console sub-resource path.
