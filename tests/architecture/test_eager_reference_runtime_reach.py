@@ -140,7 +140,7 @@ FAMILY_ENTRY_MODULE: dict[str, str] = {
 
 
 @dataclass(frozen=True)
-class FamilyReach:
+class _FamilyReach:
     direct: int
     transitive: bool
 
@@ -166,22 +166,22 @@ def _measure_transitive_reach(module: str) -> bool:
     return "REACHED" in result.stdout
 
 
-def _measure_family(name: str) -> FamilyReach:
-    return FamilyReach(
+def _measure_family(name: str) -> _FamilyReach:
+    return _FamilyReach(
         direct=_direct_import_count(FAMILY_FILES[name]),
         transitive=_measure_transitive_reach(FAMILY_ENTRY_MODULE[name]),
     )
 
 
-def _read_baseline() -> dict[str, FamilyReach]:
-    baseline: dict[str, FamilyReach] = {}
+def _read_baseline() -> dict[str, _FamilyReach]:
+    baseline: dict[str, _FamilyReach] = {}
     for raw_line in BASELINE.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         family, rest = line.split(":direct=", 1)
         direct_str, transitive_str = rest.split(":transitive=", 1)
-        baseline[family] = FamilyReach(direct=int(direct_str), transitive=transitive_str == "yes")
+        baseline[family] = _FamilyReach(direct=int(direct_str), transitive=transitive_str == "yes")
     return baseline
 
 
