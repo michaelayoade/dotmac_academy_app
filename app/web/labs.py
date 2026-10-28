@@ -128,6 +128,24 @@ def _require_instance_entitlement(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
 
 
+def _console_live(instance: LabInstance) -> bool:
+    """The one definition of "this instance's consoles are reachable".
+
+    Stored mgmt IPs / ttyd ports are only meaningful while the instance's own
+    runtime is live; after reap/error/reset they may belong to another learner.
+    Shared by the console gate and the status template so a link is shown only
+    when following it can succeed.
+    """
+    return (
+        instance.status == "active"
+        and instance.error is None
+        and instance.runtime_presence == "present"
+    )
+
+
+templates.env.globals["lab_console_live"] = _console_live
+
+
 def _authorize_console(
     db: Session,
     tenant: _TenantContext,
@@ -138,7 +156,7 @@ def _authorize_console(
     """Security gate shared by the HTTP (and future WebSocket) console paths.
 
     Returns the upstream target URL, or raises:
-      404 — instance not found in this tenant, or node/target missing.
+      404 — instance not found in this tenant, not live, or node/target missing.
       403 — instance exists in-tenant but is owned by another person.
 
     Loads via a tenant-filtered select (never ``db.get(PK)``) so a cross-tenant
@@ -152,6 +170,8 @@ def _authorize_console(
     if instance.person_id != person.id:
         raise HTTPException(status_code=403)
     _require_instance_entitlement(db, tenant, person, instance)
+    if not _console_live(instance):
+        raise HTTPException(status_code=404)
     target = _console_target(instance, node)
     if target is None:
         raise HTTPException(status_code=404)

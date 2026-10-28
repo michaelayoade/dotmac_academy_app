@@ -903,6 +903,18 @@ def run_claimed(
                 # (only if present) -> console teardown (only if destroyed).
                 lab_lifecycle.destroy_if_present(db, instance, engine)
             else:
+                # Durable reservation BEFORE slow external work, mirroring the
+                # deploy path's commit above: once destroy begins the runtime's
+                # mgmt IPs / ttyd ports may be released and reused, so make the
+                # uncertainty (and the cleared console specs) visible to the web
+                # tier immediately rather than at the end of the destroy. The
+                # commit holds no lock we rely on (this branch takes neither the
+                # capacity advisory lock nor a row lock beyond this instance's),
+                # a later failure's rollback cannot undo it, and the existing
+                # failure handler still re-asserts "unknown" afterwards.
+                instance.runtime_presence = "unknown"
+                instance.consoles = {}
+                db.commit()
                 lab_lifecycle.destroy(db, instance, engine)
         elif operation_kind == "check":
             template = db.scalars(
@@ -1072,6 +1084,7 @@ def run_claimed(
                     )
                     if escalation_message is not None:
                         failed_instance.status = "error"
+                        failed_instance.consoles = {}
                         failed_instance.error = escalation_message
                         # Never force "absent" here — escalation must not
                         # falsely claim the runtime is gone; presence stays
@@ -1100,6 +1113,7 @@ def run_claimed(
                     escalated_instance = db.get(LabInstance, operation_instance_id)
                     if escalated_instance is not None:
                         escalated_instance.status = "error"
+                        escalated_instance.consoles = {}
                         escalated_instance.error = escalation_message
                         # Never force "absent" here — escalation must not
                         # falsely claim the runtime is gone. Presence stays
@@ -1176,6 +1190,7 @@ def _fail_operation_at_ceiling(
         )
         if escalation_message is not None:
             instance.status = "error"
+            instance.consoles = {}
             instance.error = escalation_message
             # Presence stays "unknown" (set above) — never forced to
             # "absent" by escalation.
@@ -1197,6 +1212,7 @@ def _fail_operation_at_ceiling(
         )
         if escalation_message is not None:
             instance.status = "error"
+            instance.consoles = {}
             instance.error = escalation_message
             # Presence stays "unknown" (set above) — never forced to
             # "absent" by escalation.

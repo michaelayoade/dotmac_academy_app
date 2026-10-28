@@ -688,6 +688,53 @@ def test_destroy_marks_reaped(admin_session, tenant_a):
     admin_session.rollback()
 
 
+def test_destroy_clears_consoles(admin_session, tenant_a):
+    """A reaped row must not keep mgmt IPs / ttyd ports other instances reuse."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-clear", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
+    admin_session.add(inst)
+    admin_session.flush()
+    out = lab_lifecycle.destroy(admin_session, inst, MagicMock())
+    admin_session.flush()
+    assert out.status == "reaped"
+    assert out.consoles == {}
+    admin_session.rollback()
+
+
+def test_destroy_if_present_clears_consoles(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-clear2", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.destroy_if_present.return_value = True
+    out = lab_lifecycle.destroy_if_present(admin_session, inst, engine)
+    admin_session.flush()
+    assert out.status == "reaped"
+    assert out.consoles == {}
+    admin_session.rollback()
+
+
+def test_reset_failure_clears_stale_consoles(admin_session, tenant_a):
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-reset-clear", seed={"o": 5}, status="active",
+                       consoles={"client": {"kind": "linux", "mgmt": "192.0.2.9", "port": 1111}})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.reset.side_effect = RuntimeError("engine boom")
+    out = lab_lifecycle.reset(admin_session, inst, engine, lt)
+    admin_session.flush()
+    assert out.status == "error"
+    assert out.consoles == {}
+    admin_session.rollback()
+
+
 # --- console bind guard + orphan bookkeeping -------------------------------
 # Regression cover for the leak found on the academy host 2026-08-14: 14 ttyd
 # processes spinning at ~99% CPU each for up to 15 days, spawned with an ``-i``
