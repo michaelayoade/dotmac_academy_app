@@ -8,19 +8,20 @@ request through (non-403/404), not that bytes were shuttled.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType, UserCredential
 from fastapi import Response
 from sqlalchemy import select
 
 from app.models.assessment import Activity
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
 from app.web.labs import _console_target
 
@@ -44,18 +45,31 @@ def _entitled_activity(admin_session, tenant, person_id):
     return act.id
 
 
-def _make_person(admin_session, tenant, email: str) -> Person:
-    p = Person(tenant_id=tenant.id, email=email, first_name="S", last_name="L")
+def _make_person(admin_session, tenant, email: str) -> Party:
+    # Genuine canonical fixture records, following sign_in_account setup.
+    now = datetime.now(UTC)
+    p = Party(
+        tenant_id=tenant.id, party_type=PartyType.person,
+        display_name="S L", email=email, is_active=True,
+    )
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+    admin_session.add(PartyPerson(party_id=p.id, first_name="S", last_name="L"))
+    admin_session.flush()
+    admin_session.add(AcademyAccountProfile(
+        tenant_id=tenant.id, party_id=p.id, status="active", prefs={},
+        created_at=now, updated_at=now,
+    ))
+    credential = UserCredential(
+        tenant_id=tenant.id, party_id=p.id, password_hash=hash_password("password1"),
     )
+    admin_session.add(credential)
+    admin_session.flush()
+    admin_session.add(AcademyCredentialPolicy(
+        tenant_id=tenant.id, credential_id=credential.id, email=email,
+        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+        reset_required=False, created_at=now, updated_at=now,
+    ))
     admin_session.commit()
     return p
 
@@ -120,8 +134,11 @@ def test_cross_tenant_not_found(app_client, admin_session, tenant_a, tenant_b):
     """Instance belongs to tenant B; requester authenticated in tenant A → 404."""
     _make_person(admin_session, tenant_a, "owner3@a.edu")
     # Owner person + instance live entirely in tenant_b.
-    p_b = Person(tenant_id=tenant_b.id, email="owner@b.edu", first_name="B", last_name="B")
+    p_b = Party(tenant_id=tenant_b.id, party_type=PartyType.person, display_name="B B",
+                email="owner@b.edu", is_active=True)
     admin_session.add(p_b)
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=p_b.id, first_name="B", last_name="B"))
     admin_session.flush()
     li = _seed_instance(admin_session, tenant_b, p_b.id)
     h = _login(app_client, "owner3@a.edu")

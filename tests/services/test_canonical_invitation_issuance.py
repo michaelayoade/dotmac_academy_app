@@ -12,7 +12,8 @@ from uuid import uuid4
 import pytest
 from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
-from dotmac_learning.models import Cohort, CohortTrack, Course, CourseOffering, Enrollment, Track
+from dotmac_learning.models import Course
+from dotmac_learning.participation_models import Cohort, CohortTrack, CourseOffering, Enrollment, Track
 from sqlalchemy import delete, select, text
 
 from app.models.account_token import AccountToken

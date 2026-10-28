@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.models.assessment import Activity
 from app.models.course import Course
 from app.models.lab import LabConsoleActivity, LabInstance, LabOperation
-from app.models.person import Person
 from app.services import lab_console_activity as lca
 from app.services import lab_jobs
 
@@ -30,8 +30,11 @@ def _instance(admin_session, tenant, *, name, last_active=None):
     admin_session.flush()
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",
                    title="L", pass_threshold=0.6)
-    p = Person(tenant_id=tenant.id, email=f"{name}@example.com", first_name="T", last_name="U")
+    p = Party(tenant_id=tenant.id, party_type=PartyType.person, display_name="T U",
+              email=f"{name}@example.com", is_active=True)
     admin_session.add_all([act, p])
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=p.id, first_name="T", last_name="U"))
     admin_session.flush()
     inst = LabInstance(tenant_id=tenant.id, activity_id=act.id, person_id=p.id,
                        instance_name=f"dal-{name}", seed={}, status="active", consoles={},

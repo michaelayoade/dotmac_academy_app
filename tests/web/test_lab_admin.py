@@ -2,32 +2,50 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, UserCredential
+
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 
 
-def _login_instructor(app_client, admin_session, tenant):
-    """Seed an instructor person, log in via TestClient, return Host header dict."""
+def _make_account(admin_session, tenant, email: str, first_name: str, last_name: str, role: str) -> Party:
+    """Genuine canonical account (Party/PartyPerson/profile/credential/policy/grant)."""
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email="li@a.edu", first_name="Lab", last_name="Instr")
+    now = datetime.now(UTC)
+    p = Party(
+        tenant_id=tenant.id, party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}", email=email, is_active=True,
+    )
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email="li@a.edu",
-            password_hash=hash_password("password1"),
-        )
+    admin_session.add(PartyPerson(party_id=p.id, first_name=first_name, last_name=last_name))
+    admin_session.flush()
+    admin_session.add(AcademyAccountProfile(
+        tenant_id=tenant.id, party_id=p.id, status="active", prefs={},
+        created_at=now, updated_at=now,
+    ))
+    credential = UserCredential(
+        tenant_id=tenant.id, party_id=p.id, password_hash=hash_password("password1"),
     )
-    admin_session.add(
-        PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["instructor"].id)
-    )
+    admin_session.add(credential)
+    admin_session.flush()
+    admin_session.add(AcademyCredentialPolicy(
+        tenant_id=tenant.id, credential_id=credential.id, email=email,
+        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+        reset_required=False, created_at=now, updated_at=now,
+    ))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id))
     admin_session.commit()
+    return p
+
+
+def _login_instructor(app_client, admin_session, tenant):
+    """Seed an instructor person, log in via TestClient, return Host header dict."""
+    _make_account(admin_session, tenant, "li@a.edu", "Lab", "Instr", "instructor")
 
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": "li@a.edu", "password": "password1"})
@@ -36,22 +54,7 @@ def _login_instructor(app_client, admin_session, tenant):
 
 def test_student_forbidden_on_monitor(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on GET /instructor/labs."""
-    roles = ensure_roles(admin_session, tenant_a.id)
-    p = Person(tenant_id=tenant_a.id, email="ls@a.edu", first_name="S", last_name="T")
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant_a.id,
-            person_id=p.id,
-            email="ls@a.edu",
-            password_hash=hash_password("password1"),
-        )
-    )
-    admin_session.add(
-        PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["student"].id)
-    )
-    admin_session.commit()
+    _make_account(admin_session, tenant_a, "ls@a.edu", "S", "T", "student")
 
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": "ls@a.edu", "password": "password1"})
@@ -65,10 +68,13 @@ def test_instructor_override_creates_override_score(app_client, admin_session, t
     # Seed a real course + lab activity + a student submission to override.
     from app.models.course import Course
 
-    student = Person(tenant_id=tenant_a.id, email="learner@a.edu", first_name="L", last_name="N")
+    student = Party(tenant_id=tenant_a.id, party_type=PartyType.person, display_name="L N",
+                    email="learner@a.edu", is_active=True)
     course = Course(tenant_id=tenant_a.id, slug="lab", title="Lab", discipline="networking",
                     source_ref="x", version=1)
     admin_session.add_all([student, course])
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=student.id, first_name="L", last_name="N"))
     admin_session.flush()
     activity = Activity(
         tenant_id=tenant_a.id, course_id=course.id, type="lab", title="VLAN Lab",
