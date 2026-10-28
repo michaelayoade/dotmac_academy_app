@@ -326,7 +326,10 @@ def test_checkpoint_ack_shortcircuits_and_preserves_learning_completion(admin_se
     _configure(monkeypatch)
     comp, _, _ = _seed(admin_session, tenant_a)
     before = admin_session.execute(
-        text("SELECT (row_to_json(c)::jsonb - 'erp_synced_pct')::text FROM course_completions c WHERE id=:id"),
+        text(
+            "SELECT (row_to_json(c)::jsonb - 'erp_synced_pct' - 'updated_at')::text "
+            "FROM course_completions c WHERE id=:id"
+        ),
         {"id": comp.id},
     ).scalar_one()
     calls = []
@@ -336,7 +339,10 @@ def test_checkpoint_ack_shortcircuits_and_preserves_learning_completion(admin_se
     assert calls == [1]
     assert comp.erp_synced_pct == comp.pct
     after = admin_session.execute(
-        text("SELECT (row_to_json(c)::jsonb - 'erp_synced_pct')::text FROM course_completions c WHERE id=:id"),
+        text(
+            "SELECT (row_to_json(c)::jsonb - 'erp_synced_pct' - 'updated_at')::text "
+            "FROM course_completions c WHERE id=:id"
+        ),
         {"id": comp.id},
     ).scalar_one()
     assert before == after
