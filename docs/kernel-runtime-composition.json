@@ -53,16 +53,16 @@
     {
       "id": "boot-entry-point",
       "source_path": "app/main.py",
-      "source_blob_sha256": "adabcbe517136e6fdc8aecd03257570e8f547413ee89cffd27110536f70a4c57",
+      "source_blob_sha256": "ee3626a67c18c45a7ebdcc46f43751a2c092f76fc3c5155cdfe89866696a5a0b",
       "selector": "whole-file.v1",
-      "extract_sha256": "adabcbe517136e6fdc8aecd03257570e8f547413ee89cffd27110536f70a4c57"
+      "extract_sha256": "ee3626a67c18c45a7ebdcc46f43751a2c092f76fc3c5155cdfe89866696a5a0b"
     },
     {
       "id": "kernel-runtime-entry-point",
       "source_path": "app/kernel_runtime.py",
-      "source_blob_sha256": "3bcbbf3c3b4ff4f9dda1dbeb51bf16afb4fc0dcbc113cb763cabd4135a5e8a96",
+      "source_blob_sha256": "9cfcbd4a4f20123ce8bb1066d0b3aad4dcfda8d2d6a267115e99cc243226f0c8",
       "selector": "whole-file.v1",
-      "extract_sha256": "3bcbbf3c3b4ff4f9dda1dbeb51bf16afb4fc0dcbc113cb763cabd4135a5e8a96"
+      "extract_sha256": "9cfcbd4a4f20123ce8bb1066d0b3aad4dcfda8d2d6a267115e99cc243226f0c8"
     },
     {
       "id": "migration-config",
