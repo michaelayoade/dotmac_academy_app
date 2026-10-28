@@ -77,7 +77,7 @@ otherwise `create_app(assembly)` keeps building
 | API dependencies (request path) | 1 file (`app/api/deps.py`), consumed by 6 router files | Same as boot (any router import pulls in `app.assembly` → the chain above) | none |
 | CLI (`app/cli.py`) | 1 file, 1 import line | Same kernel-side chain is NOT triggered by the CLI (the CLI never imports `app.assembly`/`create_app` — MEASURED, see below) | none |
 | Web (`app/web/*`) | 2 files (`app/web/context.py`, `app/web/labs.py`) | Same as boot, plus `app/web/labs.py` imports `TenantResolverMiddleware` directly (belt-and-braces with the kernel's own install) | none |
-| Scripts / tasks / workers | 0 | 0 (MEASURED — see below) | 2 sites: `app/services/lab_jobs.py:42-43`, `scripts/seed_academy_demo.py:51-52` |
+| Scripts / tasks / workers | 0 | 1 representative entry (`app.services.lab_jobs`, MEASURED in a fresh subprocess — see below) | 2 sites: `app/services/lab_jobs.py:42-43`, `scripts/seed_academy_demo.py:51-52` |
 
 ### `create_app` / application boot
 
@@ -191,17 +191,15 @@ import of exception classes, not `db`) and the comment in
 `app/models/entrance_defaults.py:5` in `app/services`/models, neither of
 which is a scripts/tasks/workers file).
 
-Transitive: none, as long as the script/worker does not import `app.assembly`
-transitively. `app/services/lab_jobs.py` imports `app.config`,
-`app.models` (package `__init__`, MEASURED to have no `dotmac_kernel` import
-via the model files checked — `app/models/base.py`, `tenant.py`, `auth.py`,
-`rbac.py`, `person.py` all import only SQLAlchemy and `app.models.base`),
-`app.services.lab_lifecycle`, `app.services.labengine.interface` — none of
-these was checked exhaustively for a further transitive `app.assembly`
-import; I checked the direct dependency graph two hops deep and found none,
-but I have NOT walked every file `lab_lifecycle.py` and `labengine/interface.py`
-import. **This is an open gap, not a confirmed zero** — flag before treating
-"scripts/tasks: 0" as settled.
+Transitive: yes (MEASURED in hosted CI by the clean-subprocess probe).
+Importing `app.services.lab_jobs` on current `main` leaves
+`dotmac_kernel.db` in `sys.modules`, even though the scripts/tasks family's
+direct-import count remains zero. This resolves the original inventory's
+explicitly named open gap: that review walked only two dependency hops and
+did not exhaustively trace everything reached by `lab_lifecycle` and
+`labengine/interface`. The ratchet records the observed runtime reach rather
+than guessing at an unverified causal path. Retiring this reach must make the
+probe report `no` and update this inventory in the same change.
 
 ## Local `create_engine`/`sessionmaker` classification
 
