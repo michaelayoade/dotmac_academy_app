@@ -13,7 +13,10 @@ def _seed_lab(admin_session, tid, status="active"):
         tenant_id=tid,
         activity_id=uuid.uuid4(),
         person_id=uuid.uuid4(),
-        instance_name="lab-1",
+        # instance_name is now globally unique at the database — a fixed
+        # literal collides the moment this helper is called more than once
+        # (e.g. test_admin_sees_console calls it twice for two statuses).
+        instance_name=f"lab-{uuid.uuid4()}",
         status=status,
     )
     admin_session.add(inst)

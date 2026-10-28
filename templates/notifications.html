@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
+<p class="page-eyebrow">{{ branding_name | default("Technical Academy") }}</p>
 <div class="mt-1.5 flex items-center justify-between">
   <h1 class="text-3xl tracking-tight">Notifications</h1>
   {% if notifications %}
@@ -25,7 +25,7 @@
     <div class="flex items-start gap-3">
       <div class="min-w-0 flex-1">
         {% if n.link %}
-        <a href="{{ n.link }}" class="font-medium text-ink hover:text-brand-600">{{ n.title }}</a>
+        <a href="{{ n.link }}" class="inline-flex min-h-11 items-center font-medium text-ink hover:text-brand-600">{{ n.title }}</a>
         {% else %}
         <p class="font-medium text-ink">{{ n.title }}</p>
         {% endif %}

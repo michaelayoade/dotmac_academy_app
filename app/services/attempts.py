@@ -51,7 +51,9 @@ def _lock_learner(db: Session, *, tenant_id: UUID, person_id: UUID) -> None:
         select(Person.id)
         .where(Person.tenant_id == tenant_id)
         .where(Person.id == person_id)
-        .with_for_update()
+        # Keep admission exclusive without blocking People foreign-key checks
+        # from concurrent completion/certificate writers.
+        .with_for_update(key_share=True, read=False)
     )
 
 

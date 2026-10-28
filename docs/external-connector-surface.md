@@ -27,12 +27,27 @@ Measured-source digest:
 | `webhook_surface` | 0 | — |
 | `provider_credential` | 3 | `app/config.py`, `app/services/email.py`, `app/services/settings_store.py` |
 | `connector_task` | 0 | — |
-| `sync_checkpoint` | 0 | — |
+| `sync_checkpoint` | 2 | `app/models/erp_completion_checkpoint.py`, `app/services/erp_sync.py` |
 | `delivery_retry` | 0 | — |
 
 `outbound_transport` covers the HTTP deliveries to ERP and Academy's SMTP
 delivery. `provider_credential` counts identifiers only; no secret value is
 read or recorded by the detector.
+
+### Transitional checkpoint amendment (2026-10-28)
+
+PR #178 takes the explicitly documented narrow, human-approved transition path
+for separating ERP acknowledgement facts from learning completion before the
+learning-module extraction. The two measured sources above are the complete
+schema-9 finding: the Academy-owned checkpoint model and its sole sender/writer.
+This is a deliberate debt-register increase, not a rename, an exclusion, or a
+claim that transport ownership has moved to Dotmac Integrator.
+
+The checkpoint preserves every historical acknowledgement and gives reversal a
+lossless source while completion storage moves. It remains transitional: the
+Integrator handoff must replace the direct sender with versioned command and
+receipt contracts, preserve these facts, and lower this baseline in the same
+reviewed cutover. Production rollout remains separately authorized.
 
 ## Conserved exclusion
 
@@ -41,11 +56,36 @@ central reachability derivation currently removes that module through the
 assembly chain, so schema 9 publishes and requires this exact conservation
 record instead of silently subtracting it:
 
-`a3838b848c3a881e35d9cac84fd38e7b5c7924c9b564c59ce8f8ed34341a478d`
+`690589825c55266bc59cd498bd8a7ba8c06f5b2c9fabb3fe64a4faaab5063bec`
+
+Re-reviewed on 2026-09-19 for the lab-worker ownership cutover. The proxy
+implementation itself is unchanged; the fingerprint moved because the module's
+runtime imports changed when direct `ContainerlabEngine` execution was removed
+from the web tier and replaced by durable operation enqueueing. The conserved
+surface remains the same authenticated, tenant/instance-owner-gated console
+reverse proxy, not a newly accepted connector or broader egress path.
 
 This is not a claim that the proxy is test code or harmless. If reachability
 changes, the fingerprint changes, or the surface is deleted, the conservation
 ratchet fails until this record is reviewed in the same change.
+
+Re-reviewed on 2026-10-28 for the WebFig method bridge. The proxy now admits
+the bounded POST surface RouterOS WebFig requires, while retaining the existing
+authenticated tenant, instance-owner and console-entitlement gates. Request
+headers remain allow-listed, request bodies are capped, device credentials are
+never forwarded, cookies are namespaced and path-confined, and redirects are
+resolved and remapped beneath the instance console prefix. Cross-origin or
+malformed-origin POST requests fail closed. This is an expansion of the
+existing console transport, not an Integrator cutover or a general-purpose
+egress path.
+
+Four conserved findings in `tests/web/test_console_webfig_proxy.py` are also
+declared explicitly: `test_post_jsproxy_passes_through`,
+`test_learner_credentials_not_forwarded_and_device_cookie_confined`,
+`test_device_redirects_stay_inside_prefix`, and `test_upstream_down_is_502`.
+They are test-only fake-upstream witnesses for the reviewed runtime surface;
+they do not add a production connector. Their shared fingerprint is
+`4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8`.
 
 ## Review rule
 

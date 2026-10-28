@@ -256,6 +256,9 @@ def users_invite(
         first_name=first_name,
         last_name=last_name,
         role=role,
+        # This route already requires "admin" in slugs (checked above), so
+        # any reactivation activate_enrollment performs here is by an admin.
+        actor_is_admin=True,
         assignments=tuple(
             CohortAssignment(
                 cohort=cohort,

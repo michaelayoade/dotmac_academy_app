@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.certificate import Certificate
-from app.models.completion import CourseCompletion
+from app.services.completion_aggregate import lock_existing_completion
 from app.services.exceptions import ConflictError
 
 # Certificate background (built by content/management/figures-src/
@@ -77,12 +77,19 @@ def issue_certificate(
     if existing is not None:
         return existing
 
-    completion = db.scalars(
-        select(CourseCompletion)
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.person_id == person_id)
-        .where(CourseCompletion.course_id == course_id)
+    completion = lock_existing_completion(
+        db, tenant_id=tenant_id, person_id=person_id, course_id=course_id
+    )
+    # A concurrent completion/certificate writer may have issued it while we
+    # waited for the aggregate lock. Recheck before the gate and insertion.
+    existing = db.scalars(
+        select(Certificate)
+        .where(Certificate.tenant_id == tenant_id)
+        .where(Certificate.person_id == person_id)
+        .where(Certificate.course_id == course_id)
     ).first()
+    if existing is not None:
+        return existing
     if completion is None or completion.status != "completed":
         raise ConflictError("course not completed; certificate cannot be issued")
 
@@ -99,14 +106,15 @@ def issue_certificate(
     )
     try:
         from app.services.notifications import notify as _notify
-        _notify(
-            db,
-            tenant_id=tenant_id,
-            person_id=person_id,
-            kind="certificate",
-            title="Your certificate is ready",
-            body="Congratulations on completing the course!",
-        )
+        with db.begin_nested():
+            _notify(
+                db,
+                tenant_id=tenant_id,
+                person_id=person_id,
+                kind="certificate",
+                title="Your certificate is ready",
+                body="Congratulations on completing the course!",
+            )
     except Exception as exc:
         logger.warning("in-app notify (certificate) failed: %s", exc)
     return cert

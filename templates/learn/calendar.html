@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">{{ branding_name | default("Technical Academy") }}</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Calendar</h1>
+<p class="page-eyebrow">{{ branding_name | default("Technical Academy") }}</p>
+<h1 class="page-title">Calendar</h1>
 
 {% if grouped %}
 <div class="mt-8 space-y-8">
@@ -33,7 +33,7 @@
 {% else %}
 <div class="card mt-8 p-8 text-center">
   <p class="text-lg font-medium text-ink">No upcoming events</p>
-  <p class="mt-2 text-ink-soft">Your course schedule and activity deadlines will appear here.</p>
+  <p class="page-intro">Your course schedule and activity deadlines will appear here.</p>
 </div>
 {% endif %}
 {% endblock %}

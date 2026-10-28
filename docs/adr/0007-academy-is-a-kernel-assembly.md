@@ -75,11 +75,34 @@ parallel compatibility response maintained by Academy.
 
 This change intentionally does not migrate `Base`, `Tenant`, `Role`,
 `UserCredential`, `AuthSession`, `PersonRole`, or the Academy migration lineage.
-Those changes affect database identity and require their own ownership ledger,
-schema verification, cutover, and rollback plan. The duplication ratchet keeps
-the remaining seven model collisions visible and prevents new ones.
+ADR 0009 accepts the separate ownership ledger, schema verification,
+expand/shadow/cutover sequence, independent assembly rebaseline, and rollback
+plan for that work. Its inventory keeps the seven name collisions plus the
+semantic `Person`, `PersonRole`, and audit-actor edges visible. The design is
+accepted; implementation remains `design_only` with external evidence pending.
+No database authority changes until ADR 0009's PostgreSQL rehearsals pass.
+The entire unchanged Kernel lineage must execute with genuine independent
+history before runtime cutover; the old stamp-based bridge is superseded and
+canonical entry mechanics remain unresolved.
 
 Kernel 0.1.0a38 completed the former platform-surface, startup-hook, and product
 security-policy follow-ups. The a32 compatibility adapters are retired in this
 cutover; no parallel route filter, settings mutation, or browser-header writer
 remains in Academy.
+
+## Amendment — 2026-09-11: product identity is not a repository coordinate
+
+Academy's stable product identity is `dotmac-academy`. The underscore-form
+`dotmac_academy_app` remains the source-repository, Python-distribution, and
+legacy readiness-record coordinate. These are two typed identifiers, not two
+spellings to normalize between: `ProductAssemblySpec.name` consumes
+`app.assembly.PRODUCT_ID`, while repository-facing contracts continue to use
+`dotmac_academy_app` explicitly.
+
+This distinction prevents a repository rename or packaging convention from
+silently changing the identity carried by Academy's assembled product. This
+amendment is the product-owned prerequisite only; it does not claim that the
+later Kernel composition-observation record or its pinned verification action
+has landed. That record must independently bind `repository` to
+`dotmac_academy_app` and `product_id` to `dotmac-academy`, refusing substitution
+in either direction before it can serve as cutover evidence.

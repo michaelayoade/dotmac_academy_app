@@ -48,8 +48,8 @@ module.exports = {
         clay: legacyClay,
       },
       fontFamily: {
-        display: ["Fraunces", "ui-serif", "Georgia", "serif"],
-        sans: ["Manrope", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Domine", "ui-serif", "Georgia", "serif"],
+        sans: ["Hanken Grotesk", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {

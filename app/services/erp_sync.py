@@ -1,9 +1,9 @@
-"""Push academy course completions to dotmac_erp HR (training reports).
+"""Project staff course progress to dotmac_erp HR.
 
-Best-effort: each completed course is a signed webhook to ERP, which records an
-EmployeeCertification for staff learners (matched by work email) and ignores
-everyone else. Inert unless ``erp_webhook_url`` is configured. ``erp_synced_at``
-on the completion marks what's already been pushed so the sweep doesn't re-send.
+The hourly state-derived sweep sends changed percentages using the stable ERP
+employee reference carried by a staff enrolment. Accepted snapshots advance
+the persisted progress marker so unchanged state is not resent. Completed-course
+delivery acknowledgement lives in Academy's ERP checkpoint, not learning state.
 """
 
 from __future__ import annotations
@@ -17,18 +17,21 @@ from uuid import UUID
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.person import Person
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
+from app.models.offering import CourseOffering
 
 logger = logging.getLogger(__name__)
 
 # Payload contract version. ERP dispatches on it, so a future breaking change
 # ships as version 2 alongside the old handler rather than as a silent reshape.
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 
 # Push outcomes. UNMATCHED is deliberately not FAILED: retrying will not fix an
 # identity mismatch, but it must not be mistaken for delivery either.
@@ -42,17 +45,34 @@ def _sign(body: bytes) -> str:
     return f"sha256={digest}"
 
 
-def build_payload(*, email: str, course_title: str, completed_on: datetime | None, certificate_ref: str) -> dict:
-    """The `course_completed` event body ERP expects."""
-    return {
+def build_payload(
+    *, enrollment: Enrollment, course: Course, completion: CourseCompletion
+) -> dict:
+    """Build the stable-identity v2 training projection ERP expects."""
+    completed = completion.status == "completed"
+    payload = {
         "version": CONTRACT_VERSION,
-        "event": "course_completed",
-        "email": email,
-        "course_title": course_title,
-        "passed": True,
-        "completed_on": completed_on.date().isoformat() if completed_on else None,
-        "certificate_ref": certificate_ref,
+        "event": "course_completed" if completed else "training_progress_updated",
+        "employee_ref": enrollment.employee_ref,
+        "academy_enrollment_ref": str(enrollment.id),
+        "academy_course_ref": course.source_ref,
+        "course_title": course.title,
+        "course_version": course.version,
+        "progress_pct": round(completion.pct * 100, 2),
+        "status": completion.status,
+        "occurred_at": completion.updated_at.isoformat(),
     }
+    if completed:
+        payload.update(
+            passed=True,
+            completed_on=(
+                completion.completed_at.date().isoformat()
+                if completion.completed_at
+                else None
+            ),
+            certificate_ref=str(completion.id),
+        )
+    return payload
 
 
 # Reply bodies meaning "ERP understood us and wrote nothing".
@@ -100,28 +120,83 @@ def _outcome(resp: httpx.Response) -> str:
     return SYNCED
 
 
+class ERPCheckpointInvariantError(RuntimeError):
+    """Delivery history cannot safely be inferred from an absent checkpoint."""
+
+
+def _locked_checkpoint(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    completion: CourseCompletion,
+) -> ERPCompletionCheckpoint:
+    if completion.tenant_id != tenant_id:
+        raise ERPCheckpointInvariantError("completion belongs to another tenant")
+    checkpoint = db.get(ERPCompletionCheckpoint, (tenant_id, completion.id))
+    if checkpoint is None and completion.erp_synced_at is not None:
+        raise ERPCheckpointInvariantError("missing checkpoint for legacy acknowledged completion")
+    # Concurrent first senders converge on one key; INSERT waits for the other
+    # transaction before the lock/read. The caller owns commit and lock release.
+    db.execute(
+        insert(ERPCompletionCheckpoint)
+        .values(tenant_id=tenant_id, completion_id=completion.id)
+        .on_conflict_do_nothing(index_elements=["tenant_id", "completion_id"])
+    )
+    return db.scalars(
+        select(ERPCompletionCheckpoint)
+        .where(ERPCompletionCheckpoint.tenant_id == tenant_id)
+        .where(ERPCompletionCheckpoint.completion_id == completion.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+
+
 def push_completion(
-    db: Session, *, tenant_id: UUID, completion: CourseCompletion, now: datetime | None = None
+    db: Session,
+    *,
+    tenant_id: UUID,
+    completion: CourseCompletion,
+    enrollment: Enrollment | None = None,
+    now: datetime | None = None,
 ) -> str:
     """Push one completion to ERP. Returns SYNCED / UNMATCHED / FAILED.
 
-    ``erp_synced_at`` is stamped only on SYNCED — an event ERP declined to
+    Checkpoint ``erp_synced_at`` is stamped only on SYNCED — an event ERP declined to
     record is not delivered, and leaving it unstamped keeps it in the backlog
-    where it is visible and retried. Best-effort: never raises.
+    where it is visible and retried. Network errors return FAILED; broken
+    checkpoint invariants raise ERPCheckpointInvariantError. Caller owns commit.
     """
     if not settings.erp_webhook_url:
         return FAILED
-    person = db.get(Person, completion.person_id)
+    checkpoint = _locked_checkpoint(db, tenant_id=tenant_id, completion=completion)
+    if completion.status == "completed" and checkpoint.erp_synced_at is not None:
+        # 0066 preserves acknowledgements that predate the v2 progress marker.
+        # Converge that marker without replaying a completion ERP already accepted.
+        completion.erp_synced_pct = completion.pct
+        db.flush()
+        return SYNCED
     course = db.get(Course, completion.course_id)
-    if person is None or course is None:
+    if enrollment is None:
+        enrollment = db.scalar(
+            select(Enrollment)
+            .join(
+                CourseOffering,
+                (CourseOffering.tenant_id == Enrollment.tenant_id)
+                & (CourseOffering.cohort_id == Enrollment.cohort_id),
+            )
+            .where(
+                Enrollment.tenant_id == tenant_id,
+                Enrollment.person_id == completion.person_id,
+                Enrollment.audience == "staff",
+                Enrollment.employee_ref.is_not(None),
+                CourseOffering.course_id == completion.course_id,
+                CourseOffering.status == "active",
+            )
+        )
+    if enrollment is None or course is None:
         return FAILED
 
-    payload = build_payload(
-        email=person.email,
-        course_title=course.title,
-        completed_on=completion.completed_at,
-        certificate_ref=str(completion.id),
-    )
+    payload = build_payload(enrollment=enrollment, course=course, completion=completion)
     body = json.dumps(payload).encode()
     try:
         resp = httpx.post(
@@ -141,16 +216,16 @@ def push_completion(
         # match any ERP employee. It needs the identity link corrected.
         logger.warning(
             "erp training push not recorded for completion %s: ERP matched no employee for %s",
-            completion.id, person.email,
+            completion.id, enrollment.employee_ref,
         )
         return UNMATCHED
     if outcome == FAILED:
-        logger.warning(
-            "erp training push rejected (%s) for completion %s", resp.status_code, completion.id
-        )
+        logger.warning("erp training push rejected (%s) for completion %s", resp.status_code, completion.id)
         return FAILED
 
-    completion.erp_synced_at = now or datetime.now(UTC)
+    completion.erp_synced_pct = completion.pct
+    if completion.status == "completed":
+        checkpoint.erp_synced_at = now or datetime.now(UTC)
     db.flush()
     return SYNCED
 
@@ -164,18 +239,42 @@ def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -
     counts = {SYNCED: 0, UNMATCHED: 0, FAILED: 0}
     if not settings.erp_webhook_url:
         return counts
-    rows = db.scalars(
-        select(CourseCompletion)
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.status == "completed")
-        .where(CourseCompletion.erp_synced_at.is_(None))
+    rows = db.execute(
+        select(CourseCompletion, Enrollment)
+        .join(
+            CourseOffering,
+            (CourseOffering.tenant_id == CourseCompletion.tenant_id)
+            & (CourseOffering.course_id == CourseCompletion.course_id),
+        )
+        .join(
+            Enrollment,
+            (Enrollment.tenant_id == CourseOffering.tenant_id)
+            & (Enrollment.cohort_id == CourseOffering.cohort_id)
+            & (Enrollment.person_id == CourseCompletion.person_id),
+        )
+        .where(
+            CourseCompletion.tenant_id == tenant_id,
+            Enrollment.audience == "staff",
+            Enrollment.employee_ref.is_not(None),
+            Enrollment.status == "active",
+            CourseOffering.status == "active",
+        )
     ).all()
-    for completion in rows:
-        counts[push_completion(db, tenant_id=tenant_id, completion=completion, now=now)] += 1
+    seen: set[UUID] = set()
+    for completion, enrollment in rows:
+        if completion.id in seen or completion.erp_synced_pct == completion.pct:
+            continue
+        seen.add(completion.id)
+        outcome = push_completion(
+            db,
+            tenant_id=tenant_id,
+            completion=completion,
+            enrollment=enrollment,
+            now=now,
+        )
+        counts[outcome] += 1
     from app.services import erp_assessment_sync
 
-    for outcome, amount in erp_assessment_sync.sync_pending(
-        db, tenant_id=tenant_id, now=now
-    ).items():
+    for outcome, amount in erp_assessment_sync.sync_pending(db, tenant_id=tenant_id, now=now).items():
         counts[outcome] += amount
     return counts

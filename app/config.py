@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dotmac_kernel.config import Settings as KernelSettings
 from dotmac_kernel.config import validate_settings as validate_kernel_settings
+from sqlalchemy.engine import make_url
 
 # Academy currently contains inline scripts and WebSocket lab consoles. This
 # product default is declared by app.assembly's ProductSecurityPolicy;
@@ -23,7 +24,15 @@ class Settings(KernelSettings):
     academy_timezone: str = "Africa/Lagos"
     # Lab orchestration (Increment 2).
     max_concurrent_labs: int = 20
+    # 0 inherits the global limit. A distinct positive value is an explicit
+    # fairness policy for any future multi-tenant deployment.
+    max_concurrent_labs_per_tenant: int = 0
     lab_workdir: str = "/home/dotmac/labs"
+    # Containerlab and Docker execution is permitted only on the lab host.
+    lab_host_role: str = "web"
+    # Dedicated continuous-worker identity. Never reuse the migration/superuser
+    # DSN for the long-running worker or reconciler.
+    lab_worker_database_url: str = ""
     lab_idle_minutes: int = 60
     # Address the app DIALS to reach a lab console. Same-host deployments keep the
     # loopback default; when the lab worker runs on a separate KVM host, set this
@@ -36,6 +45,8 @@ class Settings(KernelSettings):
     # ``lab_console_host``", which is correct on a single-host deployment and on
     # the lab host itself, where the tunnel address IS local.
     lab_console_bind_host: str = ""
+    # Request-body cap for the console proxy (RouterOS WebFig POST /jsproxy).
+    lab_console_max_body_bytes: int = 1_048_576
     # Port probed on the lab host for the academy_lab_host_up health gauge.
     lab_host_probe_port: int = 22
 
@@ -99,6 +110,23 @@ def validate_settings(s: Settings) -> list[str]:
         errors.append("RATE_LIMIT_ENABLED must be true in production")
     if s.rate_limit_requests <= 0 or s.rate_limit_window_seconds <= 0:
         errors.append("rate-limit request and window values must be positive")
+    if s.max_concurrent_labs <= 0:
+        errors.append("MAX_CONCURRENT_LABS must be positive")
+    if s.max_concurrent_labs_per_tenant < 0:
+        errors.append("MAX_CONCURRENT_LABS_PER_TENANT must be zero or positive")
+    lab_role = s.lab_host_role.lower()
+    if lab_role not in {"web", "lab"}:
+        errors.append("LAB_HOST_ROLE must be 'web' or 'lab'")
+    elif lab_role == "lab":
+        if not s.lab_worker_database_url:
+            errors.append("LAB_WORKER_DATABASE_URL is required when LAB_HOST_ROLE=lab")
+        else:
+            try:
+                worker_role = make_url(s.lab_worker_database_url).username
+            except Exception:
+                worker_role = None
+            if worker_role != "academy_lab_worker":
+                errors.append("LAB_WORKER_DATABASE_URL must authenticate as academy_lab_worker")
     if s.is_production and s.smtp_host and not s.smtp_starttls:
         errors.append("SMTP_STARTTLS must be true when SMTP is configured in production")
     if s.erp_inbound_hmac_max_skew_seconds <= 0:

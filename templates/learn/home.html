@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Your portal</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Welcome, {{ person.first_name }}</h1>
+<p class="page-eyebrow">Your portal</p>
+<h1 class="page-title">Welcome, {{ person.first_name }}</h1>
 
 {% if total_cards %}
-<p class="mt-2 text-ink-soft">Pick up where you left off, or keep working through your courses.</p>
+<p class="page-intro">Pick up where you left off, or keep working through your courses.</p>
 
 {% if continue_to %}
-<div class="card mt-8 flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+<div class="card mt-8 flex flex-col gap-5 p-6 sm:flex-row sm:items-center">
   <div class="min-w-0">
     <p class="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-brand-600">Continue</p>
     <p class="mt-1 truncate text-lg font-medium text-ink">{{ continue_to.chapter.title }}</p>
@@ -18,30 +18,30 @@
 {% endif %}
 
 <div class="mt-10 flex flex-wrap items-baseline gap-2">
-  <h2 class="text-xl">My courses</h2>
+  <h2 class="section-title">My courses</h2>
   <nav class="ml-auto flex flex-wrap gap-1.5 text-xs font-semibold" aria-label="Course filters">
-    <a href="/" class="rounded-full px-3 py-1 {{ 'bg-brand-600 text-white' if not state_filter else 'bg-sand-200 text-ink-soft hover:bg-sand-300' }}">All ({{ total_cards }})</a>
+    <a href="/learn" class="status-badge {{ 'bg-brand-600 text-white' if not state_filter else 'bg-sand-200 text-ink-soft hover:bg-sand-300' }}">All ({{ total_cards }})</a>
     {% for f in ['in_progress', 'upcoming', 'completed', 'expired', 'locked'] %}
     {% if counts[f] %}
-    <a href="/?filter={{ f }}" class="rounded-full px-3 py-1 {{ 'bg-brand-600 text-white' if state_filter == f else 'bg-sand-200 text-ink-soft hover:bg-sand-300' }}">{{ f.replace('_', ' ') | capitalize }} ({{ counts[f] }})</a>
+    <a href="/learn?filter={{ f }}" class="status-badge {{ 'bg-brand-600 text-white' if state_filter == f else 'bg-sand-200 text-ink-soft hover:bg-sand-300' }}">{{ f.replace('_', ' ') | capitalize }} ({{ counts[f] }})</a>
     {% endif %}
     {% endfor %}
   </nav>
 </div>
 
-<div class="mt-4 space-y-4">
+<div class="mt-4 grid gap-4">
 {% for c in cards %}
-  <div class="card block p-6 {{ 'border-sand-300 bg-sand-50' if c.state in ['locked', 'expired'] else '' }}">
+  <article class="card block p-6 {{ 'border-sand-300 bg-sand-50' if c.state in ['locked', 'expired'] else '' }}">
     <div class="flex flex-wrap items-baseline gap-3">
       <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
       {% if c.state == 'locked' %}
-      <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Locked</span>
+      <span class="status-badge bg-sand-200 px-2.5 py-0.5 text-xs font-semibold text-ink-soft" title="{{ c.locked_reason }}" aria-label="Locked: {{ c.locked_reason }}">Locked</span>
       {% elif c.state == 'upcoming' %}
-      <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Starts {{ c.starts_at | localtime | datefmt if c.starts_at else 'soon' }}</span>
+      <span class="status-badge bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Starts {{ c.starts_at | localtime | datefmt if c.starts_at else 'soon' }}</span>
       {% elif c.state == 'completed' %}
-      <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Completed</span>
+      <span class="status-badge bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Completed</span>
       {% elif c.state == 'expired' %}
-      <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Window closed</span>
+      <span class="status-badge bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Window closed</span>
       {% endif %}
       <span class="ml-auto font-mono text-sm tabular-nums text-ink-soft">{{ c.pct }}%</span>
     </div>
@@ -74,13 +74,13 @@
       <span class="text-xs text-ink-soft">Next up: {{ c.next_activity.title }}</span>
       {% endif %}
     </div>
-  </div>
+  </article>
 {% else %}
   <div class="card p-8 text-center text-ink-soft">No courses in this view.</div>
 {% endfor %}
 </div>
 
-<h2 class="mt-10 text-xl">Recent results</h2>
+<h2 class="section-title mt-10">Recent results</h2>
 {% if recent %}
 <div class="card mt-4 overflow-hidden">
   <ul class="divide-y divide-sand-200">
@@ -89,9 +89,9 @@
       <span class="min-w-0 flex-1 truncate font-medium text-ink">{{ r.title }}</span>
       <span class="font-mono text-sm tabular-nums text-ink-soft">{{ r.pct }}%</span>
       {% if r.passed %}
-      <span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Pass</span>
+      <span class="status-badge bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">Pass</span>
       {% else %}
-      <span class="inline-flex items-center rounded-full bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Fail</span>
+      <span class="status-badge bg-clay-500/15 px-2.5 py-0.5 text-xs font-semibold text-clay-600">Fail</span>
       {% endif %}
     </li>
   {% endfor %}
@@ -111,7 +111,7 @@
 {% else %}
 <div class="card mt-10 p-8 text-center">
   <p class="text-lg font-medium text-ink">You're not enrolled in a course yet</p>
-  <p class="mt-2 text-ink-soft">Once an instructor enrolls you in a cohort, your courses will show up here.</p>
+  <p class="page-intro">Once an instructor enrolls you in a cohort, your courses will show up here.</p>
   {% if is_instructor or is_admin %}
   <p class="mt-5 flex flex-wrap justify-center gap-3">
     {% if is_instructor %}<a class="btn-ghost" href="/instructor">Go to Teaching</a>{% endif %}
@@ -122,7 +122,7 @@
 {% endif %}
 
 {% if announcements %}
-<h2 class="mt-10 text-xl">Announcements</h2>
+<h2 class="section-title mt-10">Announcements</h2>
 <div class="mt-4 space-y-3">
 {% for ann in announcements %}
   <a href="/announcements" class="card block p-5 transition-colors hover:border-brand-300">

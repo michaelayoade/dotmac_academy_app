@@ -50,7 +50,7 @@
       "webhook_surface": 0,
       "provider_credential": 3,
       "connector_task": 0,
-      "sync_checkpoint": 0,
+      "sync_checkpoint": 2,
       "delivery_retry": 0
     },
     "conserved_exclusions": [
@@ -58,7 +58,31 @@
         "path": "app/web/labs.py",
         "symbol": "_proxy_http",
         "category": "outbound_transport",
-        "fingerprint": "a3838b848c3a881e35d9cac84fd38e7b5c7924c9b564c59ce8f8ed34341a478d"
+        "fingerprint": "690589825c55266bc59cd498bd8a7ba8c06f5b2c9fabb3fe64a4faaab5063bec"
+      },
+      {
+        "path": "tests/web/test_console_webfig_proxy.py",
+        "symbol": "test_device_redirects_stay_inside_prefix",
+        "category": "outbound_transport",
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
+      },
+      {
+        "path": "tests/web/test_console_webfig_proxy.py",
+        "symbol": "test_learner_credentials_not_forwarded_and_device_cookie_confined",
+        "category": "outbound_transport",
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
+      },
+      {
+        "path": "tests/web/test_console_webfig_proxy.py",
+        "symbol": "test_post_jsproxy_passes_through",
+        "category": "outbound_transport",
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
+      },
+      {
+        "path": "tests/web/test_console_webfig_proxy.py",
+        "symbol": "test_upstream_down_is_502",
+        "category": "outbound_transport",
+        "fingerprint": "4f5fa3d1be6602223df391e12fd0ea8c0485ae14da0259bb7b8fcbdcbb28a8b8"
       }
     ]
   }

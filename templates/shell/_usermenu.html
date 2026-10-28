@@ -1,6 +1,6 @@
 {# User menu — avatar (img or initials badge) + name, with an Account / Log out dropdown. #}
 <details class="shell-usermenu relative">
-  <summary class="flex items-center gap-2.5 rounded-full border border-sand-300 bg-sand-50 py-1 pl-1 pr-3 transition-colors hover:border-brand-400">
+  <summary aria-label="Account menu for {{ current_person.first_name }} {{ current_person.last_name }}" class="flex items-center gap-2.5 rounded border border-sand-300 bg-white py-1 pl-1 pr-2.5 transition-colors hover:border-brand-400">
     {% if avatar_url %}
     <img src="{{ avatar_url }}" alt="" class="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-sand-300">
     {% else %}
@@ -15,7 +15,7 @@
     <svg class="h-3.5 w-3.5 shrink-0 text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
   </summary>
 
-  <div class="absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-xl border border-sand-300 bg-sand-50 shadow-lift">
+  <div class="absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-lg border border-sand-300 bg-white shadow-lift">
     <div class="border-b border-sand-200 px-4 py-3">
       <p class="truncate text-sm font-semibold text-ink">{{ current_person.first_name }} {{ current_person.last_name }}</p>
       <p class="truncate text-xs text-ink-soft">{{ current_person.email }}</p>

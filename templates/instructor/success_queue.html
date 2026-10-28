@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Success Queue — Dotmac Academy{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Instructor</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Success Queue</h1>
+<p class="page-eyebrow">Instructor</p>
+<h1 class="page-title">Success Queue</h1>
 <p class="mt-2 max-w-2xl text-ink-soft">Every entry names the rule that fired and the numbers behind it — intervene on reasons, not flags. Entries auto-resolve when their rule stops firing.</p>
 
-<form method="get" class="mt-6 flex flex-wrap items-end gap-3">
+<form method="get" class="filter-bar mt-6 flex flex-wrap items-end gap-3">
   <label class="text-sm font-semibold text-ink">Status
     <select name="status" class="mt-1 block rounded-lg border-sand-300 text-sm">
       {% for s in ["open", "acknowledged", "resolved", "all"] %}
@@ -30,7 +30,7 @@
     </select>
   </label>
   <button type="submit" class="btn-primary px-4 py-2 text-sm">Filter</button>
-  <a href="/success-queue/message" class="ml-auto rounded-lg border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-brand-50">Message learners…</a>
+  <a href="/success-queue/message" class="ml-auto inline-flex min-h-11 items-center rounded-lg border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-brand-50">Message learners…</a>
 </form>
 
 {% if entries %}

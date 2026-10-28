@@ -1,78 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Audit log — {{ branding_name | default("Technical Academy") }}{% endblock %}
+{% from "components/_pagination.html" import table_pagination %}
+{% block title %}Audit log — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
+{% block content_width %}max-w-[1360px]{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Administration</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Audit log</h1>
-<p class="mt-2 text-ink-soft">A record of actions taken by administrators and the system.</p>
-
-<form method="get" action="/admin/audit" class="mt-8 flex flex-wrap items-end gap-3">
-  <div>
-    <label for="action" class="mb-1 block text-sm font-semibold text-ink">Action</label>
-    <input id="action" name="action" type="text" value="{{ action_filter }}"
-           placeholder="e.g. user.created"
-           class="px-3.5 py-2.5 text-sm border border-sand-300 rounded">
+<header class="page-header">
+  <div class="page-header-copy"><p class="page-eyebrow">Administration</p><h1 class="page-title">Audit log</h1><p class="page-intro">A comprehensive, immutable ledger of administrator and system actions across the academy.</p></div>
+  <div class="page-header-actions"><a href="{{ request.url }}" class="btn-ghost">Refresh log</a></div>
+</header>
+<form method="get" action="/admin/audit" class="filter-toolbar">
+  <div class="filter-grid">
+    <div class="filter-field"><label for="action">Action</label><input id="action" name="action" type="text" value="{{ action_filter }}" placeholder="e.g. user.created"></div>
+    <div class="filter-field"><label for="actor_email">Actor email</label><input id="actor_email" name="actor_email" type="email" value="{{ actor_email_filter }}" placeholder="actor@example.com"></div>
+    <div class="flex flex-wrap items-center gap-2 sm:col-span-2"><button type="submit" class="btn-primary">Apply filters</button>{% if action_filter or actor_email_filter %}<a href="/admin/audit" class="btn-ghost">Clear filters</a>{% endif %}</div>
   </div>
-  <div>
-    <label for="actor_email" class="mb-1 block text-sm font-semibold text-ink">Actor email</label>
-    <input id="actor_email" name="actor_email" type="text" value="{{ actor_email_filter }}"
-           placeholder="actor@example.com"
-           class="px-3.5 py-2.5 text-sm border border-sand-300 rounded">
-  </div>
-  <button type="submit" class="btn-primary">Filter</button>
-  {% if action_filter or actor_email_filter %}
-  <a href="/admin/audit" class="btn-ghost">Clear</a>
-  {% endif %}
 </form>
-
-<div class="card mt-6 overflow-x-auto">
-  {% if events %}
-  <table class="w-full text-sm">
-    <thead>
-      <tr class="border-b border-sand-200">
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Time</th>
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Actor</th>
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Action</th>
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Entity type</th>
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Entity ID</th>
-        <th class="px-4 py-3 text-left font-semibold text-ink-soft">Details</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-sand-100">
-      {% for event in events %}
-      <tr class="hover:bg-sand-50">
-        <td class="px-4 py-3 tabular-nums text-ink-soft whitespace-nowrap">
-          {{ event.created_at.strftime("%Y-%m-%d %H:%M:%S") }}
-        </td>
-        <td class="px-4 py-3 text-ink">
-          {% if event.actor_person_id is not none %}
-            {{ actor_map.get(event.actor_person_id, "unknown") }}
-          {% else %}
-            <span class="text-ink-soft italic">system</span>
-          {% endif %}
-        </td>
-        <td class="px-4 py-3 font-mono text-ink">{{ event.action }}</td>
-        <td class="px-4 py-3 font-mono text-ink-soft">{{ event.entity_type }}</td>
-        <td class="px-4 py-3 font-mono text-ink-soft">{{ event.entity_id if event.entity_id else "—" }}</td>
-        <td class="px-4 py-3 text-ink-soft">{{ event.details | tojson if event.details else "—" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="px-4 py-8 text-center text-ink-soft">No audit events found.</p>
-  {% endif %}
-</div>
-
-{% if has_prev or has_next %}
-<nav class="mt-4 flex items-center gap-4 text-sm">
-  {% if has_prev %}
-  <a href="/admin/audit?{% if action_filter %}action={{ action_filter }}&{% endif %}{% if actor_email_filter %}actor_email={{ actor_email_filter }}&{% endif %}limit={{ limit }}&offset={{ [offset - limit, 0] | max }}"
-     class="btn-ghost">&larr; Previous</a>
-  {% endif %}
-  {% if has_next %}
-  <a href="/admin/audit?{% if action_filter %}action={{ action_filter }}&{% endif %}{% if actor_email_filter %}actor_email={{ actor_email_filter }}&{% endif %}limit={{ limit }}&offset={{ offset + limit }}"
-     class="btn-ghost">Next &rarr;</a>
-  {% endif %}
-</nav>
-{% endif %}
+<section class="data-table-card" aria-labelledby="audit-table-heading">
+  <div class="flex items-center justify-between gap-3 border-b border-sand-200 px-4 py-4 sm:px-5"><div><h2 id="audit-table-heading" class="section-title">Event ledger</h2><p class="mt-1 text-sm text-ink-soft">Newest activity appears first.</p></div></div>
+  <div class="table-frame" role="region" aria-label="Audit events table; scroll horizontally to see all columns" tabindex="0">
+    <table class="data-table">
+      <thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Entity type</th><th scope="col">Entity ID</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+        {% for event in events %}
+        <tr class="align-top">
+          <td class="whitespace-nowrap tabular-nums"><p class="cell-primary">{{ event.created_at.strftime("%Y-%m-%d") }}</p><p class="cell-secondary">{{ event.created_at.strftime("%H:%M:%S") }}</p></td>
+          <td>{% if event.actor_person_id is not none %}<p class="cell-primary">{{ actor_map.get(event.actor_person_id, "Unknown actor") }}</p><p class="cell-secondary font-mono">{{ event.actor_person_id }}</p>{% else %}<p class="cell-primary">System</p><p class="cell-secondary">Automated action</p>{% endif %}</td>
+          <td><span class="inline-flex rounded bg-brand-50 px-2 py-1 font-mono text-xs font-semibold text-brand-700">{{ event.action }}</span></td>
+          <td><p class="cell-primary">{{ event.entity_type | replace('_', ' ') | title }}</p><p class="cell-secondary font-mono">{{ event.entity_type }}</p></td>
+          <td class="font-mono text-xs text-ink-soft">{{ event.entity_id if event.entity_id else "—" }}</td>
+          <td><div class="max-w-md whitespace-normal break-words font-mono text-xs leading-relaxed text-ink-soft">{{ event.details | tojson if event.details else "—" }}</div></td>
+        </tr>
+        {% else %}<tr><td colspan="6" class="py-12 text-center text-ink-soft">No audit events found for these filters.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ table_pagination(request, pagination, "events", (10, 25, 50), (("action", action_filter), ("actor_email", actor_email_filter))) }}
+</section>
 {% endblock %}
