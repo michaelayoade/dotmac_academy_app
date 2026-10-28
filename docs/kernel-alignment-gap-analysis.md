@@ -16,7 +16,10 @@ current sequence or ownership decision.
 > at Academy `f16b1ae` through `0064_facilitator_nominations`; 0064 added the
 > strongly constrained nomination subject and nominating actor. The preceding
 > `a99a395e`/0060 checkpoint has the same census. The initial 27-reference/0053
-> design coordinates remain historical. ADR 0008 belongs to the dedicated lab-worker database role.
+> design coordinates remain historical. D1 revalidation (2026-10-28, Academy
+> `b961e37`, Kernel `0.1.0a107`) ends at `0065_applicant_bank_version_pin` with a
+> composed-graph census of 26 references (10 physical, 16 logical); status is
+> unchanged and evidence remains source-only. ADR 0008 belongs to the dedicated lab-worker database role.
 > Canonical entry mechanics remain unresolved. The entire unchanged Kernel
 > chain must execute with genuine independent history before runtime cutover;
 > the historical stamp/deferred-revision bridge is superseded.

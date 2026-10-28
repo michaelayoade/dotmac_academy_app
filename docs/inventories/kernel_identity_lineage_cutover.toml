@@ -2,7 +2,7 @@ schema_version = 1
 status = "design_only"
 decision = "docs/adr/0009-kernel-identity-and-lineage-cutover.md"
 kernel_distribution = "dotmac-kernel"
-kernel_version = "0.1.0a38"
+kernel_version = "0.1.0a107"
 
 # Initial accepted PR #122 design coordinates; not current source or production proof.
 [historical_design_baseline]
@@ -22,14 +22,32 @@ human_references = 28
 physical_references = 11
 logical_references = 17
 
-[source_revalidation]
+[prior_source_revalidation_2026_10_26]
 academy_revision = "f16b1aee684918a5168f9c64f3847188c8243942"
+academy_head = "0064_facilitator_nominations"
 date = "2026-10-26"
 evidence = "source_only"
 production_cutover_proven = false
 human_references = 30
 physical_references = 13
 logical_references = 17
+
+# D1 adoption (Learning core extracted, Kernel a107): the census runs over the
+# composed graph (product-owned + dotmac-learning + Kernel tables), recounted by
+# tests/architecture/test_kernel_identity_cutover_plan.py, not hand-incremented.
+# The four legacy Kernel-overlapping coordinates (audit_events, auth_sessions,
+# person_roles, user_credentials) are no longer Academy models, so the composed
+# count is 26 = 10 physical + 16 logical. The [[identity_reference]] entries stay
+# as the legacy design baseline. Source coordinates only: status is unchanged.
+[source_revalidation]
+academy_revision = "b961e37a34f2cee824093b5341a7d40394fe424e"
+academy_head = "0065_applicant_bank_version_pin"
+date = "2026-10-28"
+evidence = "source_only"
+production_cutover_proven = false
+human_references = 26
+physical_references = 10
+logical_references = 16
 
 [adoption_strategy]
 status = "accepted"
@@ -132,23 +150,23 @@ reject = "legacy_person_credential_session_rbac_schema"
 [current_lineage]
 owner = "academy_legacy"
 root = "0001_initial_tenant_schema"
-head = "0064_facilitator_nominations"
+head = "0065_applicant_bank_version_pin"
 root_file = "alembic/versions/20260504_0001_initial_tenant_schema.py"
 shares_kernel_root_id = true
 
 [target_kernel_lineage]
 owner = "kernel"
 root = "0001_initial_tenant_schema"
-head = "0020_delivery_receipts"
+head = "0030_credential_tenant_key"
 branch_label = "kernel"
-coordinate_status = "historical_a38_requires_selected_floor_revalidation"
+coordinate_status = "installed_a107_source_coordinate_selected_floor_unresolved"
 
 [target_assembly_lineage]
 owner = "assembly"
 root = "a001_adopt_academy"
 branch_label = "assembly"
-depends_on = "0020_delivery_receipts"
-coordinate_status = "historical_a38_requires_selected_floor_revalidation"
+depends_on = "0030_credential_tenant_key"
+coordinate_status = "installed_a107_source_coordinate_selected_floor_unresolved"
 depends_on_policy = "actual_selected_published_kernel_head_after_full_execution"
 
 [[model_edge]]

@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-26 at Academy `f16b1aee684918a5168f9c64f3847188c8243942`
+**Source revalidated:** 2026-10-28 at Academy `b961e37a34f2cee824093b5341a7d40394fe424e` (D1)
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -51,6 +51,17 @@ identity columns. Current revalidation at `f16b1ae` ends at
 `0064_facilitator_nominations`, which adds two strongly constrained human
 references for the nominated person and nominating actor. The current census is
 therefore 30 references (13 physical, 17 logical).
+
+D1 source revalidation (2026-10-28, Academy `b961e37`, Kernel `0.1.0a107`,
+`dotmac-learning` extracted): the Academy chain ends at
+`0065_applicant_bank_version_pin` (renumbered from the Question Bank source's
+0062; it adds an applicant-to-bank-version pin and no identity column). The
+census now runs over the composed graph (product-owned, Learning and Kernel
+tables) and counts 26 references (10 physical, 16 logical); the four legacy
+coordinates (`audit_events`, `auth_sessions`, `person_roles`,
+`user_credentials`) are Kernel-owned there. Evidence remains `source_only`;
+no status upgrade.
+
 These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
