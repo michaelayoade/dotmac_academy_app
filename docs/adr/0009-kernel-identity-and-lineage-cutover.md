@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-28 at Academy `b961e37a34f2cee824093b5341a7d40394fe424e` (D1)
+**Source revalidated:** 2026-10-28 at Academy `a07e1b13ac501361e62d42ea6c416e07c756ee45` (D1)
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -392,3 +392,28 @@ flip. If identity authority is also reversed, first prove that every accepted
 new canonical fact is representable, including longer names/email, credential
 multiplicity, grants and deletions. Neither an old snapshot nor an insert-only
 copy establishes that safety. No fallback activation or retirement is claimed.
+
+## Source checkpoint — 2026-10-28: bounded empty CI entry
+
+D1 source at `a07e1b13ac501361e62d42ea6c416e07c756ee45` composes the
+released Kernel a107 and Learning a3 with assembly revisions a001-a010.
+The legacy directory is exactly the frozen62 history ending at 0061; legacy
+0062/0063 bytes are custody fixtures. Access, heartbeat, bank-version pinning
+and canonical facilitator semantics now belong to a007-a010. Complete static
+owner heads and live Alembic version rows are distinct: dependency-aware final
+version rows are the singleton a010. The composed human-reference census
+remains 26 (10 physical, 16 logical).
+
+Michael approved a bounded empty scratch/CI product entry and a CI-only commit
+wrapper. That path requires genuine same-root a003 continuation, empty owner
+catalogs/data, fixed migration authority, and independently reviewed historical
+versus fresh schema convergence. Discovery cannot commit; an absent fingerprint
+pin refuses strict entry before DDL. Canonical actor attribution and the existing
+facilitator capability grants are preserved. Source review and local checks do
+not establish PostgreSQL execution, concurrency behavior or a qualified fresh
+receipt. The first hosted convergence run and separate pin commit remain due.
+
+This checkpoint does not select replica entry versus exact-0063 historical
+capture, authorize populated production adoption, or supply its committing
+executor/conservation/rollback proof. Those production gates remain open;
+`design_only` and `production_cutover_proven = false` are unchanged.

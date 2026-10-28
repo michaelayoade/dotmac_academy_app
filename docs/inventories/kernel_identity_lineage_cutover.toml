@@ -40,8 +40,8 @@ logical_references = 17
 # count is 26 = 10 physical + 16 logical. The [[identity_reference]] entries stay
 # as the legacy design baseline. Source coordinates only: status is unchanged.
 [source_revalidation]
-academy_revision = "b961e37a34f2cee824093b5341a7d40394fe424e"
-academy_head = "0065_applicant_bank_version_pin"
+academy_revision = "a07e1b13ac501361e62d42ea6c416e07c756ee45"
+academy_head = "a010_facilitator_nominations"
 date = "2026-10-28"
 evidence = "source_only"
 production_cutover_proven = false
@@ -163,7 +163,7 @@ coordinate_status = "installed_a107_source_coordinate_selected_floor_unresolved"
 
 [target_assembly_lineage]
 owner = "assembly"
-root = "a001_adopt_academy"
+root = "a001_identity_extensions"
 branch_label = "assembly"
 depends_on = "0030_credential_tenant_key"
 coordinate_status = "installed_a107_source_coordinate_selected_floor_unresolved"
