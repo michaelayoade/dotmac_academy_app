@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Lab Monitor — Dotmac Academy{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block content %}
-<p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Operations</p>
-<h1 class="mt-1.5 text-3xl tracking-tight">Active labs</h1>
-<p class="mt-2 text-ink-soft">Live lab instances across the platform and where each one stands.</p>
+<p class="page-eyebrow">Operations</p>
+<h1 class="page-title">Active labs</h1>
+<p class="page-intro">Live lab instances across the platform and where each one stands.</p>
 
-<div class="card mt-10 overflow-x-auto">
-  <table class="w-full text-sm">
+<div class="card table-frame mt-10" role="region" aria-label="Active labs table; scroll horizontally to see all columns" tabindex="0">
+  <table class="data-table">
     <thead>
       <tr class="border-b border-sand-300 bg-sand-200/60 text-left text-xs uppercase tracking-wider text-ink-soft">
-        <th class="p-3.5 font-semibold">Person</th>
-        <th class="p-3.5 font-semibold">Activity</th>
-        <th class="p-3.5 font-semibold">Instance</th>
-        <th class="p-3.5 font-semibold">Status</th>
-        <th class="p-3.5 font-semibold">Last active</th>
+        <th scope="col" class="p-3.5 font-semibold">Person</th>
+        <th scope="col" class="p-3.5 font-semibold">Activity</th>
+        <th scope="col" class="p-3.5 font-semibold">Instance</th>
+        <th scope="col" class="p-3.5 font-semibold">Status</th>
+        <th scope="col" class="p-3.5 font-semibold">Last active</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-sand-200">

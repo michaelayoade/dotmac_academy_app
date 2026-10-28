@@ -13,13 +13,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.person import Person
+from app.models.rbac import AuditEvent
 from app.services.audit import list_events
 from app.services.web_auth import require_web_role
+from app.web.pagination import pagination_context
 from app.web.templating import templates
 
 router = APIRouter(
@@ -34,7 +36,7 @@ def audit_log(
     db: Session = Depends(get_db),
     action: str | None = Query(None),
     actor_email: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(10, ge=1, le=50),
     offset: int = Query(0, ge=0),
 ) -> HTMLResponse:
     """Render the admin audit-log viewer with optional action/actor filters."""
@@ -67,6 +69,15 @@ def audit_log(
             actor_person_id=filter_actor_id,
         )
     )
+    count_stmt = select(func.count()).select_from(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if actor_not_found:
+        total = 0
+    else:
+        if action:
+            count_stmt = count_stmt.where(AuditEvent.action == action)
+        if filter_actor_id is not None:
+            count_stmt = count_stmt.where(AuditEvent.actor_person_id == filter_actor_id)
+        total = int(db.scalar(count_stmt) or 0)
 
     # Resolve actor emails for display in the table.
     person_ids = {e.actor_person_id for e in events if e.actor_person_id is not None}
@@ -89,9 +100,6 @@ def audit_log(
             "actor_map": actor_map,
             "action_filter": action or "",
             "actor_email_filter": actor_email or "",
-            "limit": limit,
-            "offset": offset,
-            "has_prev": offset > 0,
-            "has_next": len(events) == limit,
+            "pagination": pagination_context(total=total, limit=limit, offset=offset),
         },
     )

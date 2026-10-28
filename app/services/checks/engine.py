@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .primitives import eval_command, eval_config_grep, eval_probe
 
 _EVAL = {
@@ -31,13 +33,24 @@ def eval_check(check, engine, handle, seed):
     return result
 
 
-def run_checks(checks, engine, handle, seed):
+def run_checks(
+    checks,
+    engine,
+    handle,
+    seed,
+    *,
+    before_each: Callable[[], None] | None = None,
+):
     """Evaluate all checks -> ``{score, max_score, per_check}`` (weighted).
 
     ``score`` = sum of weights of passing checks; ``max_score`` = sum of all
     weights; ``per_check`` = list of :func:`eval_check` results in order.
     """
-    per = [eval_check(c, engine, handle, seed) for c in checks]
+    per = []
+    for check in checks:
+        if before_each is not None:
+            before_each()
+        per.append(eval_check(check, engine, handle, seed))
     max_score = sum(c.get("weight", 1) for c in checks)
     score = sum(r["weight"] for r in per if r["pass"])
     return {"score": score, "max_score": max_score, "per_check": per}

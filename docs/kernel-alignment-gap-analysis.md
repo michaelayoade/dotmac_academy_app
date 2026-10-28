@@ -1,7 +1,25 @@
 # Aligning `dotmac_academy_app` with the platform kernel — gap analysis
 
-**Status:** analysis, not a decision. No work is authorised by this document.
+**Status:** Superseded by ADR 0007 and ADR 0009. Do not use this document as a
+current sequence or ownership decision.
 **Date:** 2026-08-09. **Kernel surveyed:** `dotmac-kernel` 0.1.0a28.
+
+> **Current disposition, 2026-10-26.** ADR 0007 accepted Academy as a kernel
+> product assembly on kernel 0.1.0a38. ADR 0009 preserves the accepted PR #122
+> identity design: kernel `Party`/`PartyPerson` becomes identity authority,
+> human-domain references preserve UUIDs and semantics, and Academy product
+> schema gains an independent assembly lineage. Implementation is still
+> `design_only`; external adoption and published Party/facet-floor evidence
+> remain pending. The partial `Person`-beside-`Party` strategy and sequencing
+> below would leave parallel identity owners and are rejected. The current
+> source census is 30 human references (13 physical, 17 logical), revalidated
+> at Academy `f16b1ae` through `0064_facilitator_nominations`; 0064 added the
+> strongly constrained nomination subject and nominating actor. The preceding
+> `a99a395e`/0060 checkpoint has the same census. The initial 27-reference/0053
+> design coordinates remain historical. ADR 0008 belongs to the dedicated lab-worker database role.
+> Canonical entry mechanics remain unresolved. The entire unchanged Kernel
+> chain must execute with genuine independent history before runtime cutover;
+> the historical stamp/deferred-revision bridge is superseded.
 
 > **Corrected 2026-08-09.** The first version of this document claimed the
 > `Person` → `Party` migration was a prerequisite for kernel-owned roles, and

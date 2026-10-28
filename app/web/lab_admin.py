@@ -31,7 +31,7 @@ router = APIRouter(
 )
 
 # Statuses considered "live" for the monitor view.
-_ACTIVE_STATUSES = ("active", "provisioning", "queued")
+_ACTIVE_STATUSES = ("active", "provisioning", "resetting", "queued")
 
 
 @router.get("", response_class=HTMLResponse)

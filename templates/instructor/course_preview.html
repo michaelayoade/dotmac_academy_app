@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block title %}Preview {{ course.title }} — Dotmac Academy{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-end justify-between gap-4">
   <div>
-    <p class="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-brand-600">Course preview</p>
-    <h1 class="mt-1.5 text-3xl tracking-tight">{{ course.title }}</h1>
+    <p class="page-eyebrow">Course preview</p>
+    <h1 class="page-title">{{ course.title }}</h1>
     <p class="mt-2 text-sm text-ink-soft">
       <span class="inline-flex items-center rounded-full bg-sand-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{{ course.status }}</span>
       <span class="ml-2">{{ course.slug }} &middot; {{ course.discipline }} &middot; version {{ course.version }}</span>
@@ -32,7 +33,7 @@
     </nav>
   </aside>
 
-  <main class="min-w-0">
+  <div class="min-w-0">
     <section class="coursework-hero">
       <img src="/static/img/cover-{{ course.slug }}.webp" alt="" class="coursework-hero-img" loading="lazy" onerror="this.style.display='none'">
       <div class="coursework-hero-content">
@@ -62,7 +63,7 @@
       <a class="btn-primary" href="/instructor/courses/{{ course.id }}/preview/chapters/{{ next_chapter.number }}">Chapter {{ next_chapter.number }} <span aria-hidden="true">&rarr;</span></a>
       {% endif %}
     </nav>
-  </main>
+  </div>
 </div>
 {% else %}
 <div class="card mt-8 p-8 text-center text-ink-soft">No chapters have been added to this course yet.</div>

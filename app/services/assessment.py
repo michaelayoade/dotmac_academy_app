@@ -54,7 +54,9 @@ def submit_activity(db: Session, *, tenant_id, person_id, activity: Activity, an
         select(Person)
         .where(Person.tenant_id == tenant_id)
         .where(Person.id == person_id)
-        .with_for_update()
+        # Serialize admission while permitting People foreign-key KEY SHARE
+        # checks from a writer already holding the completion aggregate lock.
+        .with_for_update(key_share=True, read=False)
     ).first()
     if person is None:
         raise ConflictError("Learner account no longer exists.")
