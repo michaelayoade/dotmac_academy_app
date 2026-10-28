@@ -33,7 +33,6 @@ from dotmac_learning import (
     ChapterFact,
     authoring_chapters,
     get_activity,
-    instructor_assigned_course_ids,
 )
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -609,22 +608,17 @@ def _hx_error(request: Request, target_id: str, message: str) -> HTMLResponse:
 
 
 def _assigned_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
-    # Learning owns the legacy enrollment-based assignment projection; active
-    # facilitator nominations (#188) additionally authorize their exact
-    # offerings' courses for authoring. The union preserves every composed
-    # assignment while admitting scoped facilitators to their own courses.
-    assigned = set(instructor_assigned_course_ids(db, tenant_id=tenant_id, instructor_id=instructor_id))
-    access = facilitator_access(db, tenant_id=tenant_id, person_id=instructor_id)
+    access = _access_or_403(db, tenant_id=tenant_id, person_id=instructor_id)
     offering_ids = authorized_offering_ids(db, tenant_id=tenant_id, access=access)
-    if offering_ids:
-        assigned |= set(
-            db.scalars(
-                select(CourseOffering.course_id)
-                .where(CourseOffering.tenant_id == tenant_id)
-                .where(CourseOffering.id.in_(offering_ids))
-            ).all()
-        )
-    return assigned
+    if not offering_ids:
+        return set()
+    return set(
+        db.scalars(
+            select(CourseOffering.course_id)
+            .where(CourseOffering.tenant_id == tenant_id)
+            .where(CourseOffering.id.in_(offering_ids))
+        ).all()
+    )
 
 
 def _assessment_course_ids(db: Session, *, tenant_id: UUID, instructor_id: UUID) -> set[UUID]:
