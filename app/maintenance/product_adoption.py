@@ -76,6 +76,39 @@ def _maintenance_refusal_locations(error: BaseException) -> str:
         return "unavailable"
 
 
+def _learning_shape_refusal_code(error: BaseException) -> str | None:
+    """Return only a fixed declaration ordinal from a genuine owned frame.
+
+    Neither the exception text nor a local object's attributes are rendered.
+    A caller-supplied lookalike spec or filename cannot provide a table code.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    try:
+        declarations = history._TABLES
+        if type(declarations) is not tuple or len(declarations) != 27:
+            return None
+        for _ in range(8):
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            frame = current.__traceback__
+            for _ in range(64):
+                if frame is None:
+                    break
+                if frame.tb_frame.f_code is history._shape.__code__:
+                    supplied = frame.tb_frame.f_locals.get("spec")
+                    for ordinal, declared in enumerate(declarations, start=1):
+                        if supplied is declared:
+                            return f"L{ordinal:02d}"
+                frame = frame.tb_next
+            current = current.__context__
+        return None
+    except Exception:
+        # Diagnostic failure must not replace the original poison/refusal.
+        return None
+
+
 # Genuine frozen096 manifest, independently matched to all62 actual a5 blobs.
 # Source inspection alone is never installed-artifact qualification.
 # These are immutable schema/source contracts, never business configuration.
@@ -532,8 +565,10 @@ def _capture_product_history(connection: Connection, bindings=None, *, _hosted_c
         if not isinstance(error, Exception):
             raise
         location = _maintenance_refusal_locations(error)
+        table_code = _learning_shape_refusal_code(error)
+        suffix = f"; learning declaration {table_code}" if table_code is not None else ""
         raise ProductAdoptionRefused(
-            f"Academy product capture refused; root rollback required [maintenance {location}]"
+            f"Academy product capture refused; root rollback required [maintenance {location}{suffix}]"
         ) from None
 
 

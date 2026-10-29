@@ -438,6 +438,7 @@ _TABLES = (
             ("ix_enrollments_person_id", ("person_id",), False),
             ("ix_enrollments_track_id", ("track_id",), False),
             ("ix_enrollments_audience", ("audience",), False),
+            ("ix_enrollments_access_ends_at", ("tenant_id", "access_ends_at"), False),
         ),
     ),
     _TableSpec(

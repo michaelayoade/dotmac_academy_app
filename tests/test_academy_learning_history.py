@@ -287,10 +287,43 @@ def _assert_fixed_source_acl_profile(connection):
     )
 
 
+def _assert_fixed_enrollment_access_index(connection):
+    actual = connection.execute(
+        sa.text(
+            "SELECT c.relname,am.amname,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,"
+            "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,position) "
+            "JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.position),"
+            "pg_catalog.pg_get_expr(i.indpred,i.indrelid),pg_catalog.pg_get_expr(i.indexprs,i.indrelid),"
+            "pg_catalog.pg_get_userbyid(c.relowner),c.relacl::text,i.indnkeyatts,i.indnatts "
+            "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
+            "JOIN pg_catalog.pg_am am ON am.oid=c.relam "
+            "WHERE c.oid='public.ix_enrollments_access_ends_at'::regclass "
+            "AND i.indrelid='public.enrollments'::regclass"
+        )
+    ).one()
+    assert tuple(actual) == (
+        "ix_enrollments_access_ends_at",
+        "btree",
+        False,
+        False,
+        True,
+        True,
+        True,
+        ["tenant_id", "access_ends_at"],
+        None,
+        None,
+        "app_admin",
+        None,
+        2,
+        2,
+    )
+
+
 def test_actual_frozen62_all27_all260_fields_and_nullable_ack_history(legacy_engine):
     with _populated_source(legacy_engine) as (connection, capture, empty_tenant, expected):
         root = connection.get_transaction()
         _assert_fixed_source_acl_profile(connection)
+        _assert_fixed_enrollment_access_index(connection)
         snapshot = history._export_learning_history(connection, capture)
         acks = history._completion_ack_history(connection, capture)
         assert type(snapshot) is learning.LearningSnapshotV5
@@ -327,6 +360,21 @@ def test_actual_frozen62_all27_all260_fields_and_nullable_ack_history(legacy_eng
         assert "erp_synced_at" not in repr(acks)
         assert "huge" not in repr(snapshot)
         assert connection.get_transaction() is root and root.is_active
+
+
+@pytest.mark.parametrize("mutation", ["missing", "wrong_column", "reversed_columns"])
+def test_enrollment_access_index_drift_refuses_capture(legacy_engine, mutation):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        _assert_fixed_enrollment_access_index(connection)
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        connection.execute(sa.text("DROP INDEX public.ix_enrollments_access_ends_at"))
+        if mutation != "missing":
+            columns = "tenant_id,status" if mutation == "wrong_column" else "access_ends_at,tenant_id"
+            connection.execute(sa.text(f"CREATE INDEX ix_enrollments_access_ends_at ON public.enrollments ({columns})"))
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
 
 
 @pytest.mark.parametrize(

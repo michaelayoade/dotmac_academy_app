@@ -387,3 +387,45 @@ def test_safe_maintenance_diagnostic_bounds_cyclic_context_and_ignores_other_fil
     except ValueError as error:
         error.__context__ = error
         assert product._maintenance_refusal_locations(error) == "unavailable"
+
+
+def test_learning_shape_diagnostic_uses_only_genuine_declaration_ordinal():
+    from app.maintenance import learning_history as history
+    from app.maintenance import product_adoption as product
+
+    marker = "DO_NOT_DISCLOSE_CATALOG_OR_EXCEPTION_VALUES"
+    declared = history._TABLES[0]
+    with pytest.raises(history.LearningHistoryRefused) as failure:
+        # The genuine shape checker refuses before any Connection use. Only
+        # its fixed declaration object may select a diagnostic ordinal.
+        history._shape(object(), declared, SimpleNamespace(relation=(marker,)), {declared.name: 1}, {})
+    wrapped = RuntimeError(marker)
+    wrapped.__context__ = failure.value
+    wrapped.__suppress_context__ = True
+    assert product._learning_shape_refusal_code(wrapped) == "L01"
+    assert marker not in product._learning_shape_refusal_code(wrapped)
+
+
+def test_learning_shape_diagnostic_rejects_caller_supplied_spec_lookalike():
+    from app.maintenance import learning_history as history
+    from app.maintenance import product_adoption as product
+
+    marker = "DO_NOT_DISCLOSE_CALLER_SUPPLIED_NAME"
+    supplied = SimpleNamespace(name=marker)
+    with pytest.raises(history.LearningHistoryRefused) as failure:
+        history._shape(object(), supplied, SimpleNamespace(relation=(marker,)), {marker: 1}, {})
+    assert product._learning_shape_refusal_code(failure.value) is None
+
+
+def test_learning_shape_diagnostic_ignores_impostor_frame_and_context_cycle():
+    from app.maintenance import learning_history as history
+    from app.maintenance import product_adoption as product
+
+    def impostor(spec):
+        raise ValueError("DO_NOT_DISCLOSE_IMPOSTOR_VALUES")
+
+    impostor.__code__ = impostor.__code__.replace(co_filename=history.__file__)
+    with pytest.raises(ValueError) as failure:
+        impostor(history._TABLES[0])
+    failure.value.__context__ = failure.value
+    assert product._learning_shape_refusal_code(failure.value) is None
