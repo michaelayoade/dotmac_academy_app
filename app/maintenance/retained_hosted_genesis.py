@@ -19,6 +19,7 @@ import secrets
 import select
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -56,9 +57,21 @@ _HBA = "local all postgres scram-sha-256\nlocal all all reject\nhost all all all
 _RUNTIME = ("app_user", "platform_api", "academy_lab_worker", "outbox_dispatcher", "platform_outbox_dispatcher")
 _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
 _INSPECT_FIELDS = (
-    "container_id", "image_id", "created", "running", "started_at", "restart_count",
-    "network_mode", "port_bindings", "ports", "mounts", "command", "user",
-    "privileged", "readonly_rootfs", "networks",
+    "container_id",
+    "image_id",
+    "created",
+    "running",
+    "started_at",
+    "restart_count",
+    "network_mode",
+    "port_bindings",
+    "ports",
+    "mounts",
+    "command",
+    "user",
+    "privileged",
+    "readonly_rootfs",
+    "networks",
 )
 
 
@@ -163,6 +176,39 @@ def _private_file(path: Path, expected: bytes) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+_WATCH_MASK = 0x4000EFFF
+_WATCH_HEADER = struct.Struct("=iIII")
+_WATCH_NAMES = (
+    b"",
+    b"control",
+    b"socket",
+    b"data",
+    b"hba",
+    b"password",
+    b"postgresql.conf",
+    b"postgresql.auto.conf",
+    b"pg_hba.conf",
+    b"pg_ident.conf",
+    b".s.PGSQL.5432",
+    b".s.PGSQL.5432.lock",
+)
+
+
+def _first_watch_event(data, descriptors):
+    _need(type(data) is bytes and 16 <= len(data) <= 4096)
+    _need(type(descriptors) is dict and len(descriptors) <= 10)
+    _need(all(type(key) is int and type(value) is int and 0 <= value <= 10 for key, value in descriptors.items()))
+    descriptor, mask, _, length = _WATCH_HEADER.unpack_from(data)
+    _need(16 + length <= len(data))
+    name = data[16 : 16 + length]
+    if length:
+        end = name.find(b"\0")
+        _need(end >= 0 and not any(name[end:]))
+        name = name[:end]
+    name_class = _WATCH_NAMES.index(name) + 1 if name in _WATCH_NAMES else 0
+    return (descriptors.get(descriptor, 0), name_class, mask & _WATCH_MASK, bool(mask & ~_WATCH_MASK))
+
+
 class _Owner:
     def __init__(self, declaration: HostedGenesisDeclaration, purpose: str) -> None:
         # Reconstruct even exact-type dataclasses: frozen is not validation.
@@ -211,6 +257,8 @@ class _Owner:
         self.root: RootTransaction | None = None
         self.xid: str | None = None
         self.watch: int | None = None
+        self._watch_descriptors: dict[int, int] = {}
+        self._watch_event: tuple[int, int, int, bool] | None = None
         self.backends: dict[int, datetime] = {}
         self.logs = b""
         self.events: tuple[()] | tuple[tuple[bytes, ...], tuple[bytes, ...]] = ()
@@ -531,20 +579,35 @@ class _Owner:
         _need(fd >= 0)
         self.watch = fd
         mask = 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800
-        for path in (
-            cast(Path, self.home),
-            cast(Path, self.home) / "control",
-            cast(Path, self.home) / "socket",
-            cast(Path, self.home) / "data",
-            self.hba,
-            self.password,
-            *(p for p, _ in self.configuration),
+        for ordinal, path in enumerate(
+            (
+                cast(Path, self.home),
+                cast(Path, self.home) / "control",
+                cast(Path, self.home) / "socket",
+                cast(Path, self.home) / "data",
+                self.hba,
+                self.password,
+                *(p for p, _ in self.configuration),
+            ),
+            1,
         ):
-            _need(libc.inotify_add_watch(fd, os.fsencode(path), mask) >= 0)
+            descriptor = libc.inotify_add_watch(fd, os.fsencode(path), mask)
+            _need(descriptor >= 0)
+            self._watch_descriptors[descriptor] = 0 if descriptor in self._watch_descriptors else ordinal
+
+    def _fatal_watch_event(self):
+        self.poisoned = True
+        self._watch_event = None
+        try:
+            self._watch_event = _first_watch_event(os.read(cast(int, self.watch), 4096), self._watch_descriptors)
+        except Exception:
+            self._watch_event = None
+        raise HostedGenesisRefused("Hosted resource watch refused") from None
 
     def _live(self):
         _need(not self.poisoned and os.getpid() == self.pid)
-        _need(not select.select([cast(int, self.watch)], [], [], 0)[0])
+        if select.select([cast(int, self.watch)], [], [], 0)[0]:
+            self._fatal_watch_event()
         _require_container_identity(self.inspect(), self.identity)
         _need(all(not path.is_symlink() and path.read_bytes() == data for path, data in self.configuration))
         _need(_private_directory(cast(Path, self.home)) == self.home_identity)
@@ -625,7 +688,8 @@ class _Owner:
                 ("host", ["all"], ["all"], "all", "reject", None),
             )
         )
-        _need(not select.select([cast(int, self.watch)], [], [], 0)[0])
+        if select.select([cast(int, self.watch)], [], [], 0)[0]:
+            self._fatal_watch_event()
 
     @contextmanager
     def replay_connection(self) -> Iterator[Connection]:
@@ -810,6 +874,27 @@ class _Owner:
             raise HostedGenesisRefused("Hosted resource cleanup failed; job must fail") from None
 
 
+def _watch_diagnostic(owner):
+    if type(owner) is not _Owner or owner.poisoned is not True:
+        return ""
+    event = getattr(owner, "_watch_event", None)
+    if type(event) is not tuple or len(event) != 4:
+        return ""
+    ordinal, name_class, mask, unknown = event
+    if not (
+        type(ordinal) is int
+        and 0 <= ordinal <= 10
+        and type(name_class) is int
+        and 0 <= name_class <= 12
+        and type(mask) is int
+        and 0 <= mask <= _WATCH_MASK
+        and not mask & ~_WATCH_MASK
+        and type(unknown) is bool
+    ):
+        return ""
+    return f" [watch event=1 object={ordinal} name={name_class} mask={mask:08x} unknown={int(unknown)}]"
+
+
 def _verify_context(context: object, connection: Connection, bindings: object) -> None:
     if type(context) is not _Handle or context not in _ISSUED:
         _poison_context(context, connection)
@@ -828,7 +913,11 @@ def _verify_context(context: object, connection: Connection, bindings: object) -
             location = _maintenance_refusal_locations(error)
         except Exception:
             location = "unavailable"
-        raise HostedGenesisRefused(f"Hosted resource context refused [maintenance {location}]") from None
+        try:
+            watch = _watch_diagnostic(owner)
+        except Exception:
+            watch = ""
+        raise HostedGenesisRefused(f"Hosted resource context refused [maintenance {location}]{watch}") from None
 
 
 def _poison_context(context: object, connection: Connection | None = None) -> None:
