@@ -28,6 +28,110 @@ def _require(condition):
         raise ProductAdoptionRefused("Academy ERP successor catalog refused; root rollback required")
 
 
+# PG16 REL_16_15 plain OID wire fields; regproc and every unknown field stay raw.
+_SCALAR_OID_FIELDS = {
+    "pg_class": (
+        "oid",
+        "relnamespace",
+        "reltype",
+        "reloftype",
+        "relowner",
+        "relam",
+        "relfilenode",
+        "reltablespace",
+        "reltoastrelid",
+        "relrewrite",
+    ),
+    "pg_type": ("oid", "typnamespace", "typowner", "typrelid", "typelem", "typarray", "typbasetype", "typcollation"),
+    "pg_constraint": ("oid", "connamespace", "conrelid", "contypid", "conindid", "conparentid", "confrelid"),
+    "pg_attrdef": ("oid", "adrelid"),
+    "pg_policy": ("oid", "polrelid"),
+    "pg_trigger": ("oid", "tgrelid", "tgparentid", "tgfoid", "tgconstrrelid", "tgconstrindid", "tgconstraint"),
+    "pg_attribute": ("attrelid", "atttypid", "attcollation"),
+    "pg_index": ("indexrelid", "indrelid"),
+    "pg_proc": ("oid", "pronamespace", "proowner", "prolang", "provariadic", "prorettype"),
+    "pg_rewrite": ("oid", "ev_class"),
+}
+_NULLABLE_OID_ARRAYS = {
+    "pg_constraint": ("conpfeqop", "conppeqop", "conffeqop", "conexclop"),
+    "pg_proc": ("proallargtypes", "protrftypes"),
+}
+_REQUIRED_OID_ARRAYS = {"pg_policy": ("polroles",)}
+_REQUIRED_OIDVECTORS = {"pg_index": ("indcollation", "indclass"), "pg_proc": ("proargtypes",)}
+_NULLABLE_INT2_ARRAYS = {"pg_constraint": ("conkey", "confkey", "confdelsetcols")}
+_REQUIRED_INT2VECTORS = {"pg_trigger": ("tgattr",), "pg_index": ("indkey", "indoption")}
+
+
+def _wire_oid(value):
+    _require(type(value) is str and re.fullmatch(r"0|[1-9][0-9]*", value, flags=re.ASCII) is not None)
+    _require(len(value) <= 10)
+    oid = int(value)
+    _require(oid <= 4294967295)
+    return oid
+
+
+def _wire_int2(value):
+    _require(type(value) is int and -32768 <= value <= 32767)
+    return value
+
+
+def _wire_vector(value, decode):
+    _require(type(value) is list)
+    return [decode(item) for item in value]
+
+
+def _wire_array(value, decode):
+    def dimension(items):
+        _require(type(items) is list)
+        nested = any(type(item) is list for item in items)
+        if nested:
+            _require(all(type(item) is list for item in items))
+            children = [dimension(item) for item in items]
+            _require(all(shape == children[0][1] for _, shape in children))
+            return [child for child, _ in children], (len(items), *children[0][1])
+        return [None if item is None else decode(item) for item in items], (len(items),)
+
+    return dimension(value)[0]
+
+
+def _catalog_view(category, key, raw):
+    """Fresh validation view only. Never replace a raw custody packet row."""
+    _require(category in _SCALAR_OID_FIELDS and type(raw) is str)
+    try:
+        view = json.loads(raw)
+    except (ValueError, TypeError):
+        _require(False)
+    _require(type(view) is dict)
+    for field in _SCALAR_OID_FIELDS[category]:
+        _require(field in view)
+        view[field] = _wire_oid(view[field])
+    for spec, decode, nullable, vector in (
+        (_NULLABLE_OID_ARRAYS, _wire_oid, True, False),
+        (_REQUIRED_OID_ARRAYS, _wire_oid, False, False),
+        (_REQUIRED_OIDVECTORS, _wire_oid, False, True),
+        (_NULLABLE_INT2_ARRAYS, _wire_int2, True, False),
+        (_REQUIRED_INT2VECTORS, _wire_int2, False, True),
+    ):
+        for field in spec.get(category, ()):
+            _require(field in view)
+            if view[field] is None:
+                _require(nullable)
+            else:
+                view[field] = (_wire_vector if vector else _wire_array)(view[field], decode)
+    if category == "pg_attrdef":
+        _require("adnum" in view)
+        _wire_int2(view["adnum"])
+    if category == "pg_attribute":
+        _require(type(key) is tuple and len(key) == 2)
+        _require(type(key[0]) is int and 0 < key[0] <= 4294967295)
+        _require(type(key[1]) is int and -32768 <= key[1] <= 32767)
+        _require(type(view.get("attnum")) is int and (view["attrelid"], view["attnum"]) == key)
+    else:
+        _require(type(key) is int and 0 < key <= 4294967295)
+        _require(view["indexrelid" if category == "pg_index" else "oid"] == key)
+    return view
+
+
 @dataclass(frozen=True)
 class TableSpec:
     name: str
@@ -851,7 +955,8 @@ def _function(connection, stage):
     name, args, definer, result, defaults, digest = spec
     rows = _dicts(
         connection,
-        "SELECT p.*,n.nspname,l.lanname,pg_catalog.pg_get_userbyid(p.proowner) AS owner,"
+        "SELECT p.*,p.prosupport::oid AS support_oid,n.nspname,l.lanname,"
+        "pg_catalog.pg_get_userbyid(p.proowner) AS owner,"
         "pg_catalog.pg_get_expr(p.proargdefaults,0) AS defaults,pg_catalog.format_type(p.prorettype,NULL) AS result "
         "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
         "JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname='public' AND p.proname=:name",
@@ -882,7 +987,7 @@ def _function(connection, stage):
     _require(
         tuple(
             row[k]
-            for k in ("proconfig", "result", "pronargdefaults", "probin", "prosqlbody", "prosupport", "provariadic")
+            for k in ("proconfig", "result", "pronargdefaults", "probin", "prosqlbody", "support_oid", "provariadic")
         )
         == (["search_path=pg_catalog"], result, defaults, None, None, 0, 0)
     )
@@ -1014,7 +1119,7 @@ def row_evidence(connection, packet, *, omissions=()):
     omit = dict(omissions)
     result = []
     for oid, raw in sorted(packet["pg_class"].items()):
-        rel = json.loads(raw)
+        rel = _catalog_view("pg_class", oid, raw)
         if rel["relkind"] != "r" or rel["relname"] == "alembic_version":
             continue
         namespace = connection.scalar(
@@ -1085,7 +1190,11 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
     indexnames = {name for s in specs for name, *_ in (*s.keys, *s.indexes)}
     if stage == "a009_applicant_bank_version_pin":
         indexnames.add("ix_applicants_assessment_bank_version_id")
-    added_relations = {oid: json.loads(raw) for oid, raw in after["pg_class"].items() if oid not in before["pg_class"]}
+    added_relations = {
+        oid: _catalog_view("pg_class", oid, raw)
+        for oid, raw in after["pg_class"].items()
+        if oid not in before["pg_class"]
+    }
     tableids = {oid for oid, r in added_relations.items() if r["relname"] in tables}
     _require(len(tableids) == len(tables))
     toastids = set()
@@ -1101,7 +1210,7 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
             candidates = [i for i, r in added_relations.items() if r["relname"] == f"pg_toast_{oid}_index"]
             _require(len(candidates) == 1)
             index = candidates[0]
-            meta = json.loads(after["pg_index"][index])
+            meta = _catalog_view("pg_index", index, after["pg_index"][index])
             _require(meta["indrelid"] == toast and meta["indisunique"] and not meta["indisprimary"])
             _require(meta["indisvalid"] and meta["indisready"] and meta["indislive"])
             _require(
@@ -1125,7 +1234,9 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
             and not r["relhassubclass"]
         )
         _require(r["reloptions"] is None and r["reltablespace"] == 0 and r["relrewrite"] == 0)
-    added_types = {oid: json.loads(raw) for oid, raw in after["pg_type"].items() if oid not in before["pg_type"]}
+    added_types = {
+        oid: _catalog_view("pg_type", oid, raw) for oid, raw in after["pg_type"].items() if oid not in before["pg_type"]
+    }
     _require(len(added_types) == 2 * len(tables))
     expected_typenames = tables | {"_" + name for name in tables}
     _require({t["typname"] for t in added_types.values()} == expected_typenames)
@@ -1149,7 +1260,9 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
             _require(t["typtype"] == "b" and t["typrelid"] == 0 and t["typelem"] in added_types and t["typarray"] == 0)
             _require(added_types[t["typelem"]]["typarray"] == oid)
     added_constraints = {
-        oid: json.loads(raw) for oid, raw in after["pg_constraint"].items() if oid not in before["pg_constraint"]
+        oid: _catalog_view("pg_constraint", oid, raw)
+        for oid, raw in after["pg_constraint"].items()
+        if oid not in before["pg_constraint"]
     }
     _require(set(fks) <= set(added_constraints))
     expected_constraints = {name for s in specs for name, *_ in (*s.keys, *s.fks, *s.checks)}
@@ -1166,7 +1279,9 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
         )
     )
     added_triggers = {
-        oid: json.loads(raw) for oid, raw in after["pg_trigger"].items() if oid not in before["pg_trigger"]
+        oid: _catalog_view("pg_trigger", oid, raw)
+        for oid, raw in after["pg_trigger"].items()
+        if oid not in before["pg_trigger"]
     }
     custom = (
         {oid for oid, r in added_triggers.items() if r["tgname"] == "lab_console_activity_stamp"}
@@ -1175,13 +1290,19 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
     )
     _require(set(added_triggers) == trigger_ids | custom)
     _require(len(custom) == (1 if stage == "a008_lab_console_activity" else 0))
-    added_policies = {oid: json.loads(raw) for oid, raw in after["pg_policy"].items() if oid not in before["pg_policy"]}
+    added_policies = {
+        oid: _catalog_view("pg_policy", oid, raw)
+        for oid, raw in after["pg_policy"].items()
+        if oid not in before["pg_policy"]
+    }
     policy_tables = tables - {"platform_settings"}
     _require({r["polname"] for r in added_policies.values()} == {n + "_tenant_isolation" for n in policy_tables})
     _require(len(added_policies) == len(policy_tables))
     _require(all(r["polrelid"] in tableids for r in added_policies.values()))
     _require({oid for oid in after["pg_index"] if oid not in before["pg_index"]} == indexids)
-    added_functions = {oid: json.loads(raw) for oid, raw in after["pg_proc"].items() if oid not in before["pg_proc"]}
+    added_functions = {
+        oid: _catalog_view("pg_proc", oid, raw) for oid, raw in after["pg_proc"].items() if oid not in before["pg_proc"]
+    }
     _require(
         {p["proname"] for p in added_functions.values()} == ({_FUNCTIONS[stage][0]} if stage in _FUNCTIONS else set())
     )
@@ -1191,13 +1312,17 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
     appended = set()
     if addition is not None:
         table, col = addition
-        relid = next(oid for oid, raw in before["pg_class"].items() if json.loads(raw)["relname"] == table)
+        relid = next(
+            oid for oid, raw in before["pg_class"].items() if _catalog_view("pg_class", oid, raw)["relname"] == table
+        )
         prior = [key[1] for key in before["pg_attribute"] if key[0] == relid and key[1] > 0]
         appended.add((relid, max(prior) + 1))
     attribute_additions = set(after["pg_attribute"]) - set(before["pg_attribute"])
     _require(attribute_additions == {key for key in after["pg_attribute"] if key[0] in set(added_relations)} | appended)
     added_defaults = {
-        oid: json.loads(raw) for oid, raw in after["pg_attrdef"].items() if oid not in before["pg_attrdef"]
+        oid: _catalog_view("pg_attrdef", oid, raw)
+        for oid, raw in after["pg_attrdef"].items()
+        if oid not in before["pg_attrdef"]
     }
     expected_defaults: set[tuple[int, int]] = set()
     for s in specs:
@@ -1216,13 +1341,19 @@ def conserve(before, after, *, stage, appended):
     # Category additions have been independently classified; all prior raw rows
     # remain identical except narrowly enumerated relation flag/count changes.
     new_constraints = {
-        oid: json.loads(raw) for oid, raw in after["pg_constraint"].items() if oid not in before["pg_constraint"]
+        oid: _catalog_view("pg_constraint", oid, raw)
+        for oid, raw in after["pg_constraint"].items()
+        if oid not in before["pg_constraint"]
     }
     affected_triggers = {
-        json.loads(raw)["tgrelid"] for oid, raw in after["pg_trigger"].items() if oid not in before["pg_trigger"]
+        _catalog_view("pg_trigger", oid, raw)["tgrelid"]
+        for oid, raw in after["pg_trigger"].items()
+        if oid not in before["pg_trigger"]
     }
     affected_indexes = {
-        json.loads(raw)["indrelid"] for oid, raw in after["pg_index"].items() if oid not in before["pg_index"]
+        _catalog_view("pg_index", oid, raw)["indrelid"]
+        for oid, raw in after["pg_index"].items()
+        if oid not in before["pg_index"]
     }
     for category, old in before.items():
         if category in ("dependencies", "global"):
@@ -1231,6 +1362,8 @@ def conserve(before, after, *, stage, appended):
             _require(key in after[category])
             current = after[category][key]
             if category == "pg_class":
+                _catalog_view("pg_class", key, raw)
+                _catalog_view("pg_class", key, current)
                 a, b = json.loads(raw), json.loads(current)
                 if any(relid == key for relid, _ in appended):
                     _require(b["relnatts"] == a["relnatts"] + 1)
@@ -1373,7 +1506,7 @@ def _raw_attribute_contract(connection, before, after):
     for key, raw in after["pg_attribute"].items():
         if key in before["pg_attribute"]:
             continue
-        a = json.loads(raw)
+        a = _catalog_view("pg_attribute", key, raw)
         _require(a["attrelid"] == key[0] and a["attnum"] == key[1])
         _require(a["attidentity"] == a["attgenerated"] == a["attcompression"] == "")
         _require(a["attoptions"] is None and a["attfdwoptions"] is None)
@@ -1387,7 +1520,7 @@ def _raw_attribute_contract(connection, before, after):
         )
         _require(len(types) == 1 and types[0][0] == "pg_catalog")
         namespace, name, length, byval, align, storage = types[0]
-        relation = json.loads(after["pg_class"][key[0]])
+        relation = _catalog_view("pg_class", key[0], after["pg_class"][key[0]])
         expected_storage = "p" if relation["relkind"] in ("i", "t") else storage
         _require(
             (a["attlen"], a["attbyval"], a["attalign"], a["attstorage"]) == (length, byval, align, expected_storage)

@@ -9,6 +9,7 @@ import pytest
 from app.maintenance import erp_progress_transition as transition
 from app.maintenance import erp_successor_catalog as catalog
 from app.maintenance.product_adoption import ProductAdoptionRefused
+from tests.test_catalog_json_codec import wire_row
 
 
 def _packets():
@@ -32,15 +33,17 @@ def _packets():
     before["global"] = {"roles": (("app_admin", False),), "namespaces": (("public",),)}
     before["dependencies"] = ()
     before["pg_class"][100] = json.dumps(
-        {"relname": "lab_templates", "relnatts": 1, "relhastriggers": False, "relhasindex": False, "relowner": 10}
+        wire_row(
+            "pg_class", 100, relname="lab_templates", relnatts=1, relhastriggers=False, relhasindex=False, relowner="10"
+        )
     )
-    before["pg_attribute"][(100, 1)] = json.dumps({"attname": "id", "attnum": 1})
+    before["pg_attribute"][(100, 1)] = json.dumps(wire_row("pg_attribute", (100, 1), attname="id"))
     after = copy.deepcopy(before)
     rel = json.loads(after["pg_class"][100])
     rel["relnatts"] = 2
     after["pg_class"][100] = json.dumps(rel)
-    after["pg_attribute"][(100, 2)] = json.dumps({"attname": "access", "attnum": 2})
-    after["pg_attrdef"][200] = json.dumps({"adrelid": 100, "adnum": 2})
+    after["pg_attribute"][(100, 2)] = json.dumps(wire_row("pg_attribute", (100, 2), attname="access"))
+    after["pg_attrdef"][200] = json.dumps(wire_row("pg_attrdef", 200, adrelid="100", adnum=2))
     return before, after
 
 
@@ -65,6 +68,11 @@ def test_only_validated_column_addition_is_inverse_projected():
 )
 def test_extra_objects_cannot_disappear_in_inverse_projection(category, raw):
     before, after = _packets()
+    raw = wire_row(category, 999, **raw)
+    if category == "pg_policy":
+        raw["polrelid"] = "100"
+    if category == "pg_trigger":
+        raw["tgrelid"] = "100"
     after[category][999] = json.dumps(raw)
     with pytest.raises(ProductAdoptionRefused):
         catalog._validate_new_raw(before, after, "a007_lab_template_access", {}, set())
@@ -75,12 +83,12 @@ def test_previous_objects_and_authority_are_conserved(change):
     before, after = _packets()
     if change == "owner":
         rel = json.loads(after["pg_class"][100])
-        rel["relowner"] = 999
+        rel["relowner"] = "999"
         after["pg_class"][100] = json.dumps(rel)
     elif change == "dropped_oid":
         after["pg_class"][999] = after["pg_class"].pop(100)
     elif change == "old_attribute":
-        after["pg_attribute"][(100, 1)] = json.dumps({"attname": "wrong", "attnum": 1})
+        after["pg_attribute"][(100, 1)] = json.dumps(wire_row("pg_attribute", (100, 1), attname="wrong"))
     elif change == "role":
         after["global"]["roles"] = (("app_admin", True),)
     else:
@@ -224,7 +232,9 @@ def test_fresh_a006_counter_alone_cannot_authorize_any_learned_catalog(monkeypat
         transition._prepare(db, owner, historical=False)
 
 
-@pytest.mark.parametrize(("field", "value"), [("procost", 0.01), ("prorows", 12345), ("protrftypes", [999])])
+@pytest.mark.parametrize(
+    ("field", "value"), [("procost", 0.01), ("prorows", 12345), ("protrftypes", [999]), ("support_oid", 999)]
+)
 def test_trigger_function_fixed_create_defaults_are_required(monkeypatch, field, value):
     row = {
         "oid": 123,
@@ -241,7 +251,8 @@ def test_trigger_function_fixed_create_defaults_are_required(monkeypatch, field,
         "pronargdefaults": 0,
         "probin": None,
         "prosqlbody": None,
-        "prosupport": 0,
+        "prosupport": "-",
+        "support_oid": 0,
         "provariadic": 0,
         "prosrc": " BEGIN NEW.last_seen_at := pg_catalog.now(); RETURN NEW; END; ",
         "procost": 100,
@@ -305,7 +316,9 @@ def test_fresh_successful_callback_learning_column_is_checked_before_ordinal_adv
             relation = json.loads(state["packet"]["pg_class"][100])
             relation["relnatts"] += 1
             state["packet"]["pg_class"][100] = json.dumps(relation)
-            state["packet"]["pg_attribute"][(100, 2)] = json.dumps({"attname": "unreviewed", "attnum": 2})
+            state["packet"]["pg_attribute"][(100, 2)] = json.dumps(
+                wire_row("pg_attribute", (100, 2), attname="unreviewed")
+            )
 
     monkeypatch.setattr(transition.command, "upgrade", upgrade)
     with pytest.raises(ProductAdoptionRefused):
