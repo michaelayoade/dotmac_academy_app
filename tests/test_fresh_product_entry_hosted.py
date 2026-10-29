@@ -13,6 +13,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+from app.maintenance import erp_progress_transition as erp
 from app.maintenance import fresh_product as fresh
 from app.maintenance import product_adoption as product
 from app.migration_graph import ordinary_migration_config
@@ -284,3 +285,48 @@ def test_hosted_fingerprint_detects_function_defaults_and_live_fk_enforcement(ho
     assert fresh._issued(connection).commit_guard is not None
     # Missing-only internal rows are covered by the no-DB projection regression.
     # DROP TRIGGER is FK-dependency protected; no direct pg_catalog writes here.
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "REVOKE USAGE ON SCHEMA public FROM outbox_dispatcher",
+        "GRANT CREATE ON SCHEMA public TO platform_outbox_dispatcher",
+    ],
+)
+@pytest.mark.parametrize("boundary", ["capture", *fresh._STAGES])
+def test_real_fresh_stage_custody_refuses_missing_extra_and_late_public_acl(
+    fresh_connection, monkeypatch, statement, boundary
+):
+    # Real replay/issuance, no historical fragment or manually issued stage.
+    observed = []
+    if boundary == "capture":
+        original = erp._prepare_fresh_stages
+
+        def contaminate(connection, owner):
+            envelope = erp.retained._observe_successor_schema(connection)
+            assert len(envelope.acl) == 9
+            connection.execute(sa.text(statement))
+            observed.append(boundary)
+            return original(connection, owner)
+
+        monkeypatch.setattr(erp, "_prepare_fresh_stages", contaminate)
+    else:
+        original = erp.catalog.validate_fresh_stage
+
+        def contaminate(connection, before, after, stage, **kwargs):
+            # The genuine stage's full positive checks must pass before attack.
+            result = original(connection, before, after, stage, **kwargs)
+            if stage == boundary:
+                captured = connection.info[erp._FRESH_KEY].public_schema
+                assert kwargs["public_schema"] is captured
+                connection.execute(sa.text(statement))
+                observed.append(boundary)
+                return original(connection, before, after, stage, **kwargs)
+            return result
+
+        monkeypatch.setattr(erp.catalog, "validate_fresh_stage", contaminate)
+    with pytest.raises((fresh.FreshProductRefused, product.ProductAdoptionRefused)):
+        fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C39-hosted-successor-acl-negative")
+    assert observed == [boundary]
+    assert fresh._issued(fresh_connection).poisoned

@@ -526,3 +526,46 @@ def test_actual_driver_abort_is_suppressed_without_replacing_or_repairing_root(
         assert "division by zero" not in str(raised.value)
         assert connection.get_transaction() is root
         _assert_sticky(connection, handle)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "REVOKE USAGE ON SCHEMA public FROM outbox_dispatcher",
+        "GRANT CREATE ON SCHEMA public TO platform_outbox_dispatcher",
+    ],
+)
+@pytest.mark.parametrize("boundary", ["prepare", "pre_ddl", "recorded"])
+def test_successor_public_acl_custody_refuses_lab_missing_extra_and_late_grants(
+    hosted_declaration, tmp_path, monkeypatch, statement, boundary
+):
+    with _checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        state = product._state_for(handle)
+        envelope = state.checkpoint_transition.retained_entry.public_schema
+        transition._verify_successor_cluster(connection, envelope)
+        if boundary == "recorded":
+            product._run_lab_claim_lease_transition(connection, handle)
+            product._continuity(connection, state)
+            connection.execute(sa.text(statement))
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._continuity(connection, state)
+            return
+        if boundary == "pre_ddl":
+            original = product._consume_lab_claim_lease_transition
+
+            def mutate_after_capture(conn):
+                pending = original(conn)
+                connection.execute(sa.text(statement))
+                return pending
+
+            monkeypatch.setattr(product, "_consume_lab_claim_lease_transition", mutate_after_capture)
+        else:
+            connection.execute(sa.text(statement))
+        effects, listener = _effects(connection)
+        try:
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._run_lab_claim_lease_transition(connection, handle)
+        finally:
+            sa.event.remove(connection, "before_cursor_execute", listener)
+        assert effects == []
+        _assert_sticky(connection, handle)

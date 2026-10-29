@@ -1555,7 +1555,9 @@ def _fresh_lease_checks(connection):
         _expression(connection, row[11], row[12])
 
 
-def validate_fresh_stage(connection, before, after, stage, *, original_rows, parent_keys, checkpoint_keys):
+def validate_fresh_stage(
+    connection, before, after, stage, *, original_rows, parent_keys, checkpoint_keys, public_schema
+):
     """Independent source contracts after real command/version callbacks."""
     from app.maintenance import fresh_product as fresh
 
@@ -1569,7 +1571,7 @@ def validate_fresh_stage(connection, before, after, stage, *, original_rows, par
         cluster = retained._normalize_lab_claim_cluster(cluster)
     _check_non_ri_structure(packet)
     schema._check_security(packet)
-    schema._check_cluster_authority(cluster)
+    retained._verify_successor_cluster(connection, public_schema, cluster=cluster)
     keys = _fresh_parent_keys(connection)
     _require(all(keys[key] == value for key, value in parent_keys.items()))
     fks, triggers = retained._check_ri(connection, packet, final=True, keys=keys)

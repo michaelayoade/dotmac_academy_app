@@ -89,6 +89,18 @@ def _successor_cluster(packet, envelope):
     schema._check_cluster_authority(projected)
 
 
+def _observe_successor_schema(connection):
+    """Fixed source shape only; this observation issues no product authority."""
+    envelope = retained._public_schema_envelope(connection)
+    _require(envelope.acl == _SUCCESSOR_PUBLIC_ACL)
+    return envelope
+
+
+def _verify_successor_cluster(connection, envelope, *, cluster=None):
+    _require(_observe_successor_schema(connection) == envelope)
+    _successor_cluster(schema._observe_cluster_authority(connection) if cluster is None else cluster, envelope)
+
+
 def _successor_envelope(connection, original):
     current = retained._public_schema_envelope(connection)
     _require(type(original) is retained._PublicSchemaEnvelope)
@@ -683,8 +695,7 @@ def _verify_before(connection, entry):
         _require(history._catalog(connection, captured.relation[0]) == captured)
     _require(history._oid(connection, "alembic_version") == entry.version_oid)
     _require(_version_rows(connection) == entry.before_versions)
-    _require(retained._public_schema_envelope(connection) == entry.public_schema)
-    _successor_cluster(schema._observe_cluster_authority(connection), entry.public_schema)
+    _verify_successor_cluster(connection, entry.public_schema)
     _reference_closure(connection)
 
 
@@ -859,8 +870,7 @@ def _verify_after(connection, state, entry, *, recorded):
     cluster = schema._observe_cluster_authority(connection)
     if lab_claim_entry is not None:
         cluster = _normalize_lab_claim_cluster(cluster)
-    _require(retained._public_schema_envelope(connection) == entry.public_schema)
-    _successor_cluster(cluster, entry.public_schema)
+    _verify_successor_cluster(connection, entry.public_schema, cluster=cluster)
     names = frozenset(row[1] for row in _specs(final=True) if row[1] not in _PRESERVED)
     for namespace, table, captured in entry.canonical:
         _require(history._oid(connection, table, namespace) == captured.relation[0])

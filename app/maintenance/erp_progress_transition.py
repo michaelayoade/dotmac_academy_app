@@ -17,6 +17,7 @@ from app.maintenance import account_token_identity as tokens
 from app.maintenance import checkpoint_transition as checkpoint
 from app.maintenance import erp_successor_catalog as catalog
 from app.maintenance import learning_history as history
+from app.maintenance import retained_history
 from app.maintenance import retained_transition as retained
 from app.maintenance.identity_history import _connection_preflight
 from app.migration_graph import ordinary_migration_config
@@ -367,6 +368,7 @@ class _FreshStages:
     version_oid: int
     parent_keys: dict
     packet: dict
+    public_schema: retained_history._PublicSchemaEnvelope
     observed: int = 0
     consumed: bool = False
     poisoned: bool = False
@@ -394,19 +396,24 @@ def _prepare_fresh_stages(connection, owner):
     checkpoint._held(
         connection, {value[0] for value in parents.values()} | {history._oid(connection, "alembic_version")}
     )
+    root = _connection_preflight(connection)
+    physical = tokens._physical_context(connection)
     stage = object.__new__(_FreshStages)
     _FreshStages.__init__(
         stage,
         owner,
         connection,
-        _connection_preflight(connection),
-        tokens._physical_context(connection),
+        root,
+        physical,
         _roles(connection),
         provenance,
         history._oid(connection, "alembic_version"),
         parents,
         catalog.observe(connection),
+        retained._observe_successor_schema(connection),
     )
+    _require(_connection_preflight(connection) is root and tokens._physical_context(connection) == physical)
+    fresh._check(connection, owner)
     connection.info[_FRESH_KEY] = stage
     return stage
 
@@ -424,6 +431,8 @@ def _check_fresh_stages(connection, owner):
     _require(history._oid(connection, "alembic_version") == stage.version_oid)
     _require(owner.graph == stage.provenance[4][0])
     _require(catalog.observe(connection) == stage.packet)
+    _require(retained._observe_successor_schema(connection) == stage.public_schema)
+    _require(_connection_preflight(connection) is stage.root and tokens._physical_context(connection) == stage.physical)
     return stage
 
 
@@ -464,6 +473,7 @@ def _run_fresh_stages(connection, owner):
                 target,
                 original_rows=rows,
                 parent_keys=stage.parent_keys,
+                public_schema=stage.public_schema,
                 checkpoint_keys=keys,
             )
             stage.packet = after

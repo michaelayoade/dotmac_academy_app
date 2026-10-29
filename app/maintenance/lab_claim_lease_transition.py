@@ -147,7 +147,7 @@ def _prepare(connection, state):
     cohorts = _state_cohorts(raw)
     _require(not cohorts["claimed"])
     _require(frozenset(row[0] for row in raw) == frozenset(row[0] for row in dict(state.cohorts)[_TABLE]))
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    retained._verify_successor_cluster(connection, checkpoint_entry.retained_entry.public_schema)
     graph = state.provenance[4][0]
     before_versions = _expected_versions(graph, final=False)
     _require(retained._version_rows(connection) == before_versions == checkpoint_entry.after_versions)
@@ -177,7 +177,7 @@ def _verify_before(connection, entry):
     _zero_claimed(connection)
     _require(history._oid(connection, "alembic_version") == entry.version_oid)
     _require(retained._version_rows(connection) == entry.before_versions)
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    retained._verify_successor_cluster(connection, entry.checkpoint_entry.retained_entry.public_schema)
 
 
 def _check_acl(connection, entry, catalog):

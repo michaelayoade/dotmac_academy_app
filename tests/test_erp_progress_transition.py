@@ -272,7 +272,10 @@ def test_fresh_successful_callback_learning_column_is_checked_before_ordinal_adv
     root = object()
     provenance = (None, None, None, None, ((), ()))
     stage = object.__new__(transition._FreshStages)
-    transition._FreshStages.__init__(stage, owner, None, root, (), (), provenance, 1, {}, copy.deepcopy(before))
+    public_schema = object()
+    transition._FreshStages.__init__(
+        stage, owner, None, root, (), (), provenance, 1, {}, copy.deepcopy(before), public_schema
+    )
     db = SimpleNamespace(info={transition._FRESH_KEY: stage})
     stage.connection = db
     monkeypatch.setattr(transition, "_check_fresh_stages", lambda *a: stage)
@@ -290,6 +293,7 @@ def test_fresh_successful_callback_learning_column_is_checked_before_ordinal_adv
     monkeypatch.setattr(catalog, "row_evidence", lambda *a: ())
 
     def validate(connection, prior, current, name, **kwargs):
+        assert kwargs["public_schema"] is public_schema
         catalog.conserve(prior, current, stage=name, appended=set())
 
     monkeypatch.setattr(catalog, "validate_fresh_stage", validate)

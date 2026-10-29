@@ -198,7 +198,7 @@ def _prepare(connection, state):
     raw = _original_acks(state)
     _require(_source_acks(connection) == raw)
     _require(_canonical_keys(connection) == tuple((tenant, identifier) for tenant, identifier, _ in raw))
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    retained._verify_successor_cluster(connection, retained_entry.public_schema)
     graph = state.provenance[4][0]
     before_versions = _expected_versions(graph, final=False)
     _require(retained._version_rows(connection) == before_versions == retained_entry.after_versions)
@@ -232,7 +232,7 @@ def _verify_before(connection, entry):
     _require(_canonical_keys(connection) == tuple((tenant, identifier) for tenant, identifier, _ in entry.raw_acks))
     _require(history._oid(connection, "alembic_version") == entry.version_oid)
     _require(retained._version_rows(connection) == entry.before_versions)
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    retained._verify_successor_cluster(connection, entry.retained_entry.public_schema)
 
 
 def _records(rows, fields):
