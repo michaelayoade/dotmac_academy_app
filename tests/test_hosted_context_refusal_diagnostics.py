@@ -237,7 +237,7 @@ def test_single_read_failure_or_cancellation_cannot_undo_poison(monkeypatch, fai
         (1, 1, 4, 1),
         (-1, 1, 4, False),
         (11, 1, 4, False),
-        (1, 13, 4, False),
+        (1, 14, 4, False),
         (1, 1, 0x1000, False),
         (1, 1, -1, False),
         [1, 1, 4, False],
@@ -413,3 +413,30 @@ def test_invalid_metadata_objects_are_never_rendered_or_compared():
     assert hosted._watch_diagnostic(owner) == ""
     owner._watch_event = (1, 1, 4, PrivateValue())
     assert hosted._watch_diagnostic(owner) == ""
+
+
+def test_postmaster_pid_write_close_is_numeric_diagnostic_only_and_still_fatal(monkeypatch, capsys):
+    owner = _watch_owner()
+    owner._watch_descriptors = {3: 4}
+    handle = object.__new__(hosted._Handle)
+    monkeypatch.setitem(hosted._ISSUED, handle, owner)
+    reads = []
+
+    def read(fd, size):
+        assert owner.poisoned is True and (fd, size) == (71, 4096)
+        reads.append(True)
+        return _watch_record(mask=8, name=b"postmaster.pid\0", cookie=0xDEADBEEF)
+
+    monkeypatch.setattr(hosted.os, "read", read)
+    owner.verify = lambda *args: owner._fatal_watch_event()
+    bindings = SimpleNamespace(**{field: object() for field in hosted._FIELDS})
+    with pytest.raises(hosted.HostedGenesisRefused) as raised:
+        hosted._verify_context(handle, object(), bindings)
+    assert owner.poisoned and reads == [True] and owner._watch_event == (4, 13, 8, False)
+    assert str(raised.value).endswith("[watch event=1 object=4 name=13 mask=00000008 unknown=0]")
+    assert "postmaster.pid" not in str(raised.value)
+    monkeypatch.setattr(hosted.os, "read", lambda *args: pytest.fail("poisoned owner cannot read again"))
+    with pytest.raises(hosted.HostedGenesisRefused):
+        owner._live()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""

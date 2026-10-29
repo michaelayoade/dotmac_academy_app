@@ -191,6 +191,7 @@ _WATCH_NAMES = (
     b"pg_ident.conf",
     b".s.PGSQL.5432",
     b".s.PGSQL.5432.lock",
+    b"postmaster.pid",
 )
 
 
@@ -885,7 +886,7 @@ def _watch_diagnostic(owner):
         type(ordinal) is int
         and 0 <= ordinal <= 10
         and type(name_class) is int
-        and 0 <= name_class <= 12
+        and 0 <= name_class <= 13
         and type(mask) is int
         and 0 <= mask <= _WATCH_MASK
         and not mask & ~_WATCH_MASK
