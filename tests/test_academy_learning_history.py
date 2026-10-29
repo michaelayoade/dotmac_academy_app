@@ -312,18 +312,18 @@ def _assert_fixed_source_index_profile(connection):
     # objects. Expected types come from the immutable source declaration.
     keys = connection.execute(
         sa.text(
-            "SELECT t.relname,c.relname,v.position,a.attname,"
+            "SELECT t.relname,c.relname,v.ordinal_position,a.attname,"
             "CASE WHEN opam.amname='btree' THEN ns.nspname||'.'||oc.opcname END,"
-            "CASE WHEN v.collation=0 THEN 'none' ELSE COALESCE(cns.nspname||'.'||co.collname,'unknown') END,"
-            "v.options FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
+            "CASE WHEN v.collation_oid=0 THEN 'none' ELSE COALESCE(cns.nspname||'.'||co.collname,'unknown') END,"
+            "v.sort_options FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
             "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
             "CROSS JOIN LATERAL unnest(i.indkey::smallint[],i.indclass::oid[],i.indcollation::oid[],"
-            "i.indoption::smallint[]) WITH ORDINALITY v(attnum,opclass,collation,options,position) "
+            "i.indoption::smallint[]) WITH ORDINALITY v(attnum,opclass_oid,collation_oid,sort_options,ordinal_position) "
             "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=v.attnum "
-            "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass "
+            "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass_oid "
             "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=oc.opcnamespace "
             "LEFT JOIN pg_catalog.pg_am opam ON opam.oid=oc.opcmethod "
-            "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation "
+            "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation_oid "
             "LEFT JOIN pg_catalog.pg_namespace cns ON cns.oid=co.collnamespace "
             "WHERE n.nspname='public' AND t.relname=ANY(:names) ORDER BY 1,2,3"
         ),

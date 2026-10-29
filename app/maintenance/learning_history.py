@@ -1196,15 +1196,15 @@ def _shape(connection, spec, catalog, oids, roles):
             _query(
                 connection,
                 "SELECT CASE WHEN opam.amname='btree' THEN ns.nspname||'.'||oc.opcname END,"
-                "CASE WHEN v.collation=0 THEN 'none' "
+                "CASE WHEN v.collation_oid=0 THEN 'none' "
                 "ELSE COALESCE(cns.nspname||'.'||co.collname,'unknown') END "
                 "FROM unnest(CAST(:classes AS oid[]),CAST(:collations AS oid[])) "
-                "WITH ORDINALITY v(opclass,collation,position) "
-                "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass "
+                "WITH ORDINALITY v(opclass_oid,collation_oid,ordinal_position) "
+                "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass_oid "
                 "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=oc.opcnamespace "
                 "LEFT JOIN pg_catalog.pg_am opam ON opam.oid=oc.opcmethod "
-                "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation "
-                "LEFT JOIN pg_catalog.pg_namespace cns ON cns.oid=co.collnamespace ORDER BY v.position",
+                "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation_oid "
+                "LEFT JOIN pg_catalog.pg_namespace cns ON cns.oid=co.collnamespace ORDER BY v.ordinal_position",
                 classes=list(classes),
                 collations=list(collations),
             )
