@@ -615,6 +615,7 @@ def import_academy_identity_history(
         product._poison(connection, None)
         if not isinstance(error, Exception):
             raise
+        location = product._maintenance_refusal_locations(error)
         raise IdentityHistoryImportRefused(
-            "Academy identity history import refused; caller rollback required"
+            f"Academy identity history import refused; caller rollback required [maintenance {location}]"
         ) from None
