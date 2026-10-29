@@ -48,7 +48,8 @@ ACADEMY_RETAINED_PG_IMAGE = "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc8
 ACADEMY_RETAINED_PG_SERVER_VERSION_NUM = "160015"
 ACADEMY_RETAINED_PG_COLLATION_VERSION = "2.41"
 status = "APPLIED_AND_VISIBLY_VERIFIED"
-verified_at = "2026-10-29T02:12:00Z"
+verified_at = "2026-10-29T02:12Z"
+# Verification time records the minute displayed by Actions Settings.
 # Image and collation corrected in Actions Settings; all three values visibly
 # verified before the new Academy target-profile run. No production change.
 

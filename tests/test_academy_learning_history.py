@@ -159,9 +159,138 @@ def _populated_source(engine):
             history._release_learning_history(connection, capture)
 
 
+def _assert_fixed_source_acl_profile(connection):
+    """Independent SQL proof of frozen0048/0056/0061 grants, not a live baseline."""
+    tables = list(history._SOURCE_NAMES)
+    roles = ["app_admin", "app_user", "platform_api", "academy_lab_worker"]
+    table_privileges = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
+    worker = {
+        ("activities", "SELECT"),
+        ("courses", "SELECT"),
+        ("course_completions", "SELECT"),
+        ("submissions", "SELECT"),
+        ("submissions", "INSERT"),
+        ("scores", "SELECT"),
+        ("scores", "INSERT"),
+        ("learning_events", "SELECT"),
+        ("learning_events", "INSERT"),
+        ("certificates", "SELECT"),
+        ("certificates", "INSERT"),
+    }
+    table_grants = {
+        (table, role, privilege)
+        for table in tables
+        for role in roles
+        for privilege in table_privileges
+        if (
+            role == "app_admin"
+            or (role == "academy_lab_worker" and (table, privilege) in worker)
+            or (
+                role in {"app_user", "platform_api"}
+                and privilege
+                in (
+                    {"SELECT", "INSERT"}
+                    if table in {"learning_events", "subtopic_reads"}
+                    else {"SELECT", "INSERT", "UPDATE", "DELETE"}
+                )
+            )
+        )
+    }
+    column_grants = {
+        ("course_completions", column, "academy_lab_worker", privilege)
+        for privilege, columns in (
+            ("INSERT", ("id", "tenant_id", "person_id", "course_id", "status", "pct")),
+            ("UPDATE", ("status", "pct", "completed_at", "updated_at")),
+        )
+        for column in columns
+    }
+    table_acl = connection.execute(
+        sa.text(
+            "SELECT c.relname,pg_catalog.pg_get_userbyid(a.grantor),"
+            "CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,"
+            "a.privilege_type,a.is_grantable FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace,"
+            "LATERAL pg_catalog.aclexplode(c.relacl) a "
+            "WHERE n.nspname='public' AND c.relname=ANY(:tables) ORDER BY 1,2,3,4,5"
+        ),
+        {"tables": tables},
+    ).all()
+    assert len(table_acl) == 408
+    assert table_acl == sorted((table, "app_admin", role, privilege, False) for table, role, privilege in table_grants)
+    column_acl = connection.execute(
+        sa.text(
+            "SELECT c.relname,t.attname,pg_catalog.pg_get_userbyid(a.grantor),"
+            "CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,"
+            "a.privilege_type,a.is_grantable FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+            "JOIN pg_catalog.pg_attribute t ON t.attrelid=c.oid,"
+            "LATERAL pg_catalog.aclexplode(t.attacl) a "
+            "WHERE n.nspname='public' AND c.relname=ANY(:tables) ORDER BY 1,2,3,4,5,6"
+        ),
+        {"tables": tables},
+    ).all()
+    assert len(column_acl) == 10
+    assert column_acl == sorted(
+        (table, column, "app_admin", role, privilege, False) for table, column, role, privilege in column_grants
+    )
+    matrix = connection.execute(
+        sa.text(
+            "SELECT c.relname,r,p,pg_catalog.has_table_privilege(r,c.oid,p) "
+            "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace,"
+            "unnest(CAST(:roles AS text[])) r,unnest(CAST(:privileges AS text[])) p "
+            "WHERE n.nspname='public' AND c.relname=ANY(:tables) ORDER BY 1,2,3"
+        ),
+        {"tables": tables, "roles": roles, "privileges": table_privileges},
+    ).all()
+    assert len(matrix) == 756
+    assert matrix == sorted(
+        (table, role, privilege, (table, role, privilege) in table_grants)
+        for table in tables
+        for role in roles
+        for privilege in table_privileges
+    )
+    column_privileges = ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
+    matrix = connection.execute(
+        sa.text(
+            "SELECT c.relname,a.attname,r,p,pg_catalog.has_column_privilege(r,c.oid,a.attnum,p) "
+            "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+            "JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid,"
+            "unnest(CAST(:roles AS text[])) r,unnest(CAST(:privileges AS text[])) p "
+            "WHERE n.nspname='public' AND c.relname=ANY(:tables) AND a.attnum>0 ORDER BY 1,2,3,4"
+        ),
+        {"tables": tables, "roles": roles, "privileges": column_privileges},
+    ).all()
+    assert len(matrix) == 4176
+    assert matrix == sorted(
+        (
+            spec.name,
+            column,
+            role,
+            privilege,
+            (spec.name, role, privilege) in table_grants or (spec.name, column, role, privilege) in column_grants,
+        )
+        for spec in history._TABLES
+        for column, _, _ in spec.columns
+        for role in roles
+        for privilege in column_privileges
+    )
+    # SQL column grants permit these writes without table-wide INSERT/UPDATE.
+    assert not any(
+        row[3]
+        for row in connection.execute(
+            sa.text(
+                "SELECT 'course_completions','academy_lab_worker',p,"
+                "pg_catalog.has_table_privilege('academy_lab_worker','public.course_completions',p) "
+                "FROM unnest(ARRAY['INSERT','UPDATE']) p"
+            )
+        )
+    )
+
+
 def test_actual_frozen62_all27_all260_fields_and_nullable_ack_history(legacy_engine):
     with _populated_source(legacy_engine) as (connection, capture, empty_tenant, expected):
         root = connection.get_transaction()
+        _assert_fixed_source_acl_profile(connection)
         snapshot = history._export_learning_history(connection, capture)
         acks = history._completion_ack_history(connection, capture)
         assert type(snapshot) is learning.LearningSnapshotV5
@@ -239,6 +368,187 @@ def test_initial_unexpected_source_catalog_reference_or_roles_refuse(legacy_engi
             connection.execute(sa.text("GRANT UPDATE ON public.learning_events TO app_user"))
         with pytest.raises(history.LearningHistoryRefused):
             history._capture_learning_history(connection)
+
+
+@pytest.mark.parametrize("role", ["app_user", "platform_api"])
+@pytest.mark.parametrize("privilege", ["UPDATE", "DELETE"])
+def test_extra_subtopic_read_mutation_grant_refuses_capture(legacy_engine, role, privilege):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        # Establish a successful capture of this actual source before changing
+        # only its ACL, so an unrelated source refusal cannot satisfy the canary.
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        connection.execute(sa.text(f"GRANT {privilege} ON public.subtopic_reads TO {role}"))
+        assert (
+            connection.scalar(
+                sa.text("SELECT pg_catalog.has_table_privilege(:role,'public.subtopic_reads',:privilege)"),
+                {"role": role, "privilege": privilege},
+            )
+            is True
+        )
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
+
+
+@pytest.mark.parametrize(
+    "table,privilege", [("activities", "INSERT"), ("submissions", "DELETE"), ("question_banks", "SELECT")]
+)
+def test_extra_worker_learning_grant_refuses_capture(legacy_engine, table, privilege):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        connection.execute(sa.text(f"GRANT {privilege} ON public.{table} TO academy_lab_worker"))
+        assert (
+            connection.scalar(
+                sa.text("SELECT pg_catalog.has_table_privilege('academy_lab_worker',:table,:privilege)"),
+                {"table": f"public.{table}", "privilege": privilege},
+            )
+            is True
+        )
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ALTER ROLE academy_lab_worker SUPERUSER",
+        "ALTER ROLE academy_lab_worker NOLOGIN",
+        "ALTER ROLE academy_lab_worker NOBYPASSRLS",
+        "ALTER ROLE academy_lab_worker INHERIT",
+        "ALTER ROLE academy_lab_worker CREATEROLE",
+        "ALTER ROLE academy_lab_worker CREATEDB",
+        "ALTER ROLE academy_lab_worker REPLICATION",
+        "ALTER ROLE academy_lab_worker SET row_security TO off",
+        "GRANT app_admin TO academy_lab_worker",
+        "GRANT academy_lab_worker TO outbox_dispatcher",
+        "ALTER ROLE app_admin SUPERUSER",
+        "ALTER ROLE app_admin CREATEROLE",
+        "ALTER ROLE app_admin CREATEDB",
+        "ALTER ROLE app_admin REPLICATION",
+        "ALTER ROLE app_admin NOLOGIN",
+        "ALTER ROLE app_admin NOBYPASSRLS",
+        "ALTER ROLE app_admin NOINHERIT",
+        "ALTER ROLE app_admin SET row_security TO off",
+        "ALTER ROLE app_user NOINHERIT",
+        "ALTER ROLE app_user NOLOGIN",
+        "ALTER ROLE app_user SET row_security TO off",
+        "ALTER ROLE platform_api NOINHERIT",
+        "ALTER ROLE platform_api NOLOGIN",
+        "ALTER ROLE platform_api SET row_security TO off",
+        "GRANT app_admin TO outbox_dispatcher",
+    ],
+)
+def test_worker_role_authority_drift_refuses_capture(legacy_engine, statement):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        # Hosted fixture's provisioning identity owns these transaction-local
+        # negative mutations; return to app_admin for the actual boundary.
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text(statement))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
+
+
+def test_late_worker_membership_drift_refuses_export(legacy_engine):
+    with _populated_source(legacy_engine) as (connection, capture, _, __):
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text("GRANT academy_lab_worker TO outbox_dispatcher"))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(history.LearningHistoryRefused):
+            history._export_learning_history(connection, capture)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "REVOKE SELECT ON public.courses FROM academy_lab_worker",
+        "REVOKE INSERT(id) ON public.course_completions FROM academy_lab_worker",
+        "REVOKE UPDATE(status) ON public.course_completions FROM academy_lab_worker",
+        "GRANT INSERT ON public.course_completions TO academy_lab_worker",
+        "GRANT UPDATE(person_id) ON public.course_completions TO academy_lab_worker",
+        "GRANT INSERT(erp_synced_at) ON public.course_completions TO academy_lab_worker",
+        "GRANT SELECT(id) ON public.courses TO academy_lab_worker",
+        "GRANT SELECT(status) ON public.course_completions TO app_user",
+        "GRANT SELECT ON public.activities TO academy_lab_worker WITH GRANT OPTION",
+        "GRANT UPDATE(status) ON public.course_completions TO academy_lab_worker WITH GRANT OPTION",
+        "GRANT SELECT(status) ON public.course_completions TO PUBLIC",
+        "GRANT SELECT(status) ON public.course_completions TO outbox_dispatcher",
+        "GRANT SELECT ON public.question_banks TO PUBLIC",
+        "GRANT SELECT ON public.question_banks TO outbox_dispatcher",
+        "UPDATE pg_catalog.pg_attribute SET attacl='{}'::aclitem[] "
+        "WHERE attrelid='public.courses'::regclass AND attname='id'",
+        "UPDATE pg_catalog.pg_attribute SET attacl='{}'::aclitem[] "
+        "WHERE attrelid='public.courses'::regclass AND attname='ctid'",
+    ],
+)
+def test_exact_learning_table_and_column_acl_drift_refuses_capture(legacy_engine, statement):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text(statement))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
+
+
+def _raw_learning_column_acls(connection):
+    return connection.execute(
+        sa.text(
+            "SELECT c.relname,a.attnum,a.attacl::text FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+            "JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid "
+            "WHERE n.nspname='public' AND c.relname=ANY(:tables) ORDER BY 1,2"
+        ),
+        {"tables": list(history._SOURCE_NAMES)},
+    ).all()
+
+
+@pytest.mark.parametrize("relocated", [False, True], ids=["source", "genuine-identity-relocation"])
+@pytest.mark.parametrize("mutation", ["add", "remove", "grant_option"])
+def test_late_column_acl_drift_refuses_and_root_rollback_restores_source(
+    legacy_engine,
+    tmp_path,
+    monkeypatch,
+    relocated,
+    mutation,
+):
+    with legacy_engine.connect() as connection:
+        before = public_footprint(connection)
+        before_columns = _raw_learning_column_acls(connection)
+    source = (
+        _identity_imported_source(legacy_engine, tmp_path, monkeypatch)
+        if relocated
+        else _populated_source(legacy_engine)
+    )
+    with source as (connection, capture, _, __):
+        assert history._export_learning_history(connection, capture).version == 5
+        root = connection.get_transaction()
+        statement = {
+            "add": "GRANT UPDATE(person_id) ON public.course_completions TO academy_lab_worker",
+            "remove": "REVOKE INSERT(id) ON public.course_completions FROM academy_lab_worker",
+            "grant_option": (
+                "GRANT UPDATE(status) ON public.course_completions TO academy_lab_worker WITH GRANT OPTION"
+            ),
+        }[mutation]
+        connection.execute(sa.text(statement))
+        assert _raw_learning_column_acls(connection) != before_columns
+        assert connection.get_transaction() is root and root.is_active
+        with pytest.raises(history.LearningHistoryRefused):
+            history._export_learning_history(connection, capture)
+    with legacy_engine.connect() as connection:
+        assert public_footprint(connection) == before
+        assert _raw_learning_column_acls(connection) == before_columns
+        assert connection.scalar(sa.text("SELECT to_regclass('public.parties')")) is None
+        assert connection.scalar(sa.text("SELECT to_regnamespace('mod_learning')")) is None
+        assert connection.scalar(sa.text("SELECT to_regnamespace('academy_identity_compat')")) is None
 
 
 @pytest.mark.parametrize("mutation", ["row", "delete", "ack", "tenant", "catalog", "oid"])

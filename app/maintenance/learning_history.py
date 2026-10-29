@@ -860,6 +860,20 @@ _SOURCE_NAMES = tuple(sorted(spec.name for spec in _TABLES))
 _LOCK_NAMES = tuple(sorted((*_SOURCE_NAMES, "tenants", "people", "alembic_version")))
 _STATE_KEY = object()
 _RELOCATION_KEY = object()
+# Fixed historical0056 + 0061 worker grants, never canonical Learning policy.
+_WORKER_TABLE_PRIVILEGES = {
+    "activities": {"SELECT"},
+    "courses": {"SELECT"},
+    "course_completions": {"SELECT"},
+    "submissions": {"SELECT", "INSERT"},
+    "scores": {"SELECT", "INSERT"},
+    "learning_events": {"SELECT", "INSERT"},
+    "certificates": {"SELECT", "INSERT"},
+}
+_WORKER_COMPLETION_COLUMNS = {
+    "INSERT": {"id", "tenant_id", "person_id", "course_id", "status", "pct"},
+    "UPDATE": {"status", "pct", "completed_at", "updated_at"},
+}
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -994,28 +1008,24 @@ def _roles(connection):
         connection,
         "SELECT oid,rolname,rolsuper,rolbypassrls,rolinherit,rolcreaterole,rolcreatedb,"
         "rolcanlogin,rolreplication,rolconnlimit,rolvaliduntil,rolconfig FROM pg_catalog.pg_roles "
-        "WHERE rolname IN ('app_admin','app_user','platform_api') ORDER BY rolname",
+        "WHERE rolname IN ('app_admin','app_user','platform_api','academy_lab_worker') ORDER BY rolname",
     )
-    _require(len(rows) == 3)
+    _require(len(rows) == 4)
     by_name = {row[1]: row for row in rows}
-    _require(by_name["app_admin"][3] is True)
-    _require(all(by_name[name][2:4] == (False, False) for name in ("app_user", "platform_api")))
-    _require(
-        all(
-            not by_name[name][5] and not by_name[name][6] and not by_name[name][8]
-            for name in ("app_user", "platform_api")
-        )
-    )
+    for name, row in by_name.items():
+        _require(row[2] is False and row[3] is (name in {"app_admin", "academy_lab_worker"}))
+        _require(row[4] is (name != "academy_lab_worker"))
+        _require(row[5:9] == (False, False, True, False) and row[11] is None)
     memberships = _query(
         connection,
         "SELECT roleid,member,grantor,pg_catalog.to_jsonb(m)::text FROM pg_catalog.pg_auth_members m "
         "WHERE roleid IN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname IN "
-        "('app_admin','app_user','platform_api')) "
-        "OR member IN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname IN ('app_admin','app_user','platform_api')) "
+        "('app_admin','app_user','platform_api','academy_lab_worker')) "
+        "OR member IN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname IN "
+        "('app_admin','app_user','platform_api','academy_lab_worker')) "
         "ORDER BY roleid,member,grantor",
     )
-    online_ids = {by_name[name][0] for name in ("app_user", "platform_api")}
-    _require(all(row[1] not in online_ids for row in memberships))
+    _require(not memberships)
     return rows, memberships
 
 
@@ -1159,7 +1169,7 @@ def _shape(connection, spec, catalog, oids, roles):
                     else "kind=anyarray['chapter_completed','certificate_earned']"
                 )
             )
-    _require(not catalog.column_acl and not catalog.rules)
+    _require(not catalog.rules)
     _require(all(row[4] == "O" and row[5] is True for row in catalog.triggers))
     _require(len(catalog.policies) == 1)
     policy = catalog.policies[0]
@@ -1198,21 +1208,90 @@ def _shape(connection, spec, catalog, oids, roles):
         <= owner_privileges
         <= {"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"}
     )
-    online = {"SELECT", "INSERT"} if spec.name == "learning_events" else {"SELECT", "INSERT", "UPDATE", "DELETE"}
+    online = (
+        {"SELECT", "INSERT"}
+        if spec.name in {"learning_events", "subtopic_reads"}
+        else {"SELECT", "INSERT", "UPDATE", "DELETE"}
+    )
+    expected_privileges = {
+        "app_admin": owner_privileges,
+        "app_user": online,
+        "platform_api": online,
+        "academy_lab_worker": _WORKER_TABLE_PRIVILEGES.get(spec.name, set()),
+    }
     _require(
         set(catalog.acl)
-        == {(roles["app_admin"], roles["app_admin"], p, False) for p in owner_privileges}
-        | {(roles["app_admin"], roles[role], p, False) for role in ("app_user", "platform_api") for p in online}
+        == {
+            (roles["app_admin"], roles[role], p, False)
+            for role, privileges in expected_privileges.items()
+            for p in privileges
+        }
     )
-    for role in ("app_user", "platform_api"):
-        for privilege in owner_privileges:
-            _require(
-                connection.scalar(
-                    sa.text("SELECT pg_catalog.has_table_privilege(:role,:oid,:privilege)"),
-                    {"role": role, "oid": oid, "privilege": privilege},
-                )
-                is (privilege in online)
+    column_grants = _WORKER_COMPLETION_COLUMNS if spec.name == "course_completions" else {}
+    column_numbers = {row[1]: row[0] for row in catalog.columns}
+    expected_column_acl = tuple(
+        sorted(
+            (column_numbers[column], column, roles["app_admin"], roles["academy_lab_worker"], privilege, False)
+            for privilege, columns in column_grants.items()
+            for column in columns
+        )
+    )
+    _require(
+        _query(
+            connection,
+            "SELECT t.attnum,t.attname,a.grantor,a.grantee,a.privilege_type,a.is_grantable "
+            "FROM pg_catalog.pg_attribute t CROSS JOIN LATERAL pg_catalog.aclexplode(t.attacl) a "
+            "WHERE t.attrelid=:oid ORDER BY 1,2,3,4,5,6",
+            oid=oid,
+        )
+        == expected_column_acl
+    )
+    _require(tuple(row[0] for row in catalog.column_acl) == tuple(sorted({row[0] for row in expected_column_acl})))
+    # Batch both complete effective matrices, including the owner and worker.
+    # BYPASSRLS does not bypass SQL privileges; column rights also include table rights.
+    _require(
+        _query(
+            connection,
+            "SELECT r,p,pg_catalog.has_table_privilege(r,:oid,p) "
+            "FROM unnest(CAST(:roles AS text[])) r,unnest(CAST(:privileges AS text[])) p ORDER BY r,p",
+            oid=oid,
+            roles=list(expected_privileges),
+            privileges=sorted(owner_privileges),
+        )
+        == tuple(
+            sorted(
+                (role, privilege, privilege in privileges)
+                for role, privileges in expected_privileges.items()
+                for privilege in owner_privileges
             )
+        )
+    )
+    column_privileges = ("SELECT", "INSERT", "UPDATE", "REFERENCES")
+    _require(
+        _query(
+            connection,
+            "SELECT r,a.attname,p,pg_catalog.has_column_privilege(r,:oid,a.attnum,p) "
+            "FROM pg_catalog.pg_attribute a,unnest(CAST(:roles AS text[])) r,"
+            "unnest(CAST(:privileges AS text[])) p WHERE a.attrelid=:oid AND a.attnum>0 ORDER BY r,a.attname,p",
+            oid=oid,
+            roles=list(expected_privileges),
+            privileges=list(column_privileges),
+        )
+        == tuple(
+            sorted(
+                (
+                    role,
+                    column,
+                    privilege,
+                    privilege in privileges
+                    or (role == "academy_lab_worker" and column in column_grants.get(privilege, set())),
+                )
+                for role, privileges in expected_privileges.items()
+                for column in column_numbers
+                for privilege in column_privileges
+            )
+        )
+    )
     _require(
         connection.scalar(
             sa.text(
