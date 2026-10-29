@@ -47,9 +47,10 @@ match = true
 ACADEMY_RETAINED_PG_IMAGE = "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b"
 ACADEMY_RETAINED_PG_SERVER_VERSION_NUM = "160015"
 ACADEMY_RETAINED_PG_COLLATION_VERSION = "2.41"
-status = "PENDING_UI_CORRECTION"
-# Expected declarations only. The repository variables have not been updated
-# or visibly verified in Actions Settings; no application is claimed.
+status = "APPLIED_AND_VISIBLY_VERIFIED"
+verified_at = "2026-10-29T02:12:00Z"
+# Image and collation corrected in Actions Settings; all three values visibly
+# verified before the new Academy target-profile run. No production change.
 
 [historical.bookworm]
 status = "ci_image_inventory_verified_but_d1_context_mismatch_not_qualified"
