@@ -961,3 +961,71 @@ def test_c45_default_column_still_requires_exact_source_deparser_and_type(monkey
     else:
         with pytest.raises(ProductAdoptionRefused):
             catalog._validate_column(db, row, expected)
+
+
+@pytest.mark.parametrize(
+    "kind,name,storage,accepted",
+    [
+        ("i", "varchar", "x", True),
+        ("i", "varchar", "p", False),
+        ("t", "text", "p", True),
+        ("t", "text", "x", False),
+        ("r", "varchar", "x", True),
+        ("r", "varchar", "p", False),
+        ("i", "uuid", "p", True),
+        ("i", "uuid", "x", False),
+    ],
+)
+def test_c50_real_attribute_contract_preserves_validated_type_storage_except_toast(
+    monkeypatch, kind, name, storage, accepted
+):
+    from sqlalchemy.engine import Engine
+
+    monkeypatch.setattr(Engine, "connect", lambda *a, **k: pytest.fail("pure attribute test cannot connect"))
+    type_oid, length, byval, align, type_storage = {
+        "varchar": (1043, -1, False, "i", "x"),
+        "text": (25, -1, False, "i", "x"),
+        "uuid": (2950, 16, False, "c", "p"),
+    }[name]
+    attribute = wire_row(
+        "pg_attribute",
+        (700, 1),
+        atttypid=str(type_oid),
+        attname="status" if name == "varchar" else "value",
+        attidentity="",
+        attgenerated="",
+        attcompression="",
+        attoptions=None,
+        attfdwoptions=None,
+        attinhcount=0,
+        attislocal=True,
+        attndims=0,
+        attisdropped=False,
+        attstattarget=-1,
+        attcacheoff=-1,
+        attlen=length,
+        attbyval=byval,
+        attalign=align,
+        attstorage=storage,
+    )
+    before = {"pg_attribute": {}}
+    after = {
+        "pg_attribute": {(700, 1): json.dumps(attribute)},
+        "pg_class": {700: json.dumps(wire_row("pg_class", 700, relkind=kind))},
+    }
+    saved = copy.deepcopy((before, after))
+    observed = []
+
+    def types(connection, query, **params):
+        assert "t.typstorage" in query and "WHERE t.oid=:oid" in query
+        assert params == {"oid": type_oid}
+        observed.append(True)
+        return (("pg_catalog", name, length, byval, align, type_storage),)
+
+    monkeypatch.setattr(catalog, "_rows", types)
+    if accepted:
+        catalog._raw_attribute_contract(object(), before, after)
+    else:
+        with pytest.raises(ProductAdoptionRefused):
+            catalog._raw_attribute_contract(object(), before, after)
+    assert observed == [True] and (before, after) == saved

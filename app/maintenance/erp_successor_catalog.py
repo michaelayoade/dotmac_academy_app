@@ -1753,7 +1753,7 @@ def _raw_attribute_contract(connection, before, after):
         _require(len(types) == 1 and types[0][0] == "pg_catalog")
         namespace, name, length, byval, align, storage = types[0]
         relation = _catalog_view("pg_class", key[0], after["pg_class"][key[0]])
-        expected_storage = "p" if relation["relkind"] in ("i", "t") else storage
+        expected_storage = "p" if relation["relkind"] == "t" else storage
         _require(
             (a["attlen"], a["attbyval"], a["attalign"], a["attstorage"]) == (length, byval, align, expected_storage)
         )

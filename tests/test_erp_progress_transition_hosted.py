@@ -443,3 +443,82 @@ def test_c47_real_a010_check_substitutions_refuse_after_genuine_positive(fresh_c
     with pytest.raises((fresh.FreshProductRefused, product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
         fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C47-hostile-check")
     assert observed == [True] and fresh._issued(fresh_connection).poisoned
+
+
+@pytest.mark.parametrize("tamper", [False, True])
+def test_c50_actual_status_index_copies_varchar_storage_and_rejects_plain_tamper(
+    hosted_declaration, tmp_path, monkeypatch, tamper
+):
+    """Privileged hostile-catalog injection only; not authorization proof; unrun."""
+    from tests import test_academy_lab_claim_lease_adoption as historical
+    from tests import test_academy_product_adoption as product_tests
+
+    footprint = product_tests.public_footprint
+
+    def with_index_storage(connection):
+        attributes = connection.execute(
+            sa.text(
+                "SELECT a.attnum,a.attstorage FROM pg_catalog.pg_attribute a "
+                "JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='ix_facilitator_nominations_status' ORDER BY a.attnum"
+            )
+        ).all()
+        return footprint(connection), tuple(tuple(row) for row in attributes)
+
+    monkeypatch.setattr(product_tests, "public_footprint", with_index_storage)
+    original = transition.catalog.validate_stage
+    observed = []
+
+    def validate(connection, before, after, stage, **kwargs):
+        result = original(connection, before, after, stage, **kwargs)
+        if stage != "a010_facilitator_nominations":
+            return result
+        attribute = connection.execute(
+            sa.text(
+                "SELECT ia.attrelid,ia.attnum,ia.attstorage,ba.attstorage,t.typstorage "
+                "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                "JOIN pg_catalog.pg_index i ON i.indexrelid=c.oid "
+                "JOIN pg_catalog.pg_attribute ia ON ia.attrelid=c.oid AND ia.attnum=1 "
+                "JOIN pg_catalog.pg_attribute ba ON ba.attrelid=i.indrelid AND ba.attnum=i.indkey[0] "
+                "JOIN pg_catalog.pg_type t ON t.oid=ba.atttypid "
+                "WHERE n.nspname='public' AND c.relname='ix_facilitator_nominations_status' "
+                "AND ba.attname='status' AND NOT ia.attisdropped AND NOT ba.attisdropped"
+            )
+        ).one()
+        assert attribute[2:] == ("x", "x", "x")
+        observed.append(True)
+        if not tamper:
+            return result
+        root = connection.get_transaction()
+        physical = transition.tokens._physical_context(connection)
+        assert connection.execute(sa.text("SELECT session_user,current_user")).one() == ("postgres", "app_admin")
+        connection.execute(sa.text("SET LOCAL ROLE postgres"))
+        try:
+            assert (
+                connection.execute(
+                    sa.text("UPDATE pg_catalog.pg_attribute SET attstorage='p' WHERE attrelid=:oid AND attnum=:number"),
+                    {"oid": attribute[0], "number": attribute[1]},
+                ).rowcount
+                == 1
+            )
+        finally:
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        assert connection.scalar(sa.text("SELECT current_user")) == "app_admin"
+        assert connection.get_transaction() is root and root.is_active
+        assert transition.tokens._physical_context(connection) == physical
+        original(connection, before, transition.catalog.observe(connection), stage, **kwargs)
+        pytest.fail("hostile index storage unexpectedly accepted")
+
+    monkeypatch.setattr(transition.catalog, "validate_stage", validate)
+    with historical._checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        product._run_lab_claim_lease_transition(connection, handle)
+        if tamper:
+            with pytest.raises((product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
+                product._run_erp_progress_transition(connection, handle)
+            assert product._state_for(handle).poisoned and transition._KEY not in connection.info
+        else:
+            product._run_erp_progress_transition(connection, handle)
+            assert not product._state_for(handle).poisoned
+        assert observed == [True]
+    # Genuine same-resource qualified_root oracle above verifies the attribute
+    # injection and canonical index disappear with the final caller rollback.
