@@ -196,19 +196,27 @@ def image_inventory(directory, docker, environment, failures):
     result["index_capture"] = capture(directory, "base-index.json", raw)
     try:
         index = json.loads(raw)
-        candidates = [
-            m
-            for m in index["manifests"]
-            if m.get("platform", {}).get("os") == "linux" and m.get("platform", {}).get("architecture") == "amd64"
-        ]
-        require(len(candidates) == 1 and DIGEST.fullmatch(candidates[0]["digest"]) is not None)
-        child = "postgres@" + candidates[0]["digest"]
+        require(type(index) is dict)
+        if index.get("mediaType") in IMAGE_MANIFEST_MEDIA_TYPES:
+            require(type(index.get("schemaVersion")) is int and index["schemaVersion"] == 2)
+            require("manifests" not in index and type(index.get("layers")) is list)
+            child, child_raw = BASE, raw
+        else:
+            candidates = [
+                m
+                for m in index["manifests"]
+                if m.get("platform", {}).get("os") == "linux" and m.get("platform", {}).get("architecture") == "amd64"
+            ]
+            require(len(candidates) == 1 and DIGEST.fullmatch(candidates[0]["digest"]) is not None)
+            child = "postgres@" + candidates[0]["digest"]
+            child_raw = command(11, [*docker, "buildx", "imagetools", "inspect", "--raw", child], environment, failures)
         result["observed_child_reference"] = child
-        child_raw = command(11, [*docker, "buildx", "imagetools", "inspect", "--raw", child], environment, failures)
         require(child_raw is not None)
         result["child_capture"] = capture(directory, "amd64-child-manifest.json", child_raw)
-        config = json.loads(child_raw)["config"]["digest"]
-        require(DIGEST.fullmatch(config) is not None)
+        manifest = json.loads(child_raw)
+        require(type(manifest) is dict and type(manifest.get("config")) is dict)
+        config = manifest["config"].get("digest")
+        require(type(config) is str and DIGEST.fullmatch(config) is not None)
         result["observed_config_reference"] = config
         pulled = command(12, [*docker, "pull", "--platform", "linux/amd64", BASE], environment, failures, timeout=300)
         require(pulled is not None)
@@ -255,6 +263,8 @@ def signature_inventory(directory, environment, failures, home):
         "signature_outcome": "unavailable",
         "signer_fingerprint": None,
         "repository_key_identity_matches": False,
+        "status_stdout_available": False,
+        "recognized_status_tokens": [],
     }
     key, dsc = directory / "pgdg-repository-key.asc", directory / "pgdg.dsc"
     if not key.is_file() or not dsc.is_file():
@@ -296,6 +306,15 @@ def signature_inventory(directory, environment, failures, home):
     if status is None:
         result["signature_outcome"] = "not_verified_with_fetched_key"
         return result
+    result["status_stdout_available"] = True
+    # Only fixed token names escape; arguments can contain UIDs or other text.
+    result["recognized_status_tokens"] = sorted(
+        {
+            parts[1].decode("ascii")
+            for line in status.splitlines()
+            if len(parts := line.split()) >= 2 and parts[0] == b"[GNUPG:]" and parts[1] in GPG_STATUS_TOKENS
+        }
+    )
     signers = [
         line.split()[2]
         for line in status.decode("ascii", errors="strict").splitlines()
@@ -383,12 +402,37 @@ DSC_BASENAMES = frozenset(
         "postgresql-16_16.15-1.pgdg13+2.debian.tar.xz",
     )
 )
-MANIFEST_MEDIA_TYPES = frozenset(
+IMAGE_MANIFEST_MEDIA_TYPES = frozenset(
+    (
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
+MANIFEST_MEDIA_TYPES = IMAGE_MANIFEST_MEDIA_TYPES | frozenset(
     (
         "application/vnd.oci.image.index.v1+json",
         "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
+GPG_STATUS_TOKENS = frozenset(
+    (
+        b"NEWSIG",
+        b"GOODSIG",
+        b"VALIDSIG",
+        b"BADSIG",
+        b"ERRSIG",
+        b"NO_PUBKEY",
+        b"NODATA",
+        b"BADARMOR",
+        b"UNEXPECTED",
+        b"FAILURE",
+        b"ERROR",
+        b"EXPSIG",
+        b"EXPKEYSIG",
+        b"REVKEYSIG",
+        b"KEYEXPIRED",
+        b"SIGEXPIRED",
+        b"KEYREVOKED",
     )
 )
 
@@ -421,13 +465,28 @@ def public_text(data):
 
 
 def public_dsc(directory, record):
+    envelope = "unavailable"
     try:
         text = public_text(public_owned_bytes(directory, "pgdg.dsc", record)).replace("\r\n", "\n")
+        markers = (
+            "-----BEGIN PGP SIGNED MESSAGE-----",
+            "-----BEGIN PGP SIGNATURE-----",
+            "-----END PGP SIGNATURE-----",
+        )
+        envelope = (
+            "no_cleartext_signature"
+            if not any(marker in text for marker in markers)
+            else "malformed_cleartext_signature"
+        )
         if text.startswith("-----BEGIN PGP SIGNED MESSAGE-----\n"):
+            require(all(text.count(marker) == 1 for marker in markers))
             _, separator, text = text.partition("\n\n")
             require(bool(separator))
-            text, separator, _ = text.partition("\n-----BEGIN PGP SIGNATURE-----")
+            text, separator, signature = text.partition("\n-----BEGIN PGP SIGNATURE-----\n")
             require(bool(separator))
+            _, separator, trailing = signature.partition("\n-----END PGP SIGNATURE-----")
+            require(bool(separator) and not trailing.strip())
+            envelope = "cleartext_signature"
         fields: dict[str, list[str]] = {}
         current = None
         for line in text.splitlines():
@@ -464,10 +523,11 @@ def public_dsc(directory, record):
             "Source": "postgresql-16",
             "Version": "16.15-1.pgdg13+2",
             "Checksums-Sha256": rows,
+            "signature_envelope": envelope,
             "signature_trust_inferred": False,
         }
     except Exception:
-        return {"available": False}
+        return {"available": False, "signature_envelope": envelope, "signature_trust_inferred": False}
 
 
 def public_manifest_shape(directory, record):
@@ -602,6 +662,12 @@ def public_inventory_projection(directory, report):
     require(all(type(value) is str and re.fullmatch(r"[0-9A-F]{16}", value) is not None for value in keyids))
     repository_match = signature.get("repository_key_identity_matches", False)
     require(type(repository_match) is bool)
+    status_available = signature.get("status_stdout_available", False)
+    status_tokens = signature.get("recognized_status_tokens", [])
+    require(
+        type(status_available) is bool and type(status_tokens) is list and len(status_tokens) <= len(GPG_STATUS_TOKENS)
+    )
+    require(all(type(value) is str and value.encode("ascii") in GPG_STATUS_TOKENS for value in status_tokens))
     failures = report["failures"]
     require(type(failures) is list and len(failures) <= 128)
     clean_failures = []
@@ -628,6 +694,8 @@ def public_inventory_projection(directory, report):
             "unverified_signer_keyids": keyids,
             "repository_key_fingerprint_expected": KEY_FINGERPRINT,
             "repository_key_identity_matches": repository_match,
+            "status_stdout_available": status_available,
+            "recognized_status_tokens": status_tokens,
         },
         "DSC": public_dsc(directory, report["sources"].get("pgdg.dsc")),
         "failures": clean_failures,
