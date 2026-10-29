@@ -111,6 +111,8 @@ def test_actual_ordinary_a006_adds_nullable_claim_lease_and_conserves_all_owners
         a004_final, a005_final = retained_entry.final, checkpoint_entry.final
         lab_oid = dict(state.oids)["lab_operations"]
         before_catalog = history._catalog(connection, lab_oid)
+        assert before_catalog != dict(state.catalogs)["lab_operations"]
+        lab_claim._compare_retained_lab_catalog(state, before_catalog)
         raw_before = lab_claim._raw_rows(connection)
         assert sum(len(columns) for _, _, columns in retained_rows._ROW_SPEC) == 166
         assert len(state.catalogs) == 47
@@ -568,4 +570,73 @@ def test_successor_public_acl_custody_refuses_lab_missing_extra_and_late_grants(
         finally:
             sa.event.remove(connection, "before_cursor_execute", listener)
         assert effects == []
+        _assert_sticky(connection, handle)
+
+
+def _tamper_retained_lab_catalog(connection, attack):
+    statements = {
+        "tenant_fk": (
+            "ALTER TABLE public.lab_operations DROP CONSTRAINT lab_operations_tenant_id_fkey",
+            "ALTER TABLE public.lab_operations ADD CONSTRAINT lab_operations_tenant_id_fkey "
+            "FOREIGN KEY(tenant_id) REFERENCES public.tenants(id) ON DELETE CASCADE",
+        ),
+        "instance_fk": (
+            "ALTER TABLE public.lab_operations DROP CONSTRAINT fk_lab_operations_tenant_instance",
+            "ALTER TABLE public.lab_operations ADD CONSTRAINT fk_lab_operations_tenant_instance "
+            "FOREIGN KEY(tenant_id,instance_id) REFERENCES public.lab_instances(tenant_id,id) ON DELETE CASCADE",
+        ),
+        "trigger": (
+            "CREATE FUNCTION public.c41_lab_trigger() RETURNS trigger LANGUAGE plpgsql " "AS 'BEGIN RETURN NEW; END;'",
+            "CREATE TRIGGER c41_lab_trigger BEFORE UPDATE ON public.lab_operations "
+            "FOR EACH ROW EXECUTE FUNCTION public.c41_lab_trigger()",
+        ),
+        "index": ("CREATE INDEX c41_lab_index ON public.lab_operations(attempts)",),
+        "acl": ("GRANT INSERT(attempts) ON public.lab_operations TO app_user",),
+        "check": ("ALTER TABLE public.lab_operations ADD CONSTRAINT c41_lab_check CHECK(attempts>=0)",),
+    }[attack]
+    for statement in statements:
+        connection.execute(sa.text(statement))
+
+
+@pytest.mark.parametrize("attack", ["tenant_fk", "instance_fk", "trigger", "index", "acl", "check"])
+@pytest.mark.parametrize("boundary", ["prepare", "pre_ddl", "recorded"])
+def test_only_recorded_a004_tenant_fk_pair_is_projected_before_and_after_a006(
+    hosted_declaration, tmp_path, monkeypatch, attack, boundary
+):
+    with _checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        state = product._state_for(handle)
+        before = history._catalog(connection, dict(state.oids)["lab_operations"])
+        assert before != dict(state.catalogs)["lab_operations"]
+        # Genuine recorded chain and new bounded comparator both pass before
+        # injecting the actual catalog change, avoiding unrelated-refusal proof.
+        checkpoint._verify_after(connection, state, state.checkpoint_transition, recorded=True)
+        lab_claim._compare_retained_lab_catalog(state, before)
+        if boundary == "recorded":
+            product._run_lab_claim_lease_transition(connection, handle)
+            product._continuity(connection, state)
+            final = state.lab_claim_transition.final
+            _tamper_retained_lab_catalog(connection, attack)
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._continuity(connection, state)
+            assert state.lab_claim_transition.final is final
+            return
+        if boundary == "pre_ddl":
+            consume = product._consume_lab_claim_lease_transition
+
+            def mutate_after_capture(conn):
+                pending = consume(conn)
+                assert pending.lab_catalog_before == before
+                _tamper_retained_lab_catalog(conn, attack)
+                return pending
+
+            monkeypatch.setattr(product, "_consume_lab_claim_lease_transition", mutate_after_capture)
+        else:
+            _tamper_retained_lab_catalog(connection, attack)
+        statements, listener = _effects(connection)
+        try:
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._run_lab_claim_lease_transition(connection, handle)
+        finally:
+            sa.event.remove(connection, "before_cursor_execute", listener)
+        assert not any("CLAIM_LEASE" in statement.upper() for statement in statements)
         _assert_sticky(connection, handle)

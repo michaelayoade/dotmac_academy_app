@@ -126,6 +126,56 @@ def _refuse_destination(connection):
     )
 
 
+def _compare_retained_lab_catalog(state, current):
+    """Project only a004's authenticated tenant FK and its child RI pair."""
+    checkpoint_entry = state.checkpoint_transition
+    _require(type(checkpoint_entry) is checkpoint._CheckpointTransition and checkpoint_entry.final is not None)
+    entry = checkpoint_entry.retained_entry
+    _require(entry is state.retained_transition and type(entry) is retained._RetainedTransition)
+    _require(entry.consumed and entry.final is not None)
+    _require(entry.handle is state.handle and entry.connection is state.connection)
+    _require(entry.root is state.root and entry.xid == state.xid)
+    lab_oid = dict(state.oids)[_TABLE]
+    original = dict(state.catalogs)[_TABLE]
+    _require(original.relation[0] == current.relation[0] == lab_oid)
+    name = "lab_operations_tenant_id_fkey"
+    sides = []
+    for packet, namespace in ((entry.before, "academy_identity_compat"), (entry.final, "public")):
+        fks = tuple(
+            row
+            for row in retained._records(packet, "ri_foreign_keys", schema._RI_FK_FIELDS)
+            if row["child_oid"] == lab_oid and row["name"] == name
+        )
+        _require(len(fks) == 1)
+        fk = fks[0]
+        _require(fk["child_namespace"] == "public" and fk["child"] == _TABLE and fk["kind"] == "f")
+        _require(fk["parent_namespace"] == namespace and fk["parent"] == "tenants")
+        triggers = tuple(
+            row
+            for row in retained._records(packet, "ri_triggers", schema._RI_TRIGGER_FIELDS)
+            if row["relation_oid"] == lab_oid and row["constraint_oid"] == fk["oid"]
+        )
+        ids = frozenset(row["oid"] for row in triggers)
+        _require(len(triggers) == len(ids) == 2)
+        _require(all(type(oid) is int and oid > 0 for oid in ids | {fk["oid"]}))
+        sides.append((fk["oid"], ids))
+    (old_fk, old_triggers), (new_fk, new_triggers) = sides
+    _require(old_fk != new_fk and new_fk in entry.new_fks)
+    _require(not old_triggers & new_triggers and new_triggers <= entry.new_triggers)
+    projected = []
+    for catalog, (fk, trigger_ids) in zip((original, current), sides, strict=True):
+        normalized = retained._project_catalog(catalog, frozenset({fk}), trigger_ids, frozenset({name}))
+        _require(
+            tuple(
+                len(getattr(catalog, field)) - len(getattr(normalized, field))
+                for field in ("constraints", "incoming", "triggers")
+            )
+            == (1, 0, 2)
+        )
+        projected.append(normalized)
+    _require(projected[0] == projected[1])
+
+
 def _prepare(connection, state):
     checkpoint_entry = state.checkpoint_transition
     _require(type(checkpoint_entry) is checkpoint._CheckpointTransition and checkpoint_entry.final is not None)
@@ -137,7 +187,7 @@ def _prepare(connection, state):
     _require(type(lab_oid) is int and lab_oid > 0 and lab_oid == dict(state.oids)[_TABLE])
     _held(connection, {lab_oid})
     before = history._catalog(connection, lab_oid)
-    _require(before == dict(state.catalogs)[_TABLE])
+    _compare_retained_lab_catalog(state, before)
     _require(tuple(row[0] for row in before.columns) == tuple(range(1, 21)))
     _require(tuple(row[1] for row in before.columns) == _LAB_COLUMNS)
     _require(not {row[0] for row in before.constraints} & set(_CHECKS))
