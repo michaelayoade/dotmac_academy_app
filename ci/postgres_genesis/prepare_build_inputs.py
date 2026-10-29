@@ -37,6 +37,25 @@ PHASES = frozenset(
         "acquisition",
         "base_preflight",
         "apt_configuration",
+        "inherited_source_kind",
+        "inherited_source_copy",
+        "inherited_source_validation",
+        "inherited_hook_kind",
+        "inherited_hook_validation",
+        "inherited_hook_copy",
+        "debian_keyring_copy",
+        "pgdg_keyring_copy",
+        "explicit_config_creation",
+        "explicit_config_capture",
+        "debian_key_home",
+        "pgdg_key_home",
+        "debian_key_import",
+        "pgdg_key_import",
+        "debian_fingerprint_listing",
+        "pgdg_fingerprint_listing",
+        "debian_fingerprint_nonempty",
+        "pgdg_fingerprint_nonempty",
+        "pgdg_fingerprint_match",
         "apt_update",
         "metadata_signer",
         "metadata_index_hash",
@@ -64,6 +83,71 @@ PHASES = frozenset(
     )
 )
 ANCHORS = ("libc6-dev", "gcc-14", "g++-14", "llvm-19-dev", "clang-19")
+DIAGNOSTIC_ENUMS = {
+    "source_file_class": frozenset(("sources_list", "debian_sources", "pgdg_list", "other_sources", "other_list")),
+    "file_kind": frozenset(("regular", "symlink", "directory", "other", "missing")),
+    "source_validation": frozenset(("success", "failure")),
+    "source_rejected_field": frozenset(
+        ("types", "uris", "suites", "components", "signed_by", "architectures", "enabled", "deb_line", "other")
+    ),
+    "hook_file_class": frozenset(
+        ("docker_clean", "docker_gzip_indexes", "docker_no_languages", "docker_autoremove_suggests", "debconf", "other")
+    ),
+    "hook_validation": frozenset(("success", "failure")),
+    "hook_rejection": frozenset(
+        ("custom_cache_reference", "unauthenticated_option_token", "insecure_option_token", "valid_until_false_token")
+    ),
+    "key_context": frozenset(("debian", "pgdg")),
+    "key_format": frozenset(("armored_public_key", "binary_or_other")),
+    "import_outcome": frozenset(("success", "nonzero")),
+    "fingerprint_list_outcome": frozenset(("success", "nonzero")),
+    "gpg_status_token": frozenset(("IMPORT_OK", "IMPORT_RES", "IMPORT_PROBLEM", "NODATA", "FAILURE", "ERROR")),
+    "gpg_failure_operation": frozenset(
+        (
+            "import",
+            "import_keys",
+            "keydb_search",
+            "keydb_get_keyblock",
+            "keydb_new",
+            "add_keyblock_resource",
+            "keybox_open",
+            "other",
+        )
+    ),
+    "gpg_error_operation": frozenset(
+        (
+            "import",
+            "import_keys",
+            "keydb_search",
+            "keydb_get_keyblock",
+            "keydb_new",
+            "add_keyblock_resource",
+            "keybox_open",
+            "other",
+        )
+    ),
+}
+DIAGNOSTIC_BOOLEANS = frozenset(
+    (
+        "known_uri_match",
+        "known_suite_match",
+        "known_signed_by_match",
+        "leading_whitespace",
+        "trailing_whitespace",
+        "carriage_return",
+        "primary_count_capped",
+        "pinned_fingerprint_match",
+    )
+)
+DIAGNOSTIC_COUNTS = {
+    "primary_count": 64,
+    "import_exit_code": 255,
+    "fingerprint_list_exit_code": 255,
+    "gpg_import_problem_reason": 4294967295,
+    "gpg_nodata_reason": 4294967295,
+    "gpg_failure_code": 4294967295,
+    "gpg_error_code": 4294967295,
+}
 
 
 class Refused(Exception):
@@ -373,6 +457,35 @@ def failure_details(output):
     except Exception:
         detail["kind"] = "diagnostics_unavailable"
     return detail
+
+
+def preparation_diagnostics(output):
+    try:
+        data = read(output / "configuration-diagnostics.tsv", 65536)
+        lines = data.decode("ascii", errors="strict").splitlines()
+        need(len(lines) <= 512)
+        records = []
+        for line in lines:
+            parts = line.split("\t")
+            need(len(parts) == 2)
+            name, value = parts
+            checked: str | bool | int
+            if name in DIAGNOSTIC_ENUMS:
+                need(value in DIAGNOSTIC_ENUMS[name])
+                checked = value
+            elif name in DIAGNOSTIC_BOOLEANS:
+                need(value in ("true", "false"))
+                checked = value == "true"
+            else:
+                need(
+                    name in DIAGNOSTIC_COUNTS and re.fullmatch(r"0|[1-9][0-9]{0,9}", value, flags=re.ASCII) is not None
+                )
+                checked = int(value)
+                need(0 <= checked <= DIAGNOSTIC_COUNTS[name])
+            records.append({"name": name, "value": checked})
+        return {"available": True, "records": records}
+    except Exception:
+        return {"available": False, "reason": "unavailable_or_invalid_diagnostics"}
 
 
 def public_source_inventory(output, lock):
@@ -704,6 +817,7 @@ def main():
                 public["cleanup"] = "owned_resources_removed"
             else:
                 public["cleanup"] = "not_created"
+    public["preparation_diagnostics"] = preparation_diagnostics(output)
     if completed and not public["cleanup_uncertain"]:
         public["phase"] = "artifact_manifest"
         manifest = {}

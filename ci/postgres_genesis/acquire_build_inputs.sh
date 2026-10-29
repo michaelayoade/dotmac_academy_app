@@ -5,6 +5,73 @@ umask 022
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C TZ=UTC DEBIAN_FRONTEND=noninteractive
 
 phase() { printf '%s\n' "$1" > /out/phase.txt; }
+diagnostic_count=0
+diagnostic() {
+    if [ "$diagnostic_count" -lt 512 ]; then
+        printf '%s\t%s\n' "$1" "$2" >> /out/configuration-diagnostics.tsv
+        diagnostic_count=$((diagnostic_count + 1))
+    fi
+}
+file_kind() {
+    if [ -L "$1" ]; then diagnostic file_kind symlink;
+    elif [ -f "$1" ]; then diagnostic file_kind regular;
+    elif [ -d "$1" ]; then diagnostic file_kind directory;
+    elif [ -e "$1" ]; then diagnostic file_kind other;
+    else diagnostic file_kind missing; fi
+}
+source_rejection() {
+    # Only describe the first line rejected by the unchanged validation grammar.
+    awk '
+      /^[[:space:]]*(#|$)/ {next}
+      /^Types: deb( deb-src)?$/ {next}
+      /^URIs: https?:\/\/deb.debian.org\/debian(-security)?\/?$/ {next}
+      /^Suites: trixie( trixie-updates)?$/ {next}
+      /^Suites: trixie-security$/ {next}
+      /^Components: main$/ {next}
+      /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.gpg$/ {next}
+      /^deb(-src)? \[[[:space:]]*signed-by=\/usr\/local\/share\/keyrings\/postgres.gpg.asc[[:space:]]*\] http:\/\/apt.postgresql.org\/pub\/repos\/apt\/? trixie-pgdg main( 16)?$/ {next}
+      {
+        field="other"
+        if ($0 ~ /^[[:space:]]*Types:/) field="types"
+        else if ($0 ~ /^[[:space:]]*URIs:/) field="uris"
+        else if ($0 ~ /^[[:space:]]*Suites:/) field="suites"
+        else if ($0 ~ /^[[:space:]]*Components:/) field="components"
+        else if ($0 ~ /^[[:space:]]*Signed-By:/) field="signed_by"
+        else if ($0 ~ /^[[:space:]]*Architectures:/) field="architectures"
+        else if ($0 ~ /^[[:space:]]*Enabled:/) field="enabled"
+        else if ($0 ~ /^[[:space:]]*deb(-src)?[[:space:]]/) field="deb_line"
+        printf "source_rejected_field\t%s\n",field
+        printf "known_uri_match\t%s\n",($0 ~ /https?:\/\/deb.debian.org\/debian(-security)?\/?([[:space:]]|$)/ || $0 ~ /http:\/\/apt.postgresql.org\/pub\/repos\/apt\/?([[:space:]]|$)/)?"true":"false"
+        printf "known_suite_match\t%s\n",($0 ~ /(^|[[:space:]])trixie(-updates|-security|-pgdg)?([[:space:]]|$)/)?"true":"false"
+        printf "known_signed_by_match\t%s\n",($0 ~ /\/usr\/share\/keyrings\/debian-archive-keyring.gpg/ || $0 ~ /\/usr\/local\/share\/keyrings\/postgres.gpg.asc/)?"true":"false"
+        printf "leading_whitespace\t%s\n",($0 ~ /^[[:space:]]/)?"true":"false"
+        printf "trailing_whitespace\t%s\n",($0 ~ /[[:space:]]$/)?"true":"false"
+        printf "carriage_return\t%s\n",($0 ~ /\r/)?"true":"false"
+        exit
+      }
+    ' "$1" >> /out/configuration-diagnostics.tsv
+}
+import_status_diagnostics() {
+    # GPG arguments/UIDs/fingerprints never escape this private status parser.
+    awk '
+      function number(name,value) {
+        if (value ~ /^[0-9]+$/ && length(value)<=10 && value+0<=4294967295)
+          printf "%s\t%.0f\n",name,value+0
+      }
+      function operation(name,value) {
+        if (value=="import" || value=="import_keys" || value=="keydb_search" || value=="keydb_get_keyblock" || value=="keydb_new" || value=="add_keyblock_resource" || value=="keybox_open")
+          printf "%s\t%s\n",name,value
+        else printf "%s\tother\n",name
+      }
+      $1=="[GNUPG:]" && ($2=="IMPORT_OK" || $2=="IMPORT_RES" || $2=="IMPORT_PROBLEM" || $2=="NODATA" || $2=="FAILURE" || $2=="ERROR") && count++<32 {
+        printf "gpg_status_token\t%s\n",$2
+        if ($2=="IMPORT_PROBLEM") number("gpg_import_problem_reason",$3)
+        if ($2=="NODATA") number("gpg_nodata_reason",$3)
+        if ($2=="FAILURE") {operation("gpg_failure_operation",$3);number("gpg_failure_code",$4)}
+        if ($2=="ERROR") {operation("gpg_error_operation",$3);number("gpg_error_code",$4)}
+      }
+    ' "$1" >> /out/configuration-diagnostics.tsv
+}
 finish() {
     result=$?
     if [ "$result" -eq 0 ]; then printf 'success\n' > /out/acquisition-outcome.txt;
@@ -50,14 +117,26 @@ cp /etc/postgresql-common/createcluster.conf /out/apt/createcluster.conf
 cut -f1 /out/base-bom.tsv | xargs -r apt-mark hold > /out/transactions/base-holds.txt
 
 phase apt_configuration
+: > /out/configuration-diagnostics.tsv
 # Only known public source configuration is copied; no auth.conf, environment or host keyring.
 shopt -s nullglob
 source_files=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources)
 for file in "${source_files[@]}"; do
     test -e "$file" || continue
+    phase inherited_source_kind
+    case "$file" in
+      */sources.list) diagnostic source_file_class sources_list ;;
+      */debian.sources) diagnostic source_file_class debian_sources ;;
+      */pgdg.list) diagnostic source_file_class pgdg_list ;;
+      *.sources) diagnostic source_file_class other_sources ;;
+      *) diagnostic source_file_class other_list ;;
+    esac
+    file_kind "$file"
     test -f "$file" && test ! -L "$file"
+    phase inherited_source_copy
     cp "$file" "/out/apt/inherited/$(basename "$file")"
-    awk '
+    phase inherited_source_validation
+    if awk '
       /^[[:space:]]*(#|$)/ {next}
       /^Types: deb( deb-src)?$/ {next}
       /^URIs: https?:\/\/deb.debian.org\/debian(-security)?\/?$/ {next}
@@ -67,16 +146,48 @@ for file in "${source_files[@]}"; do
       /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.gpg$/ {next}
       /^deb(-src)? \[[[:space:]]*signed-by=\/usr\/local\/share\/keyrings\/postgres.gpg.asc[[:space:]]*\] http:\/\/apt.postgresql.org\/pub\/repos\/apt\/? trixie-pgdg main( 16)?$/ {next}
       {exit 1}
-    ' "$file"
+    ' "$file"; then
+        diagnostic source_validation success
+    else
+        code=$?
+        diagnostic source_validation failure
+        source_rejection "$file"
+        exit "$code"
+    fi
 done
 for file in /etc/apt/apt.conf.d/*; do
+    phase inherited_hook_kind
+    case "$file" in
+      */docker-clean) diagnostic hook_file_class docker_clean ;;
+      */docker-gzip-indexes) diagnostic hook_file_class docker_gzip_indexes ;;
+      */docker-no-languages) diagnostic hook_file_class docker_no_languages ;;
+      */docker-autoremove-suggests) diagnostic hook_file_class docker_autoremove_suggests ;;
+      */70debconf) diagnostic hook_file_class debconf ;;
+      *) diagnostic hook_file_class other ;;
+    esac
+    file_kind "$file"
     test -f "$file" && test ! -L "$file"
+    phase inherited_hook_validation
     # A hook targeting our custom cache must be reviewed, never silently disabled.
-    if grep -Eq '/out|[Aa]llow[Uu]nauthenticated|[Aa]llow[Ii]nsecure|[Cc]heck-[Vv]alid-[Uu]ntil.*false' "$file"; then exit 1; fi
+    if grep -Eq '/out|[Aa]llow[Uu]nauthenticated|[Aa]llow[Ii]nsecure|[Cc]heck-[Vv]alid-[Uu]ntil.*false' "$file"; then
+        diagnostic hook_validation failure
+        awk '
+          /\/out/ {print "hook_rejection\tcustom_cache_reference";exit}
+          /[Aa]llow[Uu]nauthenticated/ {print "hook_rejection\tunauthenticated_option_token";exit}
+          /[Aa]llow[Ii]nsecure/ {print "hook_rejection\tinsecure_option_token";exit}
+          /[Cc]heck-[Vv]alid-[Uu]ntil.*false/ {print "hook_rejection\tvalid_until_false_token";exit}
+        ' "$file" >> /out/configuration-diagnostics.tsv
+        exit 1
+    fi
+    diagnostic hook_validation success
+    phase inherited_hook_copy
     cp "$file" "/out/apt/inherited/config-$(basename "$file")"
 done
+phase debian_keyring_copy
 cp /usr/share/keyrings/debian-archive-keyring.gpg /out/apt/keys/debian-archive-keyring.gpg
+phase pgdg_keyring_copy
 cp /usr/local/share/keyrings/postgres.gpg.asc /out/apt/keys/postgres.gpg.asc
+phase explicit_config_creation
 mkdir /tmp/academy-empty-sourceparts
 cat > /tmp/academy-sources.list <<'SOURCES'
 deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian trixie main
@@ -104,18 +215,40 @@ APT::Install-Suggests "false";
 APT::Keep-Downloaded-Packages "true";
 Binary::apt-get::APT::Keep-Downloaded-Packages "true";
 CONFIG
+phase explicit_config_capture
 cp /tmp/academy-apt.conf /out/apt/academy-apt.conf
 cp /tmp/academy-sources.list /out/apt/academy-sources.list
 for key in debian pgdg; do
+    diagnostic key_context "$key"
+    phase "${key}_key_home"
     home="/tmp/academy-gpg-$key"
     mkdir -m 0700 "$home"
     if [ "$key" = debian ]; then public=/out/apt/keys/debian-archive-keyring.gpg;
     else public=/out/apt/keys/postgres.gpg.asc; fi
-    gpg --no-options --homedir "$home" --batch --no-auto-key-retrieve --no-autostart --auto-key-locate clear --import "$public" > /dev/null 2>&1
-    gpg --no-options --homedir "$home" --batch --no-autostart --with-colons --fingerprint --list-keys 2>/dev/null |
-        awk -F: '$1=="pub"{primary=1;next} $1=="sub"{primary=0} $1=="fpr" && primary{print $10;primary=0}' > "/out/apt/keys/$key-primary-fingerprints.txt"
+    awk 'NR==1 {if($0=="-----BEGIN PGP PUBLIC KEY BLOCK-----")print "key_format\tarmored_public_key";else print "key_format\tbinary_or_other";exit}' "$public" >> /out/configuration-diagnostics.tsv
+    phase "${key}_key_import"
+    code=0
+    gpg --no-options --homedir "$home" --batch --no-auto-key-retrieve --no-autostart --auto-key-locate clear --status-fd 1 --import "$public" > "$home/import-status" 2>/dev/null || code=$?
+    diagnostic import_exit_code "$code"
+    if [ "$code" -eq 0 ]; then diagnostic import_outcome success; else diagnostic import_outcome nonzero; fi
+    import_status_diagnostics "$home/import-status"
+    if [ "$code" -ne 0 ]; then exit "$code"; fi
+    phase "${key}_fingerprint_listing"
+    if gpg --no-options --homedir "$home" --batch --no-autostart --with-colons --fingerprint --list-keys 2>/dev/null |
+        awk -F: '$1=="pub"{primary=1;next} $1=="sub"{primary=0} $1=="fpr" && primary{print $10;primary=0}' > "/out/apt/keys/$key-primary-fingerprints.txt"; then
+        diagnostic fingerprint_list_outcome success
+    else
+        code=$?
+        diagnostic fingerprint_list_outcome nonzero
+        diagnostic fingerprint_list_exit_code "$code"
+        exit "$code"
+    fi
+    phase "${key}_fingerprint_nonempty"
+    awk 'END{printf "primary_count\t%.0f\n",NR>64?64:NR;printf "primary_count_capped\t%s\n",NR>64?"true":"false"}' "/out/apt/keys/$key-primary-fingerprints.txt" >> /out/configuration-diagnostics.tsv
     test -s "/out/apt/keys/$key-primary-fingerprints.txt"
 done
+phase pgdg_fingerprint_match
+awk '{if($0=="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8")matched++;else other++}END{printf "pinned_fingerprint_match\t%s\n",matched==1&&!other?"true":"false"}' /out/apt/keys/pgdg-primary-fingerprints.txt >> /out/configuration-diagnostics.tsv
 test "$(cat /out/apt/keys/pgdg-primary-fingerprints.txt)" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
 apt=(apt-get -c /tmp/academy-apt.conf --no-remove --no-install-recommends)
 phase apt_update
