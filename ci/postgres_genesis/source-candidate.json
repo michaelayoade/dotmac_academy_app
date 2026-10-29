@@ -1,0 +1,51 @@
+{
+  "schema": "academy-genesis-inventory-source-v1",
+  "status": "UNQUALIFIED",
+  "base_image": "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b",
+  "platform": "linux/amd64",
+  "package_version": "16.15-1.pgdg13+2",
+  "reader_input_sha256": "b1d4e0fb9f12de46f47adba8f6b90fbd0e6a93537644a0914e528a8fe7ba486d",
+  "docker_recipe_commit": "9d15534160ade17f2b6c455a39ee967c49b1937d",
+  "docker_recipe_url": "https://raw.githubusercontent.com/docker-library/postgres/9d15534160ade17f2b6c455a39ee967c49b1937d/16/trixie/Dockerfile",
+  "expected_repository_key_fingerprint": "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8",
+  "derived_image_digest": null,
+  "admission_digest": null,
+  "build_recipe": null,
+  "sources": {
+    "pgdg.dsc": {
+      "url": "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-16/postgresql-16_16.15-1.pgdg13%2B2.dsc",
+      "expected_sha256": null,
+      "maximum_bytes": 1048576
+    },
+    "pgdg.debian.tar.xz": {
+      "url": "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-16/postgresql-16_16.15-1.pgdg13%2B2.debian.tar.xz",
+      "expected_sha256": null,
+      "maximum_bytes": 8388608
+    },
+    "postgresql-16.15.tar.bz2": {
+      "url": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2",
+      "expected_sha256": "c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
+      "maximum_bytes": 67108864
+    },
+    "pgdg-repository-key.asc": {
+      "url": "https://www.postgresql.org/media/keys/ACCC4CF8.asc",
+      "expected_sha256": null,
+      "maximum_bytes": 1048576
+    }
+  },
+  "trust_gaps": [
+    "DSC signer not established; repository key identity does not imply DSC signer identity.",
+    "Unknown DSC/debian expected hashes remain null; observed hashes are candidates only.",
+    "Binary-to-source relation and reproducibility unproven; no patch/build/admission is performed.",
+    "Source-only proposed O_RDONLY change has not been implemented, built, qualified or pinned."
+  ],
+  "metadata_container_volume_exception": {
+    "allowed_only_image_declared_anonymous_scratch_targets": [
+      "/var/lib/postgresql/data"
+    ],
+    "no_user_bind_host_tmpfs_mounts": true,
+    "inspect_before_start": true,
+    "cleanup": "actual validated created CID only: docker rm --force --volumes; uncertain cleanup fails job",
+    "no_database_server": true
+  }
+}
