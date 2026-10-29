@@ -8,9 +8,11 @@ import os
 import platform
 import re
 import ssl
+import stat
 import subprocess
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -312,6 +314,361 @@ def signature_inventory(directory, environment, failures, home):
     return result
 
 
+PUBLIC_PREFIX = "ACADEMY_GENESIS_PUBLIC_JSON "
+PUBLIC_LIMIT = 196608
+PUBLIC_CAPTURE_LIMIT = 131072
+PUBLIC_METADATA_FILES = ("package-bom.tsv", "postgres-version.txt", "pg-config-configure.txt")
+PUBLIC_READABLE_FILES = (*PUBLIC_METADATA_FILES, "pgdg.dsc", "base-index.json")
+PUBLIC_FAILURE_ORDINALS = frozenset(
+    (
+        1,
+        2,
+        3,
+        4,
+        5,
+        10,
+        11,
+        12,
+        13,
+        19,
+        30,
+        31,
+        32,
+        39,
+        40,
+        41,
+        42,
+        43,
+        60,
+        61,
+        62,
+        70,
+        71,
+        72,
+        140,
+        141,
+        142,
+        143,
+        150,
+        151,
+        152,
+        153,
+        160,
+        161,
+        162,
+        163,
+    )
+)
+PUBLIC_FAILURE_REASONS = frozenset(
+    (
+        "nonzero_exit",
+        "unavailable_or_bounded_failure",
+        "metadata_container_refused_before_or_during_start",
+        "image_association_unavailable",
+        "public_source_unavailable_or_invalid",
+        "expected_public_digest_mismatch",
+        "signature_inventory_unavailable",
+    )
+)
+PUBLIC_TRUST_GAPS = (
+    "DSC signer not established; repository key identity does not imply DSC signer identity.",
+    "Unknown DSC/debian expected hashes remain null; observed hashes are candidates only.",
+    "Binary-to-source relation and reproducibility unproven; no patch/build/admission is performed.",
+    "Source-only proposed O_RDONLY change has not been implemented, built, qualified or pinned.",
+)
+DSC_BASENAMES = frozenset(
+    (
+        "postgresql-16_16.15.orig.tar.bz2",
+        "postgresql-16_16.15.orig.tar.bz2.asc",
+        "postgresql-16_16.15-1.pgdg13+2.debian.tar.xz",
+    )
+)
+MANIFEST_MEDIA_TYPES = frozenset(
+    (
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
+
+
+def public_hash(value, *, length=64):
+    require(type(value) is str and re.fullmatch(r"[0-9a-f]{" + str(length) + "}", value, flags=re.ASCII) is not None)
+    return value
+
+
+def public_owned_bytes(directory, name, record):
+    # Only five fixed public captures are readable here, never arbitrary paths.
+    require(name in PUBLIC_READABLE_FILES and type(record) is dict)
+    require(record.get("missing", False) is False and record.get("file") == name)
+    size = record.get("bytes")
+    require(type(size) is int and 0 <= size <= PUBLIC_CAPTURE_LIMIT)
+    expected = public_hash(record.get("capture_sha256"))
+    descriptor = os.open(directory / name, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size == size)
+        data = stream.read(PUBLIC_CAPTURE_LIMIT + 1)
+    require(len(data) == size and sha(data) == expected)
+    return data
+
+
+def public_text(data):
+    text = data.decode("utf-8", errors="strict")
+    require(all(character in "\t\n\r" or unicodedata.category(character) != "Cc" for character in text))
+    return text
+
+
+def public_dsc(directory, record):
+    try:
+        text = public_text(public_owned_bytes(directory, "pgdg.dsc", record)).replace("\r\n", "\n")
+        if text.startswith("-----BEGIN PGP SIGNED MESSAGE-----\n"):
+            _, separator, text = text.partition("\n\n")
+            require(bool(separator))
+            text, separator, _ = text.partition("\n-----BEGIN PGP SIGNATURE-----")
+            require(bool(separator))
+        fields: dict[str, list[str]] = {}
+        current = None
+        for line in text.splitlines():
+            if not line:
+                continue
+            if line.startswith((" ", "\t")):
+                if current in ("Source", "Version"):
+                    raise Refused
+                if current == "Checksums-Sha256":
+                    fields["Checksums-Sha256"].append(line.strip())
+                continue
+            match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)", line)
+            if match is None:
+                raise Refused
+            current, value = match.groups()
+            if current in ("Source", "Version", "Checksums-Sha256"):
+                require(current not in fields)
+                fields[current] = [value] if value else []
+        require(fields.get("Source") == ["postgresql-16"] and fields.get("Version") == ["16.15-1.pgdg13+2"])
+        rows, seen = [], set()
+        require(2 <= len(fields.get("Checksums-Sha256", ())) <= 3)
+        for line in fields["Checksums-Sha256"]:
+            parts = line.split()
+            require(len(parts) == 3)
+            digest, count, name = parts
+            public_hash(digest)
+            require(re.fullmatch(r"0|[1-9][0-9]{0,8}", count, flags=re.ASCII) is not None)
+            require(0 <= int(count) <= 67108864 and name in DSC_BASENAMES and name not in seen)
+            seen.add(name)
+            rows.append({"name": name, "sha256": digest, "bytes": int(count)})
+        require({"postgresql-16_16.15.orig.tar.bz2", "postgresql-16_16.15-1.pgdg13+2.debian.tar.xz"} <= seen)
+        return {
+            "available": True,
+            "Source": "postgresql-16",
+            "Version": "16.15-1.pgdg13+2",
+            "Checksums-Sha256": rows,
+            "signature_trust_inferred": False,
+        }
+    except Exception:
+        return {"available": False}
+
+
+def public_manifest_shape(directory, record):
+    try:
+        document = json.loads(public_owned_bytes(directory, "base-index.json", record))
+        require(
+            type(document) is dict and type(document.get("schemaVersion")) is int and document["schemaVersion"] == 2
+        )
+        media_type = document.get("mediaType")
+        require(type(media_type) is str and media_type in MANIFEST_MEDIA_TYPES)
+        shape = {
+            "available": True,
+            "schemaVersion": 2,
+            "mediaType": media_type,
+            "has_manifests": "manifests" in document,
+            "has_config": "config" in document,
+        }
+        if "manifests" in document:
+            require(type(document["manifests"]) is list and len(document["manifests"]) <= 1024)
+        if "layers" in document:
+            require(type(document["layers"]) is list and len(document["layers"]) <= 1024)
+            shape["layer_count"] = len(document["layers"])
+        if "config" in document:
+            require(type(document["config"]) is dict)
+            if "digest" in document["config"]:
+                value = document["config"]["digest"]
+                require(type(value) is str and DIGEST.fullmatch(value) is not None)
+                shape["config_digest"] = value
+        return shape
+    except Exception:
+        return {"available": False}
+
+
+def public_inventory_projection(directory, report):
+    require(report["status"] == "UNQUALIFIED" and report["build_performed"] is False)
+    require(report["derived_image_digest"] is None and report["admission_digest"] is None)
+    commit = report["commit"]
+    require(type(commit) is str and HEX40.fullmatch(commit) is not None)
+    run = {name: report[name] for name in ("run_id", "run_attempt")}
+    require(all(type(value) is str and re.fullmatch(r"[1-9][0-9]{0,19}", value) is not None for value in run.values()))
+    checked = {}
+    for name in COMMITTED_PATHS:
+        record = report["committed_sources"][name]
+        checked[name] = {
+            "git_blob_oid": public_hash(record["git_blob_oid"], length=40),
+            "blob_content_sha256": public_hash(record["blob_content_sha256"]),
+            "file_sha256": public_hash(record["file_sha256"]),
+        }
+    image = report["image"]
+    require(image["base_reference"] == BASE and image["platform"] == "linux/amd64")
+    require(type(image["association_verified"]) is bool)
+    image_view = {
+        "base_reference": BASE,
+        "platform": "linux/amd64",
+        "association_verified": image["association_verified"],
+    }
+    for field, prefix in (("observed_child_reference", "postgres@"), ("observed_config_reference", "")):
+        value = image.get(field)
+        require(
+            value is None
+            or (type(value) is str and value.startswith(prefix) and DIGEST.fullmatch(value[len(prefix) :]) is not None)
+        )
+        image_view[field] = value
+    metadata = {}
+    for name in PUBLIC_METADATA_FILES:
+        record = image.get(name)
+        if record is None:
+            metadata[name] = {"missing": True, "cleanup": "not_attempted", "mounts": []}
+            continue
+        require(type(record["missing"]) is bool and type(record["cleanup_uncertain"]) is bool)
+        require(
+            type(record["cleanup"]) is str
+            and record["cleanup"]
+            in (
+                "not_created",
+                "created_identity_unavailable",
+                "owned_container_and_anonymous_volumes_removed",
+                "uncertain",
+            )
+        )
+        mounts = record.get("mounts", [])
+        require(type(mounts) is list and len(mounts) <= 1)
+        clean_mounts = []
+        for mount in mounts:
+            require(
+                type(mount["Type"]) is str
+                and mount["Type"] == "volume"
+                and type(mount["Destination"]) is str
+                and mount["Destination"] in EXPECTED_VOLUMES
+                and type(mount["RW"]) is bool
+            )
+            clean_mounts.append({"type": "volume", "target": mount["Destination"], "RW": mount["RW"]})
+        metadata[name] = {
+            "missing": record["missing"],
+            "cleanup": record["cleanup"],
+            "cleanup_uncertain": record["cleanup_uncertain"],
+            "mounts": clean_mounts,
+        }
+    image_view["metadata"] = metadata
+    image_view["base_capture_shape"] = public_manifest_shape(directory, image.get("index_capture"))
+    sources = {}
+    for name, url in SOURCE_URLS.items():
+        record = report["sources"].get(name, {})
+        expected = UPSTREAM_SHA if name == "postgresql-16.15.tar.bz2" else None
+        actual = record.get("capture_sha256")
+        if actual is not None:
+            public_hash(actual)
+        size = record.get("bytes")
+        require(size is None or (type(size) is int and 0 <= size <= 67108864))
+        require(record.get("expected_sha256") == expected)
+        require(record.get("url", url) == url)
+        sources[name] = {
+            "url": url,
+            "actual_sha256": actual,
+            "expected_sha256": expected,
+            "bytes": size,
+            "known_hash_match": None if expected is None or actual is None else actual == expected,
+            "missing": record.get("missing", False),
+        }
+        require(type(sources[name]["missing"]) is bool)
+    signature = report.get("signature", {})
+    outcome = signature.get("signature_outcome", "unavailable")
+    require(
+        type(outcome) is str
+        and outcome in ("unavailable", "not_verified_with_fetched_key", "valid_under_fetched_key_only")
+    )
+    signer = signature.get("signer_fingerprint")
+    require(signer is None or (type(signer) is str and FINGERPRINT.fullmatch(signer) is not None))
+    fingerprints, keyids = signature.get("observed_key_fingerprints", []), signature.get("unverified_signer_keyids", [])
+    require(type(fingerprints) is list and len(fingerprints) <= 16 and type(keyids) is list and len(keyids) <= 16)
+    require(all(type(value) is str and FINGERPRINT.fullmatch(value) is not None for value in fingerprints))
+    require(all(type(value) is str and re.fullmatch(r"[0-9A-F]{16}", value) is not None for value in keyids))
+    repository_match = signature.get("repository_key_identity_matches", False)
+    require(type(repository_match) is bool)
+    failures = report["failures"]
+    require(type(failures) is list and len(failures) <= 128)
+    clean_failures = []
+    for failure in failures:
+        ordinal, reason = failure["command"], failure["reason"]
+        require(
+            type(ordinal) is int
+            and ordinal in PUBLIC_FAILURE_ORDINALS
+            and type(reason) is str
+            and reason in PUBLIC_FAILURE_REASONS
+        )
+        clean_failures.append({"command": ordinal, "reason": reason})
+    result = {
+        "status": "UNQUALIFIED",
+        "commit": commit,
+        **run,
+        "committed_sources": checked,
+        "image": image_view,
+        "sources": sources,
+        "signature": {
+            "signature_outcome": outcome,
+            "signer_fingerprint": signer,
+            "observed_key_fingerprints": fingerprints,
+            "unverified_signer_keyids": keyids,
+            "repository_key_fingerprint_expected": KEY_FINGERPRINT,
+            "repository_key_identity_matches": repository_match,
+        },
+        "DSC": public_dsc(directory, report["sources"].get("pgdg.dsc")),
+        "failures": clean_failures,
+        "trust_gaps": PUBLIC_TRUST_GAPS,
+        "build_performed": False,
+        "build_recipe": None,
+        "derived_image_digest": None,
+        "admission_digest": None,
+    }
+    require(
+        len((PUBLIC_PREFIX + json.dumps(result, ensure_ascii=True, separators=(",", ":")) + "\n").encode())
+        <= PUBLIC_LIMIT
+    )
+    for name in PUBLIC_METADATA_FILES:
+        record = image.get(name)
+        text_view: dict[str, Any] = {"available": False}
+        try:
+            require(image["association_verified"] is True and type(record) is dict and record.get("missing") is False)
+            data = public_owned_bytes(directory, name, record)
+            text_view = {"available": True, "bytes": len(data), "sha256": sha(data), "text": public_text(data)}
+        except Exception:
+            text_view = {"available": False, "reason": "unavailable_or_invalid_capture"}
+        metadata[name]["text_capture"] = text_view
+        if (
+            len((PUBLIC_PREFIX + json.dumps(result, ensure_ascii=True, separators=(",", ":")) + "\n").encode())
+            > PUBLIC_LIMIT
+        ):
+            metadata[name]["text_capture"] = {"available": False, "reason": "projection_budget"}
+    return result
+
+
+def emit_public_inventory_projection(directory, report):
+    try:
+        view = public_inventory_projection(directory, report)
+        encoded = json.dumps(view, ensure_ascii=True, separators=(",", ":"))
+        require(len((PUBLIC_PREFIX + encoded + "\n").encode()) <= PUBLIC_LIMIT)
+    except Exception:
+        encoded = '{"status":"UNQUALIFIED","public_projection":"unavailable"}'
+    print(PUBLIC_PREFIX + encoded)
+
+
 COMMITTED_PATHS = (
     "ci/postgres_genesis/inventory.py",
     "ci/postgres_genesis/source-candidate.json",
@@ -441,6 +798,7 @@ def main():
     inventory_bytes = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
     (directory / "inventory.json").write_bytes(inventory_bytes)
     (directory / "inventory.sha256").write_text(sha(inventory_bytes) + "  inventory.json\n")
+    emit_public_inventory_projection(directory, report)
     print(json.dumps({"status": "UNQUALIFIED", "failure_count": len(failures), "build_performed": False}))
     fatal = report["image"].get("cleanup_uncertain", False) or any(
         item["reason"] == "expected_public_digest_mismatch" for item in failures
