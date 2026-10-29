@@ -401,3 +401,45 @@ def test_c45_real_a010_default_tampering_still_refuses_and_poisons(fresh_connect
     with pytest.raises((fresh.FreshProductRefused, product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
         fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C45-hostile-default")
     assert observed == [True] and fresh._issued(fresh_connection).poisoned
+
+
+@pytest.mark.parametrize("attack", ["literal_case", "expanded_value", "target_null_guard"])
+def test_c47_real_a010_check_substitutions_refuse_after_genuine_positive(fresh_connection, monkeypatch, attack):
+    original = transition.catalog.validate_stage
+    observed = []
+
+    def validate(connection, before, after, stage, **kwargs):
+        result = original(connection, before, after, stage, **kwargs)
+        if stage != "a010_facilitator_nominations":
+            return result
+        # The real complete stage validates all three CHECKs and both partial
+        # predicates before replacing one CHECK with a semantic alteration.
+        if attack == "literal_case":
+            statements = (
+                "ALTER TABLE public.facilitator_nominations DROP CONSTRAINT ck_facilitator_nominations_scope",
+                "ALTER TABLE public.facilitator_nominations ADD CONSTRAINT ck_facilitator_nominations_scope "
+                "CHECK(scope_type IN ('Course','cohort'))",
+            )
+        elif attack == "expanded_value":
+            statements = (
+                "ALTER TABLE public.facilitator_nominations DROP CONSTRAINT ck_facilitator_nominations_status",
+                "ALTER TABLE public.facilitator_nominations ADD CONSTRAINT ck_facilitator_nominations_status "
+                "CHECK(status IN ('pending','active','revoked','extra'))",
+            )
+        else:
+            statements = (
+                "ALTER TABLE public.facilitator_nominations DROP CONSTRAINT ck_facilitator_nominations_target",
+                "ALTER TABLE public.facilitator_nominations ADD CONSTRAINT ck_facilitator_nominations_target "
+                "CHECK((scope_type='cohort' AND cohort_id IS NOT NULL) OR "
+                "(scope_type='course' AND cohort_id IS NULL AND offering_id IS NOT NULL))",
+            )
+        for statement in statements:
+            connection.execute(sa.text(statement))
+        observed.append(True)
+        original(connection, before, transition.catalog.observe(connection), stage, **kwargs)
+        pytest.fail("hostile a010 CHECK unexpectedly accepted")
+
+    monkeypatch.setattr(transition.catalog, "validate_stage", validate)
+    with pytest.raises((fresh.FreshProductRefused, product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
+        fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C47-hostile-check")
+    assert observed == [True] and fresh._issued(fresh_connection).poisoned

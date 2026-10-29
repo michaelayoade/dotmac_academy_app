@@ -243,13 +243,13 @@ _TABLES = {
             (
                 (
                     "ck_facilitator_nominations_scope",
-                    "((scope_type)::text = ANY (ARRAY['course'::character varying, "
-                    "'cohort'::character varying]::text[]))",
+                    "((scope_type)::text = ANY ((ARRAY['course'::character varying, "
+                    "'cohort'::character varying])::text[]))",
                 ),
                 (
                     "ck_facilitator_nominations_status",
-                    "((status)::text = ANY (ARRAY['pending'::character varying, 'active'::character "
-                    "varying, 'revoked'::character varying]::text[]))",
+                    "((status)::text = ANY ((ARRAY['pending'::character varying, 'active'::character "
+                    "varying, 'revoked'::character varying])::text[]))",
                 ),
                 (
                     "ck_facilitator_nominations_target",
