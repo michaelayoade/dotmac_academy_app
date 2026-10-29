@@ -370,3 +370,19 @@ def test_historical_recheck_detects_native_row_drift(history_hosted_owner):
         with pytest.raises(history.RetainedHistoryRefused):
             history._recheck_retained_rows(connection, fragment, bindings, _hosted_context=context)
         assert connection.get_transaction() is root and root.is_active
+
+
+@pytest.mark.parametrize("role", ["outbox_dispatcher", "platform_outbox_dispatcher"])
+def test_historical_capture_still_refuses_premature_successor_public_grants(retained_history_engine, role):
+    with entry_transaction(retained_history_engine) as connection:
+        _populate_retained(connection)
+        retained._verify_historical_retained_schema(connection)
+        before = history._public_schema_envelope(connection)
+        assert len(before.acl) == 7
+        # Only fixed parametrized role literals; never an arbitrary identifier.
+        connection.execute(sa.text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+        after = history._public_schema_envelope(connection)
+        assert after.oid == before.oid and after.owner_oid == before.owner_oid
+        assert after.raw_acl != before.raw_acl and len(after.acl) == 8
+        with pytest.raises(retained.RetainedSchemaRefused):
+            retained._verify_historical_retained_schema(connection)

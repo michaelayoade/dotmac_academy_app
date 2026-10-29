@@ -265,6 +265,35 @@ class _TableRows:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _PublicSchemaEnvelope:
+    oid: int
+    owner_oid: int
+    raw_acl: str | None
+    acl: tuple[tuple[str, str, str, bool], ...]
+
+
+def _public_schema_envelope(connection: Connection) -> _PublicSchemaEnvelope:
+    rows = retained._rows(
+        connection,
+        "SELECT n.oid,n.nspowner,n.nspacl::text FROM pg_catalog.pg_namespace n WHERE n.nspname='public'",
+    )
+    _require(len(rows) == 1 and len(rows[0]) == 3)
+    oid, owner_oid, raw_acl = rows[0]
+    _require(type(oid) is int and oid > 0 and type(owner_oid) is int and owner_oid > 0)
+    _require(raw_acl is None or type(raw_acl) is str)
+    acl = retained._rows(
+        connection,
+        "SELECT pg_catalog.pg_get_userbyid(a.grantor),"
+        "CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,"
+        "a.privilege_type,a.is_grantable FROM pg_catalog.pg_namespace n,"
+        "LATERAL pg_catalog.aclexplode(coalesce(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) a "
+        "WHERE n.nspname='public' ORDER BY 1,2,3,4",
+    )
+    _require(all(len(row) == 4 and all(type(v) is str for v in row[:3]) and type(row[3]) is bool for row in acl))
+    return _PublicSchemaEnvelope(oid, owner_oid, raw_acl, acl)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _RetainedFragment:
     """Private immutable observations, NEVER independently accepted authority.
 
@@ -278,6 +307,7 @@ class _RetainedFragment:
     physical_xid: str
     tables: tuple[_TableRows, ...]
     catalog: tuple[tuple[str, tuple], ...]
+    public_schema: _PublicSchemaEnvelope
 
 
 def _literal_bytes(value: str) -> str:
@@ -422,8 +452,9 @@ def _capture_retained_rows(
     root, xid, _ = _locked_context(connection)
     tables = _observe_rows(connection)
     catalog = tuple(sorted(retained._observe_historical_catalog(connection).items()))
+    public_schema = _public_schema_envelope(connection)
     _require(root.is_active and connection.get_transaction() is root)
-    return _RetainedFragment(connection, root, xid, tables, catalog)
+    return _RetainedFragment(connection, root, xid, tables, catalog, public_schema)
 
 
 def _recheck_retained_rows(
@@ -438,5 +469,6 @@ def _recheck_retained_rows(
     _require(type(fragment) is _RetainedFragment)
     root, xid, _ = _locked_context(connection)
     _require(fragment.connection is connection and fragment.root is root and fragment.physical_xid == xid)
+    _require(_public_schema_envelope(connection) == fragment.public_schema)
     _require(_observe_rows(connection) == fragment.tables)
     _require(tuple(sorted(retained._observe_historical_catalog(connection).items())) == fragment.catalog)

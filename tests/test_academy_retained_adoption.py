@@ -111,6 +111,11 @@ def test_actual_ordinary_a004_preserves_166_native_cells_47_catalogs_and_exact20
         state = product._state_for(handle)
         root = connection.get_transaction()
         fragment, raw, acks = state.retained_fragment, state.learning_raw, state.completion_acks
+        successor = retained._public_schema_envelope(connection)
+        assert successor.acl == transition._SUCCESSOR_PUBLIC_ACL and len(successor.acl) == 9
+        assert fragment.public_schema.acl == transition._HISTORICAL_PUBLIC_ACL
+        assert (successor.oid, successor.owner_oid) == (fragment.public_schema.oid, fragment.public_schema.owner_oid)
+        transition._successor_cluster(schema._observe_cluster_authority(connection), successor)
         before = schema._observe_historical_catalog(connection)
         old = transition._records(before, "ri_foreign_keys", schema._RI_FK_FIELDS)
         old_triggers = transition._records(before, "ri_triggers", schema._RI_TRIGGER_FIELDS)
@@ -133,6 +138,8 @@ def test_actual_ordinary_a004_preserves_166_native_cells_47_catalogs_and_exact20
         finally:
             sa.event.remove(connection, "before_cursor_execute", listener)
         pending = state.retained_transition
+        assert pending.public_schema == successor
+        assert retained._public_schema_envelope(connection) == successor
         assert pending.consumed is True and state.retained_runner is None
         assert state.phase == "retained adopted, checkpoint pending"
         assert state.retained_schema_unverified is False
@@ -406,4 +413,62 @@ def test_actual_driver_abort_is_suppressed_without_replacing_or_repairing_root(
         assert seen == [True]
         assert "division by zero" not in str(raised.value)
         assert connection.get_transaction() is root
+        _assert_sticky(connection, handle)
+
+
+_PUBLIC_ACL_ATTACKS = (
+    "REVOKE USAGE ON SCHEMA public FROM outbox_dispatcher",
+    "REVOKE USAGE ON SCHEMA public FROM platform_outbox_dispatcher",
+    "REVOKE USAGE ON SCHEMA public FROM outbox_dispatcher,platform_outbox_dispatcher",
+    "GRANT CREATE ON SCHEMA public TO outbox_dispatcher",
+    "GRANT USAGE ON SCHEMA public TO outbox_dispatcher WITH GRANT OPTION",
+    "GRANT USAGE ON SCHEMA public TO pg_read_all_data",
+    "REVOKE USAGE ON SCHEMA public FROM app_user",
+    "ALTER SCHEMA public OWNER TO app_admin",
+)
+
+
+@pytest.mark.parametrize("statement", _PUBLIC_ACL_ATTACKS)
+@pytest.mark.parametrize("boundary", ["prepare", "pre_ddl", "recorded"])
+def test_source_successor_public_acl_drift_refuses_at_each_custody_boundary(
+    hosted_declaration, tmp_path, monkeypatch, statement, boundary
+):
+    with _sealed(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        state = product._state_for(handle)
+        # Genuine online profile must succeed before any negative mutation.
+        envelope = retained._public_schema_envelope(connection)
+        assert envelope.acl == transition._SUCCESSOR_PUBLIC_ACL
+        assert len(envelope.acl) == 9
+        transition._successor_cluster(schema._observe_cluster_authority(connection), envelope)
+        assert state.retained_fragment.public_schema.acl == transition._HISTORICAL_PUBLIC_ACL
+        assert envelope.oid == state.retained_fragment.public_schema.oid
+        assert envelope.owner_oid == state.retained_fragment.public_schema.owner_oid
+        if boundary == "recorded":
+            product._run_retained_transition(connection, handle)
+            pending = state.retained_transition
+            assert pending.public_schema == envelope
+            transition._verify_after(connection, state, pending, recorded=True)
+            connection.execute(sa.text(statement))
+            with pytest.raises((product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
+                transition._verify_after(connection, state, pending, recorded=True)
+            return
+        if boundary == "pre_ddl":
+            consume = product._consume_retained_transition
+
+            def mutate_after_prepare(conn):
+                pending = consume(conn)
+                assert pending.public_schema == envelope
+                connection.execute(sa.text(statement))
+                return pending
+
+            monkeypatch.setattr(product, "_consume_retained_transition", mutate_after_prepare)
+        else:
+            connection.execute(sa.text(statement))
+        statements, listener = _retained_ddl(connection)
+        try:
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._run_retained_transition(connection, handle)
+        finally:
+            sa.event.remove(connection, "before_cursor_execute", listener)
+        assert statements == []
         _assert_sticky(connection, handle)

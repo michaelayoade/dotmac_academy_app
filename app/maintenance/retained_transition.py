@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 import sqlalchemy as sa
 
 from app.maintenance import learning_history as history
+from app.maintenance import retained_history as retained
 from app.maintenance import retained_schema as schema
 
 if TYPE_CHECKING:
@@ -45,6 +46,56 @@ def _require(condition):
         from app.maintenance.product_adoption import ProductAdoptionRefused
 
         raise ProductAdoptionRefused("Academy retained transition refused; root rollback required")
+
+
+# Fixed frozen62 profile plus precisely Kernel 0011/0012's declared grants.
+_HISTORICAL_PUBLIC_ACL = tuple(
+    sorted(
+        (
+            ("pg_database_owner", "PUBLIC", "USAGE", False),
+            ("pg_database_owner", "pg_database_owner", "CREATE", False),
+            ("pg_database_owner", "pg_database_owner", "USAGE", False),
+            ("pg_database_owner", "app_admin", "CREATE", False),
+            ("pg_database_owner", "app_admin", "USAGE", False),
+            ("pg_database_owner", "app_user", "USAGE", False),
+            ("pg_database_owner", "platform_api", "USAGE", False),
+        )
+    )
+)
+_DISPATCHER_PUBLIC_ACL = (
+    ("pg_database_owner", "outbox_dispatcher", "USAGE", False),
+    ("pg_database_owner", "platform_outbox_dispatcher", "USAGE", False),
+)
+_SUCCESSOR_PUBLIC_ACL = tuple(sorted(_HISTORICAL_PUBLIC_ACL + _DISPATCHER_PUBLIC_ACL))
+
+
+def _successor_cluster(packet, envelope):
+    # Validate the entire fixed profile before projecting exactly its two rows.
+    # A fresh packet preserves every other field for the unchanged frozen gate.
+    _require(type(envelope) is retained._PublicSchemaEnvelope)
+    acl = packet["cluster_schema_acl"]
+    _require(
+        type(acl) is tuple
+        and all(
+            type(row) is tuple
+            and len(row) == 4
+            and all(type(value) is str for value in row[:3])
+            and type(row[3]) is bool
+            for row in acl
+        )
+    )
+    _require(acl == envelope.acl == _SUCCESSOR_PUBLIC_ACL)
+    projected = {**packet, "cluster_schema_acl": tuple(row for row in acl if row not in _DISPATCHER_PUBLIC_ACL)}
+    schema._check_cluster_authority(projected)
+
+
+def _successor_envelope(connection, original):
+    current = retained._public_schema_envelope(connection)
+    _require(type(original) is retained._PublicSchemaEnvelope)
+    _require(original.acl == _HISTORICAL_PUBLIC_ACL)
+    _require(current.oid == original.oid and current.owner_oid == original.owner_oid)
+    _require(current.acl == _SUCCESSOR_PUBLIC_ACL)
+    return current
 
 
 def _specs(*, final):
@@ -81,6 +132,7 @@ class _RetainedTransition:
     version_oid: object = field(repr=False)
     before_versions: object = field(repr=False)
     after_versions: object = field(repr=False)
+    public_schema: retained._PublicSchemaEnvelope = field(repr=False)
     consumed: bool = False
     final: object = field(default=None, repr=False)
     new_fks: object = field(default=None, repr=False)
@@ -565,7 +617,8 @@ def _prepare(connection, state):
     before = schema._observe_historical_catalog(connection)
     _require(_non_ri(before) == _non_ri(original))
     schema._check_security(before)
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    public_schema = _successor_envelope(connection, state.retained_fragment.public_schema)
+    _successor_cluster(schema._observe_cluster_authority(connection), public_schema)
     keys = {(s, t): _key(connection, s, t, cols, name, kind) for s, t, cols, name, kind in _parent_specs(final=False)}
     _check_ri(connection, before, final=False, keys=keys)
     # Original captured source17 identities survive relocation/a003 exactly.
@@ -619,6 +672,7 @@ def _prepare(connection, state):
         history._oid(connection, "alembic_version"),
         before_versions,
         _expected_versions(graph, final=True),
+        public_schema,
     )
 
 
@@ -629,7 +683,8 @@ def _verify_before(connection, entry):
         _require(history._catalog(connection, captured.relation[0]) == captured)
     _require(history._oid(connection, "alembic_version") == entry.version_oid)
     _require(_version_rows(connection) == entry.before_versions)
-    schema._check_cluster_authority(schema._observe_cluster_authority(connection))
+    _require(retained._public_schema_envelope(connection) == entry.public_schema)
+    _successor_cluster(schema._observe_cluster_authority(connection), entry.public_schema)
     _reference_closure(connection)
 
 
@@ -804,7 +859,8 @@ def _verify_after(connection, state, entry, *, recorded):
     cluster = schema._observe_cluster_authority(connection)
     if lab_claim_entry is not None:
         cluster = _normalize_lab_claim_cluster(cluster)
-    schema._check_cluster_authority(cluster)
+    _require(retained._public_schema_envelope(connection) == entry.public_schema)
+    _successor_cluster(cluster, entry.public_schema)
     names = frozenset(row[1] for row in _specs(final=True) if row[1] not in _PRESERVED)
     for namespace, table, captured in entry.canonical:
         _require(history._oid(connection, table, namespace) == captured.relation[0])
