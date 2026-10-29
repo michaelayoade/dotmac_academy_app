@@ -1457,9 +1457,113 @@ def _class_conservation_refused(before, key, original, projected):
     ) from None
 
 
-def conserve(before, after, *, stage, appended):
+def _verify_a009_heap_statistics(connection, before, after, original_rows):
+    """Source-derived live heap statistics; never an observed-stat baseline."""
+    from app.maintenance import account_token_identity as tokens
+    from app.maintenance import fresh_product as fresh
+    from app.maintenance.identity_history import _connection_preflight
+
+    root = _connection_preflight(connection)
+    physical = tokens._physical_context(connection)
+    fresh._authority(connection)
+    _require(connection.scalar(sa.text("SELECT current_setting('transaction_isolation')")) == "read committed")
+    namespaces = before["global"]["namespaces"]
+    public = tuple(row[0] for row in namespaces if row[1] == "public")
+    _require(len(public) == 1 and type(public[0]) is int and 0 < public[0] <= 4294967295)
+    applicants = tuple(
+        (oid, _catalog_view("pg_class", oid, raw))
+        for oid, raw in before["pg_class"].items()
+        if _catalog_view("pg_class", oid, raw)["relname"] == "applicants"
+        and _catalog_view("pg_class", oid, raw)["relnamespace"] == public[0]
+    )
+    _require(len(applicants) == 1)
+    oid, old = applicants[0]
+    _require(old["relkind"] == "r" and old["relispartition"] is False and old["relhassubclass"] is False)
+    live = _catalog_view("pg_class", oid, after["pg_class"][oid])
+    indexes = tuple(
+        key
+        for key, raw in after["pg_class"].items()
+        if key not in before["pg_class"]
+        and _catalog_view("pg_class", key, raw)["relname"] == "ix_applicants_assessment_bank_version_id"
+        and _catalog_view("pg_class", key, raw)["relnamespace"] == public[0]
+    )
+    _require(len(indexes) == 1 and indexes[0] not in before["pg_index"])
+    index = _catalog_view("pg_index", indexes[0], after["pg_index"][indexes[0]])
+    _require(index["indrelid"] == oid)
+    _require(
+        connection.scalar(sa.text("SELECT pg_catalog.row_security_active(CAST(:oid AS oid))"), {"oid": oid}) is False
+    )
+    _require(
+        connection.scalar(
+            sa.text(
+                "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_locks WHERE pid=pg_catalog.pg_backend_pid() "
+                "AND locktype='relation' AND relation=:oid AND mode='AccessExclusiveLock' AND granted)"
+            ),
+            {"oid": oid},
+        )
+        is True
+    )
+    _require(type(original_rows) is tuple)
+    matches = []
+    for item in original_rows:
+        _require(type(item) is tuple and len(item) == 2 and type(item[0]) is int)
+        if item[0] == oid:
+            matches.append(item[1])
+    _require(len(matches) == 1 and type(matches[0]) is tuple)
+    count = 0
+    digests = set()
+    for group in matches[0]:
+        _require(type(group) is tuple and len(group) == 2)
+        digest, number = group
+        _require(type(digest) is str and re.fullmatch("[0-9a-f]{32}", digest) is not None)
+        _require(digest not in digests)
+        digests.add(digest)
+        _require(type(number) is int and 0 < number <= 2**53)
+        count += number
+        _require(count <= 2**53)
+    _require(
+        row_evidence(connection, after, omissions=(("applicants", ("assessment_bank_version_id",)),)) == original_rows
+    )
+    actual_count = connection.scalar(sa.text("SELECT count(*) FROM ONLY public.applicants"))
+    _require(type(actual_count) is int and actual_count == count)
+    _require(_raw(connection, "pg_class", "oid=:oid", oid=oid) == {oid: after["pg_class"][oid]})
+    size = connection.scalar(sa.text("SELECT pg_catalog.pg_relation_size(CAST(:oid AS oid),'main')"), {"oid": oid})
+    block = connection.scalar(sa.text("SELECT current_setting('block_size')::integer"))
+    _require(type(size) is int and size >= 0 and type(block) is int and block > 0)
+    _require(size % block == 0 and size // block <= 2147483647)
+    _require(type(old["relpages"]) is int and 0 <= old["relpages"] <= 2147483647)
+    _require(
+        type(old["reltuples"]) in (int, float) and (type(old["reltuples"]) is int or math.isfinite(old["reltuples"]))
+    )
+    _require(type(live["relpages"]) is int and 0 <= live["relpages"] <= 2147483647)
+    _require(
+        type(live["reltuples"]) in (int, float) and (type(live["reltuples"]) is int or math.isfinite(live["reltuples"]))
+    )
+    project = not (count == 0 and old["reltuples"] < 0)
+    if not project:
+        _require(live["relpages"] == old["relpages"] and live["reltuples"] == old["reltuples"])
+    else:
+        _require(live["relpages"] == size // block)
+        _require(
+            connection.scalar(
+                sa.text(
+                    "SELECT reltuples=CAST(CAST(:count AS double precision) AS real) "
+                    "FROM pg_catalog.pg_class WHERE oid=:oid"
+                ),
+                {"count": count, "oid": oid},
+            )
+            is True
+        )
+    _require(_connection_preflight(connection) is root and tokens._physical_context(connection) == physical)
+    return oid if project else None
+
+
+def conserve(before, after, *, stage, appended, connection=None, original_rows=None):
     """Inverse-project only additions already validated by the stage contract."""
     _require(Counter(before["dependencies"]) <= Counter(after["dependencies"]))
+    stats_oid = None
+    if stage == "a009_applicant_bank_version_pin" and connection is not None:
+        stats_oid = _verify_a009_heap_statistics(connection, before, after, original_rows)
     # Category additions have been independently classified; all prior raw rows
     # remain identical except narrowly enumerated relation flag/count changes.
     new_constraints = {
@@ -1499,6 +1603,8 @@ def conserve(before, after, *, stage, appended):
                 if key in affected_indexes:
                     _require(b["relhasindex"] is True)
                     b["relhasindex"] = a["relhasindex"]
+                if key == stats_oid:
+                    b["relpages"], b["reltuples"] = a["relpages"], a["reltuples"]
                 if stage == "a009_applicant_bank_version_pin" and a != b:
                     _class_conservation_refused(before, key, a, b)
                 _require(a == b)
@@ -1604,7 +1710,9 @@ def validate_stage(connection, before, after, stage, *, original_rows, expected_
     _validate_rows(connection, stage, expected_grandfathers)
     appended = _validate_new_raw(before, after, stage, fks, triggerids)
     _raw_attribute_contract(connection, before, after)
-    added, _ = conserve(before, after, stage=stage, appended=appended)
+    added, _ = conserve(
+        before, after, stage=stage, appended=appended, connection=connection, original_rows=original_rows
+    )
     _shared_dependencies(connection, before, after, added, appended)
     classids = {
         name: connection.scalar(sa.text("SELECT CAST(:name AS regclass)::oid"), {"name": "pg_catalog." + name})
@@ -1845,7 +1953,9 @@ def validate_fresh_stage(
             trigger_ids = set()
     appended = _validate_new_raw(before, after, stage, by_oid, trigger_ids)
     _raw_attribute_contract(connection, before, after)
-    added, _ = conserve(before, after, stage=stage, appended=appended)
+    added, _ = conserve(
+        before, after, stage=stage, appended=appended, connection=connection, original_rows=original_rows
+    )
     _shared_dependencies(connection, before, after, added, appended)
     _dependency_conservation(connection, before, after, added, appended)
     addition = _COLUMN_ADDITIONS.get(stage)

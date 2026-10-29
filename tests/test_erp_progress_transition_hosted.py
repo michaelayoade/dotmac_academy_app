@@ -9,10 +9,10 @@ from app.maintenance import fresh_product as fresh
 from app.maintenance import product_adoption as product
 from app.maintenance import retained_schema as schema
 from tests.test_fresh_product_entry_hosted import _actual_application_object as _actual_application_object
-from tests.test_fresh_product_entry_hosted import fresh_connection
+from tests.test_fresh_product_entry_hosted import fresh_connection, hosted_declaration
 
 pytestmark = pytest.mark.usefixtures("_actual_application_object")
-assert fresh_connection
+assert fresh_connection and hosted_declaration
 
 
 @pytest.mark.parametrize(
@@ -170,3 +170,149 @@ def test_real_successor_stage_wire_decoding_does_not_hide_actual_catalog_drift(
         fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C42-raw-catalog-drift")
     assert attacked == [stage]
     assert fresh._issued(fresh_connection).poisoned
+
+
+def _c44_dead_versions_before_capture(monkeypatch):
+    from tests.fixtures import product_adoption_entry as entry
+
+    populate = entry._populate_retained
+
+    def with_dead_versions(connection):
+        populate(connection)
+        assert connection.execute(sa.text("UPDATE public.applicants SET notes=notes")).rowcount > 0
+        connection.execute(
+            sa.text(
+                "INSERT INTO public.applicants(id,tenant_id,email,first_name,last_name) "
+                "SELECT gen_random_uuid(),tenant_id,'c44-dead@example.invalid','Dead','Version' "
+                "FROM public.applicants LIMIT 1"
+            )
+        )
+        assert (
+            connection.execute(sa.text("DELETE FROM public.applicants WHERE email='c44-dead@example.invalid'")).rowcount
+            == 1
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM ONLY public.applicants")) > 0
+
+    monkeypatch.setattr(entry, "_populate_retained", with_dead_versions)
+
+
+def test_genuine_historical_a009_heap_live_count_ignores_own_dead_versions(hosted_declaration, tmp_path, monkeypatch):
+    from tests import test_academy_lab_claim_lease_adoption as historical
+
+    _c44_dead_versions_before_capture(monkeypatch)
+    original = transition.catalog._verify_a009_heap_statistics
+    observed = []
+
+    def verify(connection, before, after, original_rows):
+        result = original(connection, before, after, original_rows)
+        count = connection.scalar(sa.text("SELECT count(*) FROM ONLY public.applicants"))
+        assert count > 0 and result is not None
+        observed.append(count)
+        return result
+
+    monkeypatch.setattr(transition.catalog, "_verify_a009_heap_statistics", verify)
+    with historical._checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        root = connection.get_transaction()
+        product._run_lab_claim_lease_transition(connection, handle)
+        product._run_erp_progress_transition(connection, handle)
+        assert observed and len(observed) == 1
+        assert connection.get_transaction() is root and root.is_active
+        assert not product._state_for(handle).poisoned
+    # Existing genuine qualified_root rollback oracle checks full public source
+    # restoration and removal of canonical DDL after this disposable root.
+
+
+def test_genuine_empty_fresh_a009_checks_empty_heap_statistics(fresh_connection, monkeypatch):
+    import json
+
+    original = transition.catalog._verify_a009_heap_statistics
+    observed = []
+
+    def verify(connection, before, after, original_rows):
+        result = original(connection, before, after, original_rows)
+        assert connection.scalar(sa.text("SELECT count(*) FROM ONLY public.applicants")) == 0
+        old = next(json.loads(raw) for raw in before["pg_class"].values() if json.loads(raw)["relname"] == "applicants")
+        assert (result is None) is (old["reltuples"] < 0)
+        observed.append(True)
+        return result
+
+    monkeypatch.setattr(transition.catalog, "_verify_a009_heap_statistics", verify)
+    root = fresh_connection.get_transaction()
+    evidence = fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C44-empty-index-statistics")
+    assert type(evidence) is fresh.FreshProductDiscovery and observed == [True]
+    assert fresh_connection.get_transaction() is root and root.is_active
+
+
+@pytest.mark.parametrize("attack", ["pages", "tuples", "applicant_options", "unrelated", "late_raw"])
+def test_hostile_historical_catalog_fixture_cannot_rebase_a009_statistics(
+    hosted_declaration, tmp_path, monkeypatch, attack
+):
+    """Privileged hostile-catalog fixture, NOT role/authorization proof; unrun."""
+    from tests import test_academy_lab_claim_lease_adoption as historical
+    from tests import test_academy_product_adoption as product_tests
+
+    # Augment the existing same-resource rollback oracle with the two raw heap
+    # statistics, proving this privileged injection is transactionally restored.
+    footprint = product_tests.public_footprint
+
+    def including_statistics(connection):
+        stats = connection.execute(
+            sa.text("SELECT relpages,reltuples FROM pg_catalog.pg_class WHERE oid='public.applicants'::regclass")
+        ).one()
+        return footprint(connection), tuple(stats)
+
+    monkeypatch.setattr(product_tests, "public_footprint", including_statistics)
+    actual = transition.catalog._verify_a009_heap_statistics
+    injected = []
+
+    def hostile(connection, before, after, original_rows):
+        root = connection.get_transaction()
+        context = transition.tokens._physical_context(connection)
+        assert connection.execute(sa.text("SELECT session_user,current_user")).one() == ("postgres", "app_admin")
+        actual(connection, before, after, original_rows)
+        if attack in ("pages", "tuples"):
+            # Sole privileged mutation: the fixed heap's two source statistics.
+            connection.execute(sa.text("SET LOCAL ROLE postgres"))
+            try:
+                statement = (
+                    "UPDATE pg_catalog.pg_class SET relpages=relpages+1 WHERE oid='public.applicants'::regclass"
+                    if attack == "pages"
+                    else "UPDATE pg_catalog.pg_class SET reltuples=reltuples+1 WHERE oid='public.applicants'::regclass"
+                )
+                assert connection.execute(sa.text(statement)).rowcount == 1
+            finally:
+                connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        elif attack == "unrelated":
+            connection.execute(sa.text("ALTER TABLE public.lab_templates SET (fillfactor=80)"))
+        else:
+            connection.execute(sa.text("ALTER TABLE public.applicants SET (fillfactor=80)"))
+        assert connection.scalar(sa.text("SELECT current_user")) == "app_admin"
+        assert connection.get_transaction() is root and root.is_active
+        assert transition.tokens._physical_context(connection) == context
+        injected.append(True)
+        if attack != "late_raw":
+            observed = transition.catalog.observe(connection)
+            appended = set(observed["pg_attribute"]) - set(before["pg_attribute"])
+            # Re-run the genuine local comparison against the newly observed
+            # hostile packet; the helper itself retains its production contract.
+            with monkeypatch.context() as context_patch:
+                context_patch.setattr(transition.catalog, "_verify_a009_heap_statistics", actual)
+                transition.catalog.conserve(
+                    before,
+                    observed,
+                    stage="a009_applicant_bank_version_pin",
+                    appended=appended,
+                    connection=connection,
+                    original_rows=original_rows,
+                )
+            pytest.fail("hostile catalog comparison unexpectedly accepted")
+        actual(connection, before, after, original_rows)
+        pytest.fail("late raw catalog mutation unexpectedly accepted")
+
+    monkeypatch.setattr(transition.catalog, "_verify_a009_heap_statistics", hostile)
+    with historical._checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        product._run_lab_claim_lease_transition(connection, handle)
+        with pytest.raises((product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
+            product._run_erp_progress_transition(connection, handle)
+        assert injected == [True] and product._state_for(handle).poisoned
+        assert transition._KEY not in connection.info

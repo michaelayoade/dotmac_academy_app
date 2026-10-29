@@ -631,3 +631,250 @@ def test_real_c43_refusal_survives_actual_erp_runner_poison_and_bare_reraise(mon
     assert raised.value is emitted[0] and "[C43 relation=1 changed=000000200" in str(raised.value)
     assert poisoned == [(db, entry)]
     assert entry.runner is None and not entry.packet and transition._KEY not in db.info
+
+
+def _c44_verifier_case(monkeypatch, *, count=3, old_tuples=-1, pages=1):
+    from sqlalchemy.engine import Engine
+
+    from app.maintenance import fresh_product as fresh
+    from app.maintenance import identity_history as identity
+
+    monkeypatch.setattr(Engine, "connect", lambda *a, **k: pytest.fail("pure verifier test cannot connect"))
+    before, after = _c43_packet()
+    for packet in (before, after):
+        row = json.loads(packet["pg_class"][100])
+        row.update(
+            relkind="r", relispartition=False, relhassubclass=False, relallvisible=0, relpages=0, reltuples=old_tuples
+        )
+        packet["pg_class"][100] = json.dumps(row)
+    row = json.loads(after["pg_class"][100])
+    row.update(relpages=pages, reltuples=count, relhasindex=True)
+    after["pg_class"][100] = json.dumps(row)
+    after["pg_class"][700] = json.dumps(
+        wire_row("pg_class", 700, relname="ix_applicants_assessment_bank_version_id", relnamespace="2200", relkind="i")
+    )
+    after["pg_index"][700] = json.dumps(wire_row("pg_index", 700, indrelid="100"))
+    rows = ((100, (("a" * 32, count),) if count else ()),)
+    state = dict(
+        root=object(),
+        physical=("fixed",),
+        authority=True,
+        isolation="read committed",
+        rls=False,
+        lock=True,
+        count=count,
+        size=pages * 8192,
+        block=8192,
+        cast=True,
+        postrows=rows,
+        raw=after["pg_class"][100],
+    )
+    seen = []
+
+    def scalar(query, parameters=None):
+        sql = str(query)
+        seen.append((sql, parameters))
+        if "transaction_isolation" in sql:
+            return state["isolation"]
+        if "row_security_active" in sql:
+            return state["rls"]
+        if "pg_locks" in sql:
+            return state["lock"]
+        if "count(*) FROM ONLY" in sql:
+            return state["count"]
+        if "pg_relation_size" in sql:
+            return state["size"]
+        if "block_size" in sql:
+            return state["block"]
+        assert "reltuples=CAST(CAST(:count AS double precision) AS real)" in sql
+        assert parameters == {"count": count, "oid": 100}
+        return state["cast"]
+
+    db = SimpleNamespace(scalar=scalar)
+    monkeypatch.setattr(identity, "_connection_preflight", lambda conn: state["root"])
+    monkeypatch.setattr(transition.tokens, "_physical_context", lambda conn: state["physical"])
+
+    def authority(conn):
+        assert conn is db
+        if not state["authority"]:
+            raise ProductAdoptionRefused("authority refused")
+
+    monkeypatch.setattr(fresh, "_authority", authority)
+
+    def postrows(conn, packet, *, omissions):
+        assert conn is db and packet is after
+        assert omissions == (("applicants", ("assessment_bank_version_id",)),)
+        return state["postrows"]
+
+    monkeypatch.setattr(catalog, "row_evidence", postrows)
+    monkeypatch.setattr(catalog, "_raw", lambda conn, category, predicate, **kw: {100: state["raw"]})
+    return db, before, after, rows, state, seen
+
+
+@pytest.mark.parametrize("count", [1, 3, 2**53])
+def test_c44_verified_physical_heap_statistics_only_project_two_local_fields(monkeypatch, count):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch, count=count)
+    saved = copy.deepcopy((before, after))
+    catalog.conserve(
+        before, after, stage="a009_applicant_bank_version_pin", appended={(100, 2)}, connection=db, original_rows=rows
+    )
+    assert (before, after) == saved
+    assert any("double precision) AS real" in query for query, _ in seen)
+    current = json.loads(after["pg_class"][100])
+    current["relallvisible"] = 1
+    after["pg_class"][100] = json.dumps(current)
+    state["raw"] = after["pg_class"][100]
+    with pytest.raises(ProductAdoptionRefused, match="C43.*changed=000000800"):
+        catalog.conserve(
+            before,
+            after,
+            stage="a009_applicant_bank_version_pin",
+            appended={(100, 2)},
+            connection=db,
+            original_rows=rows,
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("authority", False),
+        ("isolation", "repeatable read"),
+        ("rls", True),
+        ("rls", 0),
+        ("lock", False),
+        ("lock", 1),
+        ("count", True),
+        ("count", 4),
+        ("size", True),
+        ("size", -1),
+        ("size", 8193),
+        ("size", 2147483648 * 8192),
+        ("block", False),
+        ("block", 0),
+        ("block", "8192"),
+        ("cast", False),
+        ("cast", 1),
+        ("postrows", ()),
+        ("raw", "different raw packet"),
+    ],
+)
+def test_c44_actual_verifier_refuses_count_physical_or_authority_contradictions(monkeypatch, field, value):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch)
+    state[field] = value
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._verify_a009_heap_statistics(db, before, after, rows)
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, "3", 3.0, 2**53 + 1])
+def test_c44_group_counts_are_native_positive_bounded_integers(monkeypatch, value):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._verify_a009_heap_statistics(db, before, after, ((100, (("a" * 32, value),)),))
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "missing_rows",
+        "duplicate_rows",
+        "duplicate_digest",
+        "bad_digest",
+        "sum_overflow",
+        "wrong_index",
+        "old_index",
+        "wrong_table",
+        "inherited",
+        "wrong_pages",
+        "bool_pages",
+        "bool_tuples",
+    ],
+)
+def test_c44_source_and_private_row_identity_remain_exact(monkeypatch, attack):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch)
+    if attack == "missing_rows":
+        rows = ()
+    elif attack == "duplicate_rows":
+        rows *= 2
+    elif attack == "duplicate_digest":
+        rows = ((100, (("a" * 32, 1), ("a" * 32, 2))),)
+    elif attack == "bad_digest":
+        rows = ((100, (("PRIVATE", 3),)),)
+    elif attack == "sum_overflow":
+        rows = ((100, (("a" * 32, 2**53), ("b" * 32, 1))),)
+    elif attack == "wrong_index":
+        index = json.loads(after["pg_index"][700])
+        index["indrelid"] = "101"
+        after["pg_index"][700] = json.dumps(index)
+    elif attack == "old_index":
+        before["pg_index"][700] = after["pg_index"][700]
+    else:
+        packet = before if attack in ("wrong_table", "inherited") else after
+        row = json.loads(packet["pg_class"][100])
+        row[
+            {
+                "wrong_table": "relnamespace",
+                "inherited": "relhassubclass",
+                "wrong_pages": "relpages",
+                "bool_pages": "relpages",
+                "bool_tuples": "reltuples",
+            }[attack]
+        ] = {"wrong_table": "2201", "inherited": True, "wrong_pages": 2, "bool_pages": True, "bool_tuples": True}[
+            attack
+        ]
+        packet["pg_class"][100] = json.dumps(row)
+        state["raw"] = after["pg_class"][100]
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._verify_a009_heap_statistics(db, before, after, rows)
+
+
+@pytest.mark.parametrize("old_tuples", [-1, -1.0, 0, 0.0])
+def test_c44_empty_heap_preserves_unknown_statistics_special_case(monkeypatch, old_tuples):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch, count=0, old_tuples=old_tuples, pages=0)
+    row = json.loads(after["pg_class"][100])
+    row["reltuples"] = old_tuples if old_tuples < 0 else 0
+    after["pg_class"][100] = json.dumps(row)
+    state["raw"] = after["pg_class"][100]
+    assert catalog._verify_a009_heap_statistics(db, before, after, rows) == (None if old_tuples < 0 else 100)
+    assert any("double precision) AS real" in query for query, _ in seen) is (old_tuples >= 0)
+    if old_tuples < 0:
+        row["reltuples"] = 0
+        after["pg_class"][100] = json.dumps(row)
+        state["raw"] = after["pg_class"][100]
+        with pytest.raises(ProductAdoptionRefused):
+            catalog._verify_a009_heap_statistics(db, before, after, rows)
+
+
+@pytest.mark.parametrize("field", ["root", "physical"])
+def test_c44_final_read_cannot_replace_root_or_physical_transaction(monkeypatch, field):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch)
+    scalar = db.scalar
+
+    def final_read(query, parameters=None):
+        value = scalar(query, parameters)
+        if "double precision) AS real" in str(query):
+            state[field] = object() if field == "root" else ("changed",)
+        return value
+
+    db.scalar = final_read
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._verify_a009_heap_statistics(db, before, after, rows)
+
+
+def test_c44_empty_unknown_stats_preserve_old_values_even_with_dead_physical_pages(monkeypatch):
+    db, before, after, rows, state, seen = _c44_verifier_case(monkeypatch, count=0, old_tuples=-1, pages=1)
+    row = json.loads(after["pg_class"][100])
+    row.update(relpages=0, reltuples=-1)
+    after["pg_class"][100] = json.dumps(row)
+    state["raw"] = after["pg_class"][100]
+    assert catalog._verify_a009_heap_statistics(db, before, after, rows) is None
+    assert state["size"] == 8192
+    assert not any("double precision) AS real" in query for query, _ in seen)
+
+
+def test_c44_other_stages_never_invoke_stat_projection(monkeypatch):
+    before, after = _packets()
+    monkeypatch.setattr(catalog, "_verify_a009_heap_statistics", lambda *a: pytest.fail("a009 only"))
+    catalog.conserve(
+        before, after, stage="a007_lab_template_access", appended={(100, 2)}, connection=object(), original_rows=()
+    )
