@@ -9,9 +9,11 @@ from dataclasses import replace
 import pytest
 import sqlalchemy as sa
 from dotmac_kernel.migrations.identity_history import verify_identity_history
+from dotmac_kernel.prerequisites import install_prerequisite_bindings, installed_bindings
 
 from app.maintenance import identity_history as identity
 from app.maintenance import product_adoption as product
+from app.migration_graph import academy_migration_source
 from tests.fixtures.hosted_genesis import hosted_declaration
 from tests.test_academy_product_adoption import (
     _actual_application_object,
@@ -138,7 +140,15 @@ def test_public_success_with_fresh_expected_rows_never_replaces_private_expectat
         )
         assert (
             verify_identity_history(
-                connection, changed_rows, expected, operation, receipt, assembly_versions=identity._ASSEMBLY_VERSIONS
+                connection,
+                changed_rows,
+                expected,
+                operation,
+                receipt,
+                assembly_versions=identity._ASSEMBLY_VERSIONS,
+                module_registry=state.identity_verification.registry,
+                module_versions=dict(state.identity_verification.versions),
+                prerequisite_bindings=state.identity_verification.bindings,
             )
             is None
         )
@@ -146,3 +156,49 @@ def test_public_success_with_fresh_expected_rows_never_replaces_private_expectat
         with pytest.raises(product.ProductAdoptionRefused):
             product._observe_identity_import(connection, handle)
         assert state.poisoned
+
+
+@pytest.mark.parametrize("bindings", ["empty", "missing"])
+def test_explicit_missing_binding_refuses_before_canonical_writes(hosted_declaration, tmp_path, monkeypatch, bindings):
+    with _prepared_product(hosted_declaration, tmp_path, monkeypatch) as (connection, handle, expected, operation):
+        source = academy_migration_source()
+        root = connection.get_transaction()
+        assert connection.scalar(sa.text("SELECT count(*) FROM public.parties")) == 0
+        writes = []
+
+        def observe(_connection, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().split(None, 1)[0].upper() in {"INSERT", "UPDATE", "DELETE"}:
+                writes.append(statement)
+
+        sa.event.listen(connection, "before_cursor_execute", observe)
+        try:
+            with pytest.raises(identity.IdentityHistoryImportRefused):
+                identity.import_academy_identity_history(
+                    connection,
+                    expected,
+                    operation,
+                    module_registry=source.registry,
+                    module_versions=source.module_versions,
+                    prerequisite_bindings=() if bindings == "empty" else source.bindings[:-1],
+                )
+        finally:
+            sa.event.remove(connection, "before_cursor_execute", observe)
+        assert writes == []
+        assert connection.scalar(sa.text("SELECT count(*) FROM public.parties")) == 0
+        assert connection.get_transaction() is root and root.is_active
+        assert product._state_for(handle).poisoned
+
+
+def test_late_installed_binding_drift_refuses_without_repair(hosted_declaration, tmp_path, monkeypatch):
+    with _token_observed(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        assert product._verify_identity_import(connection, handle) is None
+        prior = installed_bindings()
+        drifted = prior[:-1]
+        install_prerequisite_bindings(drifted)
+        try:
+            with pytest.raises(product.ProductAdoptionRefused):
+                product._verify_identity_import(connection, handle)
+            assert installed_bindings() == drifted
+            assert product._state_for(handle).poisoned
+        finally:
+            install_prerequisite_bindings(prior)

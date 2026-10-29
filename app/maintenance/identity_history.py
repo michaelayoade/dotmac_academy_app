@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, TypedDict, cast
 from uuid import UUID
 
@@ -43,6 +44,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection, RootTransaction
 from sqlalchemy.sql.elements import quoted_name
 
+from app.migration_graph import IDENTITY_VERSIONS, academy_migration_source
 from app.models.identity_extensions import (
     AcademyAccountProfile,
     AcademyCredentialPolicy,
@@ -61,7 +63,14 @@ _FAMILIES = (
 _ACCOUNT = cast(sa.Table, AcademyAccountProfile.__table__)
 _POLICY = cast(sa.Table, AcademyCredentialPolicy.__table__)
 _TARGETS = (_ACCOUNT, _POLICY)
-_ASSEMBLY_VERSIONS = Path(__file__).resolve().parents[2] / "alembic/identity_assembly_versions"
+_ASSEMBLY_VERSIONS = IDENTITY_VERSIONS
+
+
+class _OmittedComposition:
+    """Private argument sentinel: explicit None is never omitted authority."""
+
+
+_OMITTED_COMPOSITION = _OmittedComposition()
 
 
 if TYPE_CHECKING:
@@ -90,6 +99,36 @@ if TYPE_CHECKING:
 def _require(condition: object) -> None:
     if not condition:
         raise IdentityHistoryImportRefused("Academy identity extension preflight refused")
+
+
+def _validate_identity_composition(module_registry, module_versions, prerequisite_bindings):
+    """Validate explicit source wiring without installing or repairing globals."""
+    _require(type(module_registry) is ModuleRegistry)
+    _require(isinstance(module_versions, Mapping))
+    _require(all(type(name) is str and isinstance(path, Path) for name, path in module_versions.items()))
+    _require(type(prerequisite_bindings) is tuple)
+    _require(all(type(binding) is PrerequisiteBinding for binding in prerequisite_bindings))
+    source = academy_migration_source()
+    _require(module_registry.startup_order() == source.registry.startup_order())
+    _require({name: path.resolve() for name, path in module_versions.items()} == dict(source.module_versions))
+    order = lambda binding: (binding.prerequisite, binding.provider_owner, binding.provider_revision)  # noqa: E731
+    _require(sorted(prerequisite_bindings, key=order) == sorted(source.bindings, key=order))
+    return module_registry, module_versions, prerequisite_bindings
+
+
+def _resolve_identity_composition(
+    *,
+    module_registry: ModuleRegistry | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    module_versions: Mapping[str, Path] | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    prerequisite_bindings: tuple[PrerequisiteBinding, ...] | None | _OmittedComposition = _OMITTED_COMPOSITION,
+) -> tuple[ModuleRegistry, Mapping[str, Path], tuple[PrerequisiteBinding, ...]]:
+    """Only all-omitted arguments select the shared genuine source defaults."""
+    supplied = (module_registry, module_versions, prerequisite_bindings)
+    if all(value is _OMITTED_COMPOSITION for value in supplied):
+        source = academy_migration_source()
+        return source.registry, source.module_versions, source.bindings
+    _require(all(value is not _OMITTED_COMPOSITION for value in supplied))
+    return _validate_identity_composition(module_registry, module_versions, prerequisite_bindings)
 
 
 def _time(value: object) -> bool:
@@ -469,13 +508,21 @@ def _verify_identity_import_data(
     operation,
     receipt,
     *,
-    module_registry=None,
-    module_versions=None,
-    prerequisite_bindings=(),
+    module_registry: ModuleRegistry | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    module_versions: Mapping[str, Path] | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    prerequisite_bindings: tuple[PrerequisiteBinding, ...] | None | _OmittedComposition = _OMITTED_COMPOSITION,
 ):
     """Compare ORIGINAL decoder expectations; never issue product authority."""
     _require(type(decoder) is AcademyIdentityHistoryDecoder)
     root = _connection_preflight(connection)
+    omitted = all(value is _OMITTED_COMPOSITION for value in (module_registry, module_versions, prerequisite_bindings))
+    module_registry, module_versions, prerequisite_bindings = _resolve_identity_composition(
+        module_registry=module_registry,
+        module_versions=module_versions,
+        prerequisite_bindings=prerequisite_bindings,
+    )
+    if omitted:
+        module_versions = MappingProxyType(dict(module_versions))
     _require(decoder._connection is connection and decoder._root is root)
     captured = decoder._snapshot
     _require(type(captured) is _IdentitySnapshot and captured.target_oids == _target_oids(connection))
@@ -525,20 +572,27 @@ def import_academy_identity_history(
     expected: IdentityHistoryManifestV1,
     operation: IdentityHistoryImportOperationV1,
     *,
-    module_registry: ModuleRegistry | None = None,
-    module_versions: Mapping[str, Path] | None = None,
-    prerequisite_bindings: tuple[PrerequisiteBinding, ...] = (),
+    module_registry: ModuleRegistry | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    module_versions: Mapping[str, Path] | None | _OmittedComposition = _OMITTED_COMPOSITION,
+    prerequisite_bindings: tuple[PrerequisiteBinding, ...] | None | _OmittedComposition = _OMITTED_COMPOSITION,
 ) -> IdentityHistoryImportReceiptV1:
     """Copy canonical identity ONCE, then all Academy policy on the SAME root.
 
     No transaction, savepoint, engine, Session, commit or rollback is created.
     Errors suppress driver diagnostics; caller MUST roll back the entire root.
-    These optional source inputs must come from the SAME reviewed composition
-    as env.py. Genuine installed Learning/audit-prerequisite caller wiring is
-    pending adoption work; this function neither invents nor installs it.
+    All-omitted source inputs use the shared genuine Academy composition.
+    Explicit inputs must be complete and match that source; they are never
+    repaired. Kernel still checks installed composition. Nothing is installed here.
     """
     try:
         root = _connection_preflight(connection)
+        module_registry, module_versions, prerequisite_bindings = _resolve_identity_composition(
+            module_registry=module_registry,
+            module_versions=module_versions,
+            prerequisite_bindings=prerequisite_bindings,
+        )
+        # Capture the validated caller map once, without retaining its mutable backing.
+        module_versions = MappingProxyType(dict(module_versions))
         _require(expected.relations.schema == "academy_identity_compat")
         connection.execute(
             sa.text(
