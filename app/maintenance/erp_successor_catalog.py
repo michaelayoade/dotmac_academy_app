@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -1335,6 +1336,127 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
     return appended
 
 
+_C43_CLASS_FIELDS = (
+    "oid",
+    "relname",
+    "relnamespace",
+    "reltype",
+    "reloftype",
+    "relowner",
+    "relam",
+    "relfilenode",
+    "reltablespace",
+    "relpages",
+    "reltuples",
+    "relallvisible",
+    "reltoastrelid",
+    "relhasindex",
+    "relisshared",
+    "relpersistence",
+    "relkind",
+    "relnatts",
+    "relchecks",
+    "relhasrules",
+    "relhastriggers",
+    "relhassubclass",
+    "relrowsecurity",
+    "relforcerowsecurity",
+    "relispopulated",
+    "relreplident",
+    "relispartition",
+    "relrewrite",
+    "relfrozenxid",
+    "relminmxid",
+    "relacl",
+    "reloptions",
+    "relpartbound",
+)
+
+
+def _c43_native(value, budget, depth=0):
+    # Diagnostic-only resource bounds. Never call user equality, repr or str.
+    budget[0] -= 1
+    _require(budget[0] >= 0 and depth <= 32)
+    kind = type(value)
+    _require(kind in (type(None), bool, int, float, str, list, dict))
+    if kind is float:
+        _require(math.isfinite(value))
+    if kind is str:
+        budget[1] -= len(value)
+        _require(budget[1] >= 0)
+    elif kind is list:
+        for item in value:
+            _c43_native(item, budget, depth + 1)
+    elif kind is dict:
+        for key, item in value.items():
+            _require(type(key) is str)
+            _c43_native(key, budget, depth + 1)
+            _c43_native(item, budget, depth + 1)
+
+
+def _c43_equal(left, right):
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(_c43_equal(left[key], right[key]) for key in left)
+    if type(left) is list:
+        return len(left) == len(right) and all(_c43_equal(a, b) for a, b in zip(left, right, strict=True))
+    return left == right
+
+
+def _class_conservation_refused(before, key, original, projected):
+    """Only bounded field masks; no catalog identifiers, keys or values escape."""
+    from app.maintenance.product_adoption import ProductAdoptionRefused
+
+    generic = "Academy ERP successor catalog refused; root rollback required"
+    try:
+        _require(type(original) is dict and type(projected) is dict)
+        _c43_native(original, [4096, 65536])
+        _c43_native(projected, [4096, 65536])
+        _require(type(key) is int and 0 < key <= 4294967295)
+        _require(_wire_oid(original["oid"]) == key)
+        namespace_oid = _wire_oid(original["relnamespace"])
+        _require(type(original["relname"]) is str)
+        _require(type(before) is dict and type(before.get("global")) is dict)
+        namespaces = before["global"]["namespaces"]
+        _require(type(namespaces) is tuple and len(namespaces) <= 3)
+        names: dict[int, str] = {}
+        for row in namespaces:
+            _require(type(row) is tuple and len(row) == 4)
+            oid, name, owner, acl = row
+            _require(type(oid) is int and 0 < oid <= 4294967295)
+            _require(type(owner) is int and 0 < owner <= 4294967295)
+            _require(type(name) is str and name in ("public", "mod_learning", "academy_identity_compat"))
+            _require(acl is None or type(acl) is str)
+            _require(oid not in names and name not in names.values())
+            names[oid] = name
+        ordinal = 0
+        if names.get(namespace_oid) == "public" and original["relname"] == "applicants":
+            ordinal = 1
+        elif names.get(namespace_oid) == "mod_learning" and original["relname"] == "question_bank_versions":
+            ordinal = 2
+        changed = missing = added = 0
+        for bit, field in enumerate(_C43_CLASS_FIELDS):
+            if field not in projected and field in original:
+                missing |= 1 << bit
+            elif field not in original and field in projected:
+                added |= 1 << bit
+            elif field in original and not _c43_equal(original[field], projected[field]):
+                changed |= 1 << bit
+        known = frozenset(_C43_CLASS_FIELDS)
+        old_unknown = {k: v for k, v in original.items() if k not in known}
+        new_unknown = {k: v for k, v in projected.items() if k not in known}
+        unknown_present = bool(old_unknown or new_unknown)
+        unknown_changed = not _c43_equal(old_unknown, new_unknown)
+        _require(bool(changed or missing or added or unknown_changed))
+    except (ProductAdoptionRefused, KeyError, TypeError, ValueError, RecursionError):
+        raise ProductAdoptionRefused(generic) from None
+    raise ProductAdoptionRefused(
+        generic + f" [C43 relation={ordinal} changed={changed:09x} missing={missing:09x} added={added:09x}"
+        f" unknown_present={int(unknown_present)} unknown_changed={int(unknown_changed)}]"
+    ) from None
+
+
 def conserve(before, after, *, stage, appended):
     """Inverse-project only additions already validated by the stage contract."""
     _require(Counter(before["dependencies"]) <= Counter(after["dependencies"]))
@@ -1377,6 +1499,8 @@ def conserve(before, after, *, stage, appended):
                 if key in affected_indexes:
                     _require(b["relhasindex"] is True)
                     b["relhasindex"] = a["relhasindex"]
+                if stage == "a009_applicant_bank_version_pin" and a != b:
+                    _class_conservation_refused(before, key, a, b)
                 _require(a == b)
             else:
                 _require(current == raw)

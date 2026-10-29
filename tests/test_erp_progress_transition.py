@@ -446,3 +446,188 @@ def test_learning_shape_diagnostic_ignores_impostor_frame_and_context_cycle():
         impostor(history._TABLES[0])
     failure.value.__context__ = failure.value
     assert product._learning_shape_refusal_code(failure.value) is None
+
+
+def _c43_packet(name="applicants", namespace="2200"):
+    before, after = _packets()
+    before["global"]["namespaces"] = ((2200, "public", 10, None), (2201, "mod_learning", 10, None))
+    after["global"] = copy.deepcopy(before["global"])
+    for packet in (before, after):
+        row = json.loads(packet["pg_class"][100])
+        row.update(relname=name, relnamespace=namespace, relpages=0, reltuples=0.0)
+        packet["pg_class"][100] = json.dumps(row)
+    return before, after
+
+
+def _c43_refusal(before, after, stage="a009_applicant_bank_version_pin"):
+    with pytest.raises(ProductAdoptionRefused) as raised:
+        catalog.conserve(before, after, stage=stage, appended={(100, 2)})
+    if stage == "a009_applicant_bank_version_pin":
+        assert raised.value.__suppress_context__
+    return raised.value
+
+
+@pytest.mark.parametrize(
+    "name,namespace,ordinal",
+    [
+        ("applicants", "2200", 1),
+        ("question_bank_versions", "2201", 2),
+        ("applicants", "2201", 0),
+        ("private_unrecognized_name", "2200", 0),
+    ],
+)
+def test_c43_fixed_ordinals_and_projected_masks_have_no_identifiers_or_values(name, namespace, ordinal, capsys):
+    before, after = _c43_packet(name, namespace)
+    row = json.loads(after["pg_class"][100])
+    row.update(relpages=7, reltuples="PRIVATE_C43_PAYLOAD")
+    del row["relname"]
+    row["reloptions"] = ["PRIVATE_C43_OPTION"]
+    row["PRIVATE_C43_UNKNOWN_KEY"] = {"PRIVATE_C43_TOKEN": ["PRIVATE_C43_ANSWER"]}
+    after["pg_class"][100] = json.dumps(row)
+    saved = copy.deepcopy((before, after))
+    error = _c43_refusal(before, after)
+    changed = (1 << 9) | (1 << 10)
+    assert str(error) == (
+        "Academy ERP successor catalog refused; root rollback required "
+        f"[C43 relation={ordinal} changed={changed:09x} missing=000000002 added=080000000 unknown_present=1 unknown_changed=1]"
+    )
+    import traceback
+
+    assert "PRIVATE" not in "".join(traceback.format_exception(error))
+    assert "PRIVATE" not in str(error) and name not in str(error)
+    assert (before, after) == saved
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+def test_c43_masks_observe_final_projection_and_type_sensitive_json_comparison():
+    before, after = _c43_packet()
+    prior = json.loads(before["pg_class"][100])
+    prior["relpages"] = False
+    before["pg_class"][100] = json.dumps(prior)
+    row = json.loads(after["pg_class"][100])
+    row.update(relpages=0, reltuples=2.0, relhasindex=True, relhastriggers=True)
+    after["pg_class"][100] = json.dumps(row)
+    after["pg_index"][700] = json.dumps(wire_row("pg_index", 700, indrelid="100"))
+    after["pg_trigger"][701] = json.dumps(wire_row("pg_trigger", 701, tgrelid="100"))
+    error = _c43_refusal(before, after)
+    assert "changed=000000600" in str(error)
+    assert "missing=000000000 added=000000000" in str(error)
+
+
+@pytest.mark.parametrize("kind", ["unknown_same", "unknown_changed"])
+def test_c43_unknown_fields_emit_presence_and_change_only(kind):
+    before, after = _c43_packet()
+    for packet in (before, after):
+        row = json.loads(packet["pg_class"][100])
+        row["PRIVATE_UNKNOWN_FIELD"] = {"PRIVATE_TOKEN": [False, "private_answer"]}
+        packet["pg_class"][100] = json.dumps(row)
+    row = json.loads(after["pg_class"][100])
+    row["relpages"] = 1
+    if kind == "unknown_changed":
+        row["PRIVATE_UNKNOWN_FIELD"]["PRIVATE_TOKEN"][0] = 0
+    after["pg_class"][100] = json.dumps(row)
+    error = _c43_refusal(before, after)
+    assert f"unknown_present=1 unknown_changed={int(kind == 'unknown_changed')}" in str(error)
+    assert "PRIVATE" not in str(error) and "private_answer" not in str(error)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "namespace_type",
+        "namespace_bool",
+        "namespace_owner",
+        "namespace_duplicate",
+        "arbitrary_object",
+        "nonstring_key",
+        "huge",
+        "nonfinite",
+        "unchanged",
+    ],
+)
+def test_c43_malformed_or_unchanged_diagnostic_input_only_gets_generic_refusal(fault):
+    before, after = _c43_packet()
+    a, b = (json.loads(packet["pg_class"][100]) for packet in (before, after))
+    b["relpages"] = 1
+
+    class PrivateObject:
+        def __str__(self):
+            pytest.fail("arbitrary object must never be rendered")
+
+        __repr__ = __str__
+
+        def __eq__(self, other):
+            pytest.fail("arbitrary object must never be compared")
+
+    if fault == "namespace_type":
+        before["global"]["namespaces"] = []
+    elif fault == "namespace_bool":
+        before["global"]["namespaces"] = ((True, "public", 10, None),)
+    elif fault == "namespace_owner":
+        before["global"]["namespaces"] = ((2200, "public", "secret-owner", None),)
+    elif fault == "namespace_duplicate":
+        before["global"]["namespaces"] *= 2
+    elif fault == "arbitrary_object":
+        b["unknown"] = PrivateObject()
+    elif fault == "nonstring_key":
+        b[42] = "PRIVATE"
+    elif fault == "huge":
+        b["unknown"] = "PRIVATE" * 10000
+    elif fault == "nonfinite":
+        b["reltuples"] = float("nan")
+    else:
+        b = copy.deepcopy(a)
+    with pytest.raises(ProductAdoptionRefused) as raised:
+        catalog._class_conservation_refused(before, 100, a, b)
+    assert str(raised.value) == "Academy ERP successor catalog refused; root rollback required"
+    assert raised.value.__suppress_context__
+
+
+def test_c43_only_marks_a009_and_does_not_change_any_acceptance():
+    before, after = _c43_packet()
+    catalog.conserve(before, after, stage="a009_applicant_bank_version_pin", appended={(100, 2)})
+    row = json.loads(after["pg_class"][100])
+    row["relpages"] = 7
+    after["pg_class"][100] = json.dumps(row)
+    assert "C43" in str(_c43_refusal(before, after))
+    assert "C43" not in str(_c43_refusal(before, after, stage="a008_lab_console_activity"))
+
+
+def test_real_c43_refusal_survives_actual_erp_runner_poison_and_bare_reraise(monkeypatch):
+    owner = object()
+    entry = object.__new__(transition._Continuation)
+    before, after = _c43_packet()
+    row = json.loads(after["pg_class"][100])
+    row["relpages"] = 7
+    after["pg_class"][100] = json.dumps(row)
+    packet = {"observed": ()}
+    transition._Continuation.__init__(
+        entry, None, object(), (), (), (None, None, None, None, ((), ())), 1, owner, True, object(), (), 2, 3, packet
+    )
+    db = SimpleNamespace(info={transition._KEY: entry})
+    entry.connection = db
+    poisoned, emitted = [], []
+    monkeypatch.setattr(transition, "_verify_config", lambda *a: None)
+    monkeypatch.setattr(transition, "_prepare", lambda *a, **k: entry)
+    monkeypatch.setattr(transition, "_check", lambda *a, **k: None)
+    monkeypatch.setattr(transition, "_config", lambda *a: SimpleNamespace(attributes={"connection": db}))
+    monkeypatch.setattr(transition, "_poison", lambda conn, current: poisoned.append((conn, current)))
+    monkeypatch.setattr(transition.sa.event, "listen", lambda *a: None)
+    monkeypatch.setattr(transition.sa.event, "remove", lambda *a: None)
+    monkeypatch.setattr(catalog, "observe", lambda *a: packet)
+    monkeypatch.setattr(catalog, "row_evidence", lambda *a: ())
+
+    def callback(*a, **k):
+        try:
+            catalog.conserve(before, after, stage="a009_applicant_bank_version_pin", appended={(100, 2)})
+        except ProductAdoptionRefused as error:
+            emitted.append(error)
+            raise
+
+    monkeypatch.setattr(transition.command, "upgrade", callback)
+    with pytest.raises(ProductAdoptionRefused) as raised:
+        transition._run(db, owner, historical=True)
+    assert raised.value is emitted[0] and "[C43 relation=1 changed=000000200" in str(raised.value)
+    assert poisoned == [(db, entry)]
+    assert entry.runner is None and not entry.packet and transition._KEY not in db.info
