@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import json
 import os
 import platform
@@ -15,6 +17,8 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,24 @@ HEX40 = re.compile(r"[0-9a-f]{40}", re.ASCII)
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}", re.ASCII)
 FINGERPRINT = re.compile(r"[0-9A-F]{40}", re.ASCII)
 MAX_COMMAND_OUTPUT = 16 * 1024 * 1024
+REPOSITORY_URLS = {
+    "pgdg-InRelease": "https://apt.postgresql.org/pub/repos/apt/dists/trixie-pgdg/InRelease",
+    "pgdg-Sources.gz": "https://apt.postgresql.org/pub/repos/apt/dists/trixie-pgdg/main/source/Sources.gz",
+}
+CHAIN_CAPTURE_LIMITS = {
+    "pgdg-InRelease": 1048576,
+    "pgdg-Sources.gz": 8388608,
+    "pgdg-Sources": 33554432,
+    "pgdg.dsc": 1048576,
+    "pgdg.debian.tar.xz": 8388608,
+    "postgresql-16.15.tar.bz2": 67108864,
+}
+CHAIN_SOURCE_FILES = {
+    "postgresql-16_16.15-1.pgdg13+2.dsc": "pgdg.dsc",
+    "postgresql-16_16.15.orig.tar.bz2": "postgresql-16.15.tar.bz2",
+    "postgresql-16_16.15-1.pgdg13+2.debian.tar.xz": "pgdg.debian.tar.xz",
+}
+CHAIN_OPTIONAL_SIGNATURE = "postgresql-16_16.15.orig.tar.bz2.asc"
 
 
 class Refused(Exception):
@@ -333,6 +355,188 @@ def signature_inventory(directory, environment, failures, home):
     return result
 
 
+def chain_owned_bytes(directory, name, record):
+    require(name in CHAIN_CAPTURE_LIMITS and type(record) is dict and record.get("file") == name)
+    size = record.get("bytes")
+    require(type(size) is int and 0 < size <= CHAIN_CAPTURE_LIMITS[name])
+    expected = public_hash(record.get("capture_sha256"))
+    descriptor = os.open(directory / name, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size == size)
+        data = stream.read(CHAIN_CAPTURE_LIMITS[name] + 1)
+    require(len(data) == size and sha(data) == expected)
+    return data
+
+
+def repository_fields(text):
+    fields: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        require(bool(line))
+        if line.startswith((" ", "\t")):
+            if current is None:
+                raise Refused
+            fields[current].append(line.strip())
+        else:
+            match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)", line)
+            if match is None:
+                raise Refused
+            current, value = match.groups()
+            require(current not in fields)
+            fields[current] = [value] if value else []
+    return fields
+
+
+def repository_sha256_rows(lines):
+    rows = {}
+    for line in lines:
+        parts = line.split()
+        require(len(parts) == 3)
+        digest, count, name = parts
+        public_hash(digest)
+        require(re.fullmatch(r"[1-9][0-9]{0,8}|0", count, flags=re.ASCII) is not None)
+        require(name not in rows and len(name) <= 256)
+        rows[name] = {"sha256": digest, "bytes": int(count)}
+    return rows
+
+
+def source_repository_inventory(directory, environment, failures, home, sources):
+    unavailable = {
+        "status": "unavailable",
+        "repository_integrity_verified": False,
+        "historical_publication_time_established": False,
+        "detached_source_signature_verified": False,
+    }
+    try:
+        captures = {}
+        for name, url in REPOSITORY_URLS.items():
+            captures[name] = acquire(
+                directory, name, {"url": url, "maximum_bytes": CHAIN_CAPTURE_LIMITS[name], "expected_sha256": None}
+            )
+        release = chain_owned_bytes(directory, "pgdg-InRelease", captures["pgdg-InRelease"])
+        exits: list[int] = []
+        status = command(
+            33,
+            [
+                "gpg",
+                "--no-options",
+                "--homedir",
+                str(home),
+                "--batch",
+                "--no-tty",
+                "--no-auto-key-retrieve",
+                "--no-autostart",
+                "--auto-key-locate",
+                "clear",
+                "--status-fd",
+                "1",
+                "--verify",
+                str(directory / "pgdg-InRelease"),
+            ],
+            environment,
+            failures,
+            status_only=True,
+            exit_codes=exits,
+        )
+        require(release == chain_owned_bytes(directory, "pgdg-InRelease", captures["pgdg-InRelease"]))
+        require(exits == [0] and status is not None)
+        rejected_tokens = {
+            b"EXPSIG",
+            b"EXPKEYSIG",
+            b"REVKEYSIG",
+            b"KEYEXPIRED",
+            b"SIGEXPIRED",
+            b"KEYREVOKED",
+            b"BADSIG",
+            b"ERRSIG",
+            b"NO_PUBKEY",
+            b"NODATA",
+            b"BADARMOR",
+            b"UNEXPECTED",
+            b"FAILURE",
+            b"ERROR",
+        }
+        require(
+            not any(
+                len(parts := line.split()) >= 2 and parts[0] == b"[GNUPG:]" and parts[1] in rejected_tokens
+                for line in status.splitlines()
+            )
+        )
+        valid = [line.split() for line in status.splitlines() if line.startswith(b"[GNUPG:] VALIDSIG ")]
+        require(len(valid) == 1 and len(valid[0]) in (11, 12))
+        require(valid[0][9] in (b"8", b"9", b"10") and valid[0][10] == b"01")
+        signer = valid[0][2].decode("ascii", errors="strict")
+        primary = valid[0][11].decode("ascii", errors="strict") if len(valid[0]) == 12 else signer
+        require(FINGERPRINT.fullmatch(signer) is not None and primary == KEY_FINGERPRINT)
+        # Crypto success is required before interpreting any signed Release fields.
+        text = public_text(release).replace("\r\n", "\n")
+        require(text.startswith("-----BEGIN PGP SIGNED MESSAGE-----\n"))
+        _, separator, text = text.partition("\n\n")
+        require(bool(separator))
+        text, separator, _ = text.partition("\n-----BEGIN PGP SIGNATURE-----\n")
+        require(bool(separator))
+        lines = text.splitlines()
+        require(all(not line.startswith("-") or line.startswith("- ") for line in lines))
+        fields = repository_fields("\n".join(line[2:] if line.startswith("- ") else line for line in lines))
+        require(fields.get("Origin") == ["apt.postgresql.org"] and fields.get("Suite") == ["trixie-pgdg"])
+        require(len(fields.get("Date", [])) == 1)
+        date = parsedate_to_datetime(fields["Date"][0])
+        require(date.tzinfo is not None)
+        now = datetime.now(UTC)
+        require(-300 <= (now - date).total_seconds() <= 7 * 86400)
+        valid_until = None
+        if "Valid-Until" in fields:
+            require(len(fields["Valid-Until"]) == 1)
+            expiry = parsedate_to_datetime(fields["Valid-Until"][0])
+            require(expiry.tzinfo is not None and expiry >= date and expiry > now)
+            valid_until = expiry.astimezone(UTC).isoformat()
+        release_rows = repository_sha256_rows(fields.get("SHA256", []))
+        compressed = chain_owned_bytes(directory, "pgdg-Sources.gz", captures["pgdg-Sources.gz"])
+        require(release_rows.get("main/source/Sources.gz") == {"sha256": sha(compressed), "bytes": len(compressed)})
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed), mode="rb") as stream:
+            decompressed = stream.read(CHAIN_CAPTURE_LIMITS["pgdg-Sources"] + 1)
+        require(0 < len(decompressed) <= CHAIN_CAPTURE_LIMITS["pgdg-Sources"])
+        require(release_rows.get("main/source/Sources") == {"sha256": sha(decompressed), "bytes": len(decompressed)})
+        captures["pgdg-Sources"] = capture(directory, "pgdg-Sources", decompressed)
+        index = public_text(decompressed).replace("\r\n", "\n")
+        matches = []
+        for paragraph in index.strip("\n").split("\n\n"):
+            stanza = repository_fields(paragraph)
+            if stanza.get("Package") == ["postgresql-16"] and stanza.get("Version") == ["16.15-1.pgdg13+2"]:
+                matches.append(stanza)
+        require(len(matches) == 1 and matches[0].get("Directory") == ["pool/main/p/postgresql-16"])
+        source_rows = repository_sha256_rows(matches[0].get("Checksums-Sha256", []))
+        require(set(CHAIN_SOURCE_FILES) <= set(source_rows) <= set(CHAIN_SOURCE_FILES) | {CHAIN_OPTIONAL_SIGNATURE})
+        checked_sources = {}
+        for filename, owned in CHAIN_SOURCE_FILES.items():
+            data = chain_owned_bytes(directory, owned, sources.get(owned))
+            actual = {"sha256": sha(data), "bytes": len(data)}
+            require(source_rows[filename] == actual)
+            checked_sources[filename] = {**actual, "captured_bytes_match": True}
+        return {
+            "status": "verified_current_repository_integrity",
+            "repository_integrity_verified": True,
+            "historical_publication_time_established": False,
+            "detached_source_signature_verified": False,
+            "signer_fingerprint": signer,
+            "primary_fingerprint": primary,
+            "release_date": date.astimezone(UTC).isoformat(),
+            "valid_until": valid_until,
+            "observation_time": now.isoformat(),
+            "captures": {
+                name: {"sha256": record["capture_sha256"], "bytes": record["bytes"]}
+                for name, record in captures.items()
+            },
+            "checked_sources": checked_sources,
+            "optional_orig_signature_indexed": CHAIN_OPTIONAL_SIGNATURE in source_rows,
+            "optional_orig_signature_captured": False,
+        }
+    except Exception:
+        failures.append({"command": 34, "reason": "source_repository_chain_unavailable"})
+        return unavailable
+
+
 PUBLIC_PREFIX = "ACADEMY_GENESIS_PUBLIC_JSON "
 PUBLIC_LIMIT = 196608
 PUBLIC_CAPTURE_LIMIT = 131072
@@ -353,6 +557,8 @@ PUBLIC_FAILURE_ORDINALS = frozenset(
         30,
         31,
         32,
+        33,
+        34,
         39,
         40,
         41,
@@ -387,6 +593,7 @@ PUBLIC_FAILURE_REASONS = frozenset(
         "public_source_unavailable_or_invalid",
         "expected_public_digest_mismatch",
         "signature_inventory_unavailable",
+        "source_repository_chain_unavailable",
     )
 )
 PUBLIC_TRUST_GAPS = (
@@ -561,6 +768,78 @@ def public_manifest_shape(directory, record):
         return {"available": False}
 
 
+def public_repository_chain(chain):
+    view = {
+        "status": "unavailable",
+        "repository_integrity_verified": False,
+        "historical_publication_time_established": False,
+        "detached_source_signature_verified": False,
+    }
+    if type(chain) is not dict or chain.get("repository_integrity_verified") is not True:
+        return view
+    require(chain.get("status") == "verified_current_repository_integrity")
+    require(chain.get("historical_publication_time_established") is False)
+    require(chain.get("detached_source_signature_verified") is False)
+    signer = chain.get("signer_fingerprint")
+    require(type(signer) is str and FINGERPRINT.fullmatch(signer) is not None)
+    require(chain.get("primary_fingerprint") == KEY_FINGERPRINT)
+    dates = {}
+    for name in ("release_date", "valid_until", "observation_time"):
+        value = chain.get(name)
+        require(
+            (name == "valid_until" and value is None)
+            or (
+                type(value) is str
+                and re.fullmatch(
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?\+00:00",
+                    value,
+                    flags=re.ASCII,
+                )
+                is not None
+            )
+        )
+        dates[name] = value
+    captures = chain["captures"]
+    require(type(captures) is dict and set(captures) == {*REPOSITORY_URLS, "pgdg-Sources"})
+    capture_view = {}
+    for name in (*REPOSITORY_URLS, "pgdg-Sources"):
+        record = captures[name]
+        require(type(record) is dict and type(record.get("bytes")) is int)
+        require(0 < record["bytes"] <= CHAIN_CAPTURE_LIMITS[name])
+        capture_view[name] = {"sha256": public_hash(record.get("sha256")), "bytes": record["bytes"]}
+    checked = chain["checked_sources"]
+    require(type(checked) is dict and set(checked) == set(CHAIN_SOURCE_FILES))
+    source_view = {}
+    for filename, owned in CHAIN_SOURCE_FILES.items():
+        record = checked[filename]
+        require(type(record) is dict and type(record.get("bytes")) is int)
+        require(0 < record["bytes"] <= CHAIN_CAPTURE_LIMITS[owned] and record.get("captured_bytes_match") is True)
+        source_view[filename] = {
+            "sha256": public_hash(record.get("sha256")),
+            "bytes": record["bytes"],
+            "captured_bytes_match": True,
+        }
+    require(type(chain.get("optional_orig_signature_indexed")) is bool)
+    require(chain.get("optional_orig_signature_captured") is False)
+    return {
+        **view,
+        "status": "verified_current_repository_integrity",
+        "repository_integrity_verified": True,
+        "Origin": "apt.postgresql.org",
+        "Suite": "trixie-pgdg",
+        "Package": "postgresql-16",
+        "Version": "16.15-1.pgdg13+2",
+        "Directory": "pool/main/p/postgresql-16",
+        "signer_fingerprint": signer,
+        "primary_fingerprint": KEY_FINGERPRINT,
+        **dates,
+        "captures": capture_view,
+        "checked_sources": source_view,
+        "optional_orig_signature_indexed": chain["optional_orig_signature_indexed"],
+        "optional_orig_signature_captured": False,
+    }
+
+
 def public_inventory_projection(directory, report):
     require(report["status"] == "UNQUALIFIED" and report["build_performed"] is False)
     require(report["derived_image_digest"] is None and report["admission_digest"] is None)
@@ -698,6 +977,7 @@ def public_inventory_projection(directory, report):
             "recognized_status_tokens": status_tokens,
         },
         "DSC": public_dsc(directory, report["sources"].get("pgdg.dsc")),
+        "source_repository": public_repository_chain(report.get("source_repository")),
         "failures": clean_failures,
         "trust_gaps": PUBLIC_TRUST_GAPS,
         "build_performed": False,
@@ -857,6 +1137,9 @@ def main():
         except Exception:
             failures.append({"command": 39, "reason": "signature_inventory_unavailable"})
             report["signature"] = {"signature_outcome": "unavailable"}
+        report["source_repository"] = source_repository_inventory(
+            directory, environment, failures, gpg_home, report["sources"]
+        )
     report["output_files"] = {
         p.name: {"bytes": p.stat().st_size, "sha256": sha(p.read_bytes())}
         for p in sorted(directory.iterdir())
