@@ -822,7 +822,13 @@ def _verify_context(context: object, connection: Connection, bindings: object) -
         owner.poisoned = True
         if not isinstance(error, Exception):
             raise
-        raise HostedGenesisRefused("Hosted resource context refused") from None
+        try:
+            from app.maintenance.product_adoption import _maintenance_refusal_locations
+
+            location = _maintenance_refusal_locations(error)
+        except Exception:
+            location = "unavailable"
+        raise HostedGenesisRefused(f"Hosted resource context refused [maintenance {location}]") from None
 
 
 def _poison_context(context: object, connection: Connection | None = None) -> None:
