@@ -959,7 +959,10 @@ def _run_retained_transition(connection: Connection, handle: _Capture) -> None:
         _poison(connection, handle)
         if not isinstance(error, Exception):
             raise
-        raise ProductAdoptionRefused("Academy retained runner refused; root rollback required") from None
+        location = _maintenance_refusal_locations(error)
+        raise ProductAdoptionRefused(
+            f"Academy retained runner refused; root rollback required [maintenance {location}]"
+        ) from None
     finally:
         if type(state) is _State and state.retained_runner is invocation:
             state.retained_runner = None
@@ -1107,7 +1110,10 @@ def _run_checkpoint_transition(connection: Connection, handle: _Capture) -> None
         _poison(connection, handle)
         if not isinstance(error, Exception):
             raise
-        raise ProductAdoptionRefused("Academy checkpoint runner refused; root rollback required") from None
+        location = _maintenance_refusal_locations(error)
+        raise ProductAdoptionRefused(
+            f"Academy checkpoint runner refused; root rollback required [maintenance {location}]"
+        ) from None
     finally:
         if type(state) is _State and state.checkpoint_runner is invocation:
             state.checkpoint_runner = None
@@ -1256,7 +1262,10 @@ def _run_lab_claim_lease_transition(connection: Connection, handle: _Capture) ->
         _poison(connection, handle)
         if not isinstance(error, Exception):
             raise
-        raise ProductAdoptionRefused("Academy lab claim lease runner refused; root rollback required") from None
+        location = _maintenance_refusal_locations(error)
+        raise ProductAdoptionRefused(
+            f"Academy lab claim lease runner refused; root rollback required [maintenance {location}]"
+        ) from None
     finally:
         if type(state) is _State and state.lab_claim_runner is invocation:
             state.lab_claim_runner = None
