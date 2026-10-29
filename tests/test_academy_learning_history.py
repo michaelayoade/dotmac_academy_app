@@ -287,6 +287,141 @@ def _assert_fixed_source_acl_profile(connection):
     )
 
 
+def _assert_fixed_source_index_profile(connection):
+    names = list(history._SOURCE_NAMES)
+    counts = connection.execute(
+        sa.text(
+            "SELECT count(*),count(*) FILTER(WHERE i.indisprimary),"
+            "count(*) FILTER(WHERE NOT i.indisprimary AND EXISTS(SELECT 1 FROM pg_catalog.pg_constraint k "
+            "WHERE k.conindid=i.indexrelid AND k.contype='u')),"
+            "count(*) FILTER(WHERE i.indpred IS NOT NULL AND i.indisunique),"
+            "count(*) FILTER(WHERE NOT i.indisunique),"
+            "bool_and(i.indisvalid AND i.indisready AND i.indislive AND NOT i.indnullsnotdistinct "
+            "AND i.indimmediate AND NOT i.indisexclusion AND i.indexprs IS NULL AND i.indnkeyatts=i.indnatts "
+            "AND c.reloptions IS NULL AND c.reltablespace=0 AND c.relacl IS NULL "
+            "AND pg_catalog.pg_get_userbyid(c.relowner)='app_admin' AND am.amname='btree') "
+            "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace "
+            "JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_am am ON am.oid=c.relam "
+            "WHERE n.nspname='public' AND t.relname=ANY(:names)"
+        ),
+        {"names": names},
+    ).one()
+    assert tuple(counts) == (144, 27, 35, 3, 79, True)
+    # Resolve every key's actual class/collation without filtering unexpected
+    # objects. Expected types come from the immutable source declaration.
+    keys = connection.execute(
+        sa.text(
+            "SELECT t.relname,c.relname,v.position,a.attname,"
+            "CASE WHEN opam.amname='btree' THEN ns.nspname||'.'||oc.opcname END,"
+            "CASE WHEN v.collation=0 THEN 'none' ELSE COALESCE(cns.nspname||'.'||co.collname,'unknown') END,"
+            "v.options FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
+            "CROSS JOIN LATERAL unnest(i.indkey::smallint[],i.indclass::oid[],i.indcollation::oid[],"
+            "i.indoption::smallint[]) WITH ORDINALITY v(attnum,opclass,collation,options,position) "
+            "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=v.attnum "
+            "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass "
+            "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=oc.opcnamespace "
+            "LEFT JOIN pg_catalog.pg_am opam ON opam.oid=oc.opcmethod "
+            "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation "
+            "LEFT JOIN pg_catalog.pg_namespace cns ON cns.oid=co.collnamespace "
+            "WHERE n.nspname='public' AND t.relname=ANY(:names) ORDER BY 1,2,3"
+        ),
+        {"names": names},
+    ).all()
+    expected_keys = []
+    for spec in history._TABLES:
+        types = {name: typ for name, typ, _ in spec.columns}
+        for name, columns, _unique in spec.indexes:
+            if name == "ix_enrollments_audience":
+                columns = ("tenant_id", "audience")
+            for position, column in enumerate(columns, 1):
+                typ = types[column]
+                if typ.startswith("character varying("):
+                    opclass, collation = "pg_catalog.text_ops", "pg_catalog.default"
+                else:
+                    opclass = {
+                        "uuid": "pg_catalog.uuid_ops",
+                        "integer": "pg_catalog.int4_ops",
+                        "timestamp with time zone": "pg_catalog.timestamptz_ops",
+                    }[typ]
+                    collation = "none"
+                expected_keys.append((spec.name, name, position, column, opclass, collation, 0))
+    assert keys == sorted(expected_keys)
+    links = connection.execute(
+        sa.text(
+            "SELECT t.relname,c.relname,k.conname,k.contype,"
+            "ARRAY(SELECT a.attname::text FROM unnest(k.conkey) WITH ORDINALITY v(attnum,position) "
+            "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=v.attnum ORDER BY v.position),"
+            "k.oid>0,k.conrelid=i.indrelid,k.conindid=i.indexrelid,k.convalidated,k.condeferrable,k.condeferred "
+            "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
+            "JOIN pg_catalog.pg_constraint k ON k.conindid=i.indexrelid AND k.contype IN ('p','u') "
+            "WHERE n.nspname='public' AND t.relname=ANY(:names) ORDER BY 1,2,3"
+        ),
+        {"names": names},
+    ).all()
+    expected_links = []
+    for spec in history._TABLES:
+        for name, kind, columns in (
+            (spec.name + "_pkey", "p", ("id",)),
+            *((name, "u", columns) for name, columns in spec.unique_keys),
+        ):
+            expected_links.append((spec.name, name, name, kind, list(columns), True, True, True, True, False, False))
+    assert len(links) == 62
+    assert links == sorted(expected_links)
+    # Observe the production JSONB query's decoded wire types, including its
+    # explicit OID-to-bigint casts; direct SQL booleans above cannot prove this.
+    decoded_links = [
+        link
+        for name in names
+        for index in history._catalog(connection, history._oid(connection, name)).indexes
+        for link in index[23]
+    ]
+    assert len(decoded_links) == 62
+    for link in decoded_links:
+        assert all(type(value) is int for value in link[:3])
+        assert all(type(number) is int for number in link[5])
+        assert all(type(flag) is bool for flag in link[6:])
+    partials = connection.execute(
+        sa.text(
+            "SELECT t.relname,c.relname,pg_catalog.pg_get_expr(i.indpred,i.indrelid,false) "
+            "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
+            "WHERE n.nspname='public' AND t.relname=ANY(:names) AND i.indpred IS NOT NULL ORDER BY 1,2"
+        ),
+        {"names": names},
+    ).all()
+    assert partials == [
+        ("activity_attempts", "uq_activity_attempts_open", "(submitted_at IS NULL)"),
+        (
+            "learning_events",
+            "uq_learning_events_once_per_subject",
+            "((kind)::text = ANY ((ARRAY['chapter_completed'::character varying, "
+            "'certificate_earned'::character varying])::text[]))",
+        ),
+        ("success_queue_entries", "uq_success_queue_open_person_reason", "((status)::text = 'open'::text)"),
+    ]
+    queue = connection.execute(
+        sa.text(
+            "SELECT c.relname,i.indisunique,ARRAY(SELECT a.attname::text FROM unnest(i.indkey) "
+            "WITH ORDINALITY v(attnum,position) LEFT JOIN pg_catalog.pg_attribute a "
+            "ON a.attrelid=i.indrelid AND a.attnum=v.attnum ORDER BY v.position) "
+            "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid "
+            "WHERE i.indrelid='public.success_queue_entries'::regclass ORDER BY c.relname"
+        )
+    ).all()
+    assert queue == [
+        ("ix_success_queue_cohort_id", False, ["cohort_id"]),
+        ("ix_success_queue_person_id", False, ["person_id"]),
+        ("ix_success_queue_status", False, ["tenant_id", "status", "severity"]),
+        ("ix_success_queue_tenant_id", False, ["tenant_id"]),
+        ("success_queue_entries_pkey", True, ["id"]),
+        ("uq_success_queue_open_person_reason", True, ["tenant_id", "person_id", "reason_kind"]),
+        ("uq_success_queue_tenant_id_id", True, ["tenant_id", "id"]),
+    ]
+
+
 def _assert_fixed_enrollment_access_index(connection):
     actual = connection.execute(
         sa.text(
@@ -324,6 +459,7 @@ def test_actual_frozen62_all27_all260_fields_and_nullable_ack_history(legacy_eng
         root = connection.get_transaction()
         _assert_fixed_source_acl_profile(connection)
         _assert_fixed_enrollment_access_index(connection)
+        _assert_fixed_source_index_profile(connection)
         snapshot = history._export_learning_history(connection, capture)
         acks = history._completion_ack_history(connection, capture)
         assert type(snapshot) is learning.LearningSnapshotV5
@@ -360,6 +496,248 @@ def test_actual_frozen62_all27_all260_fields_and_nullable_ack_history(legacy_eng
         assert "erp_synced_at" not in repr(acks)
         assert "huge" not in repr(snapshot)
         assert connection.get_transaction() is root and root.is_active
+
+
+@pytest.mark.parametrize(
+    "statements",
+    [
+        pytest.param(("DROP INDEX public.ix_success_queue_status",), id="missing"),
+        pytest.param(
+            ("CREATE INDEX unexpected_success_queue_index ON public.success_queue_entries(status)",), id="extra"
+        ),
+        pytest.param(("ALTER INDEX public.ix_success_queue_status RENAME TO unexpected_queue_status",), id="renamed"),
+        *[
+            pytest.param(("DROP INDEX public.ix_success_queue_status", replacement), id=name)
+            for name, replacement in (
+                ("wrong-columns", "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(status)"),
+                (
+                    "wrong-order",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(status,tenant_id,severity)",
+                ),
+                (
+                    "wrong-unique",
+                    "CREATE UNIQUE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status,severity)",
+                ),
+                (
+                    "descending",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status DESC,severity)",
+                ),
+                (
+                    "nulls-first",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status NULLS FIRST,severity)",
+                ),
+                (
+                    "operator-class",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status text_pattern_ops,severity)",
+                ),
+                (
+                    "collation",
+                    'CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status COLLATE "C",severity)',
+                ),
+                (
+                    "include",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,status,severity) INCLUDE(detected_at)",
+                ),
+                (
+                    "expression",
+                    "CREATE INDEX ix_success_queue_status ON public.success_queue_entries(tenant_id,lower(status),severity)",
+                ),
+            )
+        ],
+        pytest.param(("ALTER INDEX public.ix_success_queue_status SET(fillfactor=90)",), id="storage-options"),
+        *[
+            pytest.param(("DROP INDEX public.uq_success_queue_open_person_reason", replacement), id=name)
+            for name, replacement in (
+                (
+                    "partial-missing",
+                    "CREATE UNIQUE INDEX uq_success_queue_open_person_reason ON public.success_queue_entries(tenant_id,person_id,reason_kind)",
+                ),
+                (
+                    "partial-case",
+                    "CREATE UNIQUE INDEX uq_success_queue_open_person_reason ON public.success_queue_entries(tenant_id,person_id,reason_kind) WHERE status='OPEN'",
+                ),
+                (
+                    "partial-space",
+                    "CREATE UNIQUE INDEX uq_success_queue_open_person_reason ON public.success_queue_entries(tenant_id,person_id,reason_kind) WHERE status=' open '",
+                ),
+                (
+                    "partial-nonunique",
+                    "CREATE INDEX uq_success_queue_open_person_reason ON public.success_queue_entries(tenant_id,person_id,reason_kind) WHERE status='open'",
+                ),
+                (
+                    "nulls-not-distinct",
+                    "CREATE UNIQUE INDEX uq_success_queue_open_person_reason ON public.success_queue_entries(tenant_id,person_id,reason_kind) NULLS NOT DISTINCT WHERE status='open'",
+                ),
+            )
+        ],
+        *[
+            pytest.param(("DROP INDEX public.uq_learning_events_once_per_subject", replacement), id=name)
+            for name, replacement in (
+                (
+                    "ledger-literal-case",
+                    "CREATE UNIQUE INDEX uq_learning_events_once_per_subject ON public.learning_events(tenant_id,person_id,kind,subject_id) WHERE kind IN ('CHAPTER_COMPLETED','certificate_earned')",
+                ),
+                (
+                    "ledger-literal-space",
+                    "CREATE UNIQUE INDEX uq_learning_events_once_per_subject ON public.learning_events(tenant_id,person_id,kind,subject_id) WHERE kind IN ('chapter_completed ','certificate_earned')",
+                ),
+            )
+        ],
+        pytest.param(
+            (
+                "DROP INDEX public.uq_activity_attempts_open",
+                "CREATE UNIQUE INDEX uq_activity_attempts_open ON public.activity_attempts(tenant_id,activity_id,person_id) WHERE submitted_at IS NOT NULL",
+            ),
+            id="attempt-predicate",
+        ),
+        pytest.param(
+            (
+                "ALTER TABLE public.success_queue_entries DROP CONSTRAINT uq_success_queue_tenant_id_id",
+                "CREATE UNIQUE INDEX uq_success_queue_tenant_id_id ON public.success_queue_entries(tenant_id,id)",
+            ),
+            id="standalone-unique-without-constraint",
+        ),
+        pytest.param(
+            (
+                "ALTER TABLE public.success_queue_entries DROP CONSTRAINT uq_success_queue_tenant_id_id",
+                "ALTER TABLE public.success_queue_entries ADD CONSTRAINT uq_success_queue_tenant_id_id UNIQUE(tenant_id,id) DEFERRABLE INITIALLY IMMEDIATE",
+            ),
+            id="deferrable-unique",
+        ),
+        pytest.param(
+            (
+                "SET LOCAL ROLE NONE",
+                "UPDATE pg_catalog.pg_constraint SET conindid='public.courses_pkey'::regclass WHERE conrelid='public.success_queue_entries'::regclass AND conname='uq_success_queue_tenant_id_id'",
+                "SET LOCAL ROLE app_admin",
+            ),
+            id="wrong-owned-constraint-index-link",
+        ),
+    ],
+)
+def test_initial_exact_index_semantics_drift_refuses(legacy_engine, statements):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        history._release_learning_history(connection, capture)
+        # Actual SQL mutations exist solely inside the hosted disposable root.
+        # The sole catalog mutation changes an otherwise uncaptured owned link.
+        for statement in statements:
+            connection.execute(sa.text(statement))
+        with pytest.raises(history.LearningHistoryRefused):
+            history._capture_learning_history(connection)
+
+
+@pytest.mark.parametrize("stage", ["initial", "late"])
+@pytest.mark.parametrize("literal", ["STAFF", " staff "])
+@pytest.mark.parametrize("constraint", ["ck_enrollments_audience", "ck_enrollments_staff_has_employee_ref"])
+def test_enrollment_check_literal_drift_refuses(legacy_engine, stage, literal, constraint):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        if stage == "initial":
+            history._release_learning_history(connection, capture)
+        try:
+            connection.execute(sa.text(f"ALTER TABLE public.enrollments DROP CONSTRAINT {constraint}"))
+            expression = (
+                f"audience IS NULL OR audience IN ('{literal}','external')"
+                if constraint == "ck_enrollments_audience"
+                else f"audience IS DISTINCT FROM '{literal}' OR employee_ref IS NOT NULL"
+            )
+            connection.execute(
+                sa.text(f"ALTER TABLE public.enrollments ADD CONSTRAINT {constraint} CHECK ({expression})")
+            )
+            with pytest.raises(history.LearningHistoryRefused):
+                if stage == "initial":
+                    history._capture_learning_history(connection)
+                else:
+                    history._export_learning_history(connection, capture)
+        finally:
+            if stage == "late":
+                history._release_learning_history(connection, capture)
+
+
+@pytest.mark.parametrize("stage", ["initial", "late"])
+@pytest.mark.parametrize(
+    "assignment",
+    ["indnullsnotdistinct=true", "indimmediate=false", "indisexclusion=true"],
+)
+def test_newly_captured_index_flags_refuse(legacy_engine, stage, assignment):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        before = connection.execute(
+            sa.text(
+                "SELECT indexrelid,indnullsnotdistinct,indimmediate,indisexclusion FROM pg_catalog.pg_index "
+                "WHERE indexrelid='public.uq_success_queue_open_person_reason'::regclass"
+            )
+        ).one()
+        assert tuple(before[1:]) == (False, True, False)
+        table_oid = connection.scalar(sa.text("SELECT 'public.success_queue_entries'::regclass::oid"))
+        before_catalog = history._catalog(connection, table_oid)
+        if stage == "initial":
+            history._release_learning_history(connection, capture)
+        try:
+            # Negative-only rolled-back system-catalog mutation preserves the
+            # index OID and every original20 field, isolating the new flag gap.
+            connection.execute(sa.text("SET LOCAL ROLE NONE"))
+            statement = {
+                "indnullsnotdistinct=true": (
+                    "UPDATE pg_catalog.pg_index SET indnullsnotdistinct=true "
+                    "WHERE indexrelid='public.uq_success_queue_open_person_reason'::regclass"
+                ),
+                "indimmediate=false": (
+                    "UPDATE pg_catalog.pg_index SET indimmediate=false "
+                    "WHERE indexrelid='public.uq_success_queue_open_person_reason'::regclass"
+                ),
+                "indisexclusion=true": (
+                    "UPDATE pg_catalog.pg_index SET indisexclusion=true "
+                    "WHERE indexrelid='public.uq_success_queue_open_person_reason'::regclass"
+                ),
+            }[assignment]
+            connection.execute(sa.text(statement))
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            after = connection.execute(
+                sa.text(
+                    "SELECT indexrelid,indnullsnotdistinct,indimmediate,indisexclusion FROM pg_catalog.pg_index "
+                    "WHERE indexrelid='public.uq_success_queue_open_person_reason'::regclass"
+                )
+            ).one()
+            assert after[0] == before[0] and tuple(after[1:]) != tuple(before[1:])
+            after_catalog = history._catalog(connection, table_oid)
+            assert tuple(row[:20] for row in after_catalog.indexes) == tuple(row[:20] for row in before_catalog.indexes)
+            assert tuple(row[23] for row in after_catalog.indexes) == tuple(row[23] for row in before_catalog.indexes)
+            with pytest.raises(history.LearningHistoryRefused):
+                if stage == "initial":
+                    history._capture_learning_history(connection)
+                else:
+                    history._export_learning_history(connection, capture)
+        finally:
+            if stage == "late":
+                history._release_learning_history(connection, capture)
+
+
+def test_late_owned_index_constraint_link_drift_refuses_export(legacy_engine):
+    with entry_transaction(legacy_engine) as connection:
+        _lock_complete_source(connection)
+        capture = history._capture_learning_history(connection)
+        table_oid = connection.scalar(sa.text("SELECT 'public.success_queue_entries'::regclass::oid"))
+        before = history._catalog(connection, table_oid)
+        try:
+            connection.execute(sa.text("SET LOCAL ROLE NONE"))
+            connection.execute(
+                sa.text(
+                    "UPDATE pg_catalog.pg_constraint SET conindid='public.courses_pkey'::regclass "
+                    "WHERE conrelid='public.success_queue_entries'::regclass AND conname='uq_success_queue_tenant_id_id'"
+                )
+            )
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            after = history._catalog(connection, table_oid)
+            assert tuple(row[:23] for row in before.indexes) == tuple(row[:23] for row in after.indexes)
+            assert tuple(row[23] for row in before.indexes) != tuple(row[23] for row in after.indexes)
+            with pytest.raises(history.LearningHistoryRefused):
+                history._export_learning_history(connection, capture)
+        finally:
+            history._release_learning_history(connection, capture)
 
 
 @pytest.mark.parametrize("mutation", ["missing", "wrong_column", "reversed_columns"])

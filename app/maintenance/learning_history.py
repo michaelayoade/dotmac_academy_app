@@ -709,10 +709,11 @@ _TABLES = (
         (
             ("success_queue_entries_pkey", ("id",), True),
             ("uq_success_queue_tenant_id_id", ("tenant_id", "id"), True),
-            ("ix_success_queue_entries_tenant_id", ("tenant_id",), False),
-            ("ix_success_queue_entries_person_id", ("person_id",), False),
-            ("ix_success_queue_entries_cohort_id", ("cohort_id",), False),
-            ("ix_success_queue_entries_status", ("status",), False),
+            ("ix_success_queue_tenant_id", ("tenant_id",), False),
+            ("ix_success_queue_person_id", ("person_id",), False),
+            ("ix_success_queue_cohort_id", ("cohort_id",), False),
+            ("ix_success_queue_status", ("tenant_id", "status", "severity"), False),
+            ("uq_success_queue_open_person_reason", ("tenant_id", "person_id", "reason_kind"), True),
         ),
     ),
     _TableSpec(
@@ -859,6 +860,31 @@ _FOREIGN_KEY_NAMES = {
 
 _SOURCE_NAMES = tuple(sorted(spec.name for spec in _TABLES))
 _LOCK_NAMES = tuple(sorted((*_SOURCE_NAMES, "tenants", "people", "alembic_version")))
+# Fixed source-derived PG16 renderings; never normalize quoted literals.
+# Hosted confirmation is still required; another rendering must refuse.
+_INDEX_PREDICATES = {
+    ("activity_attempts", "uq_activity_attempts_open"): "(submitted_at IS NULL)",
+    ("learning_events", "uq_learning_events_once_per_subject"): (
+        "((kind)::text = ANY ((ARRAY['chapter_completed'::character varying, "
+        "'certificate_earned'::character varying])::text[]))"
+    ),
+    ("success_queue_entries", "uq_success_queue_open_person_reason"): "((status)::text = 'open'::text)",
+}
+_ENROLLMENT_CHECKS = {
+    "ck_enrollments_audience": (
+        "((audience IS NULL) OR ((audience)::text = ANY ((ARRAY['staff'::character varying, "
+        "'external'::character varying])::text[])))"
+    ),
+    "ck_enrollments_staff_has_employee_ref": (
+        "(((audience)::text IS DISTINCT FROM 'staff'::text) OR (employee_ref IS NOT NULL))"
+    ),
+}
+_INDEX_OPCLASSES = {
+    "uuid": "pg_catalog.uuid_ops",
+    "integer": "pg_catalog.int4_ops",
+    "timestamp with time zone": "pg_catalog.timestamptz_ops",
+    "character varying": "pg_catalog.text_ops",
+}
 _STATE_KEY = object()
 _RELOCATION_KEY = object()
 # Fixed historical0056 + 0061 worker grants, never canonical Learning policy.
@@ -970,7 +996,12 @@ def _catalog(connection, oid):
         q(
             "SELECT c.oid,c.relname,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,"
             "i.indkey::text,i.indclass::text,i.indcollation::text,i.indoption::text,i.indexprs::text,"
-            "i.indpred::text,i.indnkeyatts,i.indnatts,c.reloptions,c.reltablespace,c.relowner,c.relacl::text,am.amname "
+            "i.indpred::text,i.indnkeyatts,i.indnatts,c.reloptions,c.reltablespace,c.relowner,c.relacl::text,am.amname,"
+            "i.indnullsnotdistinct,i.indimmediate,i.indisexclusion,"
+            "COALESCE((SELECT jsonb_agg(jsonb_build_array(CAST(k.oid AS bigint),CAST(k.conrelid AS bigint),"
+            "CAST(k.conindid AS bigint),k.conname,k.contype,"
+            "k.conkey,k.convalidated,k.condeferrable,k.condeferred) ORDER BY k.oid) "
+            "FROM pg_catalog.pg_constraint k WHERE k.conindid=i.indexrelid AND k.contype IN ('p','u')),'[]'::jsonb) "
             "FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON "
             "c.oid=i.indexrelid JOIN pg_catalog.pg_am am ON am.oid=c.relam "
             "WHERE i.indrelid=:oid ORDER BY c.relname"
@@ -1088,34 +1119,28 @@ def _shape(connection, spec, catalog, oids, roles):
     )
     _require(sorted(fks) == sorted(spec.foreign_keys))
     _require({row[0] for row in catalog.constraints if row[1] == "f"} == set(_FOREIGN_KEY_NAMES[spec.name]))
-    expected_checks = (
-        {"ck_enrollments_audience", "ck_enrollments_staff_has_employee_ref"} if spec.name == "enrollments" else set()
-    )
-    _require(set(checks) == expected_checks)
-    if checks:
-        # Fixed historical0049 expressions, not reconstructed audience facts.
-        import re
-
-        expected = {
-            "ck_enrollments_audience": "audienceisnulloraudience=anyarray['staff','external']",
-            "ck_enrollments_staff_has_employee_ref": "audienceisdistinctfrom'staff'oremployee_refisnotnull",
-        }
-        for name, expression in _query(
+    expected_checks = _ENROLLMENT_CHECKS if spec.name == "enrollments" else {}
+    _require(set(checks) == set(expected_checks))
+    _require(
+        _query(
             connection,
-            "SELECT conname,pg_catalog.pg_get_expr(conbin,conrelid) FROM "
-            "pg_catalog.pg_constraint WHERE conrelid=:oid AND contype='c'",
+            "SELECT conname,pg_catalog.pg_get_expr(conbin,conrelid,false) FROM "
+            "pg_catalog.pg_constraint WHERE conrelid=:oid AND contype='c' ORDER BY conname",
             oid=oid,
-        ):
-            normalized = re.sub(r"::(?:character varying|text)(?:\[\])?", "", expression)
-            normalized = re.sub(r'[\s()"]', "", normalized).lower()
-            _require(normalized == expected[name])
+        )
+        == tuple(sorted(expected_checks.items()))
+    )
     expected_indexes = {name: (cols, unique) for name, cols, unique in spec.indexes}
     if spec.name == "enrollments":
         expected_indexes["ix_enrollments_audience"] = (("tenant_id", "audience"), False)
     _require({row[1] for row in catalog.indexes} == set(expected_indexes))
+    constraint_indexes = {spec.name + "_pkey": ("p", ("id",))}
+    constraint_indexes.update({name: ("u", columns) for name, columns in spec.unique_keys})
+    declared_types = {name: typ for name, typ, _ in spec.columns}
+    attribute_numbers = {row[1]: row[0] for row in catalog.columns}
     for row in catalog.indexes:
         (
-            _,
+            index_oid,
             name,
             unique,
             primary,
@@ -1123,9 +1148,9 @@ def _shape(connection, spec, catalog, oids, roles):
             ready,
             live,
             numbers,
-            _,
-            _,
-            _,
+            classes,
+            collations,
+            ordering,
             expression,
             predicate,
             nkeys,
@@ -1135,41 +1160,90 @@ def _shape(connection, spec, catalog, oids, roles):
             owner,
             acl,
             method,
+            nulls_not_distinct,
+            immediate,
+            exclusion,
+            constraint_links,
         ) = row
-        _require((unique, primary) == (expected_indexes[name][1], name == spec.name + "_pkey"))
+        columns, expected_unique = expected_indexes[name]
+        _require((unique, primary) == (expected_unique, name == spec.name + "_pkey"))
         _require(
-            valid
-            and ready
-            and live
+            valid is True
+            and ready is True
+            and live is True
             and expression is None
-            and nkeys == natts
+            and nkeys == natts == len(columns)
             and options is None
             and tablespace == 0
             and acl is None
+            and nulls_not_distinct is False
+            and immediate is True
+            and exclusion is False
         )
-        _require(_column_names(connection, oid, tuple(map(int, numbers.split()))) == expected_indexes[name][0])
+        numbers = tuple(map(int, numbers.split()))
+        classes = tuple(map(int, classes.split()))
+        collations = tuple(map(int, collations.split()))
+        _require(len(numbers) == len(classes) == len(collations) == len(columns))
+        _require(tuple(map(int, ordering.split())) == (0,) * len(columns))
+        _require(numbers == tuple(attribute_numbers[column] for column in columns))
         _require(owner == roles["app_admin"] and method == "btree")
-        partial = name in {"uq_activity_attempts_open", "uq_learning_events_once_per_subject"}
-        _require((predicate is not None) is partial)
-        if partial:
-            import re
-
-            expression = connection.scalar(
-                sa.text(
-                    "SELECT pg_catalog.pg_get_expr(indpred,indrelid) FROM pg_catalog.pg_index WHERE indexrelid=:oid"
-                ),
-                {"oid": row[0]},
+        types = tuple(
+            "character varying" if declared_types[column].startswith("character varying(") else declared_types[column]
+            for column in columns
+        )
+        _require(all(typ in _INDEX_OPCLASSES for typ in types))
+        _require(
+            _query(
+                connection,
+                "SELECT CASE WHEN opam.amname='btree' THEN ns.nspname||'.'||oc.opcname END,"
+                "CASE WHEN v.collation=0 THEN 'none' "
+                "ELSE COALESCE(cns.nspname||'.'||co.collname,'unknown') END "
+                "FROM unnest(CAST(:classes AS oid[]),CAST(:collations AS oid[])) "
+                "WITH ORDINALITY v(opclass,collation,position) "
+                "LEFT JOIN pg_catalog.pg_opclass oc ON oc.oid=v.opclass "
+                "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid=oc.opcnamespace "
+                "LEFT JOIN pg_catalog.pg_am opam ON opam.oid=oc.opcmethod "
+                "LEFT JOIN pg_catalog.pg_collation co ON co.oid=v.collation "
+                "LEFT JOIN pg_catalog.pg_namespace cns ON cns.oid=co.collnamespace ORDER BY v.position",
+                classes=list(classes),
+                collations=list(collations),
             )
-            normalized = re.sub(r"::(?:character varying|text)(?:\[\])?", "", expression)
-            normalized = re.sub(r'[\s()"]', "", normalized).lower()
+            == tuple(
+                (_INDEX_OPCLASSES[typ], "pg_catalog.default" if typ == "character varying" else "none") for typ in types
+            )
+        )
+        expected_predicate = _INDEX_PREDICATES.get((spec.name, name))
+        _require((predicate is not None) is (expected_predicate is not None))
+        _require(
+            connection.scalar(
+                sa.text(
+                    "SELECT pg_catalog.pg_get_expr(indpred,indrelid,false) "
+                    "FROM pg_catalog.pg_index WHERE indexrelid=:oid"
+                ),
+                {"oid": index_oid},
+            )
+            == expected_predicate
+        )
+        if name in constraint_indexes:
+            kind, key_columns = constraint_indexes[name]
+            _require(len(constraint_links) == 1 and len(constraint_links[0]) == 9)
+            link = constraint_links[0]
+            _require(type(link[0]) is int and link[0] > 0)
             _require(
-                normalized
+                link[1:]
                 == (
-                    "submitted_atisnull"
-                    if name == "uq_activity_attempts_open"
-                    else "kind=anyarray['chapter_completed','certificate_earned']"
+                    oid,
+                    index_oid,
+                    name,
+                    kind,
+                    tuple(attribute_numbers[column] for column in key_columns),
+                    True,
+                    False,
+                    False,
                 )
             )
+        else:
+            _require(constraint_links == ())
     _require(not catalog.rules)
     _require(all(row[4] == "O" and row[5] is True for row in catalog.triggers))
     _require(len(catalog.policies) == 1)
