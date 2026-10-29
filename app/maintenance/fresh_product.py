@@ -1101,7 +1101,7 @@ def _dependency_identity(class_expression, oid_expression, sub_expression):
          WHEN {class_expression}='pg_catalog.pg_class'::regclass
               AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
                            WHERE c.oid={oid_expression} AND n.nspname='pg_toast')
-         THEN (SELECT 'TOAST:'||n.nspname||'.'||p.relname||':'||c.relkind
+         THEN (SELECT 'TOAST:'||n.nspname||'.'||p.relname||':'||c.relkind::text
                  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_class p
                    ON p.reltoastrelid=c.oid OR p.reltoastrelid IN
                       (SELECT indrelid FROM pg_catalog.pg_index WHERE indexrelid=c.oid)
