@@ -316,3 +316,88 @@ def test_hostile_historical_catalog_fixture_cannot_rebase_a009_statistics(
             product._run_erp_progress_transition(connection, handle)
         assert injected == [True] and product._state_for(handle).poisoned
         assert transition._KEY not in connection.info
+
+
+def _c45_inspect_actual_default(monkeypatch):
+    import re
+
+    original = transition.catalog.validate_stage
+    observed = []
+
+    def validate(connection, before, after, stage, **kwargs):
+        result = original(connection, before, after, stage, **kwargs)
+        if stage == "a010_facilitator_nominations":
+            rows = transition.catalog._columns(connection, "facilitator_nominations")
+            status = next(row for row in rows if row[1] == "status")
+            coercion = connection.scalar(
+                sa.text("SELECT 'pg_catalog.varchar(character varying,integer,boolean)'::regprocedure::oid")
+            )
+            assert type(coercion) is int and coercion > 0
+            assert coercion in {int(value) for value in re.findall(r":funcid (\d+)", status[11])}
+            assert status[2:5] == ("character varying(20)", False, "'pending'::character varying")
+            transition.catalog._validate_column(
+                connection, status, ("status", "character varying(20)", False, "'pending'::character varying")
+            )
+            observed.append(True)
+        return result
+
+    monkeypatch.setattr(transition.catalog, "validate_stage", validate)
+    return observed
+
+
+def test_c45_actual_fresh_a010_default_has_exact_builtin_length_coercion(fresh_connection, monkeypatch):
+    observed = _c45_inspect_actual_default(monkeypatch)
+    root = fresh_connection.get_transaction()
+    result = fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C45-fresh-varchar-coercion")
+    assert type(result) is fresh.FreshProductDiscovery and observed == [True]
+    assert fresh_connection.get_transaction() is root and root.is_active
+
+
+def test_c45_actual_historical_a010_default_has_exact_builtin_length_coercion(
+    hosted_declaration, tmp_path, monkeypatch
+):
+    from tests import test_academy_lab_claim_lease_adoption as historical
+
+    observed = _c45_inspect_actual_default(monkeypatch)
+    with historical._checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
+        root = connection.get_transaction()
+        product._run_lab_claim_lease_transition(connection, handle)
+        product._run_erp_progress_transition(connection, handle)
+        assert observed == [True] and not product._state_for(handle).poisoned
+        assert connection.get_transaction() is root and root.is_active
+
+
+@pytest.mark.parametrize("attack", ["wrong_literal", "custom_function"])
+def test_c45_real_a010_default_tampering_still_refuses_and_poisons(fresh_connection, monkeypatch, attack):
+    original = transition.catalog.validate_stage
+    observed = []
+
+    def validate(connection, before, after, stage, **kwargs):
+        result = original(connection, before, after, stage, **kwargs)
+        if stage != "a010_facilitator_nominations":
+            return result
+        # The genuine complete positive stage must pass before hostile DDL.
+        if attack == "wrong_literal":
+            connection.execute(
+                sa.text("ALTER TABLE public.facilitator_nominations ALTER COLUMN status SET DEFAULT 'active'")
+            )
+        else:
+            connection.execute(
+                sa.text(
+                    "CREATE FUNCTION public.c45_status_default() RETURNS character varying LANGUAGE sql IMMUTABLE "
+                    "AS $$ SELECT 'pending'::character varying $$"
+                )
+            )
+            connection.execute(
+                sa.text(
+                    "ALTER TABLE public.facilitator_nominations ALTER COLUMN status SET DEFAULT public.c45_status_default()"
+                )
+            )
+        observed.append(True)
+        original(connection, before, transition.catalog.observe(connection), stage, **kwargs)
+        pytest.fail("hostile a010 default unexpectedly accepted")
+
+    monkeypatch.setattr(transition.catalog, "validate_stage", validate)
+    with pytest.raises((fresh.FreshProductRefused, product.ProductAdoptionRefused, schema.RetainedSchemaRefused)):
+        fresh.rehearse_fresh_composed_entry(fresh_connection, decision_ref="C45-hostile-default")
+    assert observed == [True] and fresh._issued(fresh_connection).poisoned

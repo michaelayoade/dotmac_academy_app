@@ -878,3 +878,86 @@ def test_c44_other_stages_never_invoke_stat_projection(monkeypatch):
     catalog.conserve(
         before, after, stage="a007_lab_template_access", appended={(100, 2)}, connection=object(), original_rows=()
     )
+
+
+def _c45_expression_identities(monkeypatch):
+    queries = []
+
+    def source_identities(connection, query, **params):
+        queries.append(query)
+        if "pg_catalog.pg_proc" in query:
+            assert "'pg_catalog.varchar(character varying,integer,boolean)'::regprocedure" in query
+            return ((1001,), (1002,), (1003,))
+        if "oprcode::oid" in query:
+            return ((2001,),)
+        if "pg_catalog.pg_operator" in query:
+            return ((2002,),)
+        assert "pg_catalog.pg_type" in query
+        return ((1043,), (23,), (16,))
+
+    monkeypatch.setattr(catalog, "_rows", source_identities)
+    return queries
+
+
+@pytest.mark.parametrize("function", [1001, 1002, 1003])
+def test_c45_fixed_existing_and_varchar_length_coercion_identities_are_allowed(monkeypatch, function):
+    import re
+
+    queries = _c45_expression_identities(monkeypatch)
+    # Symbolic source IDs stand for dynamically resolved builtins; no DB claim.
+    raw = f"{{FUNCEXPR :funcid {function} :args ({{CONST :consttype 1043}} {{CONST :consttype 23}} {{CONST :consttype 16}})}}"
+    catalog._expression(object(), "'pending'::character varying", raw)
+    assert re.findall(r"'([^']+)'::regprocedure", queries[0]) == [
+        "pg_catalog.now()",
+        "public.app_current_tenant_id()",
+        "pg_catalog.varchar(character varying,integer,boolean)",
+    ]
+    assert "669" not in queries[0]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{FUNCEXPR :funcid 1004}",
+        "{FUNCEXPR :funcid 669}",
+        "{FUNCEXPR :funcid 1003 :args ({FUNCEXPR :funcid 1004})}",
+        "{FUNCEXPR :funcid 1003 :consttype 9999}",
+        "{FUNCEXPR :funcid 1003 :opno 9999}",
+        "{FUNCEXPR :funcid 1003 :opfuncid 9999}",
+        "{FUNCEXPR :funcid 1003 :vartype 9999}",
+        "{FUNCEXPR :funcid 1003 :args ({COERCEVIAIO})}",
+    ],
+)
+def test_c45_new_coercion_does_not_admit_unknown_functions_types_operators_or_nodes(monkeypatch, raw):
+    _c45_expression_identities(monkeypatch)
+    with pytest.raises(ProductAdoptionRefused):
+        catalog._expression(object(), "'pending'::character varying", raw)
+
+
+@pytest.mark.parametrize(
+    "default", ["'pending'::character varying", "'active'::character varying", "private_status_function()"]
+)
+def test_c45_default_column_still_requires_exact_source_deparser_and_type(monkeypatch, default):
+    _c45_expression_identities(monkeypatch)
+    row = (
+        1,
+        "status",
+        "character varying(20)",
+        False,
+        default,
+        "",
+        "",
+        None,
+        False,
+        False,
+        None,
+        "{FUNCEXPR :funcid 1003 :args ({CONST :consttype 1043} {CONST :consttype 23} {CONST :consttype 16})}",
+        123,
+    )
+    db = SimpleNamespace(scalar=lambda *a, **k: 123)
+    expected = ("status", "character varying(20)", False, "'pending'::character varying")
+    if default == expected[3]:
+        catalog._validate_column(db, row, expected)
+    else:
+        with pytest.raises(ProductAdoptionRefused):
+            catalog._validate_column(db, row, expected)

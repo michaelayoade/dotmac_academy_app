@@ -519,8 +519,8 @@ def _expression(connection, expression, raw):
         for r in _rows(
             connection,
             "SELECT oid FROM pg_catalog.pg_proc WHERE oid IN "
-            "('pg_catalog.now()'::regprocedure,'public.app_current_tenant_id()'::regprocedure"
-            ")",
+            "('pg_catalog.now()'::regprocedure,'public.app_current_tenant_id()'::regprocedure,"
+            "'pg_catalog.varchar(character varying,integer,boolean)'::regprocedure)",
         )
     }
     operators = {
