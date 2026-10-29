@@ -441,7 +441,7 @@ def _expression(connection, expression, raw):
         r[0]
         for r in _rows(
             connection,
-            "SELECT oprcode FROM pg_catalog.pg_operator WHERE oid IN "
+            "SELECT oprcode::oid FROM pg_catalog.pg_operator WHERE oid IN "
             "('pg_catalog.=(uuid,uuid)'::regoperator,'pg_catalog.=(text,text)'::regoperator,'"
             "pg_catalog.<>(text,text)'::regoperator,'pg_catalog.>(integer,integer)'::regopera"
             "tor)",
@@ -630,7 +630,7 @@ def _check_operators(connection, by_oid):
     operator = history._query(
         connection,
         "SELECT o.oid,n.nspname,o.oprname,o.oprkind,ln.nspname,lt.typname,rn.nspname,rt.typname,"
-        "bn.nspname,bt.typname,o.oprcode,pn.nspname,p.proname "
+        "bn.nspname,bt.typname,o.oprcode::oid,pn.nspname,p.proname "
         "FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n ON n.oid=o.oprnamespace "
         "JOIN pg_catalog.pg_type lt ON lt.oid=o.oprleft JOIN pg_catalog.pg_namespace ln ON ln.oid=lt.typnamespace "
         "JOIN pg_catalog.pg_type rt ON rt.oid=o.oprright JOIN pg_catalog.pg_namespace rn ON rn.oid=rt.typnamespace "
