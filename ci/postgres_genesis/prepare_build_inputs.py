@@ -820,15 +820,25 @@ def main():
     public["preparation_diagnostics"] = preparation_diagnostics(output)
     if completed and not public["cleanup_uncertain"]:
         public["phase"] = "artifact_manifest"
-        manifest = {}
-        for path in sorted(root.rglob("*")):
-            if path.is_dir():
-                continue
-            need(not path.is_symlink())
-            manifest[path.relative_to(root).as_posix()] = file_record(path, 17179869184)
-        (root / "artifact-manifest.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
-        public["artifact_manifest"] = file_record(root / "artifact-manifest.json", 16777216)
-        public.update(status="UNQUALIFIED_BUILD_INPUTS_PREPARED", phase="complete")
+        try:
+            manifest = {}
+
+            def refuse_walk(error):
+                raise Refused from None
+
+            # Unreadable directories and symlinks of any kind fail closed instead of being skipped.
+            for directory, directories, files in root.walk(on_error=refuse_walk):
+                for name in directories:
+                    need(not (directory / name).is_symlink())
+                for name in sorted(files):
+                    path = directory / name
+                    need(not path.is_symlink())
+                    manifest[path.relative_to(root).as_posix()] = file_record(path, 17179869184)
+            (root / "artifact-manifest.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+            public["artifact_manifest"] = file_record(root / "artifact-manifest.json", 16777216)
+            public.update(status="UNQUALIFIED_BUILD_INPUTS_PREPARED", phase="complete")
+        except Exception:
+            public["failure"] = {"kind": "artifact_manifest_failed"}
     encoded = json.dumps(public, ensure_ascii=True, separators=(",", ":"))
     if "source_inventory" in public:
         source_view = public["source_inventory"]

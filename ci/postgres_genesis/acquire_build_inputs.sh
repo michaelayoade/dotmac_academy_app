@@ -74,6 +74,13 @@ import_status_diagnostics() {
 }
 finish() {
     result=$?
+    # APT hands its download staging directory to _apt with mode 0700; return it to
+    # root and make it readable so the hosted runner can retain the whole artifact.
+    if [ -d /out/debs/partial ] && [ ! -L /out/debs/partial ]; then
+        chown -R 0:0 /out/debs/partial || true
+        chmod -R u+rwX,go+rX,go-w /out/debs/partial || true
+    fi
+    if [ -f /out/debs/lock ] && [ ! -L /out/debs/lock ]; then chmod 0644 /out/debs/lock || true; fi
     if [ "$result" -eq 0 ]; then printf 'success\n' > /out/acquisition-outcome.txt;
     else
         printf 'failure\n' > /out/acquisition-outcome.txt
