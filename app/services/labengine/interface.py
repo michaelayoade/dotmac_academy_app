@@ -31,6 +31,16 @@ class LabEngine(ABC):
     def deploy(self, topology_text: str, instance_name: str) -> LabHandle: ...
 
     @abstractmethod
+    def wait_ready(self, handle: LabHandle) -> None:
+        """Wait until every runtime service required for learner access is ready.
+
+        Returns only after readiness is confirmed. Raises a bounded operational
+        error when readiness cannot be established, so lifecycle services never
+        project an unready runtime as active.
+        """
+        ...
+
+    @abstractmethod
     def destroy(self, instance_name: str) -> None: ...
 
     @abstractmethod

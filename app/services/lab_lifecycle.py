@@ -369,6 +369,7 @@ def provision(db: Session, instance: LabInstance, engine: LabEngine, template: L
     instance.runtime_presence = "unknown"
     try:
         handle = engine.deploy(topology_text, instance.instance_name)
+        engine.wait_ready(handle)
         consoles: dict = {}
         for node in handle.nodes:
             kind = handle.kinds.get(node)
@@ -512,6 +513,7 @@ def _rebuild_consoles_from_live_inspection(
         instance.runtime_presence = "unknown"
         db.flush()
         return
+    engine.wait_ready(handle)
     stop_consoles(instance)
     instance.consoles = _build_consoles_from_handle(instance, handle)
     instance.status = "active"
@@ -711,6 +713,7 @@ def provision_if_absent(
     # Precondition held (genuinely absent) and deploy_if_absent has already
     # performed the real mutation atomically — console teardown/recreation
     # may only run now, after that mutation is proven to have happened.
+    engine.wait_ready(handle)
     stop_consoles(instance)
     instance.consoles = _build_consoles_from_handle(instance, handle)
     instance.status = "active"
@@ -934,6 +937,7 @@ def reset(db: Session, instance: LabInstance, engine: LabEngine, template: LabTe
         # a failure at or after this line has already crossed into "unknown".
         instance.runtime_presence = "unknown"
         handle = engine.reset(topology_text, instance.instance_name)
+        engine.wait_ready(handle)
         consoles: dict = {}
         for node in handle.nodes:
             kind = handle.kinds.get(node)
