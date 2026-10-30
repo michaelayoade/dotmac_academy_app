@@ -11,17 +11,15 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from fastapi import Response
 from sqlalchemy import select
 
 from app.models.assessment import Activity
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.services.security import hash_password
 from app.web.labs import _console_target
 
 
@@ -44,17 +42,12 @@ def _entitled_activity(admin_session, tenant, person_id):
     return act.id
 
 
-def _make_person(admin_session, tenant, email: str) -> Person:
-    p = Person(tenant_id=tenant.id, email=email, first_name="S", last_name="L")
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+def _make_person(admin_session, tenant, email: str) -> Party:
+    from tests.conftest import make_canonical_account
+
+    p = make_canonical_account(
+        admin_session, tenant_id=tenant.id, email=email, first_name="S", last_name="L",
+        password="password1", role="student",
     )
     admin_session.commit()
     return p
@@ -62,7 +55,16 @@ def _make_person(admin_session, tenant, email: str) -> Person:
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    app_client.get("/login", headers=h)
+    token = app_client.cookies.get("csrf_token")
+    assert token
+    response = app_client.post(
+        "/login", headers={**h, "x-csrf-token": token},
+        data={"email": email, "password": "password1"}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    # The authenticated browser token is bound to its new session cookie.
+    app_client.get("/", headers=h)
     return h
 
 
@@ -120,8 +122,11 @@ def test_cross_tenant_not_found(app_client, admin_session, tenant_a, tenant_b):
     """Instance belongs to tenant B; requester authenticated in tenant A → 404."""
     _make_person(admin_session, tenant_a, "owner3@a.edu")
     # Owner person + instance live entirely in tenant_b.
-    p_b = Person(tenant_id=tenant_b.id, email="owner@b.edu", first_name="B", last_name="B")
+    p_b = Party(tenant_id=tenant_b.id, party_type=PartyType.person, display_name="B B",
+                email="owner@b.edu", is_active=True)
     admin_session.add(p_b)
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=p_b.id, first_name="B", last_name="B"))
     admin_session.flush()
     li = _seed_instance(admin_session, tenant_b, p_b.id)
     h = _login(app_client, "owner3@a.edu")

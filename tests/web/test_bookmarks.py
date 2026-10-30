@@ -7,16 +7,14 @@ isolation, and the unauthenticated redirect.
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
 from app.models.bookmark import ChapterBookmark, ChapterNote
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
-
 
 def _post(app_client, url, data=None):
     """POST with the double-submit CSRF header (cookie set by any prior GET)."""
@@ -25,21 +23,16 @@ def _post(app_client, url, data=None):
     csrf = app_client.cookies.get("csrf_token", "")
     return app_client.post(url, headers={**H, "x-csrf-token": csrf}, data=data)
 
-
 def _login(app_client, admin_session, tenant, email):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Bee", last_name="Marks")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Bee", last_name="Marks")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _seed_course(admin_session, tenant, person, slug="bm-course", enrol=True):
     c = Course(tenant_id=tenant.id, slug=slug, title=f"Course {slug}",
@@ -61,12 +54,10 @@ def _seed_course(admin_session, tenant, person, slug="bm-course", enrol=True):
     admin_session.commit()
     return c, ch
 
-
 def test_bookmarks_requires_login(app_client, tenant_a):
     r = app_client.get("/bookmarks", headers=H, follow_redirects=False)
     assert r.status_code in (302, 303)
     assert "/login" in r.headers.get("location", "")
-
 
 def test_toggle_is_idempotent_flip(app_client, admin_session, tenant_a):
     person = _login(app_client, admin_session, tenant_a, "bm1@a.edu")
@@ -82,7 +73,6 @@ def test_toggle_is_idempotent_flip(app_client, admin_session, tenant_a):
     count = admin_session.query(ChapterBookmark).filter_by(
         tenant_id=tenant_a.id, person_id=person.id, chapter_id=chapter.id).count()
     assert count == 0
-
 
 def test_note_create_update_and_delete_on_empty(app_client, admin_session, tenant_a):
     person = _login(app_client, admin_session, tenant_a, "bm2@a.edu")
@@ -105,7 +95,6 @@ def test_note_create_update_and_delete_on_empty(app_client, admin_session, tenan
     assert admin_session.query(ChapterNote).filter_by(
         tenant_id=tenant_a.id, person_id=person.id, chapter_id=chapter.id).count() == 0
 
-
 def test_note_body_rendered_escaped(app_client, admin_session, tenant_a):
     person = _login(app_client, admin_session, tenant_a, "bm3@a.edu")
     course, _ = _seed_course(admin_session, tenant_a, person, slug="bm-xss")
@@ -114,16 +103,14 @@ def test_note_body_rendered_escaped(app_client, admin_session, tenant_a):
     assert "<script>alert(1)</script>" not in r.text
     assert "&lt;script&gt;" in r.text
 
-
 def test_unentitled_course_is_forbidden(app_client, admin_session, tenant_a):
     person = _login(app_client, admin_session, tenant_a, "bm4@a.edu")
     course, _ = _seed_course(admin_session, tenant_a, person, slug="bm-nope", enrol=False)
     r = _post(app_client, f"/bookmarks/chapters/{course.slug}/1/toggle")
     assert r.status_code in (403, 404)
 
-
 def test_listing_scoped_to_person_and_entitlement(app_client, admin_session, tenant_a):
-    other = Person(tenant_id=tenant_a.id, email="bm-other@a.edu", first_name="O", last_name="P")
+    other = make_person_party(admin_session, tenant_id=tenant_a.id, email="bm-other@a.edu", first_name="O", last_name="P")
     admin_session.add(other)
     admin_session.flush()
 

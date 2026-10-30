@@ -7,7 +7,6 @@ from app.models.assessment import Activity, Question, QuestionBank
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.models.prerequisite import CoursePrerequisite
 from app.services.assessment import submit_activity
 from app.services.catalog import (
@@ -16,6 +15,7 @@ from app.services.catalog import (
     course_structure,
     my_courses,
 )
+from tests.conftest import make_person_party
 
 
 def _seed_course(db, tid, slug, title="Test Course"):
@@ -27,7 +27,6 @@ def _seed_course(db, tid, slug, title="Test Course"):
     db.flush()
     return c
 
-
 def _seed_chapter(db, tid, course_id, number, title="Ch", part="I", order_index=None):
     ch = Chapter(
         tenant_id=tid, course_id=course_id, number=number, title=title,
@@ -37,7 +36,6 @@ def _seed_chapter(db, tid, course_id, number, title="Ch", part="I", order_index=
     db.add(ch)
     db.flush()
     return ch
-
 
 def _seed_activity(db, tid, course_id, chapter_number, title="Act"):
     bank = QuestionBank(tenant_id=tid, course_id=course_id, chapter_number=chapter_number, kind="chapter", version=1)
@@ -51,7 +49,6 @@ def _seed_activity(db, tid, course_id, chapter_number, title="Act"):
     db.flush()
     return act
 
-
 def _enroll(db, tid, person_id, course_id):
     coh = Cohort(tenant_id=tid, name="Coh", discipline="networking", status="active")
     db.add(coh)
@@ -62,10 +59,9 @@ def _enroll(db, tid, person_id, course_id):
     db.flush()
     return coh
 
-
 def test_my_courses_returns_only_accessible(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_stu@a.edu", first_name="Cat", last_name="Stu")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_stu@a.edu", first_name="Cat", last_name="Stu")
     admin_session.add(person)
     admin_session.flush()
 
@@ -81,10 +77,9 @@ def test_my_courses_returns_only_accessible(admin_session, tenant_a):
     assert "Course One" in titles
     assert "Course Two" not in titles
 
-
 def test_my_courses_empty_when_no_enrollment(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_noroll@a.edu", first_name="No", last_name="Roll")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_noroll@a.edu", first_name="No", last_name="Roll")
     admin_session.add(person)
     _seed_course(admin_session, tid, "cat-noroll-c", "No Roll Course")
     admin_session.flush()
@@ -93,7 +88,6 @@ def test_my_courses_empty_when_no_enrollment(admin_session, tenant_a):
     n = len(result)
     admin_session.rollback()
     assert n == 0
-
 
 def test_all_courses_returns_all_tenant_courses(admin_session, tenant_a):
     tid = tenant_a.id
@@ -108,7 +102,6 @@ def test_all_courses_returns_all_tenant_courses(admin_session, tenant_a):
 
     assert c1_id in ids
     assert c2_id in ids
-
 
 def test_all_courses_ordered_by_title(admin_session, tenant_a):
     tid = tenant_a.id
@@ -125,10 +118,9 @@ def test_all_courses_ordered_by_title(admin_session, tenant_a):
     zebra_idx = next(i for i, t in enumerate(titles) if t == "Zebra Course")
     assert apple_idx < zebra_idx
 
-
 def test_course_completion_no_activities(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_comp0@a.edu", first_name="C", last_name="O")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_comp0@a.edu", first_name="C", last_name="O")
     admin_session.add(person)
     c = _seed_course(admin_session, tid, "cat-comp0", "Empty Course")
     admin_session.flush()
@@ -137,10 +129,9 @@ def test_course_completion_no_activities(admin_session, tenant_a):
     admin_session.rollback()
     assert pct == 0
 
-
 def test_course_completion_partial(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_comp_p@a.edu", first_name="P", last_name="C")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_comp_p@a.edu", first_name="P", last_name="C")
     admin_session.add(person)
     admin_session.flush()
     c = _seed_course(admin_session, tid, "cat-comp-p", "Partial Course")
@@ -161,10 +152,9 @@ def test_course_completion_partial(admin_session, tenant_a):
     admin_session.rollback()
     assert pct == 50
 
-
 def test_course_completion_all_passed(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_comp_full@a.edu", first_name="F", last_name="U")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_comp_full@a.edu", first_name="F", last_name="U")
     admin_session.add(person)
     admin_session.flush()
     c = _seed_course(admin_session, tid, "cat-comp-full", "Full Course")
@@ -179,10 +169,9 @@ def test_course_completion_all_passed(admin_session, tenant_a):
     admin_session.rollback()
     assert pct == 100
 
-
 def test_course_structure_parts_grouping(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_struct@a.edu", first_name="S", last_name="T")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_struct@a.edu", first_name="S", last_name="T")
     admin_session.add(person)
     admin_session.flush()
     c = _seed_course(admin_session, tid, "cat-struct", "Struct Course")
@@ -222,10 +211,9 @@ def test_course_structure_parts_grouping(admin_session, tenant_a):
     assert ch1_act0_passed is True
     assert ch1_act0_pct == 100
 
-
 def test_course_structure_continue_target(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_ct@a.edu", first_name="C", last_name="T")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_ct@a.edu", first_name="C", last_name="T")
     admin_session.add(person)
     admin_session.flush()
     c = _seed_course(admin_session, tid, "cat-ct", "CT Course")
@@ -245,10 +233,9 @@ def test_course_structure_continue_target(admin_session, tenant_a):
 
     assert cont_number == 2
 
-
 def test_course_structure_locked_when_prereq_unmet(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_lock@a.edu", first_name="L", last_name="K")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_lock@a.edu", first_name="L", last_name="K")
     admin_session.add(person)
     admin_session.flush()
     prereq = _seed_course(admin_session, tid, "cat-prereq", "Prereq Course")
@@ -263,10 +250,9 @@ def test_course_structure_locked_when_prereq_unmet(admin_session, tenant_a):
     admin_session.rollback()
     assert locked is True
 
-
 def test_course_structure_not_locked_without_prereq(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_nolock@a.edu", first_name="N", last_name="L")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_nolock@a.edu", first_name="N", last_name="L")
     admin_session.add(person)
     c = _seed_course(admin_session, tid, "cat-nolock", "No Lock Course")
     admin_session.flush()
@@ -276,11 +262,9 @@ def test_course_structure_not_locked_without_prereq(admin_session, tenant_a):
     admin_session.rollback()
     assert locked is False
 
-
 # ---------------------------------------------------------------------------
 # Course-level activities (mid/final assessments carry no chapter_number)
 # ---------------------------------------------------------------------------
-
 
 def _seed_course_activity(db, tid, course_id, title, *, type_="mcq_test"):
     """An activity with chapter_number = NULL — a whole-course assessment."""
@@ -297,13 +281,12 @@ def _seed_course_activity(db, tid, course_id, title, *, type_="mcq_test"):
     db.flush()
     return act
 
-
 def test_course_structure_surfaces_chapterless_activities(admin_session, tenant_a):
     """Regression: mid/final assessments were rendered nowhere and so were
     unreachable, while still counting towards completion — every affected
     course was impossible to finish."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_final@a.edu", first_name="F", last_name="A")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_final@a.edu", first_name="F", last_name="A")
     admin_session.add(person)
     c = _seed_course(admin_session, tid, "cat-final", "Final Course")
     admin_session.flush()
@@ -324,10 +307,9 @@ def test_course_structure_surfaces_chapterless_activities(admin_session, tenant_
     # They belong to the course, never smuggled into a chapter card.
     assert chapter_titles == ["Chapter 1 test"]
 
-
 def test_course_structure_course_activities_empty_without_any(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_nofinal@a.edu", first_name="N", last_name="F")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_nofinal@a.edu", first_name="N", last_name="F")
     admin_session.add(person)
     c = _seed_course(admin_session, tid, "cat-nofinal", "No Final Course")
     admin_session.flush()
@@ -339,10 +321,9 @@ def test_course_structure_course_activities_empty_without_any(admin_session, ten
     admin_session.rollback()
     assert course_acts == []
 
-
 def test_course_structure_course_activity_reports_pass_state(admin_session, tenant_a):
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="cat_finalpass@a.edu", first_name="P", last_name="S")
+    person = make_person_party(admin_session, tenant_id=tid, email="cat_finalpass@a.edu", first_name="P", last_name="S")
     admin_session.add(person)
     c = _seed_course(admin_session, tid, "cat-finalpass", "Final Pass Course")
     admin_session.flush()

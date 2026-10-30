@@ -1,100 +1,89 @@
 """Cookie-based web auth service.
 
-Provides authenticate(), start_session(), require_web_user(), and
+Provides sign_in(), require_web_user(), and
 require_web_role() for server-rendered (Jinja2) routes.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
+from dotmac_kernel.models import AuthSession, PartyRoleGrant, Role
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.auth import AuthSession, UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole, Role
-from app.services.identity import normalize_email, sync_credential_emails
-from app.services.security import hash_token, issue_access_token, verify_password
+from app.services.credential_authentication import sign_in  # noqa: F401
+from app.services.identity import AcademyCurrentAccount, current_account
+from app.services.security import hash_token
 
 COOKIE = "session"
-MAX_FAILED_LOGINS = 5
-LOCKOUT_MINUTES = 15
-
-
-def authenticate(db: Session, tenant_id: UUID, email: str, password: str) -> Person | None:
-    """Authenticate and own the durable account lockout policy.
-
-    The credential row is locked so concurrent failures cannot race below the
-    threshold. Callers must return an error response rather than raise after a
-    failed attempt, allowing the request transaction to commit the counter.
-    """
-    now = datetime.now(UTC)
-    row = db.execute(
-        select(UserCredential, Person)
-        .join(
-            Person,
-            (Person.tenant_id == UserCredential.tenant_id) & (Person.id == UserCredential.person_id),
-        )
-        .where(UserCredential.tenant_id == tenant_id)
-        .where(func.lower(func.btrim(Person.email)) == normalize_email(email))
-        .with_for_update(of=UserCredential)
-    ).first()
-    if row is None:
-        return None
-    cred, person = row
-    if cred.locked_until is not None and cred.locked_until > now:
-        return None
-    if not verify_password(password, cred.password_hash):
-        cred.failed_login_attempts += 1
-        if cred.failed_login_attempts >= MAX_FAILED_LOGINS:
-            cred.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
-        db.flush()
-        return None
-    cred.failed_login_attempts = 0
-    cred.locked_until = None
-    sync_credential_emails(db, person=person)
-    db.flush()
-    if person.status != "active":
-        return None  # suspended accounts cannot authenticate
-    return person
-
-
-def start_session(db: Session, tenant_id: UUID, person_id: UUID) -> str:
-    """Create an AuthSession and return the raw token to set as the cookie value."""
-    token, expires_at = issue_access_token(person_id, tenant_id)
-    db.add(
-        AuthSession(
-            tenant_id=tenant_id,
-            person_id=person_id,
-            token_hash=hash_token(token),
-            expires_at=expires_at,
-        )
-    )
-    db.flush()
-    return token
 
 
 def revoke_session(db: Session, tenant_id: UUID, token: str | None) -> None:
-    """Mark the AuthSession identified by token as revoked (logout)."""
+    """Lock the genuine principal before refreshing/revoking this exact session."""
+    from dotmac_kernel.identity_storage import revoke_party_sessions
+    from dotmac_kernel.models import AuthSession as CanonicalSession
+    from dotmac_kernel.models import Party
+    from dotmac_kernel.transactions import ConflictSavepointProtocolError, conflict_savepoint
+
     if not token:
         return
-    s = db.scalars(
-        select(AuthSession)
-        .where(AuthSession.tenant_id == tenant_id)
-        .where(AuthSession.token_hash == hash_token(token))
-        .where(AuthSession.revoked_at.is_(None))
-    ).first()
-    if s is not None:
-        s.revoked_at = datetime.now(UTC)
-        db.flush()
+    # begin_nested() preflushes before establishing the public SAVEPOINT. Logout
+    # must never flush unrelated caller work merely to admit the storage owner.
+    if db.new or db.dirty or db.deleted:
+        raise ConflictSavepointProtocolError("logout requires clean pending state")
+    digest = hash_token(token)
+    with conflict_savepoint(db):
+        candidate = db.scalars(
+            select(CanonicalSession)
+            .where(CanonicalSession.tenant_id == tenant_id, CanonicalSession.token_hash == digest)
+            .execution_options(populate_existing=True)
+        ).first()
+        if candidate is None:
+            return
+        session_id, party_id = candidate.id, candidate.party_id
+        party = db.scalars(
+            select(Party)
+            .where(Party.tenant_id == tenant_id, Party.id == party_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).first()
+        if party is None:
+            return
+        session = db.scalars(
+            select(CanonicalSession)
+            .where(
+                CanonicalSession.tenant_id == tenant_id,
+                CanonicalSession.id == session_id,
+                CanonicalSession.party_id == party_id,
+                CanonicalSession.token_hash == digest,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).first()
+        if session is not None and session.revoked_at is None:
+            changed = revoke_party_sessions(
+                db,
+                tenant_id=tenant_id,
+                party_id=party_id,
+                session_ids=(session_id,),
+                revoked_at=datetime.now(UTC),
+            )
+            if session_id in changed:
+                # The owner uses Core DML. Refresh only its persisted fields on
+                # the already locked row so immediate identity-map reads agree.
+                db.refresh(session, attribute_names=["revoked_at", "updated_at"])
 
 
-def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person | None:
-    """Resolve the session cookie to a Person, or None if missing/invalid/expired."""
+def _current_person(db: Session, tenant_id: UUID, token: str | None) -> AcademyCurrentAccount | None:
+    """Resolve a cookie HMAC/session and read its current canonical account.
+
+    Cookie authentication deliberately does not decode JWT claims. This is a
+    request read, never proof that a later writer action remains authorized.
+    """
     if not token:
         return None
     session = db.scalars(
@@ -103,22 +92,18 @@ def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person |
         .where(AuthSession.token_hash == hash_token(token))
         .where(AuthSession.revoked_at.is_(None))
         .where(AuthSession.expires_at > datetime.now(UTC))
+        .execution_options(populate_existing=True)
     ).first()
     if session is None:
         return None
-    person = db.scalars(
-        select(Person).where(Person.id == session.person_id).where(Person.tenant_id == tenant_id)
-    ).first()
-    if person is None or person.status != "active":
-        return None  # suspended mid-session → treated as logged out
-    return person
+    return current_account(db, tenant_id=tenant_id, party_id=session.party_id)
 
 
 def require_web_user(
     request: Request,
     db: Session = Depends(get_db),
-) -> Person:
-    """Dependency: read the session cookie and return the Person.
+) -> AcademyCurrentAccount:
+    """Dependency: read the session cookie and return a live immutable account.
 
     Raises HTTPException(303) → /login when missing or invalid.
     FastAPI/Starlette's default HTTPException handler preserves the Location
@@ -138,8 +123,8 @@ def require_web_user(
 def optional_web_user(
     request: Request,
     db: Session = Depends(get_db),
-) -> Person | None:
-    """Dependency: the session's Person, or None when anonymous.
+) -> AcademyCurrentAccount | None:
+    """Dependency: the session's current account, or None when anonymous.
 
     For routes that render differently for visitors and signed-in users
     (e.g. the public landing at ``/``) instead of redirecting to /login.
@@ -160,19 +145,21 @@ def require_web_role(role_slug: str):
 
     def _dep(
         request: Request,
-        person: Person = Depends(require_web_user),
+        person: AcademyCurrentAccount = Depends(require_web_user),
         db: Session = Depends(get_db),
-    ) -> Person:
+    ) -> AcademyCurrentAccount:
         tenant = require_tenant(request)
         has = db.scalars(
-            select(PersonRole)
+            select(PartyRoleGrant)
             .join(
                 Role,
-                (Role.id == PersonRole.role_id) & (Role.tenant_id == PersonRole.tenant_id),
+                (Role.id == PartyRoleGrant.role_id) & (Role.tenant_id == PartyRoleGrant.tenant_id),
             )
-            .where(PersonRole.tenant_id == tenant.id)
-            .where(PersonRole.person_id == person.id)
+            .where(PartyRoleGrant.tenant_id == tenant.id)
+            .where(PartyRoleGrant.party_id == person.id)
+            .where(Role.tenant_id == tenant.id)
             .where(Role.slug.in_(accepted))
+            .execution_options(populate_existing=True)
         ).first()
         if has is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType
 from sqlalchemy import select, text
 
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.notification import Notification
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import AuditEvent, PersonRole
+from app.models.rbac import AuditEvent
 from app.models.track import CohortTrack, Track
 from app.services.facilitator_nominations import (
     FacilitatorScope,
@@ -26,8 +29,25 @@ from app.services.facilitator_nominations import (
 
 
 def _person(db, tenant_id, email):
-    person = Person(tenant_id=tenant_id, email=email, first_name="Fac", last_name="Candidate", status="active")
+    # Canonical person account components (Party + PartyPerson + active
+    # profile) with no credential and no role grant: the nomination service
+    # must not confer one, which the role-grant assertions below pin.
+    person = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        display_name="Fac Candidate",
+        email=email,
+        is_active=True,
+    )
     db.add(person)
+    db.flush()
+    db.add(PartyPerson(party_id=person.id, first_name="Fac", last_name="Candidate"))
+    now = datetime.now(UTC)
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id, party_id=person.id, status="active", prefs={}, created_at=now, updated_at=now
+        )
+    )
     db.flush()
     return person
 
@@ -124,7 +144,7 @@ def test_incomplete_active_learner_nomination_stays_pending_without_mutating_lea
     assert enrollment.role_in_cohort == "student"
     assert enrollment.status == "active"
     assert enrollment.track_id == track.id
-    assert admin_session.query(PersonRole).filter_by(tenant_id=tenant_a.id, person_id=learner.id).count() == 0
+    assert admin_session.query(PartyRoleGrant).filter_by(tenant_id=tenant_a.id, party_id=learner.id).count() == 0
     notices = admin_session.scalars(
         select(Notification).where(Notification.tenant_id == tenant_a.id).where(Notification.person_id == learner.id)
     ).all()
@@ -163,7 +183,7 @@ def test_course_nomination_activates_immediately_when_requirement_is_completed(a
     assert outcome.activated_now is True
     assert outcome.required_course_ids == (course.id,)
     assert outcome.missing_course_ids == ()
-    assert admin_session.query(PersonRole).filter_by(tenant_id=tenant_a.id, person_id=nominee.id).count() == 0
+    assert admin_session.query(PartyRoleGrant).filter_by(tenant_id=tenant_a.id, party_id=nominee.id).count() == 0
     notices = admin_session.scalars(
         select(Notification).where(Notification.tenant_id == tenant_a.id).where(Notification.person_id == nominee.id)
     ).all()
@@ -177,7 +197,10 @@ def test_course_nomination_activates_immediately_when_requirement_is_completed(a
         )
         .one()
     )
-    assert activation_audit.actor_person_id == actor.id
+    assert (
+        activation_audit.actor_type, activation_audit.actor_id,
+        activation_audit.actor_party_id, activation_audit.source_application,
+    ) == ("user", str(actor.id), actor.id, "dotmac_academy_app")
 
 
 def test_cohort_nomination_snapshots_requirements_and_sweep_activates_once(admin_session, tenant_a):

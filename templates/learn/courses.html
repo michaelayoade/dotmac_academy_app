@@ -10,7 +10,7 @@
   <div class="card block overflow-hidden border-sand-300 bg-sand-50 text-ink-soft">
     <img src="/static/img/cover-{{ c.course.slug }}.webp" alt=""
          class="h-36 w-full object-cover opacity-60" loading="lazy"
-         onerror="this.style.display='none'">
+         data-hide-on-error>
     <div class="p-5">
       <div class="flex items-baseline gap-3">
         <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
@@ -27,7 +27,7 @@
      class="card block overflow-hidden transition-colors hover:border-brand-300">
     <img src="/static/img/cover-{{ c.course.slug }}.webp" alt=""
          class="h-36 w-full object-cover" loading="lazy"
-         onerror="this.style.display='none'">
+         data-hide-on-error>
     <div class="p-5">
       <div class="flex items-baseline gap-3">
         <h3 class="text-lg font-medium text-ink">{{ c.course.title }}</h3>
@@ -57,7 +57,7 @@
      class="card flex items-center gap-4 p-3 transition-colors hover:border-brand-300">
     <img src="/static/img/cover-{{ c.slug }}.webp" alt=""
          class="h-12 w-20 shrink-0 rounded-lg object-cover" loading="lazy"
-         onerror="this.style.display='none'">
+         data-hide-on-error>
     <span class="min-w-0 flex-1 font-medium text-ink">{{ c.title }}</span>
     <span class="text-xs text-ink-soft">{{ c.status }}</span>
   </a>

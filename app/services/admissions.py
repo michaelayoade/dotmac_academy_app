@@ -10,25 +10,40 @@ Tenant scoping is enforced by RLS; we still pass ``tenant_id`` on writes so the
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
+from typing import cast
 from uuid import UUID
 
+import dotmac_learning as learning
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.admissions import APPLICANT_STATUSES, Applicant
-from app.models.auth import UserCredential
-from app.models.cohort import Cohort, Enrollment
-from app.models.person import Person
-from app.models.rbac import PersonRole
+from app.models.cohort import Cohort
 from app.models.track import CohortTrack, Track
-from app.services import lifecycle, onboarding
-from app.services.audit import write_audit_event
-from app.services.bootstrap import ensure_roles
+from app.services import onboarding
+from app.services.admission_assessment_policy import assessment_path, below_threshold_reason
 from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.services.security import hash_token
+
+
+def _legacy_write_audit_event(*args, **kwargs):
+    """Explicit automated legacy assessment origin, never a human fallback."""
+    from app.services.audit import write_audit_event
+
+    if kwargs.pop("actor_person_id", None) is not None:
+        raise BadRequestError("legacy assessment origin cannot assert a human actor")
+    return write_audit_event(
+        *args,
+        **kwargs,
+        actor_type="system",
+        actor_id="assessment_policy",
+        actor_party_id=None,
+        source_application="dotmac_academy_app",
+    )
+
 
 VALID_STATUSES = frozenset(APPLICANT_STATUSES)
 
@@ -414,19 +429,13 @@ def has_active_intake(db: Session, *, applicant: Applicant) -> bool:
     )
 
 
-def assign_applicant_intake(
-    db: Session,
-    *,
-    applicant_id: UUID,
-    cohort_id: UUID,
-    track_id: UUID,
-    actor_person_id: UUID,
-    reason: str | None = None,
-) -> Applicant:
-    """Assign the canonical cohort/track pair and audit the correction."""
-    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
-    if applicant is None:
-        raise NotFoundError("Applicant not found.")
+def _assign_applicant_intake_locked(db, *, context):
+    from app.services.audit_context import _require_human_admission
+
+    state = _require_human_admission(context, db)
+    applicant, command = state.applicant, context.resources
+    actor_person_id = context.actor_id
+    cohort_id, track_id, reason = command.cohort_id, command.track_id, command.reason
     track = _active_intake_track(
         db,
         tenant_id=applicant.tenant_id,
@@ -440,8 +449,10 @@ def assign_applicant_intake(
     applicant.cohort_id = cohort_id
     applicant.track_id = track_id
     applicant.program = track.name
+    state.expected_binding = (*state.expected_binding[:3], cohort_id, track_id)
     db.flush()
-    write_audit_event(
+    _write_human_event(
+        context,
         db,
         tenant_id=applicant.tenant_id,
         actor_person_id=actor_person_id,
@@ -493,111 +504,84 @@ def admin_review_actions(
 
 def applicant_transition_history(db: Session, *, applicant: Applicant) -> list:
     """Authoritative transition/audit events for one applicant, newest first."""
-    from app.models.rbac import AuditEvent
+    from app.services.api_identity_reads import applicant_history
 
-    return list(
-        db.scalars(
-            select(AuditEvent)
-            .where(AuditEvent.tenant_id == applicant.tenant_id)
-            .where(AuditEvent.entity_type == "applicant")
-            .where(AuditEvent.entity_id == str(applicant.id))
-            .where(
-                AuditEvent.action.in_(
-                    (
-                        "applicant.transition",
-                        "applicant.transition_baseline",
-                        "applicant.assessment_reset",
-                        "applicant.assessment_reinvite",
-                        "applicant.invitation_resent",
-                        "applicant.access_extended",
-                        "applicant.intake_assigned",
-                    )
-                )
+    return applicant_history(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
+
+
+def _resend_applicant_invitation_locked(db, *, context):
+    try:
+        from app.services import entrance_exam
+        from app.services.audit_context import _require_human_admission
+
+        state = _require_human_admission(context, db)
+        applicant, command = state.applicant, context.resources
+        actor_person_id = context.actor_id
+        base_url, extend_access, reason = state.base_url, command.extend_access, command.reason
+        if applicant.assessment_taken_at is not None:
+            raise BadRequestError("This applicant has already completed the assessment.")
+        if not entrance_exam.has_entrance_exam(db, applicant=applicant):
+            raise BadRequestError("No entrance assessment is configured for this applicant.")
+
+        previous_deadline = applicant.assessment_deadline
+        should_extend = extend_access or previous_deadline is None or entrance_exam.past_deadline(applicant)
+        state.extended_access = bool(should_extend)
+        if should_extend:
+            result = entrance_exam.invite(db, applicant=applicant, base_url=base_url)
+            state.delivery("entrance_invite", result["emailed"])
+        else:
+            from urllib.parse import quote
+
+            from app.services import applicant_email
+
+            raw = entrance_exam.issue_token(db, applicant=applicant)
+            queued = applicant_email.send_exam_invite(
+                db,
+                applicant=applicant,
+                url=f"{base_url.rstrip("/")}/apply/assessment?token={quote(raw)}",
+                minutes=entrance_exam.time_limit_minutes(db, applicant=applicant),
             )
-            .order_by(AuditEvent.created_at.desc())
-        ).all()
-    )
-
-
-def resend_applicant_invitation(
-    db: Session,
-    *,
-    applicant_id: UUID,
-    actor_person_id: UUID,
-    base_url: str,
-    extend_access: bool = False,
-    reason: str | None = None,
-) -> Applicant:
-    """Resend an external applicant's current invitation through existing services.
-
-    For applicants who have not completed the entrance assessment, the entrance
-    assessment invitation is the active access artifact. Reissuing it replaces
-    the stored token hash, so older links stop resolving and audit history stays
-    append-only.
-    """
-    from app.services import entrance_exam
-
-    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
-    if applicant is None:
-        raise NotFoundError("Applicant not found.")
-    if applicant.assessment_taken_at is not None:
-        raise BadRequestError("This applicant has already completed the assessment.")
-    if not entrance_exam.has_entrance_exam(db, applicant=applicant):
-        raise BadRequestError("No entrance assessment is configured for this applicant.")
-
-    previous_deadline = applicant.assessment_deadline
-    should_extend = extend_access or previous_deadline is None or entrance_exam.past_deadline(applicant)
-    if should_extend:
-        entrance_exam.invite(db, applicant=applicant, base_url=base_url)
-    else:
-        from urllib.parse import quote
-
-        from app.services import applicant_email
-
-        raw = entrance_exam.issue_token(db, applicant=applicant)
-        applicant_email.send_exam_invite(
+            state.delivery("entrance_invite", queued)
+        _write_human_event(
+            context,
             db,
-            applicant=applicant,
-            url=f"{base_url.rstrip("/")}/apply/assessment?token={quote(raw)}",
-            minutes=entrance_exam.time_limit_minutes(db, applicant=applicant),
+            tenant_id=applicant.tenant_id,
+            actor_person_id=actor_person_id,
+            action="applicant.invitation_resent",
+            entity_type="applicant",
+            entity_id=str(applicant.id),
+            details={
+                "reason": reason or "",
+                "source": "admin_web",
+                "extended_access": bool(should_extend),
+                "previous_assessment_deadline": previous_deadline.isoformat() if previous_deadline else "",
+                "assessment_deadline": applicant.assessment_deadline.isoformat()
+                if applicant.assessment_deadline
+                else "",
+            },
         )
-    write_audit_event(
-        db,
-        tenant_id=applicant.tenant_id,
-        actor_person_id=actor_person_id,
-        action="applicant.invitation_resent",
-        entity_type="applicant",
-        entity_id=str(applicant.id),
-        details={
-            "reason": reason or "",
-            "source": "admin_web",
-            "extended_access": bool(should_extend),
-            "previous_assessment_deadline": previous_deadline.isoformat() if previous_deadline else "",
-            "assessment_deadline": applicant.assessment_deadline.isoformat() if applicant.assessment_deadline else "",
-        },
-    )
-    return applicant
+        return applicant
+
+    finally:
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
 
 
-def extend_applicant_access(
-    db: Session,
-    *,
-    applicant_id: UUID,
-    actor_person_id: UUID,
-    reason: str | None = None,
-) -> Applicant:
-    """Extend an uncompleted applicant assessment without changing completed work."""
-    from app.services import entrance_exam
+def _extend_applicant_access_locked(db, *, context):
+    from app.services.audit_context import _require_human_admission
+    from app.services.entrance_invitation_policy import entrance_invitation_policy
 
-    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
-    if applicant is None:
-        raise NotFoundError("Applicant not found.")
+    state = _require_human_admission(context, db)
+    applicant, command = state.applicant, context.resources
+    actor_person_id = context.actor_id
+    reason = command.reason
     if applicant.assessment_taken_at is not None:
         raise BadRequestError("This applicant has already completed the assessment.")
     previous = applicant.assessment_deadline
-    applicant.assessment_deadline = datetime.now(UTC) + timedelta(days=entrance_exam.DEFAULT_DEADLINE_DAYS)
+    applicant.assessment_deadline = entrance_invitation_policy(db).deadline(datetime.now(UTC))
     db.flush()
-    write_audit_event(
+    _write_human_event(
+        context,
         db,
         tenant_id=applicant.tenant_id,
         actor_person_id=actor_person_id,
@@ -614,112 +598,146 @@ def extend_applicant_access(
     return applicant
 
 
-def apply_admin_review_action(
-    db: Session,
-    *,
-    applicant_id: UUID,
-    action: str,
-    actor_person_id: UUID,
-    base_url: str,
-    reason: str | None = None,
-) -> Applicant:
-    """Canonical writer for all applicant-detail actions."""
-    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
-    if applicant is None:
-        raise NotFoundError("Applicant not found.")
-    eligible = {
-        str(item["key"])
-        for item in admin_review_actions(
-            applicant,
-            placement_ready=has_active_intake(db, applicant=applicant),
-        )
-    }
-    if action not in eligible:
-        raise BadRequestError("That action is not available for the applicant's current state.")
+def _apply_admin_review_action_locked(db, *, context):
+    try:
+        from app.services.audit_context import _require_human_admission
 
-    if action == "resend_invitation":
-        return resend_applicant_invitation(
-            db,
-            applicant_id=applicant_id,
-            actor_person_id=actor_person_id,
-            base_url=base_url,
-            extend_access=False,
-            reason=reason,
-        )
-
-    if action == "extend_access":
-        return extend_applicant_access(
-            db,
-            applicant_id=applicant_id,
-            actor_person_id=actor_person_id,
-            reason=reason,
-        )
-
-    if action == "reset_assessment":
-        from app.services import entrance_exam
-
-        entrance_exam.reset_and_invite(db, applicant=applicant, base_url=base_url)
-        write_audit_event(
-            db,
-            tenant_id=applicant.tenant_id,
-            actor_person_id=actor_person_id,
-            action="applicant.assessment_reset",
-            entity_type="applicant",
-            entity_id=str(applicant.id),
-            details={"reason": reason or "", "source": "admin_web"},
-        )
-        return applicant
-
-    if action == "reinvite_assessment":
-        from app.services import entrance_exam
-
-        entrance_exam.invite(db, applicant=applicant, base_url=base_url)
-        write_audit_event(
-            db,
-            tenant_id=applicant.tenant_id,
-            actor_person_id=actor_person_id,
-            action="applicant.assessment_reinvite",
-            entity_type="applicant",
-            entity_id=str(applicant.id),
-            details={"reason": reason or "", "source": "admin_web"},
-        )
-        return applicant
-
-    if action == "accept":
-        path = {
-            "applied": ("screened", "accepted", "onboarding"),
-            "screened": ("accepted", "onboarding"),
-            "waitlisted": ("accepted", "onboarding"),
-            "accepted": ("onboarding",),
-        }[applicant.status]
-        for next_status in path:
-            transition_applicant(
-                db,
-                applicant_id=applicant.id,
-                to_status=next_status,
-                notes=reason,
-                actor_person_id=actor_person_id,
-                source="admin_web",
+        state = _require_human_admission(context, db)
+        applicant, command = state.applicant, context.resources
+        actor_person_id = context.actor_id
+        action, reason, base_url = command.action, command.reason, state.base_url
+        eligible = {
+            str(item["key"])
+            for item in admin_review_actions(
+                applicant,
+                placement_ready=has_active_intake(db, applicant=applicant),
             )
-        raw = mint_onboarding_token(db, applicant=applicant)
-        from app.services import applicant_email
+        }
+        if action not in eligible:
+            raise BadRequestError("That action is not available for the applicant's current state.")
 
-        applicant_email.send_onboarding_invite(
+        if action == "resend_invitation":
+            return _resend_applicant_invitation_locked(db, context=context)
+        if action == "extend_access":
+            return _extend_applicant_access_locked(db, context=context)
+
+        if action == "reset_assessment":
+            from app.services import entrance_exam
+
+            queued = entrance_exam.reset_and_invite(db, applicant=applicant, base_url=base_url)
+            state.delivery("entrance_invite", queued)
+            _write_human_event(
+                context,
+                db,
+                tenant_id=applicant.tenant_id,
+                actor_person_id=actor_person_id,
+                action="applicant.assessment_reset",
+                entity_type="applicant",
+                entity_id=str(applicant.id),
+                details={"reason": reason or "", "source": "admin_web"},
+            )
+            return applicant
+
+        if action == "reinvite_assessment":
+            from app.services import entrance_exam
+
+            result = entrance_exam.invite(db, applicant=applicant, base_url=base_url)
+            state.delivery("entrance_invite", result["emailed"])
+            _write_human_event(
+                context,
+                db,
+                tenant_id=applicant.tenant_id,
+                actor_person_id=actor_person_id,
+                action="applicant.assessment_reinvite",
+                entity_type="applicant",
+                entity_id=str(applicant.id),
+                details={"reason": reason or "", "source": "admin_web"},
+            )
+            return applicant
+
+        if action == "accept":
+            path = {
+                "applied": ("screened", "accepted", "onboarding"),
+                "screened": ("accepted", "onboarding"),
+                "waitlisted": ("accepted", "onboarding"),
+                "accepted": ("onboarding",),
+            }[applicant.status]
+            for next_status in path:
+                _transition_applicant_locked(
+                    db,
+                    applicant=applicant,
+                    transition_origin=context,
+                    to_status=next_status,
+                    notes=reason,
+                    actor_person_id=actor_person_id,
+                    source="admin_web",
+                )
+            raw = mint_onboarding_token(db, applicant=applicant)
+            from app.services import applicant_email
+
+            queued = applicant_email.send_onboarding_invite(
+                db,
+                applicant=applicant,
+                url=f"{base_url.rstrip('/')}/onboarding?token={raw}",
+            )
+            state.delivery("onboarding_invite", queued)
+            return applicant
+
+        target = "waitlisted" if action == "waitlist" else "rejected"
+        return _transition_applicant_locked(
             db,
             applicant=applicant,
-            url=f"{base_url.rstrip('/')}/onboarding?token={raw}",
+            transition_origin=context,
+            to_status=target,
+            notes=reason,
+            actor_person_id=actor_person_id,
+            source="admin_web",
         )
-        return applicant
 
-    target = "waitlisted" if action == "waitlist" else "rejected"
-    return transition_applicant(
-        db,
-        applicant_id=applicant.id,
-        to_status=target,
-        notes=reason,
-        actor_person_id=actor_person_id,
-        source="admin_web",
-    )
+    finally:
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
+
+
+class _LegacyTransitionOrigin:
+    """UNQUALIFIED compatibility origin; never authorizes the genuine submit producer."""
+
+    def __init__(self, actor_person_id, source):
+        if actor_person_id is not None or source != "assessment_policy":
+            raise BadRequestError("human transitions require a genuine Request")
+        self.actor_person_id, self.source = actor_person_id, source
+
+
+def _write_transition_audit(origin, db, **kwargs):
+    from app.admission_assessment_context import _AssessmentContext, _write_assessment_event
+    from app.services.invitation_issuance import _OnboardingContext
+
+    if type(origin) is _AssessmentContext:
+        return _write_assessment_event(origin, db, **kwargs)
+    if type(origin) is _LegacyTransitionOrigin:
+        if origin.actor_person_id is not None or origin.source != "assessment_policy":
+            raise BadRequestError("invalid legacy assessment origin")
+        return _legacy_write_audit_event(db, **kwargs)
+    from app.services.audit_context import _Context
+
+    if type(origin) is _Context:
+        return _write_human_event(origin, db, **kwargs)
+    if type(origin) is not _OnboardingContext or origin.db is not db:
+        raise BadRequestError("invalid transition origin")
+    origin.require()
+    origin._check_bearer()
+    if (
+        kwargs["tenant_id"] != origin.tenant_id
+        or kwargs["entity_id"] != str(cast(Applicant, origin.applicant).id)
+        or kwargs["action"] != "applicant.transition"
+        or kwargs["entity_type"] != "applicant"
+        or kwargs["actor_person_id"] is not None
+        or cast(Applicant, origin.applicant).status != "enrolled"
+        or kwargs["details"]
+        != {"from_status": "onboarding", "to_status": "enrolled", "reason": "", "source": "onboarding"}
+    ):
+        raise BadRequestError("invalid onboarding transition")
+    origin._audit(kwargs["action"], kwargs["entity_type"], cast(Applicant, origin.applicant).id, kwargs["details"])
 
 
 def transition_applicant(
@@ -731,13 +749,50 @@ def transition_applicant(
     actor_person_id: UUID | None = None,
     source: str = "admin",
 ) -> Applicant:
-    """Move an applicant to ``to_status`` if the transition is allowed."""
+    if to_status not in VALID_STATUSES:
+        raise BadRequestError(f"Unknown status: {to_status}")
+    applicant = db.scalars(
+        select(Applicant)
+        .where(Applicant.id == applicant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if applicant is None:
+        raise NotFoundError("Applicant not found.")
+    origin = _LegacyTransitionOrigin(actor_person_id, source)
+    return _transition_applicant_locked(
+        db,
+        applicant=applicant,
+        to_status=to_status,
+        notes=notes,
+        actor_person_id=actor_person_id,
+        source=source,
+        transition_origin=origin,
+    )
+
+
+def _transition_onboarding_enrollment(context):
+    from app.services.invitation_issuance import _OnboardingContext
+
+    if type(context) is not _OnboardingContext:
+        raise BadRequestError("invalid onboarding transition context")
+    context.require()
+    context._check_bearer()
+    return _transition_applicant_locked(
+        context.db,
+        applicant=context.applicant,
+        to_status="enrolled",
+        notes=None,
+        actor_person_id=None,
+        source="onboarding",
+        transition_origin=context,
+    )
+
+
+def _transition_applicant_locked(db, *, applicant, to_status, notes, actor_person_id, source, transition_origin):
     if to_status not in VALID_STATUSES:
         raise BadRequestError(f"Unknown status: {to_status}")
 
-    applicant = db.scalars(select(Applicant).where(Applicant.id == applicant_id).with_for_update()).first()
-    if applicant is None:
-        raise NotFoundError("Applicant not found.")
     current = applicant.status
     if to_status == current:
         return applicant
@@ -753,7 +808,8 @@ def transition_applicant(
     if notes:
         applicant.notes = notes
     db.flush()
-    write_audit_event(
+    _write_transition_audit(
+        transition_origin,
         db,
         tenant_id=applicant.tenant_id,
         actor_person_id=actor_person_id,
@@ -778,7 +834,26 @@ def transition_applicant(
     return applicant
 
 
-def apply_assessment_policy(db: Session, *, applicant: Applicant) -> str | None:
+def _assessment_policy_transition(db, *, context, **kwargs):
+    if context is None:
+        return transition_applicant(db, **kwargs)
+    from app.admission_assessment_context import _require_assessment
+
+    _require_assessment(context, db, context.applicant)
+    if kwargs["applicant_id"] != context.applicant.id or kwargs["source"] != "assessment_policy":
+        raise BadRequestError("assessment policy transition differs")
+    return _transition_applicant_locked(
+        db,
+        applicant=context.applicant,
+        to_status=kwargs["to_status"],
+        notes=kwargs.get("notes"),
+        actor_person_id=None,
+        source="assessment_policy",
+        transition_origin=context,
+    )
+
+
+def apply_assessment_policy(db: Session, *, applicant: Applicant, _assessment_context=None) -> str | None:
     """Decide the pipeline consequence of a graded entrance sitting.
 
     The single owner of the auto-progression decision. Acts only when the
@@ -787,38 +862,53 @@ def apply_assessment_policy(db: Session, *, applicant: Applicant) -> str | None:
 
     - score >= threshold → screened → accepted → onboarding (portal token
       minted; the raw is returned so the caller can email the offer).
-    - score < threshold → waitlisted, for human review of the borderline.
+    - score < threshold → the cohort's ``auto_accept_below_action``:
+      ``waitlisted`` (historical default) or untouched for a human.
     - invalid sitting / no cohort / no threshold → untouched: a human decides.
+
+    The decision itself is the shared pure policy in
+    :mod:`app.services.admission_assessment_policy`; this function only
+    executes its path (transitions, notes, onboarding token).
     """
-    if applicant.status != "applied":
-        return None
-    if applicant.cohort_id is None or applicant.assessment_score is None:
-        return None
-    if applicant.assessment_valid is not True:
-        return None  # no signal — never auto-decide on an invalid sitting
-    cohort = db.get(Cohort, applicant.cohort_id)
-    if cohort is None or cohort.auto_accept_threshold is None:
+    if _assessment_context is not None:
+        from app.admission_assessment_context import _require_assessment
+
+        _require_assessment(_assessment_context, db, applicant)
+    cohort = db.get(Cohort, applicant.cohort_id) if applicant.cohort_id is not None else None
+    threshold = cohort.auto_accept_threshold if cohort is not None else None
+    below_action = cohort.auto_accept_below_action if cohort is not None else "waitlisted"
+    path = assessment_path(
+        status=applicant.status,
+        score=applicant.assessment_score,
+        valid=applicant.assessment_valid is True,
+        threshold=threshold,
+        below_action=below_action,
+    )
+    if not path:
         return None
 
-    score, threshold = applicant.assessment_score, cohort.auto_accept_threshold
-    if score >= threshold:
-        for nxt in ("screened", "accepted", "onboarding"):
-            transition_applicant(
+    score = applicant.assessment_score
+    assert score is not None and threshold is not None  # assessment_path guarantees both
+    if path == ("screened", "accepted", "onboarding"):
+        for nxt in path:
+            _assessment_policy_transition(
                 db,
                 applicant_id=applicant.id,
                 to_status=nxt,
                 source="assessment_policy",
+                context=_assessment_context,
             )
         applicant.notes = f"auto-accepted: entrance score {score:.0%} >= threshold {threshold:.0%}"
         db.flush()
         return mint_onboarding_token(db, applicant=applicant)
 
-    transition_applicant(
+    _assessment_policy_transition(
         db,
         applicant_id=applicant.id,
         to_status="waitlisted",
-        notes=f"auto-waitlisted: entrance score {score:.0%} below threshold {threshold:.0%}",
+        notes=below_threshold_reason(score, threshold),
         source="assessment_policy",
+        context=_assessment_context,
     )
     return None
 
@@ -829,6 +919,7 @@ def mint_onboarding_token(db: Session, *, applicant: Applicant) -> str:
     Returns the raw token — deliver once (email link); only its hash is stored.
     Re-minting invalidates any older link, same as the entrance-exam invite.
     """
+    applicant = onboarding._lock_applicant(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
     raw = secrets.token_urlsafe(32)
     applicant.onboarding_token_hash = hash_token(raw)
     db.flush()
@@ -846,121 +937,272 @@ def applicant_for_onboarding_token(db: Session, *, tenant_id: UUID, raw: str) ->
     ).first()
 
 
-def _ensure_student_role(db: Session, *, tenant_id: UUID, person_id: UUID) -> None:
-    roles = ensure_roles(db, tenant_id)
-    existing = db.scalars(
-        select(PersonRole)
-        .where(PersonRole.tenant_id == tenant_id)
-        .where(PersonRole.person_id == person_id)
-        .where(PersonRole.role_id == roles["student"].id)
-    ).first()
-    if existing is None:
-        db.add(PersonRole(tenant_id=tenant_id, person_id=person_id, role_id=roles["student"].id))
-        db.flush()
+def _enroll_locked(db, *, applicant, cohort_id, context=None, actor_person_id=None):
+    """Product guards and canonical facts under Party -> Applicant -> Task locks."""
+    from uuid import uuid4
 
+    from dotmac_kernel.identity import person_display_name
+    from dotmac_kernel.models import PartyType
 
-def try_auto_enroll(db: Session, *, applicant: Applicant) -> tuple[bool, str | None]:
-    """Enrol an onboarding applicant the moment their checklist completes.
+    from app.services import canonical_identity_store as store
+    from app.services.admission_enrollment_policy import admission_enrollment_policy
+    from app.services.audit_context import _Context, _require_human_admission
+    from app.services.initial_identity_policy import initial_identity_policy
+    from app.services.invitation_issuance import _OnboardingContext
 
-    No-op unless the applicant is in ``onboarding``, every onboarding task is
-    done, and a target cohort is known. On enrolment the Person gets the
-    ``student`` role, and — if they have no login credential yet — an invite
-    token is issued so they can set their first password.
-
-    Returns ``(enrolled_now, invite_raw)``: ``enrolled_now`` is True only on the
-    call that performed the enrolment (so the caller emails the welcome exactly
-    once); ``invite_raw`` is the password-setup token to deliver, or None when
-    the person already had a credential. Idempotent: re-running never duplicates
-    enrolment, role, or credential.
-    """
-    if applicant.status != "onboarding" or applicant.cohort_id is None:
-        return (False, None)
-    if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
-        return (False, None)
-
-    enroll_applicant(db, applicant_id=applicant.id, cohort_id=applicant.cohort_id)
-    if applicant.person_id is None:  # defensive; enroll_applicant always links it
-        return (False, None)
-    _ensure_student_role(db, tenant_id=applicant.tenant_id, person_id=applicant.person_id)
-
-    credential = db.scalars(
-        select(UserCredential)
-        .where(UserCredential.tenant_id == applicant.tenant_id)
-        .where(UserCredential.person_id == applicant.person_id)
-    ).first()
-    if credential is not None:
-        return (True, None)
-    raw = lifecycle.issue_invite_for_person(db, tenant_id=applicant.tenant_id, person_id=applicant.person_id)
-    return (True, raw)
-
-
-def enroll_applicant(
-    db: Session,
-    *,
-    applicant_id: UUID,
-    cohort_id: UUID,
-    actor_person_id: UUID | None = None,
-) -> Applicant:
-    """Convert an onboarding applicant into an enrolled learner.
-
-    Creates (or reuses) the ``Person`` for this email and enrols them in the
-    target cohort as a student, then marks the applicant ``enrolled`` and links
-    ``person_id``. Idempotent: an existing person/enrolment is reused, so
-    re-running is safe. Requires ``onboarding`` status (the onboarding step
-    gates enrolment).
-    """
-    applicant = get_applicant(db, applicant_id=applicant_id)
+    if type(context) is _Context:
+        enrollment_context = _require_human_admission(context, db)
+    elif type(context) is _OnboardingContext and context.db is db:
+        context.require()
+        context._check_bearer()
+        enrollment_context = context
+    else:
+        raise BadRequestError("exact human or onboarding enrollment origin required")
+    if applicant is not enrollment_context.applicant:
+        raise BadRequestError("enrollment applicant binding differs")
     if applicant.status != "onboarding":
         raise BadRequestError(f"Applicant must be in 'onboarding' to enrol (is '{applicant.status}').")
     if not onboarding.is_complete(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id):
         raise BadRequestError("Applicant has outstanding onboarding tasks and cannot enrol yet.")
-
     if applicant.cohort_id != cohort_id:
         raise BadRequestError("Applicant must be enrolled into their assigned cohort.")
     if not has_active_intake(db, applicant=applicant):
         raise BadRequestError("Applicant has no active canonical training track.")
-
-    # Reuse an existing Person for this email (e.g. an employee already in the
-    # tenant), otherwise create one. RLS scopes the lookup to this tenant.
-    person = db.scalar(select(Person).where(Person.email == applicant.email))
-    if person is None:
-        person = Person(
-            tenant_id=applicant.tenant_id,
-            email=applicant.email,
-            first_name=applicant.first_name,
-            last_name=applicant.last_name,
-        )
-        db.add(person)
-        db.flush()
-
-    enrollment = db.scalar(
-        select(Enrollment).where(
-            Enrollment.cohort_id == cohort_id,
-            Enrollment.person_id == person.id,
-        )
-    )
-    if enrollment is None:
-        db.add(
-            Enrollment(
+    person = store.find_party_exact_email(db, tenant_id=applicant.tenant_id, email=applicant.email)
+    created = person is None
+    if not created:
+        person = cast("store.PartyFact", person)
+        subtype = store.lock_person(db, tenant_id=applicant.tenant_id, party_id=person.id)
+        profile = store.lock_profile(db, tenant_id=applicant.tenant_id, party_id=person.id)
+        if person.party_type != PartyType.person or subtype is None or profile is None:
+            raise BadRequestError("Admission identity is incomplete.")
+    # Required even for enrollment reuse; compose before any identity/enrollment DML.
+    initial_state = admission_enrollment_policy(db)
+    if created:
+        policy = initial_identity_policy(db)
+        now = datetime.now(UTC)
+        person = store.create_person(
+            db,
+            values=store.NewPersonValues(
+                id=uuid4(),
                 tenant_id=applicant.tenant_id,
-                cohort_id=cohort_id,
-                track_id=applicant.track_id,
-                person_id=person.id,
-                role_in_cohort="student",
-                status="active",
-            )
+                email=applicant.email,
+                display_name=person_display_name(applicant.first_name, applicant.last_name),
+                first_name=applicant.first_name,
+                last_name=applicant.last_name,
+                is_active=policy.is_active,
+                custom_fields={},
+                profile_status=policy.profile_status,
+                profile_avatar_path=None,
+                profile_prefs={},
+                created_at=now,
+                updated_at=now,
+            ),
         )
-        db.flush()
-    elif enrollment.track_id != applicant.track_id:
-        enrollment.track_id = applicant.track_id
-        db.flush()
-
-    applicant.person_id = person.id
-    transition_applicant(
+    person = cast("store.PartyFact", person)
+    subtype = store.lock_person(db, tenant_id=applicant.tenant_id, party_id=person.id)
+    profile = store.lock_profile(db, tenant_id=applicant.tenant_id, party_id=person.id)
+    if person.party_type != PartyType.person or subtype is None or profile is None:
+        raise BadRequestError("Admission identity is incomplete.")
+    person = store.lock_parties(db, tenant_id=applicant.tenant_id, party_ids=(person.id,))[0]
+    if created and (person.is_active is not policy.is_active or profile.status != policy.profile_status):
+        raise BadRequestError("Admission initial identity state differs.")
+    enrollment_context.target_id = person.id
+    enrollment_context.identity = enrollment_context._identity_state()
+    enrollment_context.original_roles = enrollment_context._roles()
+    if type(context) is _Context:
+        enrollment_context.credentials_before = enrollment_context._credentials()
+    learning.ensure_admission_enrollment(
         db,
-        applicant_id=applicant.id,
-        to_status="enrolled",
-        actor_person_id=actor_person_id,
-        source="admin" if actor_person_id is not None else "onboarding",
+        learning.EnsureAdmissionEnrollmentCommand(
+            tenant_id=applicant.tenant_id, cohort_id=cohort_id, person_id=person.id, track_id=applicant.track_id
+        ),
+        initial_state=initial_state,
     )
-    return applicant
+    if (
+        enrollment_context._identity_state() != enrollment_context.identity
+        or enrollment_context._roles() != enrollment_context.original_roles
+    ):
+        raise BadRequestError("Admission identity changed during enrollment.")
+    if type(context) is _Context and enrollment_context._credentials() != enrollment_context.credentials_before:
+        raise BadRequestError("Admission credentials changed during enrollment.")
+    applicant.person_id = person.id
+    db.flush()
+    if type(context) is _Context:
+        enrollment_context.expected_binding = (
+            applicant.email,
+            person.id,
+            person.id,
+            applicant.cohort_id,
+            applicant.track_id,
+        )
+        return _transition_applicant_locked(
+            db,
+            applicant=applicant,
+            to_status="enrolled",
+            notes=None,
+            actor_person_id=context.actor_id,
+            source="admin_api",
+            transition_origin=context,
+        )
+    context.linked_id = context.identified_id = person.id
+    return _transition_onboarding_enrollment(context)
+
+
+def enroll_applicant(db: Session, *, request, applicant_id: UUID, cohort_id: UUID) -> Applicant:
+    try:
+        return enroll_api_applicant(db, request=request, applicant_id=applicant_id, cohort_id=cohort_id)
+
+    finally:
+        db = cast(Session, None)
+        request = None
+
+
+def _write_human_event(context, db, **kwargs):
+    from app.services.audit_context import _require_human_admission
+
+    state = _require_human_admission(context, db)
+    if (
+        kwargs["tenant_id"] != context.tenant_id
+        or kwargs["actor_person_id"] != context.actor_id
+        or kwargs["entity_type"] != "applicant"
+        or kwargs["entity_id"] != str(context.resources.entity_id)
+    ):
+        raise BadRequestError("human admission audit resource differs")
+    state.issue(kwargs["action"], kwargs["details"])
+
+
+def _execute_human_admission(context):
+    try:
+        from app.services import audit_context as boundary
+
+        state = boundary._require_human_admission(context, context.db)
+        db, applicant, command = context.db, state.applicant, context.resources
+        if context.operation is boundary._ADMISSIONS_INTAKE:
+            return _assign_applicant_intake_locked(db, context=context)
+        if context.operation is boundary._ADMISSIONS_REVIEW:
+            # Preserve the WEB special resend+extend bypass of the action panel gate.
+            if command.action == "resend_invitation" and command.extend_access:
+                return _resend_applicant_invitation_locked(db, context=context)
+            return _apply_admin_review_action_locked(db, context=context)
+        if context.operation is boundary._ADMISSIONS_ENROLL:
+            return _enroll_locked(db, applicant=applicant, cohort_id=command.cohort_id, context=context)
+        if context.operation is not boundary._ADMISSIONS_TRANSITION:
+            raise BadRequestError("unsupported human admission command")
+        result = _transition_applicant_locked(
+            db,
+            applicant=applicant,
+            to_status=command.action,
+            notes=command.reason,
+            actor_person_id=context.actor_id,
+            source="admin_api",
+            transition_origin=context,
+        )
+        if command.action == "onboarding":
+            from app.services import applicant_email
+
+            raw = mint_onboarding_token(db, applicant=applicant)
+            queued = applicant_email.send_onboarding_invite(
+                db, applicant=applicant, url=f"{state.base_url}/onboarding?token={raw}"
+            )
+            state.delivery("onboarding_invite", queued)
+        return result
+
+    finally:
+        raw = cast(str, None)
+        db = context = state = applicant = command = None
+
+
+def assign_web_applicant_intake(db, *, request, applicant_id, cohort_id, track_id, reason=None):
+    try:
+        from app.services import audit_context as boundary
+
+        with boundary.assign_web_applicant_intake(
+            db, request=request, applicant_id=applicant_id, cohort_id=cohort_id, track_id=track_id, reason=reason
+        ) as context:
+            return context.execute_admission()
+
+    finally:
+        db = request = None
+
+
+def review_web_applicant(db, *, request, applicant_id, action, reason=None, extend_access=False):
+    try:
+        from app.services import audit_context as boundary
+
+        with boundary.review_web_applicant(
+            db, request=request, applicant_id=applicant_id, action=action, reason=reason, extend_access=extend_access
+        ) as context:
+            return context.execute_admission()
+
+    finally:
+        db = request = None
+
+
+def transition_api_applicant(db, *, request, applicant_id, to_status, notes=None):
+    try:
+        from app.services import audit_context as boundary
+
+        with boundary.transition_api_applicant(
+            db, request=request, applicant_id=applicant_id, to_status=to_status, notes=notes
+        ) as context:
+            return context.execute_admission()
+
+    finally:
+        db = request = None
+
+
+def enroll_api_applicant(db, *, request, applicant_id, cohort_id):
+    try:
+        from app.services import audit_context as boundary
+
+        with boundary.enroll_api_applicant(
+            db, request=request, applicant_id=applicant_id, cohort_id=cohort_id
+        ) as context:
+            return context.execute_admission()
+
+    finally:
+        db = request = None
+
+
+def assign_applicant_intake(db, *, request, applicant_id, cohort_id, track_id, reason=None):
+    try:
+        return assign_web_applicant_intake(
+            db, request=request, applicant_id=applicant_id, cohort_id=cohort_id, track_id=track_id, reason=reason
+        )
+
+    finally:
+        db = request = None
+
+
+def apply_admin_review_action(db, *, request, applicant_id, action, reason=None):
+    try:
+        return review_web_applicant(db, request=request, applicant_id=applicant_id, action=action, reason=reason)
+
+    finally:
+        db = request = None
+
+
+def resend_applicant_invitation(db, *, request, applicant_id, extend_access=False, reason=None):
+    try:
+        return review_web_applicant(
+            db,
+            request=request,
+            applicant_id=applicant_id,
+            action="resend_invitation",
+            reason=reason,
+            extend_access=extend_access,
+        )
+
+    finally:
+        db = request = None
+
+
+def extend_applicant_access(db, *, request, applicant_id, reason=None):
+    try:
+        return review_web_applicant(
+            db, request=request, applicant_id=applicant_id, action="extend_access", reason=reason
+        )
+
+    finally:
+        db = request = None

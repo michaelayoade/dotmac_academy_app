@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.models import Tenant
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -25,8 +26,9 @@ from app.models.base import Base, TimestampMixin, uuid_pk
 
 
 def _tenant_fk():
-    return mapped_column(PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
-                         nullable=False, index=True)
+    return mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"), nullable=False, index=True
+    )
 
 
 class LabTemplate(Base, TimestampMixin):
@@ -83,19 +85,11 @@ class LabInstance(Base, TimestampMixin):
     seed: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # These runtime fields are worker-owned.  Server-default metadata keeps a
     # normal app_user ORM insert from naming columns outside its column grant.
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'queued'")
-    )
-    consoles: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'queued'"))
+    consoles: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     error: Mapped[str | None] = mapped_column(Text, server_default=FetchedValue())
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=FetchedValue()
-    )
-    last_active_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=FetchedValue()
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=FetchedValue())
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=FetchedValue())
     # Worker-owned, independent of `status` (see migration
     # 0058_lab_runtime_presence.py's module docstring): `status`
     # carries lifecycle/UI meaning and cannot simultaneously express physical
@@ -104,10 +98,7 @@ class LabInstance(Base, TimestampMixin):
     # mutation began, result uncertain). Capacity accounting
     # (`_capacity_available` in `app/services/lab_operations.py`) counts
     # "present" and "unknown" together, regardless of lifecycle `status`.
-    runtime_presence: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'absent'")
-    )
-
+    runtime_presence: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'absent'"))
 
 class LabConsoleActivity(Base):
     """Web-tier observation that a learner used a console of this instance.
@@ -151,9 +142,12 @@ class LabOperation(Base, TimestampMixin):
 
     __tablename__ = "lab_operations"
     __table_args__ = (
-        ForeignKeyConstraint(["tenant_id", "instance_id"],
-                             ["lab_instances.tenant_id", "lab_instances.id"],
-                             ondelete="CASCADE", name="fk_lab_operations_tenant_instance"),
+        ForeignKeyConstraint(
+            ["tenant_id", "instance_id"],
+            ["lab_instances.tenant_id", "lab_instances.id"],
+            ondelete="CASCADE",
+            name="fk_lab_operations_tenant_instance",
+        ),
         Index(
             "uq_lab_operations_open_per_instance",
             "instance_id",
@@ -161,6 +155,12 @@ class LabOperation(Base, TimestampMixin):
             postgresql_where=text("state IN ('queued', 'claimed')"),
         ),
         Index("ix_lab_operations_claim", "state", "not_before", "requested_at"),
+        CheckConstraint(
+            "claim_lease_seconds IS NULL OR claim_lease_seconds > 0", name="ck_lab_operations_claim_lease_positive"
+        ),
+        CheckConstraint(
+            "state <> 'claimed' OR claim_lease_seconds IS NOT NULL", name="ck_lab_operations_claim_lease_required"
+        ),
         # Mirrors migration 0060_lab_conditional_ops.py's CHECK exactly —
         # see that migration's module docstring for why every branch below
         # uses explicit `IS NOT NULL`/`IS NULL` guards rather than a bare `=`
@@ -193,10 +193,8 @@ class LabOperation(Base, TimestampMixin):
     # like `requested_at`/`not_before` below.
     state: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'queued'"))
     requested_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
-    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
-                                                    server_default=func.now())
-    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
-                                                  server_default=func.now())
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     # Same reasoning as `state` above applies to every worker-owned column
     # below, nullable or not: Postgres requires INSERT privilege on any
     # column *mentioned* in the statement regardless of whether the value
@@ -206,6 +204,8 @@ class LabOperation(Base, TimestampMixin):
     # tells SQLAlchemy's ORM to omit the column so the
     # column-level INSERT grant is never tripped by an otherwise-normal
     # insert that doesn't set it.
+    # Worker-stamped duration; FetchedValue omits it from request-only INSERTs.
+    claim_lease_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, server_default=FetchedValue())
     claimed_by: Mapped[str | None] = mapped_column(String(200), server_default=FetchedValue())
     # Structural decomposition of `claimed_by` for restart-reclaim (migration
     # 0059_lab_claim_owner.py): `claimed_by` stays the sole fencing value
@@ -216,20 +216,13 @@ class LabOperation(Base, TimestampMixin):
     # Same `FetchedValue()` reasoning as `claimed_by` above: metadata-only
     # server-generation marker, so app_user's column-scoped INSERT grant (see
     # migration 0055) never needs to cover these worker-owned columns either.
-    claimed_host: Mapped[str | None] = mapped_column(
-        String(255), server_default=FetchedValue()
-    )
-    claimed_epoch: Mapped[str | None] = mapped_column(
-        String(64), server_default=FetchedValue()
-    )
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                         server_default=FetchedValue())
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                           server_default=FetchedValue())
+    claimed_host: Mapped[str | None] = mapped_column(String(255), server_default=FetchedValue())
+    claimed_epoch: Mapped[str | None] = mapped_column(String(64), server_default=FetchedValue())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=FetchedValue())
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=FetchedValue())
     # Same reasoning as `state` above.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
-                                                          server_default=FetchedValue())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=FetchedValue())
     last_error: Mapped[str | None] = mapped_column(Text, server_default=FetchedValue())
     # Reconciler conditional operations (migration 0060_lab_conditional_ops.py):
     # worker-owned, like every column above. `origin` is audit/provenance
@@ -245,6 +238,4 @@ class LabOperation(Base, TimestampMixin):
     # marker, so app_user's column-scoped INSERT grant (see migration 0055)
     # never needs to cover these worker-owned columns either.
     origin: Mapped[str | None] = mapped_column(String(32), server_default=FetchedValue())
-    runtime_precondition: Mapped[str | None] = mapped_column(
-        String(16), server_default=FetchedValue()
-    )
+    runtime_precondition: Mapped[str | None] = mapped_column(String(16), server_default=FetchedValue())

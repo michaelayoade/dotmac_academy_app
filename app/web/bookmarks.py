@@ -7,46 +7,41 @@ stays untouched. Thin adapters: all writes live in ``services.bookmarks``.
 
 from __future__ import annotations
 
+from dotmac_learning import ChapterFact, CourseFact
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.course import Chapter, Course
-from app.models.person import Person
 from app.services import bookmarks as svc
+from app.services import catalog
 from app.services.entitlements import require_course_access
+from app.services.identity import AcademyCurrentAccount
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
-def _resolve(db: Session, tenant_id, slug: str, n: int, person_id) -> tuple[Course, Chapter]:
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.slug == slug)
-    ).first()
+def _resolve(db: Session, tenant_id, slug: str, n: int, person_id) -> tuple[CourseFact, ChapterFact]:
+    course = catalog.catalog_course_by_slug(db, tenant_id=tenant_id, slug=slug)
     if course is None:
         raise HTTPException(status_code=404)
     require_course_access(db, tenant_id=tenant_id, person_id=person_id, course_id=course.id)
-    chapter = db.scalars(
-        select(Chapter).where(Chapter.tenant_id == tenant_id)
-        .where(Chapter.course_id == course.id).where(Chapter.number == n)
-    ).first()
+    chapter = catalog.catalog_chapter_by_number(db, tenant_id=tenant_id, course_id=course.id, number=n)
     if chapter is None:
         raise HTTPException(status_code=404)
     return course, chapter
 
 
-def _toggle_partial(request: Request, course: Course, chapter: Chapter, bookmarked: bool):
+def _toggle_partial(request: Request, course: CourseFact, chapter: ChapterFact, bookmarked: bool):
     return templates.TemplateResponse(
         request, "bookmarks/_toggle.html",
         {"course": course, "chapter": chapter, "bookmarked": bookmarked},
     )
 
 
-def _note_partial(request: Request, course: Course, chapter: Chapter, note, saved: bool = False):
+def _note_partial(request: Request, course: CourseFact, chapter: ChapterFact, note, saved: bool = False):
     return templates.TemplateResponse(
         request, "bookmarks/_note.html",
         {"course": course, "chapter": chapter, "note": note, "saved": saved},
@@ -56,7 +51,7 @@ def _note_partial(request: Request, course: Course, chapter: Chapter, note, save
 @router.get("/bookmarks", response_class=HTMLResponse)
 def bookmarks_index(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -67,7 +62,7 @@ def bookmarks_index(
 @router.get("/bookmarks/chapters/{slug}/{n}/toggle", response_class=HTMLResponse)
 def bookmark_toggle_ui(
     slug: str, n: int, request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -79,7 +74,7 @@ def bookmark_toggle_ui(
 @router.post("/bookmarks/chapters/{slug}/{n}/toggle", response_class=HTMLResponse)
 def bookmark_toggle(
     slug: str, n: int, request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -94,7 +89,7 @@ def bookmark_toggle(
 @router.get("/bookmarks/chapters/{slug}/{n}/note", response_class=HTMLResponse)
 def note_ui(
     slug: str, n: int, request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -107,7 +102,7 @@ def note_ui(
 def note_save(
     slug: str, n: int, request: Request,
     body: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)

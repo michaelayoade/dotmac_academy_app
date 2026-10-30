@@ -17,11 +17,10 @@ from app.models.certificate import Certificate
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.learning_event import LearningEvent
-from app.models.notification import Notification
-from app.models.person import Person
-from app.services import attempts, certificates, completion
+from app.services import attempts
 from app.services.assessment import submit_activity
 from app.services.completion import recompute_completion
+from tests.conftest import make_person_party
 
 
 def _course_with_two_activities(db, tid):
@@ -37,7 +36,6 @@ def _course_with_two_activities(db, tid):
     db.flush()
     return c, a1, a2
 
-
 def _pass(db, tid, person, activity, frac=1.0):
     sub = Submission(tenant_id=tid, activity_id=activity.id, person_id=person.id,
                      answers={}, attempt_no=1)
@@ -47,10 +45,9 @@ def _pass(db, tid, person, activity, frac=1.0):
                  fraction=frac, passed=frac >= activity.pass_threshold, per_item=[], source="auto"))
     db.flush()
 
-
 def test_partial_then_full_completion(admin_session, tenant_a):
     tid = tenant_a.id
-    p = Person(tenant_id=tid, email="c@a.edu", first_name="C", last_name="X")
+    p = make_person_party(admin_session, tenant_id=tid, email="c@a.edu", first_name="C", last_name="X")
     admin_session.add(p)
     admin_session.flush()
     c, a1, a2 = _course_with_two_activities(admin_session, tid)
@@ -81,11 +78,10 @@ def test_partial_then_full_completion(admin_session, tenant_a):
     assert n == 1
     admin_session.rollback()
 
-
 def test_submit_activity_updates_completion(admin_session, tenant_a):
     """Slice 2c: grading a submission recomputes the completion record."""
     tid = tenant_a.id
-    p = Person(tenant_id=tid, email="d@a.edu", first_name="D", last_name="X")
+    p = make_person_party(admin_session, tenant_id=tid, email="d@a.edu", first_name="D", last_name="X")
     admin_session.add(p)
     admin_session.flush()
     c = Course(tenant_id=tid, slug="solo", title="Solo", discipline="networking",
@@ -113,13 +109,12 @@ def test_submit_activity_updates_completion(admin_session, tenant_a):
     assert rec.pct == 1.0
     admin_session.rollback()
 
-
 def test_concurrent_first_recomputes_create_one_completion_and_certificate(
     admin_engine, admin_session, tenant_a
 ):
     """First-creation serialization also covers callers without a Person lock."""
     tid = tenant_a.id
-    person = Person(tenant_id=tid, email="race@a.edu", first_name="Race", last_name="Learner")
+    person = make_person_party(admin_session, tenant_id=tid, email="race@a.edu", first_name="Race", last_name="Learner")
     admin_session.add(person)
     admin_session.flush()
     course, first, last = _course_with_two_activities(admin_session, tid)
@@ -157,9 +152,8 @@ def test_concurrent_first_recomputes_create_one_completion_and_certificate(
         tenant_id=tid, person_id=person_id, course_id=course_id, kind="certificate_earned"
     ).count() == 1
 
-
 def _learner_with_open_quiz(db, tid):
-    person = Person(tenant_id=tid, email="mixed@a.edu", first_name="Mixed", last_name="Learner")
+    person = make_person_party(db, tenant_id=tid, email="mixed@a.edu", first_name="Mixed", last_name="Learner")
     db.add(person)
     course, quiz, last = _course_with_two_activities(db, tid)
     bank = QuestionBank(tenant_id=tid, course_id=course.id, chapter_number=1, kind="chapter", version=1)
@@ -179,110 +173,9 @@ def _learner_with_open_quiz(db, tid):
     db.flush()
     return person, course, quiz, last, attempt
 
-
-@pytest.mark.parametrize("close_first", [False, True], ids=["direct-submit", "close-then-submit"])
-def test_admission_and_certificate_writers_preserve_fk_consequences_without_deadlock(
-    admin_engine, admin_session, tenant_a, monkeypatch, close_first
-):
-    """Cross actual admission/aggregate locks before writing real People FKs.
-
-    A holds the admission lock and approaches completion; B holds completion
-    and must write certificate_earned plus its notification. FOR UPDATE on
-    People would block B's FK checks and create a lock cycle or lose these
-    best-effort consequences, even if both callers eventually report success.
-    """
-    tid = tenant_a.id
-    person, course, quiz, last, attempt = _learner_with_open_quiz(admin_session, tid)
-    _pass(admin_session, tid, person, quiz)
-    _pass(admin_session, tid, person, last)
-    completed_at = datetime(2026, 6, 27, tzinfo=UTC)
-    admin_session.add(CourseCompletion(
-        tenant_id=tid, person_id=person.id, course_id=course.id,
-        status="completed", pct=1, completed_at=completed_at,
-    ))
-    person_id, course_id, quiz_id, attempt_id = person.id, course.id, quiz.id, attempt.id
-    admin_session.commit()
-    assert admin_session.query(Certificate).filter_by(tenant_id=tid).count() == 0
-    factory = sessionmaker(bind=admin_engine, autoflush=False)
-    both_locks = Barrier(2)
-    real_ensure = completion.ensure_locked_completion
-    real_lock = certificates.lock_existing_completion
-
-    def after_admission(db, **kwargs):
-        # submit_activity already acquired its real Person admission lock.
-        both_locks.wait(timeout=5)
-        return real_ensure(db, **kwargs)
-
-    def after_completion_lock(db, **kwargs):
-        aggregate = real_lock(db, **kwargs)
-        assert aggregate is not None
-        both_locks.wait(timeout=5)
-        return aggregate
-
-    monkeypatch.setattr(completion, "ensure_locked_completion", after_admission)
-    monkeypatch.setattr(certificates, "lock_existing_completion", after_completion_lock)
-
-    def submit():
-        with factory() as db:
-            try:
-                db.execute(text("SET LOCAL lock_timeout = '2s'"))
-                db.execute(text("SET LOCAL statement_timeout = '8s'"))
-                activity = db.get(Activity, quiz_id)
-                if close_first:
-                    closed = attempts.close_open_attempt(
-                        db, tenant_id=tid, person_id=person_id, activity_id=quiz_id
-                    )
-                    assert closed is not None and closed.id == attempt_id
-                score = submit_activity(
-                    db, tenant_id=tid, person_id=person_id, activity=activity,
-                    answers={"q1": ["A"]}, only_ext_ids=["q1"],
-                )
-                assert score is not None and score.passed
-                score_id = score.id
-                db.commit()
-                return score_id
-            finally:
-                db.rollback()
-
-    def issue():
-        with factory() as db:
-            try:
-                db.execute(text("SET LOCAL lock_timeout = '2s'"))
-                db.execute(text("SET LOCAL statement_timeout = '8s'"))
-                cert = certificates.issue_certificate(
-                    db, tenant_id=tid, person_id=person_id, course_id=course_id
-                )
-                certificate_id = cert.id
-                db.commit()
-                return certificate_id
-            finally:
-                db.rollback()
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        submit_future = pool.submit(submit)
-        issue_future = pool.submit(issue)
-        score_id = submit_future.result(timeout=15)
-        certificate_id = issue_future.result(timeout=15)
-    admin_session.expire_all()
-    assert admin_session.get(Score, score_id).passed
-    assert admin_session.query(Submission).filter_by(tenant_id=tid, activity_id=quiz_id).count() == 2
-    cert = admin_session.query(Certificate).filter_by(
-        tenant_id=tid, person_id=person_id, course_id=course_id
-    ).one()
-    assert cert.id == certificate_id
-    earned = admin_session.query(LearningEvent).filter_by(
-        tenant_id=tid, person_id=person_id, course_id=course_id, kind="certificate_earned"
-    ).one()
-    assert earned.detail["serial"] == cert.serial
-    assert admin_session.query(Notification).filter_by(
-        tenant_id=tid, person_id=person_id, kind="certificate"
-    ).count() == 1
-    aggregate = admin_session.query(CourseCompletion).filter_by(
-        tenant_id=tid, person_id=person_id, course_id=course_id
-    ).one()
-    assert aggregate.status == "completed" and aggregate.completed_at == completed_at
-    assert (admin_session.get(ActivityAttempt, attempt_id).submitted_at is not None) == close_first
-
+# Retired in C1 with app/services/completion_aggregate.py: test_admission_and_certificate_writers_preserve_fk_consequences_without_deadlock
+# monkeypatched ensure_locked_completion/lock_existing_completion, which Learning
+# now owns. Concurrency intent is re-proved at the Learning boundary (see C1 receipt).
 
 def test_attempt_close_and_submit_admission_locks_remain_mutually_exclusive(
     admin_engine, admin_session, tenant_a

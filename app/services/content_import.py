@@ -1,23 +1,24 @@
 """Foundation manual content import service.
 
 Parses markdown chapter files (with YAML frontmatter) into rendered HTML and
-upserts them into the database as Course/Chapter records.
+delegates curriculum persistence to the public Learning owner.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
+import dotmac_learning as learning
 import yaml
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.course import Chapter, Course
+from app.services import settings_store
 from app.services.authoring import render_markdown
+from app.services.learning_policy import creation_defaults
 
 
 def sync_figures(figures_dir: Path, static_figures_dir: Path) -> int:
@@ -65,17 +66,13 @@ def missing_figure_refs(chapters_dir: Path, figures_dir: Path) -> dict[str, list
     return missing
 
 
-def _figure_fingerprint(raw: str, figures_dir: Path) -> str:
-    """Hash the figure files referenced by a chapter into source change state."""
-    h = hashlib.sha256()
+def _chapter_source(raw: str, figures_dir: Path) -> learning.ChapterSource:
+    """Supply exact raw text and distinct referenced figure bytes to the owner."""
+    figures = []
     for fid in sorted({m.group(1) for m in _FIG.finditer(raw)}):
         img_path = Path(figures_dir) / f"{fid}.png"
-        h.update(fid.encode())
-        if img_path.exists():
-            h.update(img_path.read_bytes())
-        else:
-            h.update(b"<missing>")
-    return h.hexdigest()
+        figures.append(learning.FigureSource(id=fid, content=img_path.read_bytes() if img_path.exists() else None))
+    return learning.ChapterSource(raw_utf8=raw.encode(), figures=tuple(figures))
 
 
 @dataclass
@@ -126,9 +123,7 @@ def parse_chapter_file(path: Path, figures_dir: Path) -> ChapterDoc:
         A :class:`ChapterDoc` with rendered HTML and metadata from frontmatter.
     """
     raw = Path(path).read_text(encoding="utf-8")
-    source_hash = hashlib.sha256(
-        raw.encode() + _figure_fingerprint(raw, figures_dir).encode()
-    ).hexdigest()
+    source_hash = learning.chapter_source_hash(_chapter_source(raw, figures_dir))
 
     fm_match = _FM.match(raw)
     meta: dict = yaml.safe_load(fm_match.group(1)) if fm_match else {}
@@ -160,7 +155,7 @@ def import_manual(
     chapters_dir: Path,
     figures_dir: Path,
     strict_figures: bool = True,
-) -> Course:
+) -> learning.CourseFact:
     """Upsert a course and its chapters from a directory of markdown files.
 
     Generic over any manual. Idempotent: chapters whose ``source_hash`` has not
@@ -168,7 +163,7 @@ def import_manual(
     chapter changed or was added.
 
     Args:
-        db: SQLAlchemy session (must have INSERT/UPDATE rights on courses/chapters).
+        db: Caller-owned SQLAlchemy session with an active tenant transaction.
         tenant_id: UUID of the tenant to import into.
         slug: URL-safe course identifier (e.g. ``"foundation"``, ``"fiber-engineering"``).
         title: Human-readable course title.
@@ -179,82 +174,44 @@ def import_manual(
         strict_figures: When true, abort if any chapter references a missing figure.
 
     Returns:
-        The upserted :class:`Course`.
+        An immutable course fact with the imported course values.
     """
     if strict_figures:
         missing = missing_figure_refs(chapters_dir, figures_dir)
         if missing:
-            details = "; ".join(
-                f"{chapter}: {', '.join(ids)}" for chapter, ids in missing.items()
-            )
+            details = "; ".join(f"{chapter}: {', '.join(ids)}" for chapter, ids in missing.items())
             raise ValueError(f"missing figure assets for import: {details}")
 
-    display_title = _course_display_title(title)
+    defaults = creation_defaults(db)
+    command = learning.ManualImportHeader(
+        tenant_id=tenant_id,
+        slug=slug,
+        title=_course_display_title(title),
+        discipline=discipline,
+        source_ref=source_ref,
+        new_course_status=cast(str, settings_store.effective(db, require_store=True)["learning_default_course_status"]),
+        new_course_listed=cast(
+            bool, settings_store.effective(db, require_store=True)["learning_default_course_listed"]
+        ),
+        new_course_completion_fraction=defaults.completion_fraction,
+        new_course_certificate_auto_issue=defaults.certificate_auto_issue,
+        new_course_certificate_validity_days=defaults.certificate_validity_days,
+        new_course_prerequisite_composition=defaults.prerequisite_default_composition,
+    )
 
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.slug == slug)
-    ).first()
-
-    if course is None:
-        course = Course(
-            tenant_id=tenant_id,
-            slug=slug,
-            title=display_title,
-            discipline=discipline,
-            source_ref=source_ref,
-            version=1,
-        )
-        db.add(course)
-        db.flush()
-
-    changed = False
-    if course.title != display_title:
-        course.title = display_title
-        changed = True
-    if course.discipline != discipline:
-        course.discipline = discipline
-        changed = True
-    if course.source_ref != source_ref:
-        course.source_ref = source_ref
-        changed = True
-
-    for chapter_file in sorted(Path(chapters_dir).glob("chapter-*.md")):
-        doc = parse_chapter_file(chapter_file, figures_dir)
-
-        existing = db.scalars(
-            select(Chapter)
-            .where(Chapter.tenant_id == tenant_id)
-            .where(Chapter.course_id == course.id)
-            .where(Chapter.number == doc.number)
-        ).first()
-
-        if existing is None:
-            db.add(
-                Chapter(
-                    tenant_id=tenant_id,
-                    course_id=course.id,
-                    number=doc.number,
-                    title=doc.title,
-                    part=doc.part,
-                    body_html=doc.body_html,
-                    source_hash=doc.source_hash,
-                    order_index=doc.number,
-                )
+    def chapters():
+        # Discovery and parsing occur after the owner stages course metadata.
+        for chapter_file in sorted(Path(chapters_dir).glob("chapter-*.md")):
+            doc = parse_chapter_file(chapter_file, figures_dir)
+            yield learning.ImportedChapter(
+                number=doc.number,
+                title=doc.title,
+                part=doc.part,
+                body_html=doc.body_html,
+                source_hash=doc.source_hash,
             )
-            changed = True
-        elif existing.source_hash != doc.source_hash:
-            existing.title = doc.title
-            existing.part = doc.part
-            existing.body_html = doc.body_html
-            existing.source_hash = doc.source_hash
-            changed = True
-        # else: unchanged — skip
 
-    if changed:
-        course.version += 1
-
-    db.flush()
-    return course
+    return learning.import_manual_chapters(db, command, chapters=chapters())
 
 
 def import_foundation(
@@ -264,7 +221,7 @@ def import_foundation(
     chapters_dir: Path,
     figures_dir: Path,
     strict_figures: bool = True,
-) -> Course:
+) -> learning.CourseFact:
     """Backward-compatible wrapper: import the Foundation manual.
 
     Thin convenience over :func:`import_manual` with the Foundation course

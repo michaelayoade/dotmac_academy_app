@@ -1,8 +1,8 @@
 """Academy admin Settings portal — configure SMTP / email toggles / branding /
 lab limits in the browser (DB-stored, overriding env defaults).
 
-ADMIN ONLY: every route is gated by ``require_web_role("admin")`` — instructors
-and students get 403.
+Every route composes the configured Settings access roles with live tenant
+grants and cookie authentication.
 
 Settings apply to the single Academy instance and live in the
 ``platform_settings`` table, which only the restricted settings-writer DB role
@@ -16,24 +16,35 @@ on POST means "keep the existing value".
 
 from __future__ import annotations
 
+from html import escape
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_platform_db, require_tenant
-from app.config import settings
-from app.models.person import Person
+from app.config import Settings, settings
 from app.services.email import send_email_detailed
+from app.services.identity import AcademyCurrentAccount
+from app.services.settings_access import require_settings_access
 from app.services.settings_store import effective, set_many
-from app.services.web_auth import require_web_role
 from app.web.templating import templates
 
 router = APIRouter(
     prefix="/admin",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("admin"))],
+    dependencies=[Depends(require_tenant), Depends(require_settings_access)],
 )
 
-_BOOL_FIELDS = ("smtp_starttls", "email_auto_on_pass", "email_digest_enabled")
+_DISPLAY_FIELDS = (
+    "branding_name", "smtp_host", "smtp_port", "smtp_user", "smtp_from", "smtp_starttls",
+    "email_auto_on_pass", "email_digest_enabled", "max_concurrent_labs",
+    "max_concurrent_labs_per_tenant", "lab_idle_minutes",
+)
+
+
+def _display_config(cfg) -> dict[str, object]:
+    """Project only form fields; credentials never cross the template boundary."""
+    return {name: getattr(cfg, name) for name in _DISPLAY_FIELDS}
 
 
 def _context(request: Request, db: Session) -> dict:
@@ -41,7 +52,7 @@ def _context(request: Request, db: Session) -> dict:
     return {
         "request": request,
         "branding_name": cfg.branding_name,
-        "cfg": cfg,
+        "cfg": _display_config(cfg),
     }
 
 
@@ -73,7 +84,7 @@ def settings_save(
 ):
     """Upsert settings via a platform_api session. Blank password keeps existing."""
     smtp_from = (smtp_from or "").strip()
-    if smtp_user and smtp_from in {"", settings.smtp_from, "Dotmac Academy <academy@localhost>"}:
+    if smtp_user and smtp_from in {"", settings.smtp_from, Settings.model_fields["smtp_from"].default}:
         smtp_from = smtp_user.strip()
     values: dict[str, str | None] = {
         "smtp_host": smtp_host,
@@ -103,7 +114,7 @@ def settings_save(
         return templates.TemplateResponse(
             request,
             "admin/_settings_save_result.html",
-            {"request": request, "cfg": cfg, "saved": True},
+            {"request": request, "cfg": _display_config(cfg), "saved": True},
         )
     return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -111,7 +122,7 @@ def settings_save(
 @router.post("/settings/test-email", response_class=HTMLResponse)
 def settings_test_email(
     request: Request,
-    person: Person = Depends(require_web_role("admin")),
+    person: AcademyCurrentAccount = Depends(require_settings_access),
     db: Session = Depends(get_db),
 ):
     """Send a test email to the current admin's own address; render a flash."""
@@ -125,9 +136,9 @@ def settings_test_email(
         )
     result = send_email_detailed(
         to,
-        "Dotmac Academy — test email",
-        "<p>This is a test email from your Dotmac Academy settings page.</p>",
-        text_body="This is a test email from your Dotmac Academy settings page.",
+        f"{cfg.branding_name} — test email",
+        f"<p>This is a test email from your {escape(cfg.branding_name)} settings page.</p>",
+        text_body=f"This is a test email from your {cfg.branding_name} settings page.",
         db=db,
     )
     return templates.TemplateResponse(
@@ -138,6 +149,6 @@ def settings_test_email(
             "sent": result.sent,
             "to": to,
             "unconfigured": False,
-            "error": result.error,
+            "error": "Delivery failed" if not result.sent else "",
         },
     )

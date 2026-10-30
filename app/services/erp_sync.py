@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -24,7 +24,7 @@ from app.config import settings
 from app.models.cohort import Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
-from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint
+from app.models.erp_completion_checkpoint import ERPCompletionCheckpoint, ERPImportedCompletionKey
 from app.models.offering import CourseOffering
 
 logger = logging.getLogger(__name__)
@@ -132,9 +132,15 @@ def _locked_checkpoint(
 ) -> ERPCompletionCheckpoint:
     if completion.tenant_id != tenant_id:
         raise ERPCheckpointInvariantError("completion belongs to another tenant")
-    checkpoint = db.get(ERPCompletionCheckpoint, (tenant_id, completion.id))
-    if checkpoint is None and completion.erp_synced_at is not None:
-        raise ERPCheckpointInvariantError("missing checkpoint for legacy acknowledged completion")
+    checkpoint = db.scalars(
+        select(ERPCompletionCheckpoint)
+        .where(ERPCompletionCheckpoint.tenant_id == tenant_id)
+        .where(ERPCompletionCheckpoint.completion_id == completion.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one_or_none()
+    if checkpoint is None and db.get(ERPImportedCompletionKey, (tenant_id, completion.id)) is not None:
+        raise ERPCheckpointInvariantError("missing checkpoint for imported completion")
     # Concurrent first senders converge on one key; INSERT waits for the other
     # transaction before the lock/read. The caller owns commit and lock release.
     db.execute(
@@ -149,6 +155,29 @@ def _locked_checkpoint(
         .with_for_update()
         .execution_options(populate_existing=True)
     ).one()
+
+
+def _eligible_enrollments(db: Session, *, tenant_id: UUID, completion: CourseCompletion) -> list[Enrollment]:
+    return list(db.scalars(
+        select(Enrollment)
+        .join(
+            CourseOffering,
+            (CourseOffering.tenant_id == Enrollment.tenant_id)
+            & (CourseOffering.cohort_id == Enrollment.cohort_id),
+        )
+        .where(
+            Enrollment.tenant_id == tenant_id,
+            Enrollment.person_id == completion.person_id,
+            Enrollment.status == "active",
+            Enrollment.audience == "staff",
+            Enrollment.employee_ref.is_not(None),
+            func.length(func.trim(Enrollment.employee_ref)) > 0,
+            CourseOffering.tenant_id == tenant_id,
+            CourseOffering.course_id == completion.course_id,
+            CourseOffering.status == "active",
+        )
+        .execution_options(populate_existing=True)
+    ).unique().all())
 
 
 def push_completion(
@@ -168,35 +197,46 @@ def push_completion(
     """
     if not settings.erp_webhook_url:
         return FAILED
+    if enrollment is not None and (
+        enrollment.tenant_id != tenant_id or enrollment.person_id != completion.person_id
+    ):
+        raise ERPCheckpointInvariantError("supplied enrollment identity mismatch")
+    supplied_enrollment_id = None if enrollment is None else enrollment.id
     checkpoint = _locked_checkpoint(db, tenant_id=tenant_id, completion=completion)
+    # The sweep may have waited behind another sender. Re-read canonical inputs
+    # under the product lock without taking a Learning write lock over HTTP.
+    current = db.scalars(
+        select(CourseCompletion)
+        .where(CourseCompletion.tenant_id == tenant_id, CourseCompletion.id == completion.id)
+        .execution_options(populate_existing=True)
+    ).one_or_none()
+    if current is None:
+        raise ERPCheckpointInvariantError("completion disappeared while acquiring checkpoint")
+    completion = current
+    enrollments = _eligible_enrollments(db, tenant_id=tenant_id, completion=completion)
+    if len(enrollments) > 1:
+        raise ERPCheckpointInvariantError("conflicting eligible ERP enrollment identities")
+    if not enrollments or (supplied_enrollment_id is not None and enrollments[0].id != supplied_enrollment_id):
+        return FAILED
+    enrollment = enrollments[0]
+    course = db.scalars(
+        select(Course)
+        .where(Course.tenant_id == tenant_id, Course.id == completion.course_id)
+        .execution_options(populate_existing=True)
+    ).one_or_none()
+    if course is None:
+        return FAILED
+    if checkpoint.erp_synced_pct == completion.pct:
+        return SYNCED
     if completion.status == "completed" and checkpoint.erp_synced_at is not None:
-        # 0066 preserves acknowledgements that predate the v2 progress marker.
-        # Converge that marker without replaying a completion ERP already accepted.
-        completion.erp_synced_pct = completion.pct
+        # Preserve the imported raw ACK; this is suppression, not a new receipt.
+        checkpoint.erp_synced_pct = completion.pct
         db.flush()
         return SYNCED
-    course = db.get(Course, completion.course_id)
-    if enrollment is None:
-        enrollment = db.scalar(
-            select(Enrollment)
-            .join(
-                CourseOffering,
-                (CourseOffering.tenant_id == Enrollment.tenant_id)
-                & (CourseOffering.cohort_id == Enrollment.cohort_id),
-            )
-            .where(
-                Enrollment.tenant_id == tenant_id,
-                Enrollment.person_id == completion.person_id,
-                Enrollment.audience == "staff",
-                Enrollment.employee_ref.is_not(None),
-                CourseOffering.course_id == completion.course_id,
-                CourseOffering.status == "active",
-            )
-        )
-    if enrollment is None or course is None:
-        return FAILED
 
     payload = build_payload(enrollment=enrollment, course=course, completion=completion)
+    sent_pct = completion.pct
+    sent_completed = completion.status == "completed"
     body = json.dumps(payload).encode()
     try:
         resp = httpx.post(
@@ -211,9 +251,6 @@ def push_completion(
 
     outcome = _outcome(resp)
     if outcome == UNMATCHED:
-        # Named explicitly rather than folded into "failed": this one will not
-        # fix itself by retrying, because the learner's Academy email does not
-        # match any ERP employee. It needs the identity link corrected.
         logger.warning(
             "erp training push not recorded for completion %s: ERP matched no employee for %s",
             completion.id, enrollment.employee_ref,
@@ -223,8 +260,8 @@ def push_completion(
         logger.warning("erp training push rejected (%s) for completion %s", resp.status_code, completion.id)
         return FAILED
 
-    completion.erp_synced_pct = completion.pct
-    if completion.status == "completed":
+    checkpoint.erp_synced_pct = sent_pct
+    if sent_completed:
         checkpoint.erp_synced_at = now or datetime.now(UTC)
     db.flush()
     return SYNCED
@@ -252,17 +289,24 @@ def sync_pending(db: Session, *, tenant_id: UUID, now: datetime | None = None) -
             & (Enrollment.cohort_id == CourseOffering.cohort_id)
             & (Enrollment.person_id == CourseCompletion.person_id),
         )
+        .outerjoin(
+            ERPCompletionCheckpoint,
+            (ERPCompletionCheckpoint.tenant_id == CourseCompletion.tenant_id)
+            & (ERPCompletionCheckpoint.completion_id == CourseCompletion.id),
+        )
         .where(
             CourseCompletion.tenant_id == tenant_id,
             Enrollment.audience == "staff",
             Enrollment.employee_ref.is_not(None),
+            func.length(func.trim(Enrollment.employee_ref)) > 0,
             Enrollment.status == "active",
             CourseOffering.status == "active",
+            ERPCompletionCheckpoint.erp_synced_pct.is_distinct_from(CourseCompletion.pct),
         )
     ).all()
     seen: set[UUID] = set()
     for completion, enrollment in rows:
-        if completion.id in seen or completion.erp_synced_pct == completion.pct:
+        if completion.id in seen:
             continue
         seen.add(completion.id)
         outcome = push_completion(

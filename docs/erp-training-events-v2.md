@@ -1,38 +1,33 @@
-# ERP staff training projection contract v2
+# Staff training events, version 2
 
-The Academy is authoritative for learning state. ERP is authoritative for
-employees, required assignments, and credentials. The hourly Academy sweep
-projects changed staff course percentages to ERP over the existing signed
-webhook.
+Academy preserves main's stable employee-reference projection while Learning
+owns curriculum, participation and completion. ERP receives a replaceable
+projection; it does not become the learning writer. Version 1's email matching
+does not provide version 2 identity.
 
-## Identity and mapping
+An eligible active staff enrollment supplies `employee_ref`. The sender checks
+the tenant, person, active course offering and enrollment identity again under
+the product checkpoint lock. Conflicting eligible identities refuse rather than
+selecting an arbitrary enrollment. Progress uses Learning's fractional `pct`
+and emits percentage units rounded to two decimal places.
 
-- `employee_ref` is the ERP `Employee.employee_code` supplied on the Academy
-  staff enrolment. Email is not an integration key.
-- `academy_course_ref` is the Academy `Course.source_ref`. Before enabling the
-  Academy v2 sender, ERP must set the matching `TrainingCourse.academy_course_ref`.
-- `academy_enrollment_ref` is the Academy enrollment UUID and becomes the ERP
-  assignment source reference.
+The common event fields are `version`, `event`, `employee_ref`,
+`academy_enrollment_ref`, `academy_course_ref`, `course_title`, `course_version`,
+`progress_pct`, `status`, and `occurred_at`. A completion event also includes
+`passed`, `completed_on`, and `certificate_ref`. The exact serialized body is
+HMAC-signed. Only explicit `recorded`, `updated`, or `duplicate` acknowledgements
+advance delivery markers; unmatched/refused replies and transport failures
+preserve previous markers.
 
-Unmapped employees or courses return HTTP 422 and are not marked as delivered.
+Academy stores `erp_synced_at` and `erp_synced_pct` in its checkpoint, never in
+Learning's completion row. An existing completion acknowledgement suppresses
+replay without changing its original timestamp. Accepted percentage snapshots
+prevent queued senders from sending the same progress after acquiring the lock.
+HTTP acceptance followed by local rollback remains at-least-once delivery;
+receiver deduplication is still required.
 
-## Events
-
-ERP accepts `training_enrolled`, `training_progress_updated`, and
-`course_completed` at version 2. The current state-derived Academy sender emits
-changed `training_progress_updated` snapshots and `course_completed` snapshots.
-Completion additionally carries `passed`, `completed_on`, and
-`certificate_ref`.
-
-`progress_pct` is a number from 0 through 100. ERP upserts
-`TrainingCourseAssignment` and `TrainingCourseProgress`; a completion also
-upserts `EmployeeCertification`. Replaying the same state is safe.
-
-## Deployment order
-
-1. Deploy the ERP migration and backward-compatible v2 receiver.
-2. Populate ERP course `academy_course_ref` mappings and confirm employee codes
-   match Academy `employee_ref` values.
-3. Deploy the Academy migration and v2 sender.
-4. Run `python -m app.cli erp-training-sync` once for reconciliation, then
-   verify synced, unmatched, and failed counts before relying on the timer.
+The existing offline admin-session sweep retains its hourly schedule. Web and
+lab-worker roles receive no new checkpoint or imported-membership writes. The
+candidate a011 migration and missing imported-checkpoint invariant are described
+in [checkpoint custody](runbooks/ERP_COMPLETION_CHECKPOINT.md). This source
+contract does not authorize production adoption or sender rollout.

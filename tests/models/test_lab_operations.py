@@ -10,7 +10,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import Integer, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from app.models.lab import LabInstance, LabOperation
@@ -65,7 +65,7 @@ def test_columns_match_contract(admin_engine):
     expected_nullable = {
         "requested_by", "claimed_by", "claimed_host", "claimed_epoch",
         "claimed_at", "heartbeat_at", "finished_at", "last_error",
-        "origin", "runtime_precondition",
+        "origin", "runtime_precondition", "claim_lease_seconds",
     }
     for name in expected_not_null:
         assert name in columns, f"missing column {name}"
@@ -96,6 +96,10 @@ def test_columns_match_contract(admin_engine):
     assert columns["runtime_precondition"]["type"].length == 16
     assert columns["origin"]["default"] is None
     assert columns["runtime_precondition"]["default"] is None
+    # a006: worker-stamped claim lease, also with no DDL default (no backfill
+    # guess — every pre-existing queued/terminal row keeps a NULL stamp).
+    assert isinstance(columns["claim_lease_seconds"]["type"], Integer)
+    assert columns["claim_lease_seconds"]["default"] is None
 
     checks = {
         row["name"]: str(row["sqltext"])
@@ -104,7 +108,12 @@ def test_columns_match_contract(admin_engine):
     assert set(checks) == {
         "ck_lab_operations_kind", "ck_lab_operations_state",
         "ck_lab_operations_conditional_runtime",
+        "ck_lab_operations_claim_lease_positive",
+        "ck_lab_operations_claim_lease_required",
     }
+    assert "claim_lease_seconds" in checks["ck_lab_operations_claim_lease_positive"]
+    assert "claim_lease_seconds" in checks["ck_lab_operations_claim_lease_required"]
+    assert "claimed" in checks["ck_lab_operations_claim_lease_required"]
     assert all(kind in checks["ck_lab_operations_kind"] for kind in ("deploy", "destroy", "check"))
     assert all(
         state in checks["ck_lab_operations_state"]
@@ -317,7 +326,10 @@ def test_second_queued_operation_for_same_instance_is_rejected(admin_session, te
 
 def test_claimed_operation_also_blocks_a_new_queued_one(admin_session, tenant_a):
     instance = _make_instance(admin_session, tenant_a)
-    admin_session.add(_make_operation(tenant_a, instance, state="claimed"))
+    claimed = _make_operation(tenant_a, instance, state="claimed")
+    # a006 requires every claimed row to carry its stamped lease duration.
+    claimed.claim_lease_seconds = 600
+    admin_session.add(claimed)
     admin_session.flush()
 
     admin_session.add(_make_operation(tenant_a, instance, state="queued"))

@@ -16,15 +16,9 @@ database as ``Activity(type="lab")`` + :class:`LabTemplate` pairs.
     limits:                        # dict, passed verbatim
       time_minutes: 45
       ready_wait_seconds: 120
-      pass_threshold: 0.7          # optional; default 0.7
+      pass_threshold: 0.7          # optional; Settings supplies the default
     checks:                        # list of check dicts, stored verbatim
       - {id: c1, type: probe, node: client, weight: 1, probe: ping}
-    access:                        # optional; device login info shown to the lab owner
-      - {node: router, protocol: webfig, username: admin, default_password: admin}
-      - {node: client, protocol: console, note: "No login needed."}
-
-``access`` carries disposable, documented lab-device defaults only (see
-:func:`parse_access`); it is validated strictly and never read from env/secrets.
 
 ``instructions.md`` may contain ``$include: <manual-file>#<anchor>`` directive
 lines; each is replaced by the slice of the referenced chapter markdown around
@@ -41,17 +35,17 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
+import dotmac_learning as learning
 import markdown as md
 import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabTemplate
 from app.services import authoring, lab_seed
-
-_DEFAULT_PASS_THRESHOLD = 0.7
+from app.services.settings_store import EffectiveSettings, effective
 
 # A standalone `$include: file.md#anchor` directive line.
 _INCLUDE = re.compile(r"^[ \t]*\$include:[ \t]*(?P<file>[^#\s]+)(?:#(?P<anchor>\S+))?[ \t]*$")
@@ -319,17 +313,30 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
     ``source_hash`` changes. Does not commit.
     """
     templates: list[LabTemplate] = []
+    cfg: EffectiveSettings | None = None
+
+    def lab_settings() -> EffectiveSettings:
+        nonlocal cfg
+        if cfg is None:
+            # Only this new Settings read suppresses autoflush. Existing lab
+            # SELECTs and full caller flushes retain their original behavior.
+            with db.no_autoflush:
+                cfg = effective(db, require_store=True)
+        return cfg
 
     for lab_yaml in sorted(Path(labs_dir).glob("*/lab.yaml")):
         spec = parse_lab(lab_yaml.parent, chapters_dir=chapters_dir)
         if not spec.slug:
             continue
 
-        instructions_html = md.markdown(
-            spec.instructions_md, extensions=["tables", "fenced_code"]
-        )
+        instructions_html = md.markdown(spec.instructions_md, extensions=["tables", "fenced_code"])
         source_hash = _source_hash(spec, instructions_html)
-        pass_threshold = float(spec.limits.get("pass_threshold", _DEFAULT_PASS_THRESHOLD))
+        threshold = (
+            spec.limits["pass_threshold"]
+            if "pass_threshold" in spec.limits
+            else lab_settings()["learning_lab_pass_threshold"]
+        )
+        pass_threshold = float(cast(float | int | str, threshold))
 
         template = db.scalars(
             select(LabTemplate)
@@ -339,22 +346,29 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
         ).first()
 
         if template is None:
-            activity = Activity(
-                tenant_id=tenant_id,
-                course_id=course_id,
-                chapter_number=spec.chapter_number,
-                type="lab",
-                bank_id=None,
-                title=spec.title,
-                pass_threshold=pass_threshold,
+            settings = lab_settings()
+            activity_id = learning.create_activity_identity(
+                db,
+                learning.ActivityCreate(
+                    tenant_id=tenant_id,
+                    course_id=course_id,
+                    chapter_number=spec.chapter_number,
+                    type="lab",
+                    bank_id=None,
+                    title=spec.title,
+                    pass_threshold=pass_threshold,
+                    assessment_mode=cast(str, settings["learning_default_activity_assessment_mode"]),
+                    grading=cast(str, settings["learning_default_activity_grading"]),
+                    weight=cast(float, settings["learning_default_activity_weight"]),
+                    scoring_policy=cast(str, settings["learning_default_activity_scoring_policy"]),
+                    min_attempt_interval_seconds=cast(int, settings["learning_default_attempt_cooldown_seconds"]),
+                ),
             )
-            db.add(activity)
-            db.flush()
             template = LabTemplate(
                 tenant_id=tenant_id,
                 course_id=course_id,
                 chapter_number=spec.chapter_number,
-                activity_id=activity.id,
+                activity_id=activity_id,
                 slug=spec.slug,
                 title=spec.title,
                 topology=spec.topology_text,
@@ -369,15 +383,16 @@ def import_labs(db: Session, *, tenant_id, course_id, labs_dir, chapters_dir=Non
             )
             db.add(template)
         elif template.source_hash != source_hash:
-            existing = db.scalars(
-                select(Activity)
-                .where(Activity.tenant_id == tenant_id)
-                .where(Activity.id == template.activity_id)
-            ).first()
-            if existing is not None:
-                existing.title = spec.title
-                existing.chapter_number = spec.chapter_number
-                existing.pass_threshold = pass_threshold
+            learning.stage_activity_patch(
+                db,
+                learning.ActivityPatch(
+                    tenant_id=tenant_id,
+                    id=template.activity_id,
+                    title=spec.title,
+                    chapter_number=spec.chapter_number,
+                    pass_threshold=pass_threshold,
+                ),
+            )
             template.chapter_number = spec.chapter_number
             template.title = spec.title
             template.topology = spec.topology_text

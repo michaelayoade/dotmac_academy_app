@@ -1,221 +1,155 @@
-"""Single owner for account invitation, role, and cohort enrolment decisions."""
+"""Canonical invitation/role/enrollment decisions, under private human authority.
+
+Nonhuman legacy callers must port their genuine provenance before adoption.
+No actor boolean, caller ORM object or tenant UUID alone reaches this writer.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import dotmac_learning as learning
 
-from app.models.auth import UserCredential
-from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
-from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
-from app.models.track import Track
-from app.services import tracks as track_svc
-from app.services.bootstrap import ensure_roles
-from app.services.exceptions import BadRequestError
-from app.services.identity import normalize_email, person_for_email, sync_credential_emails
-from app.services.lifecycle import issue_invite_for_person
-from app.services.roster import activate_enrollment
+from app.services.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.services.identity import normalize_email
+from app.services.invitation_policy import invitation_enrollment_policy
+from app.services.learning_policy import creation_defaults
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CohortAssignment:
-    cohort: Cohort
-    courses: tuple[Course, ...] = ()
-    track: Track | None = None
+    cohort_id: UUID
+    course_ids: tuple[UUID, ...] = ()
+    track_id: UUID | None = None
+
+    def __post_init__(self):
+        if (
+            type(self.cohort_id) is not UUID
+            or type(self.course_ids) is not tuple
+            or any(type(value) is not UUID for value in self.course_ids)
+            or (self.track_id is not None and type(self.track_id) is not UUID)
+        ):
+            raise ValueError("cohort assignment requires UUID IDs")
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
+class InvitationAccountView:
+    id: UUID
+    tenant_id: UUID
+    email: str | None
+    first_name: str
+    last_name: str
+    status: str
+    is_active: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AccountInvitationResult:
-    person: Person
-    token: str | None
+    person: InvitationAccountView
+    token: str | None = field(repr=False)
     created_person: bool
     had_credential: bool
-    assignments: list[str] = field(default_factory=list)
+    _assignments: tuple[str, ...] = ()
+
+    @property
+    def assignments(self) -> list[str]:
+        return list(self._assignments)
 
 
-def _ensure_role(db: Session, *, tenant_id: UUID, person_id: UUID, role: str) -> None:
-    roles = ensure_roles(db, tenant_id)
-    if role not in roles:
-        raise BadRequestError(f"invalid role: {role}")
-    grant = db.scalars(
-        select(PersonRole)
-        .where(PersonRole.tenant_id == tenant_id)
-        .where(PersonRole.person_id == person_id)
-        .where(PersonRole.role_id == roles[role].id)
-    ).first()
-    if grant is None:
-        db.add(PersonRole(tenant_id=tenant_id, person_id=person_id, role_id=roles[role].id))
-
-
-def _apply_assignment(
-    db: Session,
-    *,
-    tenant_id: UUID,
-    person: Person,
-    role: str,
-    assignment: CohortAssignment,
-    actor_is_admin: bool,
-) -> list[str]:
-    cohort = assignment.cohort
-    member_role = "instructor" if role in {"instructor", "admin"} else "student"
-    enrollment = db.scalars(
-        select(Enrollment)
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.cohort_id == cohort.id)
-        .where(Enrollment.person_id == person.id)
-    ).first()
-    preserved_instructor_role = False
-    reactivation_note = ""
-    if enrollment is None:
-        enrollment = Enrollment(
-            tenant_id=tenant_id,
-            cohort_id=cohort.id,
-            person_id=person.id,
-            role_in_cohort=member_role,
-            status="active",
+def _apply_assignment(context, *, role, assignment, role_policy, pacing_default_open):
+    """Learning owns persisted selection/enrollment; product owns descriptions."""
+    context.require_assignment(role, assignment)
+    cohort, courses, track = context.assignment_facts(assignment)
+    try:
+        result = learning.ensure_invitation_enrollment(
+            context.db,
+            learning.EnsureInvitationEnrollmentCommand(
+                tenant_id=context.tenant_id,
+                cohort_id=cohort.id,
+                person_id=context.target.id,
+                global_role=role,
+                pacing_default_open=pacing_default_open,
+                track_id=track.id if track is not None else None,
+                selected_course_ids=tuple(course.id for course in courses),
+            ),
+            authority=learning.RosterAuthority(tenant_id=context.tenant_id, actor_is_admin=context.actor_is_admin),
+            role_policy=role_policy,
+            initial_state=role_policy.initial_state,
         )
-        db.add(enrollment)
+    except learning.ParticipationNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
+    except (learning.ParticipationBadRequest, learning.ParticipationForbidden) as exc:
+        raise BadRequestError(str(exc)) from exc
+    activation = result.activation
+    note = ""
+    if (
+        activation is not None
+        and activation.outcome == "reactivated"
+        and activation.previous_status in ("dropped", "waitlisted")
+    ):
+        note = f" — reactivated (was {activation.previous_status})"
+    if result.preserved_instructor_role:
+        descriptions = [f"{cohort.name} cohort — already an instructor, role unchanged{note}"]
     else:
-        # Never downgrade an existing cohort instructor to student — this is
-        # unconditional (Michael's decision), regardless of caller (both the
-        # instructor-facing invite/enroll routes and the admin Users page's
-        # invite path share this function). Demoting silently strips
-        # instructor.py's _assigned_course_ids-derived authoring access.
-        if enrollment.role_in_cohort == "instructor" and member_role == "student":
-            preserved_instructor_role = True
-        else:
-            enrollment.role_in_cohort = member_role
-        # activate_enrollment is the single owner of the status="active"
-        # decision: it raises BadRequestError when this enrollment's
-        # role_in_cohort is not "student" and actor_is_admin is False —
-        # reactivating a dropped/waitlisted non-student enrollment silently
-        # restores their authoring access, the mirror-image of the admin
-        # gate change_roster_state already enforces for dropping one.
-        result = activate_enrollment(db, tenant_id=tenant_id, enrollment=enrollment, actor_is_admin=actor_is_admin)
-        if result.outcome == "reactivated" and result.previous_status in ("dropped", "waitlisted"):
-            reactivation_note = f" — reactivated (was {result.previous_status})"
-
-    if preserved_instructor_role:
-        descriptions = [f"{cohort.name} cohort — already an instructor, role unchanged{reactivation_note}"]
-    else:
-        descriptions = [f"{cohort.name} cohort as {member_role}{reactivation_note}"]
-    if assignment.track is not None:
-        enrollment.track_id = assignment.track.id
-        track_svc.ensure_track_offerings(
-            db,
-            tenant_id=tenant_id,
-            cohort_id=cohort.id,
-            track_id=assignment.track.id,
-        )
-        descriptions.append(f"{assignment.track.name} track in {cohort.name}")
-
-    for course in assignment.courses:
-        offering = db.scalars(
-            select(CourseOffering)
-            .where(CourseOffering.tenant_id == tenant_id)
-            .where(CourseOffering.cohort_id == cohort.id)
-            .where(CourseOffering.course_id == course.id)
-        ).first()
-        if offering is None:
-            db.add(
-                CourseOffering(
-                    tenant_id=tenant_id,
-                    cohort_id=cohort.id,
-                    course_id=course.id,
-                    status="active",
-                )
-            )
-        else:
-            offering.status = "active"
-        descriptions.append(f"{course.title} course for {cohort.name}")
+        descriptions = [f"{cohort.name} cohort as {result.member_role}{note}"]
+    if track is not None:
+        descriptions.append(f"{track.name} track in {cohort.name}")
+    descriptions.extend(f"{course.title} course for {cohort.name}" for course in courses)
     return descriptions
 
 
-def invite_and_enroll(
-    db: Session,
-    *,
-    tenant_id: UUID,
-    email: str,
-    first_name: str,
-    last_name: str,
-    role: str,
-    actor_is_admin: bool,
-    assignments: tuple[CohortAssignment, ...] = (),
-    now: datetime | None = None,
-) -> AccountInvitationResult:
-    """Idempotently provision identity, role, enrolment, and activation.
-
-    Existing login-capable users are enrolled without receiving an unusable
-    activation link. Credential-less people receive one fresh invite; issuing
-    it invalidates any older outstanding invite for the same account.
-
-    ``actor_is_admin`` has no default — every caller must state the acting
-    user's authority, since reactivating an existing non-student cohort
-    enrollment (via ``_apply_assignment`` -> ``activate_enrollment``) is
-    admin-only. It is inert when ``assignments`` is empty (nothing to
-    reactivate) but callers must still pass it explicitly.
-    """
-    canonical = normalize_email(email)
-    if not canonical:
-        raise BadRequestError("email is required")
-
-    person = person_for_email(db, tenant_id=tenant_id, email=canonical)
-    created_person = person is None
-    if person is None:
-        person = Person(
-            tenant_id=tenant_id,
-            email=canonical,
-            first_name=first_name,
-            last_name=last_name,
-        )
-        db.add(person)
-        db.flush()
-    else:
-        sync_credential_emails(db, person=person)
-
-    _ensure_role(db, tenant_id=tenant_id, person_id=person.id, role=role)
-    credentials = db.scalars(
-        select(UserCredential).where(UserCredential.tenant_id == tenant_id).where(UserCredential.person_id == person.id)
-    ).all()
-    had_credential = bool(credentials)
-
-    descriptions: list[str] = []
-    for assignment in assignments:
-        if assignment.cohort.tenant_id != tenant_id:
-            raise BadRequestError("cohort does not belong to this tenant")
+def _invite_locked(context, command):
+    context.require(command)
+    # Resolve the enrollment policy before any identity/role/token mutation.
+    role_policy = invitation_enrollment_policy(context.db) if command.assignments else None
+    pacing_default_open = creation_defaults(context.db).pacing_default_open if command.assignments else None
+    had_credential = bool(context.credentials)
+    if command.purpose == "strict" and had_credential:
+        raise ConflictError("account already has a credential")
+    if command.purpose == "resend" and had_credential:
+        return AccountInvitationResult(context.view(), None, False, True)
+    created = context.target is None
+    if created:
+        context.create_identity(command.first_name, command.last_name, normalize_email(command.email))
+    elif command.purpose != "resend":
+        context.synchronize_aliases()
+    if command.purpose != "resend":
+        context.ensure_role(command.role)
+    descriptions = []
+    for assignment in command.assignments:
         descriptions.extend(
             _apply_assignment(
-                db,
-                tenant_id=tenant_id,
-                person=person,
-                role=role,
+                context,
+                role=command.role,
                 assignment=assignment,
-                actor_is_admin=actor_is_admin,
+                role_policy=role_policy,
+                pacing_default_open=pacing_default_open,
             )
         )
+    context.db.flush()
+    context.revalidate()
+    token = None if had_credential else context.issue_token(ttl_hours=command.ttl_hours)
+    return AccountInvitationResult(context.view(), token, created, had_credential, tuple(descriptions))
 
-    db.flush()
-    token = (
-        None
-        if had_credential
-        else issue_invite_for_person(
-            db,
-            tenant_id=tenant_id,
-            person_id=person.id,
-            now=now,
-        )
-    )
-    return AccountInvitationResult(
-        person=person,
-        token=token,
-        created_person=created_person,
-        had_credential=had_credential,
-        assignments=descriptions,
+
+def invite_and_enroll(db, *, request, email, first_name, last_name, role, assignments=(), ttl_hours=None):
+    """Strict generic human context; existing custom global roles remain valid.
+
+    Returns an operation context manager so delivery enqueue belongs to the same
+    public savepoint. Old ORM/actor_is_admin/tenant-only callers fail closed and
+    remain explicit nonhuman/lifecycle integration gates.
+    """
+    from app.services.invitation_issuance import _human_operation
+
+    return _human_operation(
+        db,
+        request=request,
+        purpose="generic",
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        role=role,
+        assignments=tuple(assignments),
+        ttl_hours=ttl_hours,
     )

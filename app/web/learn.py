@@ -4,28 +4,44 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
+from dotmac_learning import (
+    bank_questions,
+    course_structure,
+    get_activity,
+    get_completion,
+    get_course,
+    progress_overview,
+    questions_for,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import JsonValue
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.assessment import Activity, Question, Score, Submission
-from app.models.completion import CourseCompletion
+from app.models.assessment import Activity, Score, Submission
 from app.models.course import Chapter, Course
-from app.models.person import Person
-from app.models.reading import ChapterRead
 from app.services import announcements as ann_svc
+from app.services import (
+    bank_authoring,
+    exam_engine,
+    insights,
+    learner_dashboard,
+    learning_events,
+    learning_policy,
+    reading_progress,
+)
 from app.services import catalog as catalog_service
-from app.services import exam_engine, insights, learner_dashboard, learning_events, reading_progress
 from app.services.assessment import attempts_used, best_scores_for, reveal_feedback, submit_activity
-from app.services.attempts import close_open_attempt, open_or_create_attempt
+from app.services.attempts import close_open_attempt, get_open_attempt, open_or_create_attempt
 from app.services.certificates import issue_certificate, render_certificate_pdf
 from app.services.entitlements import require_course_open, visible_course_ids
 from app.services.facilitator_access import facilitator_access
+from app.services.identity import AcademyCurrentAccount
 from app.services.pacing import require_activity_readable, require_activity_submittable
 from app.services.settings_store import effective
 from app.services.web_auth import optional_web_user, require_web_user
@@ -59,14 +75,14 @@ class _HeadingExtractor(HTMLParser):
             self._parts = []
 
 
-def _sitting_view(person, questions: Sequence[Question]) -> list[dict]:
-    """Questions as this learner sees them, with options ordered per learner.
+def _sitting_view(person, questions: Sequence) -> list[dict]:
+    """Legacy-strip question facts for the pre-versioning fallback only.
 
-    Until now every learner saw an identical option order, so "the answer is
-    the third one" transferred between them and stayed true — the leak that
-    the entrance exam has always shuffled to prevent. Deterministic in
-    (learner, question), so a reload does not move the options under answers
-    already selected, and safe because answers are submitted by option text.
+    Versioned banks render through Learning ``sitting_questions`` via
+    ``bank_authoring.activity_sitting``; this remains for banks with no
+    published version yet. Options are ordered per learner (a fixed
+    order leaks "the answer is the third one"); deterministic in
+    (learner, question) and safe because answers post by option text.
     """
     return [
         {
@@ -128,11 +144,11 @@ def _enrolled_courses(db: Session, tid: UUID, person_id: UUID) -> list[Course]:
     )
 
 
-@router.get("/", response_class=HTMLResponse)
-@router.get("/learn", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse, name="home")
+@router.get("/learn", response_class=HTMLResponse, name="learn_home")
 def home(
     request: Request,
-    person: Person | None = Depends(optional_web_user),
+    person: AcademyCurrentAccount | None = Depends(optional_web_user),
     db: Session = Depends(get_db),
 ):
     """Signed-in: Learning workspace. Anonymous root: public landing page.
@@ -214,7 +230,7 @@ def chapter(
     slug: str,
     n: int,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -285,18 +301,8 @@ def chapter(
         }
         for course_chapter in chapters
     ]
-    completed_chapter_ids = (
-        {
-            row[0]
-            for row in db.execute(
-                select(ChapterRead.chapter_id)
-                .where(ChapterRead.tenant_id == tenant.id)
-                .where(ChapterRead.person_id == person.id)
-                .where(ChapterRead.chapter_id.in_(chapter_ids))
-            ).all()
-        }
-        if chapter_ids
-        else set()
+    completed_chapter_ids = reading_progress.completed_chapter_ids(
+        db, tenant_id=tenant.id, person_id=person.id, chapter_ids=chapter_ids
     )
     prev_ch = db.scalars(
         select(Chapter)
@@ -313,16 +319,11 @@ def chapter(
         .order_by(Chapter.number)
     ).first()
     words = len(re.sub(r"<[^>]+>", " ", ch.body_html or "").split())
-    reading_minutes = max(1, round(words / 200))
-    completed = (
-        db.scalar(
-            select(func.count())
-            .select_from(ChapterRead)
-            .where(ChapterRead.tenant_id == tenant.id)
-            .where(ChapterRead.person_id == person.id)
-            .where(ChapterRead.chapter_id == ch.id)
-        )
-        or 0
+    reading_minutes = learning_policy.reading_minutes(db, words)
+    # Preserve the separate current-chapter observation at its original point.
+    # Under READ COMMITTED it can see a completion newer than the sidebar batch.
+    completed = ch.id in reading_progress.completed_chapter_ids(
+        db, tenant_id=tenant.id, person_id=person.id, chapter_ids=[ch.id]
     )
     best = best_scores_for(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     activity_items: list[dict[str, Any]] = []
@@ -377,7 +378,7 @@ def subtopic_complete(
     n: int,
     subtopic_slug: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Record one completed subtopic for the current learner.
@@ -416,7 +417,7 @@ def chapter_complete(
     slug: str,
     n: int,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Toggle a chapter's read-completion for the current learner (htmx)."""
@@ -437,27 +438,9 @@ def chapter_complete(
     ).first()
     if ch is None:
         raise HTTPException(status_code=404)
-    existing = db.scalars(
-        select(ChapterRead)
-        .where(ChapterRead.tenant_id == tenant.id)
-        .where(ChapterRead.person_id == person.id)
-        .where(ChapterRead.chapter_id == ch.id)
-    ).first()
-    if existing is None:
-        db.add(ChapterRead(tenant_id=tenant.id, person_id=person.id, chapter_id=ch.id))
-        done = True
-        learning_events.emit(
-            db,
-            tenant_id=tenant.id,
-            person_id=person.id,
-            kind="chapter_completed",
-            course_id=course.id,
-            subject_id=ch.id,
-        )
-    else:
-        db.delete(existing)
-        done = False
-    db.flush()
+    done = reading_progress.toggle_chapter_read(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course.id, chapter_id=ch.id
+    )
     return templates.TemplateResponse(
         request,
         "_mark_complete.html",
@@ -469,7 +452,7 @@ def chapter_complete(
 def activity(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -483,26 +466,51 @@ def activity(
         # whose submission scored 0/0 and burned an attempt. Send the learner to
         # the workspace that can actually grade it.
         return RedirectResponse(f"/labs/{act.id}", status_code=303)
-    qs = db.scalars(
-        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
-    ).all()
+    # Key-free sitting projection from Learning (options only; the
+    # SittingQuestion type cannot carry correct/explanation). The draw
+    # list comes from the same projection, and the attempt pins the
+    # served bank version so a mid-sitting publish cannot move the paper.
+    only_ext_ids: list[str] | None = None
+    pinned_version_id = None
     if act.question_count is not None:
-        # Random pool: fix a subset+order for this attempt and render only those.
-        attempt = open_or_create_attempt(
-            db,
-            tenant_id=tenant.id,
-            person_id=person.id,
-            activity_id=act.id,
-            all_ext_ids=[q.ext_id for q in qs],
-            count=act.question_count,
-            questions=list(qs),
-        )
-        order = {eid: i for i, eid in enumerate(attempt.question_ext_ids)}
-        qs = sorted((q for q in qs if q.ext_id in order), key=lambda q: order[q.ext_id])
+        # Random pool: an open attempt already fixed its subset+order and
+        # its bank-version pin. Re-render from that pin (mirroring the
+        # submit path's attempt_pin) so the served paper equals the
+        # graded paper after a publish/repoint; activity resolution is
+        # used only to create a new draw. A retired attempt pin refusing
+        # inside Learning remains the already-declared B2 behavior and
+        # is not worked around here.
+        existing = get_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
+        if existing is not None:
+            only_ext_ids = list(cast("list[str]", existing.question_ext_ids))
+            pinned_version_id = existing.bank_version_id
+        else:
+            version_id, all_ext_ids = bank_authoring.activity_ext_ids(
+                db, tenant_id=tenant.id, activity=act, sitter_id=person.id
+            )
+            attempt = open_or_create_attempt(
+                db,
+                tenant_id=tenant.id,
+                person_id=person.id,
+                activity_id=act.id,
+                all_ext_ids=all_ext_ids,
+                count=act.question_count,
+                bank_version_id=version_id,
+            )
+            only_ext_ids = list(cast("list[str]", attempt.question_ext_ids))
+            pinned_version_id = attempt.bank_version_id if attempt.bank_version_id is not None else version_id
+    _version_id, questions = bank_authoring.activity_sitting(
+        db,
+        tenant_id=tenant.id,
+        activity=act,
+        sitter=person,
+        only_ext_ids=only_ext_ids,
+        pinned_version_id=pinned_version_id,
+    )
     return templates.TemplateResponse(
         request,
         "activity.html",
-        {"request": request, "activity": act, "questions": _sitting_view(person, qs)},
+        {"request": request, "activity": act, "questions": questions},
     )
 
 
@@ -510,11 +518,11 @@ def activity(
 async def submit(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    act = db.scalars(select(Activity).where(Activity.id == activity_id).where(Activity.tenant_id == tenant.id)).first()
+    act = get_activity(db, tenant_id=tenant.id, activity_id=activity_id)
     if act is None:
         raise HTTPException(status_code=404)
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
@@ -522,26 +530,31 @@ async def submit(
         db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id, activity_id=act.id
     )
     form = await request.form()
-    # Random pool: grade exactly the subset this attempt was shown.
+    # Random pool: grade exactly the subset this attempt was shown. Read
+    # the attempt WITHOUT closing it: Learning grades against the open
+    # attempt's bank-version pin, and closing first would hide that pin.
+    # The close follows a successful submit in the same transaction.
     only_ext_ids: list | None = None
+    attempt_pin = act.bank_version_id
     if act.question_count is not None:
-        attempt = close_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
-        only_ext_ids = list(attempt.question_ext_ids) if attempt is not None else []
-    qs = db.scalars(
-        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
-    ).all()
-    if only_ext_ids is not None:
-        keep = set(only_ext_ids)
-        qs = [q for q in qs if q.ext_id in keep]
-    answers = {q.ext_id: form.getlist(q.ext_id) for q in qs}
+        attempt = get_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
+        only_ext_ids = list(cast("list[str]", attempt.question_ext_ids)) if attempt is not None else []
+        if attempt is not None and attempt.bank_version_id is not None:
+            attempt_pin = attempt.bank_version_id
+    qs = questions_for(
+        db, tenant_id=tenant.id, bank_id=act.bank_id, only_ext_ids=only_ext_ids, bank_version_id=attempt_pin
+    )
+    answers = {q["ext_id"]: form.getlist(q["ext_id"]) for q in qs}
     score = submit_activity(
         db,
         tenant_id=tenant.id,
         person_id=person.id,
         activity=act,
-        answers=answers,
+        answers=cast("dict[str, JsonValue]", answers),
         only_ext_ids=only_ext_ids,
     )
+    if act.question_count is not None:
+        close_open_attempt(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id)
     if score is None:
         # Manual-grading activity: submission is queued for the instructor.
         return HTMLResponse(
@@ -551,28 +564,25 @@ async def submit(
     # get_db handles the final db.commit(); calling it here would expire ORM
     # objects and clear the SET LOCAL tenant config. Render from all bank questions
     # so retakes can display the originally recorded score, including random pools.
-    display_questions = db.scalars(
-        select(Question).where(Question.tenant_id == tenant.id).where(Question.bank_id == act.bank_id)
-    ).all()
+    display_questions = bank_questions(db, tenant_id=tenant.id, bank_id=act.bank_id, bank_version_id=attempt_pin)
     by_id = {q.ext_id: q for q in display_questions}
-    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.id == act.course_id)).first()
+    course = get_course(db, tenant_id=tenant.id, course_id=act.course_id)
     next_chapter = None
     course_completion = None
     if course is not None and act.chapter_number is not None:
-        next_chapter = db.scalars(
-            select(Chapter)
-            .where(Chapter.tenant_id == tenant.id)
-            .where(Chapter.course_id == course.id)
-            .where(Chapter.number > act.chapter_number)
-            .order_by(Chapter.number)
-        ).first()
+        structure = course_structure(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
+        next_chapter = min(
+            (
+                entry.chapter
+                for part in structure.parts
+                for entry in part.chapters
+                if entry.chapter.number > act.chapter_number
+            ),
+            key=lambda chapter: chapter.number,
+            default=None,
+        )
     if course is not None:
-        course_completion = db.scalars(
-            select(CourseCompletion)
-            .where(CourseCompletion.tenant_id == tenant.id)
-            .where(CourseCompletion.person_id == person.id)
-            .where(CourseCompletion.course_id == course.id)
-        ).first()
+        course_completion = get_completion(db, tenant_id=tenant.id, person_id=person.id, course_id=course.id)
     return templates.TemplateResponse(
         request,
         "_activity_result.html",
@@ -587,6 +597,7 @@ async def submit(
             # has passed or used all their attempts (see assessment.reveal_feedback).
             "reveal": reveal_feedback(
                 act,
+                terms=learning_policy.feedback_reveal_terms(db),
                 passed=score.passed,
                 attempts_used=attempts_used(db, tenant_id=tenant.id, person_id=person.id, activity_id=act.id),
             ),
@@ -597,11 +608,17 @@ async def submit(
 @router.get("/progress", response_class=HTMLResponse)
 def progress(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    overview = learner_dashboard.progress_overview(db, tenant_id=tenant.id, person_id=person.id)
+    overview = progress_overview(
+        db,
+        tenant_id=tenant.id,
+        person_id=person.id,
+        progress_trend=learning_policy.progress_trend_terms(db),
+        feedback_terms=learning_policy.feedback_reveal_terms(db),
+    )
     activity = insights.learner_activity(db, tenant_id=tenant.id, person_id=person.id)
     return templates.TemplateResponse(
         request,
@@ -614,20 +631,15 @@ def progress(
 def certificate(
     course_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Download the learner's PDF certificate for a completed course (403 if not)."""
     tenant = require_tenant(request)
-    course = db.scalars(select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_id)).first()
+    course = get_course(db, tenant_id=tenant.id, course_id=course_id)
     if course is None:
         raise HTTPException(status_code=404)
-    completion = db.scalars(
-        select(CourseCompletion)
-        .where(CourseCompletion.tenant_id == tenant.id)
-        .where(CourseCompletion.person_id == person.id)
-        .where(CourseCompletion.course_id == course_id)
-    ).first()
+    completion = get_completion(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
     if completion is None or completion.status != "completed":
         raise HTTPException(status_code=403)
     cert = issue_certificate(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)

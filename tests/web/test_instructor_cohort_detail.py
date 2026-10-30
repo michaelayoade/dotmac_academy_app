@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dotmac_kernel.models import Party
 from sqlalchemy import select
 
 from app.models.assessment import Activity
@@ -10,7 +11,7 @@ from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.facilitator import FacilitatorNomination
 from app.models.offering import CourseOffering
-from app.models.person import Person
+from tests.conftest import make_canonical_account
 from tests.web.test_reports import _login, _seed_login
 
 
@@ -31,20 +32,26 @@ def _seed_detail(admin_session, tenant):
         version=2,
         status="published",
     )
-    learner = Person(
+    admin_session.add_all([cohort, course])
+    admin_session.flush()
+    learner = make_canonical_account(
+        admin_session,
         tenant_id=tenant.id,
         email="learner@a.edu",
         first_name="Ada",
         last_name="Learner",
+        password="password1",
+        role="student",
     )
-    facilitator = Person(
+    facilitator = make_canonical_account(
+        admin_session,
         tenant_id=tenant.id,
         email="facilitator@a.edu",
         first_name="Femi",
         last_name="Facilitator",
+        password="password1",
+        role="instructor",
     )
-    admin_session.add_all([cohort, course, learner, facilitator])
-    admin_session.flush()
     admin_session.add_all(
         [
             CourseOffering(
@@ -145,7 +152,7 @@ def test_admin_can_unenroll_student_from_cohort_workspace(app_client, admin_sess
     _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
     cohort = _seed_detail(admin_session, tenant_a)
     learner = admin_session.scalars(
-        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "learner@a.edu")
+        select(Party).where(Party.tenant_id == tenant_a.id).where(Party.email == "learner@a.edu")
     ).one()
     headers = _login(app_client, "admin@a.edu")
     csrf = app_client.cookies.get("csrf_token", "")
@@ -171,13 +178,15 @@ def test_admin_can_unenroll_student_from_cohort_workspace(app_client, admin_sess
 def test_admin_can_enroll_existing_student_from_cohort_workspace(app_client, admin_session, tenant_a):
     _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
     cohort = _seed_detail(admin_session, tenant_a)
-    learner = Person(
+    learner = make_canonical_account(
+        admin_session,
         tenant_id=tenant_a.id,
         email="existing@a.edu",
         first_name="Existing",
         last_name="Learner",
+        password="password1",
+        role="student",
     )
-    admin_session.add(learner)
     admin_session.commit()
     headers = _login(app_client, "admin@a.edu")
     csrf = app_client.cookies.get("csrf_token", "")
@@ -223,7 +232,7 @@ def test_admin_can_invite_student_from_cohort_workspace(app_client, admin_sessio
     assert response.headers.get("HX-Redirect") == workspace
     admin_session.expire_all()
     learner = admin_session.scalars(
-        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "invited@a.edu")
+        select(Party).where(Party.tenant_id == tenant_a.id).where(Party.email == "invited@a.edu")
     ).one()
     enrollment = admin_session.scalars(
         select(Enrollment)
@@ -237,7 +246,7 @@ def test_cohort_action_rejects_external_return_target(app_client, admin_session,
     _seed_login(admin_session, tenant_a, "admin@a.edu", "admin")
     cohort = _seed_detail(admin_session, tenant_a)
     learner = admin_session.scalars(
-        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "learner@a.edu")
+        select(Party).where(Party.tenant_id == tenant_a.id).where(Party.email == "learner@a.edu")
     ).one()
     headers = _login(app_client, "admin@a.edu")
     csrf = app_client.cookies.get("csrf_token", "")
@@ -258,14 +267,15 @@ def test_cohort_workspace_student_table_is_paginated(app_client, admin_session, 
     admin_session.add(cohort)
     admin_session.flush()
     for index in range(13):
-        learner = Person(
+        learner = make_canonical_account(
+            admin_session,
             tenant_id=tenant_a.id,
             email=f"learner{index:02d}@a.edu",
             first_name=f"Learner {index:02d}",
             last_name="Student",
+            password="password1",
+            role="student",
         )
-        admin_session.add(learner)
-        admin_session.flush()
         admin_session.add(
             Enrollment(
                 tenant_id=tenant_a.id,

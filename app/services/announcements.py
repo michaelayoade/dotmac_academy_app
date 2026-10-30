@@ -1,24 +1,33 @@
-"""Announcement service.
+"""Academy rendering and notification adapters for public Learning announcements."""
 
-All keyword-only after `db`. No db.commit() — callers/get_db own the tx.
-create() flushes so the caller sees the new row (and emitted notifications/audit)
-in the same session before get_db commits.
-"""
 from __future__ import annotations
 
-import logging
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy import or_, select
+import dotmac_learning as learning
+from dotmac_kernel.audit import resolve_event_attribution
 from sqlalchemy.orm import Session
 
-from app.models.announcement import Announcement
-from app.models.cohort import Enrollment
-from app.services.audit import write_audit_event
 from app.services.authoring import render_markdown
 from app.services.notifications import notify_many
+from app.services.settings_store import effective
 
-logger = logging.getLogger(__name__)
+
+def _notify(
+    db: Session,
+    announcement: learning.AnnouncementFact,
+    recipient_ids: tuple[UUID, ...],
+) -> None:
+    notify_many(
+        db,
+        tenant_id=announcement.tenant_id,
+        person_ids=list(recipient_ids),
+        kind="announcement",
+        title=announcement.title,
+        body="",
+        link="/announcements",
+    )
 
 
 def create(
@@ -29,68 +38,24 @@ def create(
     title: str,
     body_md: str,
     cohort_id: UUID | None = None,
-) -> Announcement:
+) -> learning.AnnouncementFact:
+    """Render once before dispatch, using the authenticated caller's author ID."""
     body_html = render_markdown(body_md)
-    ann = Announcement(
+    command = learning.CreateAnnouncementCommand(
         tenant_id=tenant_id,
-        cohort_id=cohort_id,
         author_person_id=author_person_id,
         title=title,
         body_md=body_md,
         body_html=body_html,
+        cohort_id=cohort_id,
     )
-    db.add(ann)
-    db.flush()
-
-    # Audience: cohort students if targeted, else all actively-enrolled persons.
-    if cohort_id is not None:
-        audience_ids = list(
-            db.scalars(
-                select(Enrollment.person_id)
-                .where(Enrollment.tenant_id == tenant_id)
-                .where(Enrollment.cohort_id == cohort_id)
-                .where(Enrollment.status == "active")
-                .where(Enrollment.role_in_cohort == "student")
-            ).all()
-        )
-    else:
-        audience_ids = list(
-            db.scalars(
-                select(Enrollment.person_id)
-                .where(Enrollment.tenant_id == tenant_id)
-                .where(Enrollment.status == "active")
-                .distinct()
-            ).all()
-        )
-
-    if audience_ids:
-        # Best-effort fan-out: a notification insert failure must NOT roll back the
-        # announcement. SAVEPOINT isolates it so a poisoned sub-tx can't break the
-        # outer get_db commit.
-        try:
-            with db.begin_nested():
-                notify_many(
-                    db,
-                    tenant_id=tenant_id,
-                    person_ids=audience_ids,
-                    kind="announcement",
-                    title=title,
-                    body="",
-                    link="/announcements",
-                )
-        except Exception as exc:
-            logger.warning("announcement notify fan-out failed: %s", exc)
-
-    write_audit_event(
-        db,
+    audit_context = learning.AttemptAuditContext(
         tenant_id=tenant_id,
-        actor_person_id=author_person_id,
-        action="announcement.created",
-        entity_type="announcement",
-        entity_id=str(ann.id),
+        actor_type="user",
+        actor_id=str(author_person_id),
+        source_application=resolve_event_attribution(None),
     )
-
-    return ann
+    return learning.create_announcement(db, command, audit_context=audit_context, fanout=_notify)
 
 
 def for_person(
@@ -98,50 +63,22 @@ def for_person(
     *,
     tenant_id: UUID,
     person_id: UUID,
-    limit: int = 20,
-) -> list[Announcement]:
-    """Tenant-wide (cohort_id IS NULL) OR cohorts the person is actively enrolled in."""
-    enrolled_cohort_ids = list(
-        db.scalars(
-            select(Enrollment.cohort_id)
-            .where(Enrollment.tenant_id == tenant_id)
-            .where(Enrollment.person_id == person_id)
-            .where(Enrollment.status == "active")
-        ).all()
-    )
-    if enrolled_cohort_ids:
-        cohort_filter = or_(
-            Announcement.cohort_id.is_(None),
-            Announcement.cohort_id.in_(enrolled_cohort_ids),
-        )
-    else:
-        cohort_filter = Announcement.cohort_id.is_(None)
-
-    return list(
-        db.scalars(
-            select(Announcement)
-            .where(Announcement.tenant_id == tenant_id)
-            .where(cohort_filter)
-            .order_by(Announcement.created_at.desc())
-            .limit(limit)
-        ).all()
-    )
+    limit: int | None = None,
+) -> list[learning.AnnouncementFact]:
+    if limit is None:
+        limit = cast(int, effective(db, require_store=True)["learning_person_announcements_limit"])
+    return list(learning.announcements_for_person(db, tenant_id=tenant_id, person_id=person_id, limit=limit))
 
 
 def list_for_tenant(
     db: Session,
     *,
     tenant_id: UUID,
-    limit: int = 50,
-) -> list[Announcement]:
-    return list(
-        db.scalars(
-            select(Announcement)
-            .where(Announcement.tenant_id == tenant_id)
-            .order_by(Announcement.created_at.desc())
-            .limit(limit)
-        ).all()
-    )
+    limit: int | None = None,
+) -> list[learning.AnnouncementFact]:
+    if limit is None:
+        limit = cast(int, effective(db, require_store=True)["learning_tenant_announcements_limit"])
+    return list(learning.list_announcements(db, tenant_id=tenant_id, limit=limit))
 
 
 def delete(
@@ -150,11 +87,7 @@ def delete(
     tenant_id: UUID,
     announcement_id: UUID,
 ) -> None:
-    ann = db.scalars(
-        select(Announcement)
-        .where(Announcement.tenant_id == tenant_id)
-        .where(Announcement.id == announcement_id)
-    ).first()
-    if ann is not None:
-        db.delete(ann)
-        db.flush()
+    learning.delete_announcement(
+        db,
+        learning.DeleteAnnouncementCommand(tenant_id=tenant_id, announcement_id=announcement_id),
+    )

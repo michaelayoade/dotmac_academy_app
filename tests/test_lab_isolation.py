@@ -6,12 +6,12 @@ then prove it's invisible under an app_user session scoped to tenant B.
 
 import uuid
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import text
 
 from app.models.assessment import Activity
 from app.models.course import Course
 from app.models.lab import LabInstance
-from app.models.person import Person
 
 
 def test_lab_instance_invisible_across_tenants(admin_session, app_user_session, tenant_a, tenant_b):
@@ -32,10 +32,13 @@ def test_lab_instance_invisible_across_tenants(admin_session, app_user_session, 
     admin_session.add(a)
     admin_session.flush()
 
-    p = Person(
-        tenant_id=tenant_a.id, email=f"learner-{uuid.uuid4().hex[:8]}@a.example.com", first_name="Lab", last_name="Rat"
+    p = Party(
+        tenant_id=tenant_a.id, party_type=PartyType.person, display_name="Lab Rat",
+        email=f"learner-{uuid.uuid4().hex[:8]}@a.example.com", is_active=True,
     )
     admin_session.add(p)
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=p.id, first_name="Lab", last_name="Rat"))
     admin_session.flush()
 
     li = LabInstance(
@@ -59,7 +62,8 @@ def test_lab_instance_invisible_across_tenants(admin_session, app_user_session, 
 
     # Cleanup
     admin_session.query(LabInstance).filter(LabInstance.id == li.id).delete()
-    admin_session.query(Person).filter(Person.id == p.id).delete()
+    admin_session.query(PartyPerson).filter(PartyPerson.party_id == p.id).delete()
+    admin_session.query(Party).filter(Party.id == p.id).delete()
     admin_session.query(Activity).filter(Activity.id == a.id).delete()
     admin_session.query(Course).filter(Course.id == c.id).delete()
     admin_session.commit()

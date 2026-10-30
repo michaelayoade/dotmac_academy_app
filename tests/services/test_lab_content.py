@@ -120,8 +120,7 @@ def test_parse_lab_missing_include_does_not_crash(tmp_path):
 
 
 def _course(db, tenant_id):
-    c = Course(tenant_id=tenant_id, slug="foundation", title="F",
-               discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tenant_id, slug="foundation", title="F", discipline="networking", source_ref="x", version=1)
     db.add(c)
     db.flush()
     return c
@@ -131,17 +130,18 @@ def test_import_labs_creates_activity_and_template(admin_session, tenant_a, tmp_
     root = _make_lab_dir(tmp_path)
     c = _course(admin_session, tenant_a.id)
     templates = import_labs(
-        admin_session, tenant_id=tenant_a.id, course_id=c.id,
-        labs_dir=root / "labs", chapters_dir=root / "chapters",
+        admin_session,
+        tenant_id=tenant_a.id,
+        course_id=c.id,
+        labs_dir=root / "labs",
+        chapters_dir=root / "chapters",
     )
     admin_session.flush()
     assert len(templates) == 1
     lt = templates[0]
     assert lt.slug == "vlan-segmentation"
 
-    activities = admin_session.query(Activity).filter(
-        Activity.course_id == c.id, Activity.type == "lab"
-    ).all()
+    activities = admin_session.query(Activity).filter(Activity.course_id == c.id, Activity.type == "lab").all()
     assert len(activities) == 1
     assert activities[0].id == lt.activity_id
     assert activities[0].bank_id is None
@@ -152,19 +152,19 @@ def test_import_labs_creates_activity_and_template(admin_session, tenant_a, tmp_
 def test_import_labs_is_idempotent(admin_session, tenant_a, tmp_path):
     root = _make_lab_dir(tmp_path)
     c = _course(admin_session, tenant_a.id)
-    t1 = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id,
-                     labs_dir=root / "labs", chapters_dir=root / "chapters")
+    t1 = import_labs(
+        admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=root / "labs", chapters_dir=root / "chapters"
+    )
     admin_session.flush()
     v1 = t1[0].version
-    t2 = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id,
-                     labs_dir=root / "labs", chapters_dir=root / "chapters")
+    t2 = import_labs(
+        admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=root / "labs", chapters_dir=root / "chapters"
+    )
     admin_session.flush()
     assert t1[0].id == t2[0].id
     assert t2[0].version == v1
     assert admin_session.query(LabTemplate).filter(LabTemplate.course_id == c.id).count() == 1
-    assert admin_session.query(Activity).filter(
-        Activity.course_id == c.id, Activity.type == "lab"
-    ).count() == 1
+    assert admin_session.query(Activity).filter(Activity.course_id == c.id, Activity.type == "lab").count() == 1
     admin_session.rollback()
 
 
@@ -192,7 +192,10 @@ def test_import_labs_stores_resolved_raw_markdown_with_seed_placeholder(admin_se
     root = _make_seeded_lab_dir(tmp_path)
     c = _course(admin_session, tenant_a.id)
     templates = import_labs(
-        admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=root / "labs",
+        admin_session,
+        tenant_id=tenant_a.id,
+        course_id=c.id,
+        labs_dir=root / "labs",
     )
     admin_session.flush()
     lt = templates[0]
@@ -231,12 +234,24 @@ def test_render_instance_instructions_interpolates_per_instance_seed(admin_sessi
     lt = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=root / "labs")[0]
     admin_session.flush()
 
-    inst_a = LabInstance(tenant_id=tenant_a.id, activity_id=lt.activity_id,
-                         person_id=c.id, instance_name="dal-a", seed={"lan_octet": 5},
-                         status="active", consoles={})
-    inst_b = LabInstance(tenant_id=tenant_a.id, activity_id=lt.activity_id,
-                         person_id=c.id, instance_name="dal-b", seed={"lan_octet": 9},
-                         status="active", consoles={})
+    inst_a = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=lt.activity_id,
+        person_id=c.id,
+        instance_name="dal-a",
+        seed={"lan_octet": 5},
+        status="active",
+        consoles={},
+    )
+    inst_b = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=lt.activity_id,
+        person_id=c.id,
+        instance_name="dal-b",
+        seed={"lan_octet": 9},
+        status="active",
+        consoles={},
+    )
 
     html_a = render_instance_instructions(lt, inst_a)
     html_b = render_instance_instructions(lt, inst_b)
@@ -255,8 +270,15 @@ def test_render_instance_instructions_sanitizes_unsafe_html(admin_session, tenan
     lt = import_labs(admin_session, tenant_id=tenant_a.id, course_id=c.id, labs_dir=root / "labs")[0]
     admin_session.flush()
 
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=lt.activity_id, person_id=c.id,
-                       instance_name="dal-xss", seed={"lan_octet": 5}, status="active", consoles={})
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=lt.activity_id,
+        person_id=c.id,
+        instance_name="dal-xss",
+        seed={"lan_octet": 5},
+        status="active",
+        consoles={},
+    )
     html = render_instance_instructions(lt, inst)
     assert "<script" not in html
     assert "alert(" not in html
@@ -272,8 +294,15 @@ def test_render_instance_instructions_falls_back_to_legacy_html_when_md_is_none(
     lt.instructions_md = None
     admin_session.flush()
 
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=lt.activity_id, person_id=c.id,
-                       instance_name="dal-legacy", seed={"lan_octet": 5}, status="active", consoles={})
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=lt.activity_id,
+        person_id=c.id,
+        instance_name="dal-legacy",
+        seed={"lan_octet": 5},
+        status="active",
+        consoles={},
+    )
     html = render_instance_instructions(lt, inst)
     assert html == lt.instructions_html
     admin_session.rollback()

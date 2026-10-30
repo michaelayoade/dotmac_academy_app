@@ -19,32 +19,53 @@ commits after the response (a mid-handler commit clears the RLS tenant GUC).
 from __future__ import annotations
 
 from html import escape
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+from urllib.parse import urlencode
 from uuid import UUID
 
+from dotmac_kernel.exceptions import BadRequestError, ForbiddenError
+from dotmac_kernel.identity_storage import ensure_grant, lock_grants, remove_grants
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_kernel.transactions import conflict_savepoint
+from dotmac_kernel.web_surfaces import surface_path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort
 from app.models.course import Course
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
-from app.models.track import Track
 from app.services import tracks as track_svc
-from app.services.account_invitations import CohortAssignment, invite_and_enroll
-from app.services.accounts import create_user
+from app.services.account_invitations import CohortAssignment
 from app.services.bootstrap import ensure_roles
+from app.services.canonical_lifecycle import request_password_reset, set_web_account_status
+from app.services.credential_assignment import create_web_user
 from app.services.email_outbox import enqueue_email
-from app.services.lifecycle import issue_invite_for_person, request_password_reset, set_account_status
+from app.services.identity import AcademyCurrentAccount
+from app.services.invitation_issuance import (
+    cohort_fact,
+    course_fact,
+    invite_web_account,
+    resend_web_account_invitation,
+    track_fact,
+)
 from app.services.roles import role_slugs
 from app.services.security import hash_token
+from app.services.web_account_authority import (
+    lock_web_admin_write,
+    require_clean_account_write,
+    revalidate_web_admin_write,
+)
 from app.services.web_auth import require_web_user
 from app.web.responses import hx_redirect
 from app.web.templating import templates
+
+if TYPE_CHECKING:
+    from dotmac_learning.references import CourseFact
 
 router = APIRouter(prefix="/admin/users", dependencies=[Depends(require_tenant)])
 
@@ -69,7 +90,7 @@ def _html_error(message: str, status_code: int = status.HTTP_200_OK) -> HTMLResp
 def users_list(
     request: Request,
     q: str = "",
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -79,18 +100,40 @@ def users_list(
     is_admin = "admin" in slugs
 
     normalized_q = (q or "").strip()
-    people_query = select(Person).where(Person.tenant_id == tenant.id)
+    people_query = (
+        select(
+            Party.id,
+            Party.email,
+            PartyPerson.first_name,
+            PartyPerson.last_name,
+            AcademyAccountProfile.status.label("status"),
+        )
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .outerjoin(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .where(Party.tenant_id == tenant.id)
+        .where(Party.party_type == PartyType.person)
+    )
     if normalized_q:
         like = f"%{normalized_q}%"
         people_query = people_query.where(
             or_(
-                Person.email.ilike(like),
-                Person.first_name.ilike(like),
-                Person.last_name.ilike(like),
-                (Person.first_name + " " + Person.last_name).ilike(like),
+                Party.email.ilike(like),
+                PartyPerson.first_name.ilike(like),
+                PartyPerson.last_name.ilike(like),
+                (PartyPerson.first_name + " " + PartyPerson.last_name).ilike(like),
             )
         )
-    people = db.scalars(people_query.order_by(Person.email)).all()
+    people = [
+        SimpleNamespace(
+            id=row.id, email=row.email, first_name=row.first_name,
+            last_name=row.last_name, status=row.status or "",
+        )
+        for row in db.execute(people_query.order_by(Party.email))
+    ]
     cohorts = db.scalars(
         select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.status == "active").order_by(Cohort.name)
     ).all()
@@ -151,7 +194,7 @@ def users_invite(
     track_id: str = Form(""),
     course_ids: list[str] = Form([]),
     course_id: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -161,9 +204,9 @@ def users_invite(
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
 
-    cohorts: list[Cohort] = []
-    courses_by_cohort: dict[UUID, list[Course]] = {}
-    tracks_by_cohort: dict[UUID, Track] = {}
+    cohorts = []
+    courses_by_cohort: dict[UUID, list[CourseFact]] = {}
+    tracks_by_cohort = {}
     selected_cohort_ids = [raw for raw in [*cohort_ids, cohort_id] if raw]
     selected_track_ids = [raw for raw in [*track_ids, track_id] if raw]
     selected_course_ids = [raw for raw in [*course_ids, course_id] if raw]
@@ -175,12 +218,7 @@ def users_invite(
             return _html_error("Invalid cohort selection")
         if cohort_uuid in seen_cohort_ids:
             continue
-        cohort = db.scalars(
-            select(Cohort)
-            .where(Cohort.tenant_id == tenant.id)
-            .where(Cohort.id == cohort_uuid)
-            .where(Cohort.status == "active")
-        ).first()
+        cohort = cohort_fact(db, tenant_id=tenant.id, cohort_id=cohort_uuid, active_only=True)
         if cohort is None:
             return _html_error("Selected cohort was not found")
         seen_cohort_ids.add(cohort_uuid)
@@ -206,9 +244,7 @@ def users_invite(
             cohort_track = track_svc.cohort_track_or_404(
                 db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=track_uuid
             )
-            track = db.scalars(
-                select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
-            ).first()
+            track = track_fact(db, tenant_id=tenant.id, cohort_id=pair_cohort_id, track_id=cohort_track.track_id)
             if track is None:
                 return _html_error("Selected track was not found")
             tracks_by_cohort[pair_cohort_id] = track
@@ -237,9 +273,7 @@ def users_invite(
                 course_uuid = UUID(raw_course_uuid)
             except ValueError:
                 return _html_error("Invalid course selection")
-            course = db.scalars(
-                select(Course).where(Course.tenant_id == tenant.id).where(Course.id == course_uuid)
-            ).first()
+            course = course_fact(db, tenant_id=tenant.id, course_id=course_uuid)
             if course is None:
                 return _html_error("Selected course was not found")
             for target_cohort_id in target_cohort_ids:
@@ -249,93 +283,100 @@ def users_invite(
                 seen_course_pairs.add(pair)
                 courses_by_cohort.setdefault(target_cohort_id, []).append(course)
 
-    result = invite_and_enroll(
+    with invite_web_account(
         db,
-        tenant_id=tenant.id,
+        request=request,
         email=email,
         first_name=first_name,
         last_name=last_name,
         role=role,
-        # This route already requires "admin" in slugs (checked above), so
-        # any reactivation activate_enrollment performs here is by an admin.
-        actor_is_admin=True,
         assignments=tuple(
             CohortAssignment(
-                cohort=cohort,
-                courses=tuple(courses_by_cohort.get(cohort.id, [])),
-                track=tracks_by_cohort.get(cohort.id),
+                cohort_id=cohort.id,
+                course_ids=tuple(course.id for course in courses_by_cohort.get(cohort.id, [])),
+                track_id=tracks_by_cohort[cohort.id].id if cohort.id in tracks_by_cohort else None,
             )
             for cohort in cohorts
         ),
-    )
-    invited = result.person
-    token = result.token
-    existing_user = not result.created_person
-    assignments = result.assignments
-    link = str(request.url_for("accept_form").include_query_params(token=token)) if token else ""
-    assignment_html = ""
-    assignment_text = ""
-    if assignments:
-        assignment_items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
-        assignment_html = f"<p>Assignments:</p><ul>{assignment_items}</ul>"
-        assignment_text = "\nAssignments: " + "; ".join(assignments) + "\n"
-    sent = False
-    if token:
-        sent = enqueue_email(
-            db,
-            tenant_id=tenant.id,
-            idempotency_key=f"account-invite:{invited.id}:{hash_token(token)}",
-            kind="account_invite",
-            recipient=invited.email,
-            subject="You're invited to Dotmac Academy",
-            html_body=(
-                f"<p>Hi {escape(invited.first_name)},</p>"
-                f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
-                f"{assignment_html}"
-                f'<p><a href="{link}">Set up your account</a></p>'
-                f"<p>If the button does not work, open this link: {link}</p>"
-            ),
-            text_body=(
-                f"Hi {invited.first_name},\n\n"
-                f"You have been invited to Dotmac Academy as {role}.\n"
-                f"{assignment_text}\n"
-                f"Set up your account: {link}\n"
-            ),
-        )
-    if existing_user and token:
-        if sent:
-            status_text = "User already existed. Invite queued and assignments updated."
+    ) as result:
+        invited = result.person
+        token = result.token
+        existing_user = not result.created_person
+        assignments = result.assignments
+        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}" if token else ""
+        assignment_html = ""
+        assignment_text = ""
+        if assignments:
+            assignment_items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
+            assignment_html = f"<p>Assignments:</p><ul>{assignment_items}</ul>"
+            assignment_text = "\nAssignments: " + "; ".join(assignments) + "\n"
+        sent = False
+        if token:
+            sent = enqueue_email(
+                db,
+                tenant_id=tenant.id,
+                idempotency_key=f"account-invite:{invited.id}:{hash_token(token)}",
+                kind="account_invite",
+                recipient=invited.email,
+                subject="You're invited to Dotmac Academy",
+                html_body=(
+                    f"<p>Hi {escape(invited.first_name)},</p>"
+                    f"<p>You have been invited to Dotmac Academy as <strong>{escape(role)}</strong>.</p>"
+                    f"{assignment_html}"
+                    f'<p><a href="{link}">Set up your account</a></p>'
+                    f"<p>If the button does not work, open this link: {link}</p>"
+                ),
+                text_body=(
+                    f"Hi {invited.first_name},\n\n"
+                    f"You have been invited to Dotmac Academy as {role}.\n"
+                    f"{assignment_text}\n"
+                    f"Set up your account: {link}\n"
+                ),
+            )
+        if existing_user and token:
+            if sent:
+                status_text = "User already existed. Invite queued and assignments updated."
+            else:
+                status_text = "User already existed. Assignments updated; invite could not be queued."
+        elif existing_user:
+            status_text = "User already exists. Assignments updated."
         else:
-            status_text = "User already existed. Assignments updated; invite could not be queued."
-    elif existing_user:
-        status_text = "User already exists. Assignments updated."
-    else:
-        status_text = "Invite queued." if sent else "Invite could not be queued."
-    assignment_status = ""
-    if assignments:
-        items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
-        assignment_status = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
-    return HTMLResponse(
-        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
-        f'<p class="font-semibold">{status_text}</p>'
-        f"<p>{escape(invited.email)} - {escape(role)}</p>"
-        f"{assignment_status}"
-        f"</div>"
-    )
+            status_text = "Invite queued." if sent else "Invite could not be queued."
+        assignment_status = ""
+        if assignments:
+            items = "".join(f"<li>{escape(item)}</li>" for item in assignments)
+            assignment_status = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
+        return HTMLResponse(
+            f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+            f'<p class="font-semibold">{status_text}</p>'
+            f"<p>{escape(invited.email)} - {escape(role)}</p>"
+            f"{assignment_status}"
+            f"</div>"
+        )
 
 
 @router.post("/{person_id}/reset-link", response_class=HTMLResponse)
 def users_reset_link(
     person_id: UUID,
     request: Request,
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send reset links")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
+    target_row = db.execute(
+        select(Party.id, Party.email, PartyPerson.first_name)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.tenant_id == tenant.id, Party.id == person_id, Party.party_type == PartyType.person)
+    ).first()
+    target = (
+        SimpleNamespace(id=target_row.id, email=target_row.email, first_name=target_row.first_name)
+        if target_row is not None
+        else None
+    )
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     token = request_password_reset(db, tenant_id=tenant.id, email=target.email)
@@ -347,7 +388,7 @@ def users_reset_link(
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    link = str(request.url_for("reset_form").include_query_params(token=token))
+    link = f"{surface_path(request, 'reset_form')}?{urlencode({'token': token})}"
     sent = enqueue_email(
         db,
         tenant_id=tenant.id,
@@ -375,51 +416,47 @@ def users_reset_link(
 def users_invite_link(
     person_id: UUID,
     request: Request,
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send invites")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    credential = db.scalars(
-        select(UserCredential).where(UserCredential.tenant_id == tenant.id).where(UserCredential.person_id == target.id)
-    ).first()
-    if credential is not None:
-        return HTMLResponse(
-            (
-                '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
-                '<p class="font-semibold">This user already has a password.</p>'
-                '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
-                "</div>"
+    with resend_web_account_invitation(db, request=request, person_id=person_id) as result:
+        target = result.person
+        if result.had_credential:
+            return HTMLResponse(
+                (
+                    '<div class="rounded-lg bg-sand-100 p-3 text-sm">'
+                    '<p class="font-semibold">This user already has a password.</p>'
+                    '<p class="text-ink-soft">Use a reset link if they need access restored.</p>'
+                    "</div>"
+                )
             )
+        token = result.token
+        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}"
+        sent = enqueue_email(
+            db,
+            tenant_id=tenant.id,
+            idempotency_key=f"account-invite:{target.id}:{hash_token(token)}",
+            kind="account_invite",
+            recipient=target.email,
+            subject="Activate your Dotmac Academy account",
+            html_body=(
+                f"<p>Hi {escape(target.first_name)},</p>"
+                "<p>Use this link to activate your Dotmac Academy account:</p>"
+                f'<p><a href="{link}">Set up your account</a></p>'
+                f"<p>If the button does not work, open this link: {link}</p>"
+            ),
+            text_body=f"Set up your Dotmac Academy account: {link}\n",
         )
-    token = issue_invite_for_person(db, tenant_id=tenant.id, person_id=target.id)
-    link = str(request.url_for("accept_form").include_query_params(token=token))
-    sent = enqueue_email(
-        db,
-        tenant_id=tenant.id,
-        idempotency_key=f"account-invite:{target.id}:{hash_token(token)}",
-        kind="account_invite",
-        recipient=target.email,
-        subject="Activate your Dotmac Academy account",
-        html_body=(
-            f"<p>Hi {escape(target.first_name)},</p>"
-            "<p>Use this link to activate your Dotmac Academy account:</p>"
-            f'<p><a href="{link}">Set up your account</a></p>'
-            f"<p>If the button does not work, open this link: {link}</p>"
-        ),
-        text_body=f"Set up your Dotmac Academy account: {link}\n",
-    )
-    status_text = "Invite email queued." if sent else "Invite email could not be queued."
-    return HTMLResponse(
-        f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
-        f'<p class="font-semibold">{status_text}</p>'
-        f"</div>"
-    )
+        status_text = "Invite email queued." if sent else "Invite email could not be queued."
+        return HTMLResponse(
+            f'<div class="rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+            f'<p class="font-semibold">{status_text}</p>'
+            f"</div>"
+        )
 
 
 @router.post("/{person_id}/role")
@@ -427,42 +464,45 @@ def users_role(
     person_id: UUID,
     request: Request,
     role: str = Form(...),
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    require_clean_account_write(db)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change roles")
-    roles = ensure_roles(db, tenant.id)
     if role not in {"student", "instructor", "admin"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    target = db.scalars(select(Person).where(Person.tenant_id == tenant.id).where(Person.id == person_id)).first()
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if target.id == actor.id and role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot remove your own admin role here",
+    with conflict_savepoint(db):
+        db.connection()
+        actor_id, target = lock_web_admin_write(
+            db, request, target_id=person_id, forbidden_detail="Only admins can change roles",
         )
-
-    standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
-    target_role_id = roles[role].id
-    existing_grants = db.scalars(
-        select(PersonRole)
-        .where(PersonRole.tenant_id == tenant.id)
-        .where(PersonRole.person_id == target.id)
-        .where(PersonRole.role_id.in_(standard_role_ids))
-    ).all()
-    has_target_role = False
-    for grant in existing_grants:
-        if grant.role_id == target_role_id:
-            has_target_role = True
-        else:
-            db.delete(grant)
-    if not has_target_role:
-        db.add(PersonRole(tenant_id=tenant.id, person_id=target.id, role_id=target_role_id))
-    db.flush()
+        if target is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        if target.id == actor_id and role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot remove your own admin role here",
+            )
+        roles = ensure_roles(db, tenant.id)
+        standard_role_ids = {roles[slug].id for slug in ("student", "instructor", "admin")}
+        target_role_id = roles[role].id
+        existing_grants = lock_grants(db, tenant_id=tenant.id, party_ids=(target.id,))
+        obsolete = tuple(
+            grant for grant in existing_grants if grant.role_id in standard_role_ids and grant.role_id != target_role_id
+        )
+        has_target_role = any(grant.role_id == target_role_id for grant in existing_grants)
+        # Role provisioning and the final grant lock can wait past cookie expiry.
+        revalidate_web_admin_write(db, request, actor_id=actor_id, forbidden_detail="Only admins can change roles")
+        remove_grants(db, tenant_id=tenant.id, party_id=target.id, expected=obsolete)
+        if not has_target_role:
+            ensure_grant(
+                db, tenant_id=tenant.id, party_id=target.id, role_id=target_role_id,
+                new_grant_id=None, created_at=None, updated_at=None,
+            )
+        db.flush()
     return hx_redirect(request, "/admin/users")
 
 
@@ -471,14 +511,17 @@ def users_status(
     person_id: UUID,
     request: Request,
     status_value: str = Form(...),
-    actor: Person = Depends(require_web_user),
+    actor: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
+    require_clean_account_write(db)
     slugs = _role_slugs(db, tenant.id, actor.id)
     if "admin" not in slugs:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can manage accounts")
-    set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
+    set_web_account_status(
+        db, request, person_id=person_id, status=status_value, forbidden_detail="Only admins can manage accounts",
+    )
     label = "suspended" if status_value == "suspended" else "reactivated"
     return HTMLResponse(
         (
@@ -496,7 +539,7 @@ def users_create(
     email: str = Form(...),
     password: str = Form(...),
     role: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -511,16 +554,20 @@ def users_create(
         )
 
     try:
-        create_user(
+        create_web_user(
             db,
-            tenant_id=tenant.id,
+            request=request,
             email=email,
             first_name=first_name,
             last_name=last_name,
             password=password,
             role=role,
         )
-    except ValueError as exc:
+    except ForbiddenError as exc:
+        # Canonical creation refuses by category: authorization refusals stay
+        # 403, input/conflict refusals stay 400 (the legacy ValueError split).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    except BadRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # No db.commit() here — get_db commits after the response is returned.
     return hx_redirect(request, "/admin/users")

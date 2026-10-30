@@ -1,0 +1,91 @@
+schema_version = 1
+status = "ci_image_inventory_verified"
+academy_schema_qualified = false
+production_database_change = false
+image = "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b"
+config_digest = "sha256:74d436cb49d3398cf7b5d7b33635d43623d9e4da4b93c22db453f7d5d81181b1"
+platform = "linux/amd64"
+server_version_num = 160015
+server_version = "16.15 (Debian 16.15-1.pgdg13+2)"
+encoding = "UTF8"
+locale_provider = "c"
+lc_collate = "en_US.utf8"
+lc_ctype = "en_US.utf8"
+collation_version = "2.41"
+actual_collation_version = "2.41"
+glibc_version = "2.41"
+d1_context_match = true
+d1_qualified = false
+qualification_status = "PENDING_FULL_D1_HOSTED_QUALIFICATION"
+
+[source]
+repository = "docker-library/repo-info"
+revision = "1218b6a4b08f5f5be91b116f482989668710594e"
+path = "repos/postgres/remote/16.md"
+
+[hosted_image_inventory]
+repository = "michaelayoade/dotmac_academy_app"
+revision = "cb30604ee4073d6764bf9987298952c196fd8870"
+run_id = 40771193179
+job_id = 123108524938
+conclusion = "success"
+evidence = "https://github.com/michaelayoade/dotmac_academy_app/actions/runs/40771193179/job/123108524938"
+# Docker image stores may identify the image by manifest or config digest.
+# The job verifies the fixed manifest's config independently and checks the
+# service image identity against the same immutable image's inspect identity.
+
+[retained_schema_runtime_context]
+server_version_num = 160015
+server_version = "16.15 (Debian 16.15-1.pgdg13+2)"
+search_path_setting = '"$user", public'
+effective_search_path = ["pg_catalog", "public"]
+quote_all_identifiers = "off"
+standard_conforming_strings = "on"
+match = true
+
+[repository_variable_declarations]
+ACADEMY_RETAINED_PG_IMAGE = "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b"
+ACADEMY_RETAINED_PG_SERVER_VERSION_NUM = "160015"
+ACADEMY_RETAINED_PG_COLLATION_VERSION = "2.41"
+status = "APPLIED_AND_VISIBLY_VERIFIED"
+verified_at = "2026-10-29T02:12Z"
+# Verification time records the minute displayed by Actions Settings.
+# Image and collation corrected in Actions Settings; all three values visibly
+# verified before the new Academy target-profile run. No production change.
+
+[historical.bookworm]
+status = "ci_image_inventory_verified_but_d1_context_mismatch_not_qualified"
+image = "postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962"
+config_digest = "sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f"
+platform = "linux/amd64"
+server_version_num = 160015
+encoding = "UTF8"
+locale_provider = "c"
+lc_collate = "en_US.utf8"
+lc_ctype = "en_US.utf8"
+collation_version = "2.36"
+actual_collation_version = "2.36"
+glibc_version = "2.36"
+d1_context_match = false
+d1_qualified = false
+d1_run_id = 40766285684
+d1_failure = "Failed at the exact frozen retained_schema context."
+
+[historical.bookworm.source]
+repository = "docker-library/repo-info"
+revision = "1218b6a4b08f5f5be91b116f482989668710594e"
+path = "repos/postgres/remote/16-bookworm.md"
+
+[historical.bookworm.hosted_image_inventory]
+repository = "michaelayoade/dotmac_academy_app"
+revision = "ef1af8cd933e63f14ed9138e0c747368d31261cb"
+run_id = 40755115876
+job_id = 123051850311
+conclusion = "success"
+evidence = "https://github.com/michaelayoade/dotmac_academy_app/actions/runs/40755115876/job/123051850311"
+
+[historical.bookworm.repository_variable_declarations]
+ACADEMY_RETAINED_PG_IMAGE = "postgres@sha256:cf5d353f55240ecc2f811827a15c7d1f2d562f08019b49dca12b5a59f4ab5962"
+ACADEMY_RETAINED_PG_SERVER_VERSION_NUM = "160015"
+ACADEMY_RETAINED_PG_COLLATION_VERSION = "2.36"
+status = "applied_and_visibly_verified_before_the_bookworm_profile_run"

@@ -1,26 +1,28 @@
 # app/services/completion.py
-"""Course completion recomputation.
-
-Completion = fraction of a course's activities with a passing best score. The
-single per-(person, course) ``CourseCompletion`` record is upserted on every
-score write; ``completed_at`` is stamped once, the first time pct reaches 1.0.
-"""
+"""Learning completion delegation and Academy completion delivery."""
 
 from __future__ import annotations
 
 import html
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_learning import (
+    CertificateFact,
+    CompletionCommand,
+    CompletionFact,
+    CompletionResult,
+    get_course,
+)
+from dotmac_learning import (
+    recompute_completion as learning_recompute_completion,
+)
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.assessment import Activity
-from app.models.completion import CourseCompletion
-from app.models.course import Course
-from app.services.assessment import best_scores_for
-from app.services.completion_aggregate import ensure_locked_completion
+from app.models.identity_extensions import AcademyAccountProfile
 
 logger = logging.getLogger(__name__)
 
@@ -32,34 +34,13 @@ def recompute_completion(
     person_id: UUID,
     course_id: UUID,
     now: datetime | None = None,
-) -> CourseCompletion:
-    """Upsert the person's completion record for the course and return it."""
-    rec = ensure_locked_completion(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-    total = (
-        db.scalar(
-            select(func.count())
-            .select_from(Activity)
-            .where(Activity.tenant_id == tenant_id)
-            .where(Activity.course_id == course_id)
-        )
-        or 0
+) -> CompletionFact:
+    """Recompute in the caller's transaction and deliver product effects."""
+    result = learning_recompute_completion(
+        db,
+        CompletionCommand(tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now),
     )
-    best = best_scores_for(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
-    passed = sum(1 for s in best.values() if s.passed)
-    pct = (passed / total) if total else 0.0
-    is_complete = total > 0 and passed == total
-
-    first_completion = is_complete and rec.completed_at is None
-    rec.pct = pct
-    if is_complete:
-        rec.status = "completed"
-        if rec.completed_at is None:  # stamp once
-            rec.completed_at = now or datetime.now(UTC)
-    else:
-        rec.status = "in_progress"
-        rec.completed_at = None
-    db.flush()
-    if first_completion:
+    if result.first_completion:
         # Facilitator eligibility is a consequence of this canonical completion
         # fact. Reconcile in the same transaction so qualified nominees do not
         # wait for the scheduled repair sweep before receiving scoped access.
@@ -76,58 +57,107 @@ def recompute_completion(
                 course_id=course_id,
             ),
         )
-        course = db.scalars(select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)).first()
-        course_title = course.title if course is not None else "the course"
-        # Issue the certificate RECORD + serial immediately on completion,
-        # independent of the email path (which is skipped for opted-out or
-        # email-less learners). The PDF still renders lazily on download.
-        # Without this, a completed course shows a permanent certificate_blocked.
-        from app.services.certificates import issue_certificate
-
-        issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, now=now)
-        try:
-            from app.services.notifications import notify
-
-            with db.begin_nested():
-                notify(
-                    db,
-                    tenant_id=tenant_id,
-                    person_id=person_id,
-                    kind="course_completed",
-                    title="Well done, course completed",
-                    body=f"Congratulations on completing {course_title}.",
-                    link=f"/certificates/{course_id}",
-                )
-        except Exception as exc:
-            logger.warning("course completion notification failed: %s", exc)
-        try:
-            with db.begin_nested():
-                _email_certificate(
-                    db, tenant_id=tenant_id, person_id=person_id, course_id=course_id, course_title=course_title
-                )
-        except Exception as exc:
-            logger.warning("course completion certificate email failed: %s", exc)
-    return rec
+    deliver_completion_notifications(db, result)
+    return result.completion
 
 
-def _email_certificate(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID, course_title: str) -> bool:
+def deliver_completion_notifications(db: Session, result: CompletionResult) -> None:
+    """Deliver Academy effects from a completed Learning command result.
+
+    Result adapters can share this path without a second recomputation. Required
+    completion and certificate writes have already succeeded in the caller's
+    transaction; optional delivery retains its existing savepoint boundaries.
+    """
+    if not result.first_completion:
+        return
+    # A course with certificate_auto_issue=False completes without a
+    # certificate (HM-04): notify the completion, skip certificate delivery.
+    certificate = result.certificate
+    completion = result.completion
+    tenant_id = completion.tenant_id
+    person_id = completion.person_id
+    course_id = completion.course_id
+    course = get_course(db, tenant_id=tenant_id, course_id=course_id)
+    course_title = course.title if course is not None else "the course"
+    if certificate is not None:
+        from app.services.certificates import deliver_certificate_notification
+
+        deliver_certificate_notification(db, certificate)
+    try:
+        from app.services.notifications import notify
+
+        with db.begin_nested():
+            notify(
+                db,
+                tenant_id=tenant_id,
+                person_id=person_id,
+                kind="course_completed",
+                title="Well done, course completed",
+                body=f"Congratulations on completing {course_title}.",
+                link=f"/certificates/{course_id}" if certificate is not None else "/progress",
+            )
+    except Exception as exc:
+        logger.warning("course completion notification failed: %s", exc)
+    if certificate is None:
+        return
+    try:
+        with db.begin_nested():
+            _email_certificate(
+                db,
+                tenant_id=tenant_id,
+                person_id=person_id,
+                course_id=course_id,
+                course_title=course_title,
+                certificate=certificate.certificate,
+            )
+    except Exception as exc:
+        logger.warning("course completion certificate email failed: %s", exc)
+
+
+def _notification_recipient(db: Session, *, tenant_id: UUID, person_id: UUID):
+    """Read current canonical delivery fields, without account authorization.
+
+    Scalar rows avoid stale ORM identity-map values. The subtype has no tenant
+    column: Party supplies isolation and the Academy profile join supplies the
+    recipient's own preferences. Missing canonical parts refuse delivery.
+    Inactive/suspended accounts retain the existing notification behavior;
+    this read grants no Learning or account authority and takes no row locks.
+    """
+    return db.execute(
+        select(Party.id, Party.email, PartyPerson.first_name, AcademyAccountProfile.prefs)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .where(Party.tenant_id == tenant_id, Party.id == person_id, Party.party_type == PartyType.person)
+    ).first()
+
+
+def _email_certificate(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    person_id: UUID,
+    course_id: UUID,
+    course_title: str,
+    certificate: CertificateFact,
+) -> bool:
     """Queue the freshly-completed course's certificate email.
 
     The certificate and outbox intent commit atomically. The delivery worker
     renders the PDF after commit and retries SMTP independently.
     """
-    from app.models.person import Person
-    from app.services.certificates import issue_certificate
     from app.services.email import recipient_allows
     from app.services.email_outbox import enqueue_email
 
-    person = db.get(Person, person_id)
+    person = _notification_recipient(db, tenant_id=tenant_id, person_id=person_id)
     if person is None or not person.email:
         return False
     if not recipient_allows(person, "email_results"):
         return False
 
-    cert = issue_certificate(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    cert = certificate
     name_text = person.first_name or "there"
     name = html.escape(name_text)
     safe_title = html.escape(course_title)

@@ -24,15 +24,23 @@
       "owner_component": "erp-applicant-assessment-service",
       "owner_implementation": "app/services/erp_applicant_assessments.py",
       "decision_interface": "app.services.erp_applicant_assessments.register",
-      "canonical_writer_paths": ["app/services/erp_applicant_assessments.py"],
-      "adapter_paths": ["app/api/erp_applicant_assessments.py"],
-      "drift_test_paths": ["tests/test_erp_applicant_assessment_api.py"]
+      "canonical_writer_paths": [
+        "app/services/erp_applicant_assessments.py"
+      ],
+      "adapter_paths": [
+        "app/api/erp_applicant_assessments.py"
+      ],
+      "drift_test_paths": [
+        "tests/test_erp_applicant_assessment_api.py"
+      ]
     }
   ],
   "typed_contract_surfaces": [
     {
       "surface_id": "erp-inbound-authenticity-contract",
-      "paths": ["app/services/erp_integration_security.py"],
+      "paths": [
+        "app/services/erp_integration_security.py"
+      ],
       "require_public_annotations": true,
       "forbid_any": true,
       "require_immutable_records": true
@@ -40,7 +48,9 @@
   ],
   "module_declared_vocabularies": [],
   "testing_kit_boundary": {
-    "test_roots": ["tests"],
+    "test_roots": [
+      "tests"
+    ],
     "kit_source_roots": [],
     "conformance_probes": []
   },
@@ -50,7 +60,7 @@
       "webhook_surface": 0,
       "provider_credential": 3,
       "connector_task": 0,
-      "sync_checkpoint": 2,
+      "sync_checkpoint": 3,
       "delivery_retry": 0
     },
     "conserved_exclusions": [
@@ -58,37 +68,55 @@
         "path": "app/web/labs.py",
         "symbol": "_proxy_http",
         "category": "outbound_transport",
-        "fingerprint": "b36fbbc016c9b148ed08703aa2ada7371126bf7b825cd996e9e8e054f954629b"
+        "fingerprint": "2c328231a93ddd1bd861da9a32a325523d176432dca6b3706b87589717c4ad06"
       },
       {
-        "path": "tests/web/test_console_webfig_proxy.py",
+        "path": "tests/web/test_webfig_proxy.py",
         "symbol": "test_device_redirects_stay_inside_prefix",
         "category": "outbound_transport",
-        "fingerprint": "eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619"
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
       },
       {
-        "path": "tests/web/test_console_webfig_proxy.py",
+        "path": "tests/web/test_webfig_proxy.py",
         "symbol": "test_javascript_root_redirect_stays_inside_console_prefix",
         "category": "outbound_transport",
-        "fingerprint": "eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619"
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
       },
       {
-        "path": "tests/web/test_console_webfig_proxy.py",
+        "path": "tests/web/test_webfig_proxy.py",
         "symbol": "test_learner_credentials_not_forwarded_and_device_cookie_confined",
         "category": "outbound_transport",
-        "fingerprint": "eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619"
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
       },
       {
-        "path": "tests/web/test_console_webfig_proxy.py",
+        "path": "tests/web/test_webfig_proxy.py",
         "symbol": "test_post_jsproxy_passes_through",
         "category": "outbound_transport",
-        "fingerprint": "eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619"
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
       },
       {
-        "path": "tests/web/test_console_webfig_proxy.py",
+        "path": "tests/web/test_webfig_proxy.py",
+        "symbol": "test_signed_proxy_rewrites_stream_and_drops_stale_validators",
+        "category": "outbound_transport",
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/web/test_webfig_proxy.py",
         "symbol": "test_upstream_down_is_502",
         "category": "outbound_transport",
-        "fingerprint": "eb870dcdb784189c3c1cf538dc9c56213f5536bfc23dd5a3472306e6978ec619"
+        "fingerprint": "2958fc7c69a21568e8583e400ba63730ccda9bd239ac56a53aecd6e436da3603"
+      },
+      {
+        "path": "tests/services/test_erp_sync_contract.py",
+        "symbol": "_AbsentCheckpoint",
+        "category": "sync_checkpoint",
+        "fingerprint": "104ecada6f5e6cbdf55461fff29413c587c4caef0c55c64dd45e93a311ce867a"
+      },
+      {
+        "path": "tests/services/test_erp_sync_contract.py",
+        "symbol": "_LostImportedCheckpointSession",
+        "category": "sync_checkpoint",
+        "fingerprint": "104ecada6f5e6cbdf55461fff29413c587c4caef0c55c64dd45e93a311ce867a"
       }
     ]
   }

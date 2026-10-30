@@ -9,6 +9,7 @@ import pytest
 from app.services import scheduling
 from app.services.agenda import upcoming_for_person
 from app.services.exceptions import BadRequestError
+from tests.conftest import make_person_party
 
 
 def _cohort(admin_session, tenant, name="Live cohort", mode="self_paced"):
@@ -21,10 +22,8 @@ def _cohort(admin_session, tenant, name="Live cohort", mode="self_paced"):
     admin_session.refresh(c)
     return c
 
-
 def _soon(**kw):
     return datetime.now(UTC) + timedelta(**kw)
-
 
 def test_create_session_and_timetable(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
@@ -48,13 +47,12 @@ def test_create_session_and_timetable(admin_session, tenant_a):
     )
     admin_session.commit()
 
-    tt = scheduling.list_for_cohort(admin_session, cohort_id=cohort.id)
+    tt = scheduling.list_for_cohort(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id)
     assert [s.title for s in tt] == ["OTDR lab", "Fiber splicing — live"]  # chronological
     assert s1.session_type == "live_class"
     # scheduling on a self_paced cohort promotes it to blended
     admin_session.refresh(cohort)
     assert cohort.delivery_mode == "blended"
-
 
 def test_validation(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
@@ -77,30 +75,27 @@ def test_validation(admin_session, tenant_a):
             ends_at=_soon(hours=1),
         )
 
-
 def test_delivery_mode_and_cancel(admin_session, tenant_a):
     cohort = _cohort(admin_session, tenant_a)
-    scheduling.set_delivery_mode(admin_session, cohort_id=cohort.id, mode="live")
+    scheduling.set_delivery_mode(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, mode="live")
     admin_session.refresh(cohort)
     assert cohort.delivery_mode == "live"
     with pytest.raises(BadRequestError):
-        scheduling.set_delivery_mode(admin_session, cohort_id=cohort.id, mode="hologram")
+        scheduling.set_delivery_mode(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, mode="hologram")
 
     s = scheduling.create_session(
         admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, title="Lecture", starts_at=_soon(days=3)
     )
-    scheduling.cancel_session(admin_session, session_id=s.id)
-    admin_session.refresh(s)
+    scheduling.cancel_session(admin_session, tenant_id=tenant_a.id, session_id=s.id)
+    s = scheduling.get_session(admin_session, tenant_id=tenant_a.id, session_id=s.id)
     assert s.status == "cancelled"
-
 
 def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
     from app.models.cohort import Enrollment
-    from app.models.person import Person
 
     cohort = _cohort(admin_session, tenant_a)
     admin_session.rollback()
-    p = Person(tenant_id=tenant_a.id, email="learner@a.ex", first_name="L", last_name="R")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="learner@a.ex", first_name="L", last_name="R")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
@@ -123,12 +118,9 @@ def test_session_appears_in_agenda_for_enrolled_person(admin_session, tenant_a):
     # ADR: agenda links to the session detail page; the raw join_url rides along
     # for the calendar's imminent-Join button.
     assert any(
-        i["title"] == "Live class"
-        and i["link"].startswith("/timetable/sessions/")
-        and i["join_url"] == "https://meet"
+        i["title"] == "Live class" and i["link"].startswith("/timetable/sessions/") and i["join_url"] == "https://meet"
         for i in sessions
     )
-
 
 def test_session_isolated_between_tenants(admin_session, tenant_a, tenant_b):
     from sqlalchemy import select as sa_select

@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 from app.models.assessment import Activity, Question, QuestionBank, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _setup(admin_session, tenant, *, max_attempts):
-    p = Person(tenant_id=tenant.id, email="att@a.edu", first_name="At", last_name="T")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email="att@a.edu", first_name="At", last_name="T")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email="att@a.edu",
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="att@a.edu", password_hash=hash_password("password1")))
     c = Course(tenant_id=tenant.id, slug="att", title="Att", discipline="networking",
                source_ref="x", version=1)
     admin_session.add(c)
@@ -43,23 +40,19 @@ def _setup(admin_session, tenant, *, max_attempts):
     admin_session.commit()
     return p, c, act
 
-
 def _login(app_client):
     app_client.post("/login", headers=H, data={"email": "att@a.edu", "password": "password1"})
-
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
 
-
 def _submit(app_client, act):
     app_client.get("/courses/att/chapters/1", headers=H)
     csrf = app_client.cookies.get("csrf_token", "")
     return app_client.post(f"/activities/{act.id}/submit",
                            headers={**H, "x-csrf-token": csrf}, data={"q1": "B"})  # wrong → fail
-
 
 def test_attempts_capped(app_client, admin_session, tenant_a):
     p, c, act = _setup(admin_session, tenant_a, max_attempts=2)
@@ -73,7 +66,6 @@ def test_attempts_capped(app_client, admin_session, tenant_a):
         assert n == 2
     finally:
         _cleanup(admin_session, tenant_a)
-
 
 def test_unlimited_when_null(app_client, admin_session, tenant_a):
     p, c, act = _setup(admin_session, tenant_a, max_attempts=None)

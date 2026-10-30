@@ -6,33 +6,59 @@ opening a new admin connection, and clean up by letting ``tenant_a`` CASCADE.
 """
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_learning import ActivityWrite, CourseWrite, create_activity, create_course
 from sqlalchemy import select
 
-from app.config import settings
-from app.models.assessment import Activity
-from app.models.course import Course
+from app.config import LabExecutionPolicy, settings
 from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.models.person import Person
 from app.services import lab_jobs, lab_operations
 from app.services.labengine.interface import LabHandle
 
 
 def _seed(db, tid):
-    c = Course(tenant_id=tid, slug="foundation", title="F",
-               discipline="networking", source_ref="x", version=1)
-    db.add(c)
-    db.flush()
-    act = Activity(tenant_id=tid, course_id=c.id, chapter_number=14, type="lab",
-                   title="VLAN Lab", pass_threshold=0.6)
-    db.add(act)
-    db.flush()
+    c = create_course(
+        db,
+        CourseWrite(
+            id=uuid4(),
+            tenant_id=tid,
+            slug="foundation",
+            title="F",
+            discipline="networking",
+            source_ref="x",
+            version=1,
+            status="published",
+            listed=False,
+        ),
+    )
+    act = create_activity(
+        db,
+        ActivityWrite(
+            id=uuid4(),
+            tenant_id=tid,
+            course_id=c.id,
+            chapter_number=14,
+            type="lab",
+            title="VLAN Lab",
+            pass_threshold=0.6,
+            assessment_mode="graded",
+            grading="auto",
+            weight=1.0,
+        ),
+    )
     lt = LabTemplate(
-        tenant_id=tid, course_id=c.id, chapter_number=14, activity_id=act.id,
-        slug="vlan", title="VLAN", topology="name: x {{o}}",
+        tenant_id=tid,
+        course_id=c.id,
+        chapter_number=14,
+        activity_id=act.id,
+        slug="vlan",
+        title="VLAN",
+        topology="name: x {{o}}",
         instructions_html="<p>do</p>",
         checks=[{"id": "c1", "type": "probe"}],
         seed_spec={"o": {"type": "int", "min": 2, "max": 9}},
@@ -40,13 +66,20 @@ def _seed(db, tid):
     )
     db.add(lt)
     db.flush()
-    p = Person(tenant_id=tid, email="trainee@example.com", first_name="T", last_name="U")
+    p = Party(
+        tenant_id=tid, party_type=PartyType.person, display_name="T U", email="trainee@example.com", is_active=True
+    )
     db.add(p)
+    db.flush()
+    db.add(PartyPerson(party_id=p.id, first_name="T", last_name="U"))
     db.flush()
     return c, act, lt, p
 
 
-def test_worker_session_refuses_a_non_worker_dsn(monkeypatch):
+def test_worker_session_refuses_a_non_worker_dsn(
+    monkeypatch,
+    policy,
+):
     monkeypatch.setattr(
         settings,
         "lab_worker_database_url",
@@ -57,7 +90,10 @@ def test_worker_session_refuses_a_non_worker_dsn(monkeypatch):
             pytest.fail("must refuse before opening a session")
 
 
-def test_worker_session_refuses_worker_without_bypassrls(monkeypatch):
+def test_worker_session_refuses_worker_without_bypassrls(
+    monkeypatch,
+    policy,
+):
     """A live worker role that has lost BYPASSRLS must fail loudly, not go quiet.
 
     Regression coverage for the guard added alongside the ``current_user``
@@ -74,7 +110,11 @@ def test_worker_session_refuses_worker_without_bypassrls(monkeypatch):
     fake_session = MagicMock()
     fake_session.scalar.side_effect = ["academy_lab_worker", False]
     monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
-    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+    monkeypatch.setattr(
+        lab_jobs,
+        "DatabaseRuntime",
+        lambda *, engine: SimpleNamespace(session_factory=lambda: fake_session),
+    )
 
     with pytest.raises(RuntimeError, match="does not have BYPASSRLS"):
         with lab_jobs.lab_worker_session():
@@ -83,7 +123,10 @@ def test_worker_session_refuses_worker_without_bypassrls(monkeypatch):
     fake_session.close.assert_called_once()
 
 
-def test_worker_session_refuses_worker_that_owns_application_objects(monkeypatch):
+def test_worker_session_refuses_worker_that_owns_application_objects(
+    monkeypatch,
+    policy,
+):
     monkeypatch.setattr(
         settings,
         "lab_worker_database_url",
@@ -92,7 +135,11 @@ def test_worker_session_refuses_worker_that_owns_application_objects(monkeypatch
     fake_session = MagicMock()
     fake_session.scalar.side_effect = ["academy_lab_worker", True, True, True]
     monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
-    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+    monkeypatch.setattr(
+        lab_jobs,
+        "DatabaseRuntime",
+        lambda *, engine: SimpleNamespace(session_factory=lambda: fake_session),
+    )
 
     with pytest.raises(RuntimeError, match="must not own"):
         with lab_jobs.lab_worker_session():
@@ -100,7 +147,10 @@ def test_worker_session_refuses_worker_that_owns_application_objects(monkeypatch
     fake_session.close.assert_called_once()
 
 
-def test_worker_session_refuses_unsafe_role_attributes(monkeypatch):
+def test_worker_session_refuses_unsafe_role_attributes(
+    monkeypatch,
+    policy,
+):
     monkeypatch.setattr(
         settings,
         "lab_worker_database_url",
@@ -109,7 +159,11 @@ def test_worker_session_refuses_unsafe_role_attributes(monkeypatch):
     fake_session = MagicMock()
     fake_session.scalar.side_effect = ["academy_lab_worker", True, False]
     monkeypatch.setattr(lab_jobs, "create_engine", lambda *a, **k: MagicMock())
-    monkeypatch.setattr(lab_jobs, "sessionmaker", lambda *a, **k: (lambda: fake_session))
+    monkeypatch.setattr(
+        lab_jobs,
+        "DatabaseRuntime",
+        lambda *, engine: SimpleNamespace(session_factory=lambda: fake_session),
+    )
 
     with pytest.raises(RuntimeError, match="unsafe attributes or role memberships"):
         with lab_jobs.lab_worker_session():
@@ -117,23 +171,44 @@ def test_worker_session_refuses_unsafe_role_attributes(monkeypatch):
     fake_session.close.assert_called_once()
 
 
-def test_drain_once_provisions_pending(admin_session, tenant_a, monkeypatch):
+def test_drain_once_provisions_pending(
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
+):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     monkeypatch.setattr(settings, "max_concurrent_labs", 20)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-drain", seed={"o": 5},
-                       status="queued", consoles={})
+    policy = LabExecutionPolicy.from_settings(settings)
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-drain",
+        seed={"o": 5},
+        status="queued",
+        consoles={},
+    )
     admin_session.add(inst)
     admin_session.flush()
     lab_operations.enqueue(admin_session, instance=inst, kind="deploy", requested_by=p.id)
     admin_session.commit()
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.deploy.return_value = LabHandle(
-        instance_name="dal-drain", nodes={"client": "clab-x-client"},
-        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+        instance_name="dal-drain",
+        nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"},
+        kinds={"client": "linux"},
+    )
 
-    n = lab_jobs.drain_once(admin_session, engine)
+    n = lab_jobs.drain_once(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert n == 1
     admin_session.refresh(inst)
@@ -142,7 +217,10 @@ def test_drain_once_provisions_pending(admin_session, tenant_a, monkeypatch):
 
 
 def test_drain_once_default_identity_persists_structural_claim_ownership(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     """When ``drain_once`` is left to compute its own identity (the CLI's
     production path, `claimed_by=` omitted), the settled operation's
@@ -151,9 +229,16 @@ def test_drain_once_default_identity_persists_structural_claim_ownership(
     retained as audit provenance by a terminal settlement, not cleared."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
     monkeypatch.setattr(settings, "max_concurrent_labs", 20)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-drain-identity", seed={"o": 5},
-                       status="queued", consoles={})
+    policy = LabExecutionPolicy.from_settings(settings)
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-drain-identity",
+        seed={"o": 5},
+        status="queued",
+        consoles={},
+    )
     admin_session.add(inst)
     admin_session.flush()
     operation = lab_operations.enqueue(admin_session, instance=inst, kind="deploy", requested_by=p.id)
@@ -161,12 +246,24 @@ def test_drain_once_default_identity_persists_structural_claim_ownership(
     operation_id = operation.id
 
     identity = lab_operations.worker_identity_parts()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.deploy.return_value = LabHandle(
-        instance_name="dal-drain-identity", nodes={"client": "clab-x-client"},
-        mgmt={"client": "172.20.20.3"}, kinds={"client": "linux"})
+        instance_name="dal-drain-identity",
+        nodes={"client": "clab-x-client"},
+        mgmt={"client": "172.20.20.3"},
+        kinds={"client": "linux"},
+    )
 
-    assert lab_jobs.drain_once(admin_session, engine) == 1
+    assert (
+        lab_jobs.drain_once(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 1
+    )
 
     settled = admin_session.scalar(select(LabOperation).where(LabOperation.id == operation_id))
     assert settled.claimed_by == lab_operations.worker_identity()
@@ -174,12 +271,22 @@ def test_drain_once_default_identity_persists_structural_claim_ownership(
     assert settled.claimed_epoch == identity.epoch
 
 
-def test_reap_idle_enqueues_destroy_without_touching_engine(admin_session, tenant_a):
+def test_reap_idle_enqueues_destroy_without_touching_engine(
+    admin_session,
+    tenant_a,
+    policy,
+):
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-reap", seed={"o": 5},
-                       status="active", consoles={},
-                       last_active_at=datetime.now(UTC) - timedelta(minutes=999))
+    inst = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-reap",
+        seed={"o": 5},
+        status="active",
+        consoles={},
+        last_active_at=datetime.now(UTC) - timedelta(minutes=999),
+    )
     admin_session.add(inst)
     admin_session.commit()
 
@@ -193,41 +300,69 @@ def test_reap_idle_enqueues_destroy_without_touching_engine(admin_session, tenan
     assert operation.state == "queued"
 
 
-def test_sweep_kills_consoles_whose_instance_is_not_live(admin_session, tenant_a, monkeypatch):
+def test_sweep_kills_consoles_whose_instance_is_not_live(
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
+):
     """The backstop: a console outliving its instance gets reaped on the timer."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    live = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-live", seed={"o": 5}, status="active", consoles={})
+    live = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-live",
+        seed={"o": 5},
+        status="active",
+        consoles={},
+    )
     live.runtime_presence = "present"
-    dead = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                       instance_name="dal-dead", seed={"o": 5}, status="reaped", consoles={})
+    dead = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-dead",
+        seed={"o": 5},
+        status="reaped",
+        consoles={},
+    )
     dead.runtime_presence = "absent"
     admin_session.add_all([live, dead])
     admin_session.flush()
 
-    monkeypatch.setattr(lab_jobs, "console_pids", lambda: {
-        str(live.id): [111],
-        str(dead.id): [222, 333],
-        "11111111-2222-3333-4444-555555555555": [444],  # no row at all
-    })
+    monkeypatch.setattr(
+        lab_jobs,
+        "console_pids",
+        lambda: {
+            str(live.id): [111],
+            str(dead.id): [222, 333],
+            "11111111-2222-3333-4444-555555555555": [444],  # no row at all
+        },
+    )
     killed = []
-    monkeypatch.setattr(lab_jobs, "kill_consoles",
-                        lambda pids: killed.extend(pids) or len(killed))
+    monkeypatch.setattr(lab_jobs, "kill_consoles", lambda pids: killed.extend(pids) or len(killed))
 
     assert lab_jobs.sweep_orphan_consoles(admin_session) == 3
     assert sorted(killed) == [222, 333, 444]  # the live instance's console survives
     admin_session.rollback()
 
 
-def test_sweep_is_a_no_op_when_no_consoles_are_running(admin_session, monkeypatch):
+def test_sweep_is_a_no_op_when_no_consoles_are_running(
+    admin_session,
+    monkeypatch,
+    policy,
+):
     monkeypatch.setattr(lab_jobs, "console_pids", lambda: {})
-    monkeypatch.setattr(lab_jobs, "kill_consoles",
-                        lambda pids: pytest.fail("must not kill anything"))
+    monkeypatch.setattr(lab_jobs, "kill_consoles", lambda pids: pytest.fail("must not kill anything"))
     assert lab_jobs.sweep_orphan_consoles(admin_session) == 0
 
 
 def test_recover_missing_consoles_starts_only_missing_linux_nodes_and_is_idempotent(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
@@ -246,7 +381,9 @@ def test_recover_missing_consoles_starts_only_missing_linux_nodes_and_is_idempot
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inspect_running.return_value = LabHandle(
         instance_name=instance.instance_name,
         nodes={
@@ -268,10 +405,15 @@ def test_recover_missing_consoles_starts_only_missing_linux_nodes_and_is_idempot
         lambda cname, path: starts.append((cname, path)) or 41000,
     )
 
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 1
-    assert starts == [
-        ("clab-x-client", f"/labs/instances/{instance.id}/console/client")
-    ]
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 1
+    )
+    assert starts == [("clab-x-client", f"/labs/instances/{instance.id}/console/client")]
     assert instance.consoles == {
         "client": {"kind": "linux", "mgmt": "172.20.0.1", "port": 41000},
         "server": {"kind": "linux", "mgmt": "172.20.0.2", "port": 41001},
@@ -281,13 +423,23 @@ def test_recover_missing_consoles_starts_only_missing_linux_nodes_and_is_idempot
     processes[str(instance.id)]["client"] = [(111, 41000)]
     engine.reset_mock()
     starts.clear()
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 0
+    )
     engine.inspect_running.assert_not_called()
     assert starts == []
 
 
 def test_recover_missing_consoles_excludes_non_live_and_open_instances(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
 
@@ -310,18 +462,28 @@ def test_recover_missing_consoles_excludes_non_live_and_open_instances(
     _instance(presence="unknown")
     _instance(status="error")
     open_instance = _instance()
-    lab_operations.enqueue(
-        admin_session, instance=open_instance, kind="check", requested_by=p.id
-    )
+    lab_operations.enqueue(admin_session, instance=open_instance, kind="check", requested_by=p.id)
     monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
 
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 0
+    )
     engine.inspect_running.assert_not_called()
 
 
 def test_recover_missing_consoles_scan_failure_never_spawns_duplicates(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.1", "port": 40000}}
@@ -338,11 +500,20 @@ def test_recover_missing_consoles_scan_failure_never_spawns_duplicates(
     admin_session.add(instance)
     admin_session.flush()
     monkeypatch.setattr(lab_jobs, "console_processes", lambda: None)
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     starts = MagicMock()
     monkeypatch.setattr(lab_jobs, "start_console", starts)
 
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 0
+    )
     engine.inspect_running.assert_not_called()
     starts.assert_not_called()
     assert instance.consoles == consoles
@@ -350,7 +521,11 @@ def test_recover_missing_consoles_scan_failure_never_spawns_duplicates(
 
 @pytest.mark.parametrize("inspection", [None, RuntimeError("inspect failed")])
 def test_recover_missing_consoles_never_mutates_without_positive_inspection(
-    admin_session, tenant_a, monkeypatch, inspection
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    inspection,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     consoles = {"client": {"kind": "linux", "mgmt": "10.0.0.1", "port": 40000}}
@@ -369,19 +544,31 @@ def test_recover_missing_consoles_never_mutates_without_positive_inspection(
     monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
     starts = MagicMock()
     monkeypatch.setattr(lab_jobs, "start_console", starts)
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     if isinstance(inspection, Exception):
         engine.inspect_running.side_effect = inspection
     else:
         engine.inspect_running.return_value = inspection
 
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 0
+    )
     assert instance.consoles == consoles
     starts.assert_not_called()
 
 
 def test_recover_missing_consoles_retries_a_failed_ttyd_launch(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
@@ -397,7 +584,9 @@ def test_recover_missing_consoles_retries_a_failed_ttyd_launch(
     admin_session.add(instance)
     admin_session.flush()
     monkeypatch.setattr(lab_jobs, "console_processes", lambda: {})
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inspect_running.return_value = LabHandle(
         instance_name=instance.instance_name,
         nodes={"client": "clab-x-client", "r1": "clab-x-r1"},
@@ -407,15 +596,31 @@ def test_recover_missing_consoles_retries_a_failed_ttyd_launch(
     ports = iter([None, 42000])
     monkeypatch.setattr(lab_jobs, "start_console", lambda *a: next(ports))
 
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 0
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 0
+    )
     assert instance.consoles["client"]["port"] is None
     assert "port" not in instance.consoles["r1"]
-    assert lab_jobs.recover_missing_consoles(admin_session, engine) == 1
+    assert (
+        lab_jobs.recover_missing_consoles(
+            admin_session,
+            engine,
+            policy=policy,
+        )
+        == 1
+    )
     assert instance.consoles["client"]["port"] == 42000
 
 
 def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
@@ -429,10 +634,16 @@ def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {instance.instance_name: "/labs/leak.clab.yml"}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     # The reconciler no longer projects repaired lifecycle state itself —
     # only the worker's own locked, authoritative recheck
     # (lab_lifecycle.destroy_if_present) may settle status/runtime_presence.
@@ -448,21 +659,31 @@ def test_runtime_reconcile_queues_destroy_for_reaped_row_with_live_runtime(
 
 
 def test_runtime_reconcile_destroys_only_rowless_academy_labs(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {
         "dal-rowless": "/labs/rowless.clab.yml",
         "shared-infrastructure": "/labs/shared.clab.yml",
     }
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (0, 1)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (0, 1)
     engine.destroy.assert_called_once_with("dal-rowless")
     admin_session.rollback()
 
 
 def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """The reconciler enqueues conditional repair INTENT only (origin=
     "runtime_repair", runtime_precondition="absent") — it no longer projects
@@ -482,10 +703,16 @@ def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
     assert operation.origin == "runtime_repair"
@@ -497,7 +724,9 @@ def test_runtime_reconcile_queues_replay_for_live_row_without_runtime(
 
 
 def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """A prior error no longer bypasses the worker's own conditional recheck
     by settling status="error" directly from this pass's snapshot — it must
@@ -519,10 +748,16 @@ def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     assert instance.status == "active"
     assert instance.error == "worker lease expired after 3 attempts"
     assert instance.runtime_presence == "absent"
@@ -534,7 +769,9 @@ def test_runtime_reconcile_releases_confirmed_absent_degraded_capacity(
 
 
 def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent_reset(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """Phase 4 must re-validate, not trust, Phase 2's snapshot.
 
@@ -573,23 +810,25 @@ def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent
         lab_operations.enqueue(admin_session, instance=instance, kind="deploy", requested_by=p.id)
         admin_session.flush()
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {
         "dal-rowless-race-trigger": "/labs/rowless-race-trigger.clab.yml",
     }
     engine.destroy.side_effect = _concurrent_reset_during_phase_3
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 1
     engine.destroy.assert_called_once_with("dal-rowless-race-trigger")
     # The concurrent deploy is the only operation queued for `instance` — no
     # destroy/deploy was ALSO enqueued against the stale Phase 2 snapshot.
-    ops = (
-        admin_session.query(LabOperation)
-        .filter_by(instance_id=instance.id)
-        .all()
-    )
+    ops = admin_session.query(LabOperation).filter_by(instance_id=instance.id).all()
     assert [op.kind for op in ops] == ["deploy"]
     assert queued == 0
     # Untouched by Phase 4 — it was skipped, not mutated.
@@ -599,7 +838,10 @@ def test_runtime_reconcile_does_not_act_on_a_snapshot_made_stale_by_a_concurrent
 
 
 def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     """The status/open-op pre-check narrows the race, it does not close it.
 
@@ -632,7 +874,9 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
     admin_session.add(instance)
     admin_session.flush()
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {instance.instance_name: "/labs/race.clab.yml"}
 
     real_enqueue = lab_operations.enqueue
@@ -665,7 +909,11 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
 
     monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_late_concurrent_winner)
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 0
     assert queued == 0
@@ -680,7 +928,9 @@ def test_runtime_reconcile_does_not_claim_a_destroy_that_lost_the_enqueue_race(
 
 
 def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeared_during_phase_3(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """Phase 1's runtime snapshot can go stale exactly like Phase 2's database
     snapshot did in earlier rounds — a concurrent deploy elsewhere can SETTLE
@@ -715,13 +965,19 @@ def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeare
     admin_session.add(settled)
     admin_session.flush()
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.side_effect = [
         {},  # Phase 1: genuinely missing at snapshot time
         {instance.instance_name: "/labs/settled.clab.yml"},  # Phase 4's fresh re-check
     ]
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 0
     assert queued == 0
@@ -734,7 +990,9 @@ def test_runtime_reconcile_does_not_redeploy_an_instance_whose_runtime_reappeare
 
 
 def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_present(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """An instance already escalated to status="error" (Stream A's destroy-
     escalation feature, which sets this specifically to stop automatic
@@ -758,57 +1016,82 @@ def test_runtime_reconcile_leaves_an_escalated_instance_alone_even_with_runtime_
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {
         instance.instance_name: "/labs/escalated-runtime-present.clab.yml",
     }
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 0
     assert queued == 0
     engine.destroy.assert_not_called()
-    assert (
-        admin_session.query(LabOperation)
-        .filter_by(instance_id=instance.id)
-        .count()
-        == 0
-    )
+    assert admin_session.query(LabOperation).filter_by(instance_id=instance.id).count() == 0
     assert instance.status == "error"
     assert instance.error == "automatic destroy failed 5 time(s); escalated for manual review"
     admin_session.rollback()
 
 
 def test_sweep_protects_present_and_unknown_including_escalated_error(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     """The protected set is now presence-based: an escalated instance
     (status="error") whose runtime may still be present/unknown must be
     protected exactly like a live one — killing its console would be wrong."""
     _c, act, lt, p = _seed(admin_session, tenant_a.id)
-    present = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                          instance_name="dal-presence-present", seed={"o": 5}, status="active",
-                          consoles={})
+    present = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-present",
+        seed={"o": 5},
+        status="active",
+        consoles={},
+    )
     present.runtime_presence = "present"
-    unknown_errored = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                                  instance_name="dal-presence-unknown-error", seed={"o": 5},
-                                  status="error", consoles={})
+    unknown_errored = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-unknown-error",
+        seed={"o": 5},
+        status="error",
+        consoles={},
+    )
     unknown_errored.runtime_presence = "unknown"
-    absent = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-                         instance_name="dal-presence-absent", seed={"o": 5}, status="reaped",
-                         consoles={})
+    absent = LabInstance(
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-presence-absent",
+        seed={"o": 5},
+        status="reaped",
+        consoles={},
+    )
     absent.runtime_presence = "absent"
     admin_session.add_all([present, unknown_errored, absent])
     admin_session.flush()
 
-    monkeypatch.setattr(lab_jobs, "console_pids", lambda: {
-        str(present.id): [111],
-        str(unknown_errored.id): [222],
-        str(absent.id): [333],
-    })
+    monkeypatch.setattr(
+        lab_jobs,
+        "console_pids",
+        lambda: {
+            str(present.id): [111],
+            str(unknown_errored.id): [222],
+            str(absent.id): [333],
+        },
+    )
     killed = []
-    monkeypatch.setattr(lab_jobs, "kill_consoles",
-                        lambda pids: killed.extend(pids) or len(killed))
+    monkeypatch.setattr(lab_jobs, "kill_consoles", lambda pids: killed.extend(pids) or len(killed))
 
     assert lab_jobs.sweep_orphan_consoles(admin_session) == 1
     assert killed == [333]  # only the confirmed-absent instance's console is killed
@@ -816,7 +1099,9 @@ def test_sweep_protects_present_and_unknown_including_escalated_error(
 
 
 def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_projecting_state(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """A reaped row whose runtime is confirmed live by fresh inventory gets a
     conditional destroy enqueued (origin="runtime_cleanup",
@@ -839,10 +1124,16 @@ def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_p
     )
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {instance.instance_name: "/labs/leak.clab.yml"}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     admin_session.refresh(instance)
     assert instance.status == "reaped"
     assert instance.runtime_presence == "present"  # lock-verified observed fact
@@ -854,7 +1145,9 @@ def test_runtime_reconcile_db_only_repair_enqueues_conditional_destroy_without_p
 
 
 def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_conditionally(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """A prior error no longer bypasses the worker's own conditional recheck
     by settling status="error" directly from this pass's snapshot — it must
@@ -879,10 +1172,16 @@ def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_condi
     instance.runtime_presence = "unknown"
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     admin_session.refresh(instance)
     # status/error untouched by the reconciler itself — the prior
     # error/status survive exactly as they were until the worker's own
@@ -899,7 +1198,9 @@ def test_runtime_reconcile_missing_runtime_with_prior_error_still_enqueues_condi
 
 
 def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """No prior error: a conditional deploy (origin="runtime_repair",
     runtime_precondition="absent") is enqueued. The row's runtime_presence
@@ -921,10 +1222,16 @@ def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally
     instance.runtime_presence = "present"
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {}
 
-    assert lab_jobs.reconcile_runtime(admin_session, engine) == (1, 0)
+    assert lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    ) == (1, 0)
     admin_session.refresh(instance)
     assert instance.runtime_presence == "absent"  # corrected from stale "present"
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
@@ -935,7 +1242,9 @@ def test_runtime_reconcile_missing_runtime_fresh_redeploy_enqueues_conditionally
 
 
 def test_runtime_reconcile_escalated_instance_keeps_its_presence_value(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """An escalated instance (status="error") excluded from automatic destroy
     must keep whatever presence value it already carries — reconcile_runtime
@@ -954,12 +1263,18 @@ def test_runtime_reconcile_escalated_instance_keeps_its_presence_value(
     instance.runtime_presence = "unknown"
     admin_session.add(instance)
     admin_session.flush()
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {
         instance.instance_name: "/labs/escalated-presence.clab.yml",
     }
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 0
     assert queued == 0
@@ -971,7 +1286,10 @@ def test_runtime_reconcile_escalated_instance_keeps_its_presence_value(
 
 
 def test_runtime_reconcile_still_raises_on_duplicate_instance_names(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     """The in-application duplicate guard (a second line of defense alongside
     the new DB-level ``uq_lab_instances_instance_name`` unique index — see
@@ -984,30 +1302,45 @@ def test_runtime_reconcile_still_raises_on_duplicate_instance_names(
     """
     fake_rows = [
         LabInstance(
-            tenant_id=tenant_a.id, activity_id=uuid4(), person_id=uuid4(),
-            instance_name="dal-duplicate-in-memory", seed={},
+            tenant_id=tenant_a.id,
+            activity_id=uuid4(),
+            person_id=uuid4(),
+            instance_name="dal-duplicate-in-memory",
+            seed={},
         ),
         LabInstance(
-            tenant_id=uuid4(), activity_id=uuid4(), person_id=uuid4(),
-            instance_name="dal-duplicate-in-memory", seed={},
+            tenant_id=uuid4(),
+            activity_id=uuid4(),
+            person_id=uuid4(),
+            instance_name="dal-duplicate-in-memory",
+            seed={},
         ),
     ]
     fake_scalars_result = MagicMock()
     fake_scalars_result.all.return_value = fake_rows
     monkeypatch.setattr(admin_session, "scalars", lambda *a, **k: fake_scalars_result)
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {}
 
     with pytest.raises(RuntimeError, match="duplicate lab instance names"):
-        lab_jobs.reconcile_runtime(admin_session, engine)
+        lab_jobs.reconcile_runtime(
+            admin_session,
+            engine,
+            policy=policy,
+        )
 
     engine.destroy.assert_not_called()
     admin_session.rollback()
 
 
 def test_runtime_reconcile_enqueue_race_is_detected_by_the_full_tuple_not_kind_alone(
-    admin_session, tenant_a, monkeypatch
+    admin_session,
+    tenant_a,
+    monkeypatch,
+    policy,
 ):
     """A genuinely concurrent operation of the SAME ``kind`` ("destroy") but a
     DIFFERENT ``(origin, runtime_precondition)`` — an ordinary, unconditional,
@@ -1030,7 +1363,9 @@ def test_runtime_reconcile_enqueue_race_is_detected_by_the_full_tuple_not_kind_a
     admin_session.add(instance)
     admin_session.flush()
 
-    engine = MagicMock()
+    engine = MagicMock(
+        execution_policy=policy,
+    )
     engine.inventory.return_value = {instance.instance_name: "/labs/race-full-tuple.clab.yml"}
 
     real_enqueue = lab_operations.enqueue
@@ -1056,7 +1391,11 @@ def test_runtime_reconcile_enqueue_race_is_detected_by_the_full_tuple_not_kind_a
 
     monkeypatch.setattr(lab_operations, "enqueue", _enqueue_with_unconditional_concurrent_winner)
 
-    queued, destroyed = lab_jobs.reconcile_runtime(admin_session, engine)
+    queued, destroyed = lab_jobs.reconcile_runtime(
+        admin_session,
+        engine,
+        policy=policy,
+    )
 
     assert destroyed == 0
     assert queued == 0  # this pass's own tuple did not come back — not claimed
@@ -1067,15 +1406,24 @@ def test_runtime_reconcile_enqueue_race_is_detected_by_the_full_tuple_not_kind_a
     admin_session.rollback()
 
 
-def test_reap_idle_never_sets_origin_or_runtime_precondition(admin_session, tenant_a):
+def test_reap_idle_never_sets_origin_or_runtime_precondition(
+    admin_session,
+    tenant_a,
+    policy,
+):
     """`request_idle_reaps` is explicitly out of scope for conditional
     operations — it must remain an unconditional, originating enqueue with
     both new fields left NULL."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
-        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-        instance_name="dal-idle-regression", seed={}, status="active",
-        last_active_at=datetime.now(UTC) - timedelta(days=1), consoles={},
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-idle-regression",
+        seed={},
+        status="active",
+        last_active_at=datetime.now(UTC) - timedelta(days=1),
+        consoles={},
     )
     admin_session.add(instance)
     admin_session.flush()
@@ -1089,21 +1437,40 @@ def test_reap_idle_never_sets_origin_or_runtime_precondition(admin_session, tena
 
 
 def test_reconcile_stuck_requeue_never_sets_origin_or_runtime_precondition(
-    admin_session, tenant_a
+    admin_session,
+    tenant_a,
+    policy,
 ):
     """`reconcile_stuck` is explicitly out of scope — its phase-1-to-worker
     cutover repair enqueue must remain unconditional, both new fields NULL."""
     _c, act, _lt, p = _seed(admin_session, tenant_a.id)
     instance = LabInstance(
-        tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
-        instance_name="dal-stuck-regression", seed={}, status="queued", consoles={},
+        tenant_id=tenant_a.id,
+        activity_id=act.id,
+        person_id=p.id,
+        instance_name="dal-stuck-regression",
+        seed={},
+        status="queued",
+        consoles={},
     )
     admin_session.add(instance)
     admin_session.flush()
 
-    assert lab_operations.reconcile_stuck(admin_session) == 1
+    assert (
+        lab_operations.reconcile_stuck(
+            admin_session,
+            policy=policy,
+        )
+        == 1
+    )
     operation = admin_session.query(LabOperation).filter_by(instance_id=instance.id).one()
     assert operation.kind == "deploy"
     assert operation.origin is None
     assert operation.runtime_precondition is None
     admin_session.rollback()
+
+
+@pytest.fixture
+def policy():
+    """Explicit validated env/default snapshot; never used as a production fallback."""
+    return LabExecutionPolicy.from_settings(settings)

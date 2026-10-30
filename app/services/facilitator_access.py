@@ -1,8 +1,9 @@
 """Read-only authorization projection for legacy and scoped facilitators.
 
-``PersonRole`` remains authoritative for administrators and legacy instructors.
-New facilitator authority comes only from an active ``FacilitatorNomination``;
-pending and revoked nominations are deliberately absent from this projection.
+Tenant role grants remain authoritative for administrators and legacy
+instructors. New facilitator authority comes only from an active
+``FacilitatorNomination``; pending and revoked nominations are deliberately
+absent from this projection.
 """
 
 from __future__ import annotations

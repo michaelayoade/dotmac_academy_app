@@ -2,7 +2,7 @@
 
 **Status:** Accepted; schema implementation is gated by the rehearsals below  
 **Date:** 2026-08-11  
-**Source revalidated:** 2026-10-26 at Academy `f16b1aee684918a5168f9c64f3847188c8243942`
+**Source revalidated:** 2026-10-28 at Academy `a07e1b13ac501361e62d42ea6c416e07c756ee45` (D1)
 **Implementation:** `design_only`; activation evidence is `pending_external_evidence`  
 **Extends:** ADR 0007, Academy Is a Kernel Product Assembly  
 **Inventory:** `docs/inventories/kernel_identity_lineage_cutover.toml`
@@ -51,6 +51,17 @@ identity columns. Current revalidation at `f16b1ae` ends at
 `0064_facilitator_nominations`, which adds two strongly constrained human
 references for the nominated person and nominating actor. The current census is
 therefore 30 references (13 physical, 17 logical).
+
+D1 source revalidation (2026-10-28, Academy `b961e37`, Kernel `0.1.0a107`,
+`dotmac-learning` extracted): the Academy chain ends at
+`0065_applicant_bank_version_pin` (renumbered from the Question Bank source's
+0062; it adds an applicant-to-bank-version pin and no identity column). The
+census now runs over the composed graph (product-owned, Learning and Kernel
+tables) and counts 26 references (10 physical, 16 logical); the four legacy
+coordinates (`audit_events`, `auth_sessions`, `person_roles`,
+`user_credentials`) are Kernel-owned there. Evidence remains `source_only`;
+no status upgrade.
+
 These are source coordinates only; no
 production database, rollout or rehearsal result is inferred from this census.
 ADR 0008 is now the accepted lab-worker-role decision; this identity proposal
@@ -381,3 +392,53 @@ flip. If identity authority is also reversed, first prove that every accepted
 new canonical fact is representable, including longer names/email, credential
 multiplicity, grants and deletions. Neither an old snapshot nor an insert-only
 copy establishes that safety. No fallback activation or retirement is claimed.
+
+## Source checkpoint — 2026-10-28: bounded empty CI entry
+
+D1 source at `a07e1b13ac501361e62d42ea6c416e07c756ee45` composes the
+released Kernel a107 and Learning a3 with assembly revisions a001-a010.
+The legacy directory is exactly the frozen62 history ending at 0061; legacy
+0062/0063 bytes are custody fixtures. Access, heartbeat, bank-version pinning
+and canonical facilitator semantics now belong to a007-a010. Complete static
+owner heads and live Alembic version rows are distinct: dependency-aware final
+version rows are the singleton a010. The composed human-reference census
+remains 26 (10 physical, 16 logical).
+
+Michael approved a bounded empty scratch/CI product entry and a CI-only commit
+wrapper. That path requires genuine same-root a003 continuation, empty owner
+catalogs/data, fixed migration authority, and independently reviewed historical
+versus fresh schema convergence. Discovery cannot commit; an absent fingerprint
+pin refuses strict entry before DDL. Canonical actor attribution and the existing
+facilitator capability grants are preserved. Source review and local checks do
+not establish PostgreSQL execution, concurrency behavior or a qualified fresh
+receipt. The first hosted convergence run and separate pin commit remain due.
+
+This checkpoint does not select replica entry versus exact-0063 historical
+capture, authorize populated production adoption, or supply its committing
+executor/conservation/rollback proof. Those production gates remain open;
+`design_only` and `production_cutover_proven = false` are unchanged.
+
+
+## Source checkpoint — 2026-10-28: ERP progress successor
+
+Source `8776f410dc60d35aa1ff3980ffcdc78187fb00e4` retains Kernel a107
+and Learning a3 and extends the product assembly through
+`a011_erp_progress_checkpoint`. Academy owns ERP acknowledgement, progress and
+imported-key membership; Learning continues to own completions. The preceding
+a001-a010 revisions remain byte-for-byte unchanged. The frozen legacy chain
+still contains exactly 62 files through 0061. Main's populated legacy 0065/0066
+predecessor is unsupported and fails closed; this successor does not authorize
+adopting that state or discarding its acknowledgements.
+
+The independently reviewed source now checks all three owners' catalogs for
+fresh/historical convergence, including function metadata and dependency
+contracts. The temporary source-review transfer hold is removed after zero
+open P1/P2 findings. Strict empty CI entry still refuses before DDL while its
+convergence fingerprint is unset. Discovery remains noncommitting. Pure tests,
+whole-tree collection and standards conformance are source evidence; they do
+not establish PostgreSQL convergence, writer locking, RLS or migration
+roundtrips. Both hosted workflows on the exact integrated head remain due.
+
+The composed human-reference census is unchanged at 26 (10 physical, 16
+logical). The earlier a010 checkpoint above remains historical evidence.
+No production adoption, deployment, rollback or lineage activation is proven.

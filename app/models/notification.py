@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, Tenant
 from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -16,16 +17,19 @@ class Notification(Base, TimestampMixin):
         UniqueConstraint("tenant_id", "id", name="uq_notifications_tenant_id_id"),
         ForeignKeyConstraint(
             ["tenant_id", "person_id"],
-            ["people.tenant_id", "people.id"],
+            [Party.__table__.c.tenant_id, Party.__table__.c.id],
             ondelete="CASCADE",
             name="fk_notifications_tenant_person",
+        ),
+        ForeignKeyConstraint(
+            ["person_id"], [PartyPerson.__table__.c.party_id], ondelete="CASCADE", name="fk_notifications_person"
         ),
     )
 
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

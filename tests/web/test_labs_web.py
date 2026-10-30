@@ -3,31 +3,56 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyType, UserCredential
+from dotmac_learning import (
+    ActivityWrite,
+    CourseWrite,
+    CreateCohortCommand,
+    create_activity,
+    create_cohort,
+    create_course,
+)
+from dotmac_learning.models import Score, Submission
+from dotmac_learning.participation_models import Cohort, CourseOffering, Enrollment
 
-from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
-from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
 
 
-def _make_person(admin_session, tenant, email: str) -> Person:
-    p = Person(tenant_id=tenant.id, email=email, first_name="S", last_name="L")
-    admin_session.add(p)
-    admin_session.flush()
-    admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+def _make_party(admin_session, tenant, email: str, *, first_name="S", last_name="L") -> Party:
+    party = Party(
+        tenant_id=tenant.id, party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}", email=email, is_active=True,
     )
+    admin_session.add(party)
+    admin_session.flush()
+    admin_session.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    admin_session.flush()
+    return party
+
+
+def _make_person(admin_session, tenant, email: str) -> Party:
+    # Genuine identity and credential rows, as in the canonical sign-in fixture.
+    now = datetime.now(UTC)
+    p = _make_party(admin_session, tenant, email)
+    admin_session.add(AcademyAccountProfile(
+        tenant_id=tenant.id, party_id=p.id, status="active", prefs={},
+        created_at=now, updated_at=now,
+    ))
+    credential = UserCredential(
+        tenant_id=tenant.id, party_id=p.id, password_hash=hash_password("password1"),
+    )
+    admin_session.add(credential)
+    admin_session.flush()
+    admin_session.add(AcademyCredentialPolicy(
+        tenant_id=tenant.id, credential_id=credential.id, email=email,
+        failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+        reset_required=False, created_at=now, updated_at=now,
+    ))
     admin_session.commit()
     return p
 
@@ -40,10 +65,14 @@ def _login(app_client, email: str) -> dict[str, str]:
 
 def _entitle(admin_session, tenant, person, course):
     """Give the person access to the course via cohort + enrollment + offering."""
-    coh = Cohort(tenant_id=tenant.id, name="Lab Cohort", discipline=course.discipline,
-                 status="active")
-    admin_session.add(coh)
+    create_cohort(admin_session, CreateCohortCommand(
+        tenant_id=tenant.id, name="Lab Cohort", discipline=course.discipline,
+    ))
+    # create_cohort stages one public owner row without flushing or returning it.
+    coh = next(row for row in admin_session.new if isinstance(row, Cohort))
     admin_session.flush()
+    # Preserve the exact historical active entitlement fixture. Admission and
+    # invitation commands would add unrelated policy/assignment behavior.
     admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=coh.id, person_id=person.id,
                                  role_in_cohort="student", status="active"))
     admin_session.add(CourseOffering(tenant_id=tenant.id, cohort_id=coh.id, course_id=course.id,
@@ -53,26 +82,24 @@ def _entitle(admin_session, tenant, person, course):
 
 
 def _seed_lab(admin_session, tenant, *, with_course=True):
-    course = Course(
+    course = create_course(admin_session, CourseWrite(
+        id=uuid4(), status="published", listed=False,
         tenant_id=tenant.id,
         slug="foundation",
         title="F",
         discipline="networking",
         source_ref="x",
         version=1,
-    )
-    admin_session.add(course)
-    admin_session.flush()
-    act = Activity(
+    ))
+    act = create_activity(admin_session, ActivityWrite(
+        id=uuid4(), assessment_mode="graded", grading="auto", weight=1.0,
         tenant_id=tenant.id,
         course_id=course.id,
         chapter_number=14,
         type="lab",
         title="VLAN Lab",
         pass_threshold=0.5,
-    )
-    admin_session.add(act)
-    admin_session.flush()
+    ))
     tpl = LabTemplate(
         tenant_id=tenant.id,
         course_id=course.id,
@@ -104,18 +131,16 @@ def _seed_lab(admin_session, tenant, *, with_course=True):
 def _seed_seeded_lab(admin_session, tenant):
     """A lab template whose instructions carry a `{{lan_octet}}` placeholder,
     for the interpolation/placeholder web tests."""
-    course = Course(
+    course = create_course(admin_session, CourseWrite(
+        id=uuid4(), status="published", listed=False,
         tenant_id=tenant.id, slug="foundation-seeded", title="F", discipline="networking",
         source_ref="x", version=1,
-    )
-    admin_session.add(course)
-    admin_session.flush()
-    act = Activity(
+    ))
+    act = create_activity(admin_session, ActivityWrite(
+        id=uuid4(), assessment_mode="graded", grading="auto", weight=1.0,
         tenant_id=tenant.id, course_id=course.id, chapter_number=14, type="lab",
         title="Seeded Lab", pass_threshold=0.5,
-    )
-    admin_session.add(act)
-    admin_session.flush()
+    ))
     tpl = LabTemplate(
         tenant_id=tenant.id, course_id=course.id, chapter_number=14, activity_id=act.id,
         slug="seeded", title="Seeded Lab", topology="name: x",
@@ -337,7 +362,7 @@ def test_cross_tenant_check_not_found(
     app_client, admin_session, tenant_a, tenant_b, monkeypatch
 ):
     _make_person(admin_session, tenant_a, "owner4@a.edu")
-    p_b = Person(tenant_id=tenant_b.id, email="b@b.edu", first_name="B", last_name="B")
+    p_b = _make_party(admin_session, tenant_b, email="b@b.edu", first_name="B", last_name="B")
     admin_session.add(p_b)
     admin_session.flush()
     _, act_b, _ = _seed_lab(admin_session, tenant_b)
@@ -746,8 +771,8 @@ def test_operation_poll_hides_another_tenant(
     app_client, admin_session, tenant_a, tenant_b
 ):
     viewer = _make_person(admin_session, tenant_a, "poll-viewer@a.edu")
-    owner = Person(
-        tenant_id=tenant_b.id,
+    owner = _make_party(
+        admin_session, tenant_b,
         email="poll-owner@b.edu",
         first_name="B",
         last_name="Owner",

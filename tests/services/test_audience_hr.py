@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import select
 
 from app.models.auth import AuthSession, UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.email_outbox import EmailOutbox
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.learning_event import LearningEvent
-from app.models.person import Person
 from app.services import audience, hr_digest
 from app.services.security import hash_password
 
@@ -26,9 +27,17 @@ def _cohort(db, tenant, name="Aud"):
 
 
 def _enrol(db, tenant, cohort, email, *, role="student", first="A", last="B"):
-    p = Person(tenant_id=tenant.id, email=email, first_name=first, last_name=last, status="active")
+    now = datetime.now(UTC)
+    p = Party(
+        tenant_id=tenant.id, party_type=PartyType.person, display_name=f"{first} {last}",
+        email=email, is_active=True,
+    )
     db.add(p)
     db.flush()
+    db.add(PartyPerson(party_id=p.id, first_name=first, last_name=last))
+    db.add(AcademyAccountProfile(
+        tenant_id=tenant.id, party_id=p.id, status="active", prefs={}, created_at=now, updated_at=now,
+    ))
     db.add(Enrollment(tenant_id=tenant.id, cohort_id=cohort.id, person_id=p.id,
                       role_in_cohort=role, status="active"))
     db.flush()
@@ -140,10 +149,19 @@ def test_hr_report_separates_never_activated_from_stalled(admin_session, tenant_
     cohort = _cohort(admin_session, tenant_a, "aud-split")
     locked = _enrol(admin_session, tenant_a, cohort, "locked@dotmac.ng", first="Lo", last="Cked")
     quiet = _enrol(admin_session, tenant_a, cohort, "quiet@dotmac.ng", first="Qu", last="Iet")
+    credential = UserCredential(
+        tenant_id=tenant_a.id, party_id=quiet.id,
+        password_hash=hash_password("correct horse battery staple"),
+    )
+    admin_session.add(credential)
+    admin_session.flush()
     admin_session.add_all([
-        UserCredential(tenant_id=tenant_a.id, person_id=quiet.id, email=quiet.email,
-                       password_hash=hash_password("correct horse battery staple")),
-        AuthSession(tenant_id=tenant_a.id, person_id=quiet.id, token_hash="b" * 64,
+        AcademyCredentialPolicy(
+            tenant_id=tenant_a.id, credential_id=credential.id, email=quiet.email,
+            failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+            reset_required=False, created_at=now, updated_at=now,
+        ),
+        AuthSession(tenant_id=tenant_a.id, party_id=quiet.id, token_hash="b" * 64,
                     expires_at=now + timedelta(days=1)),
         LearningEvent(tenant_id=tenant_a.id, person_id=quiet.id, kind="chapter_viewed",
                       detail={}, occurred_at=now - timedelta(days=30)),

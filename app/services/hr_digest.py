@@ -17,13 +17,13 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.auth import AuthSession, UserCredential
 from app.models.completion import CourseCompletion
 from app.models.learning_event import LearningEvent
-from app.models.person import Person
 from app.services import audience as audience_service
 from app.services.email_outbox import enqueue_email
 
@@ -35,10 +35,13 @@ def _names(db: Session, tenant_id: UUID, person_ids: list[UUID]) -> list[str]:
     if not person_ids:
         return []
     rows = db.execute(
-        select(Person.first_name, Person.last_name, Person.email)
-        .where(Person.tenant_id == tenant_id)
-        .where(Person.id.in_(person_ids))
-        .order_by(Person.email)
+        select(PartyPerson.first_name, PartyPerson.last_name, Party.email)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.tenant_id == tenant_id)
+        .where(Party.party_type == PartyType.person)
+        .where(Party.id.in_(person_ids))
+        .order_by(Party.email)
     ).all()
     return [f"{(f or '').strip()} {(last or '').strip()}".strip() or email for f, last, email in rows]
 
@@ -62,11 +65,11 @@ def snapshot(db: Session, *, tenant_id: UUID, since: datetime, now: datetime | N
         pid for pid in staff_ids
         if not db.scalar(
             select(func.count()).select_from(UserCredential)
-            .where(UserCredential.tenant_id == tenant_id).where(UserCredential.person_id == pid)
+            .where(UserCredential.tenant_id == tenant_id).where(UserCredential.party_id == pid)
         )
         and not db.scalar(
             select(func.count()).select_from(AuthSession)
-            .where(AuthSession.tenant_id == tenant_id).where(AuthSession.person_id == pid)
+            .where(AuthSession.tenant_id == tenant_id).where(AuthSession.party_id == pid)
         )
     ]
 

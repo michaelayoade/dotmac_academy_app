@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from tests.conftest import client_for
+from tests.conftest import client_for, make_person_party
 
 
 def _cohort(admin_session, tenant, name="Fiber intake"):
@@ -39,7 +39,6 @@ def _cohort(admin_session, tenant, name="Fiber intake"):
     admin_session.refresh(track)
     return c, track
 
-
 def _application(admin_session, tenant, cohort, track, email):
     from app.services import admissions
 
@@ -55,7 +54,6 @@ def _application(admin_session, tenant, cohort, track, email):
     )
     admin_session.commit()
     return str(applicant.id)
-
 
 def _clear_onboarding(client, auth, app_id):
     """Mark every onboarding task done via the API.
@@ -74,12 +72,10 @@ def _clear_onboarding(client, auth, app_id):
         )
     client.cookies.clear()
 
-
 def _to_onboarding(client, auth, app_id):
     for nxt in ("screened", "accepted", "onboarding"):
         client.post(f"/admissions/{app_id}/transition", json={"to_status": nxt}, headers=auth)
     _clear_onboarding(client, auth, app_id)
-
 
 def test_enroll_creates_person_and_enrollment(app_client, tenant_a, admin_session, api_actor):
     a = client_for(app_client, tenant_a.slug)
@@ -104,7 +100,6 @@ def test_enroll_creates_person_and_enrollment(app_client, tenant_a, admin_sessio
     ).scalar()
     assert n == 1
 
-
 def test_enroll_is_idempotent(app_client, tenant_a, admin_session, api_actor):
     a = client_for(app_client, tenant_a.slug)
     auth = api_actor(app_client, tenant_a)["headers"]
@@ -125,7 +120,6 @@ def test_enroll_is_idempotent(app_client, tenant_a, admin_session, api_actor):
     ).scalar()
     assert n == 1  # no duplicate enrolment
 
-
 def test_enroll_requires_onboarding_status(app_client, tenant_a, admin_session, api_actor):
     a = client_for(app_client, tenant_a.slug)
     auth = api_actor(app_client, tenant_a)["headers"]
@@ -134,7 +128,6 @@ def test_enroll_requires_onboarding_status(app_client, tenant_a, admin_session, 
     # still 'applied' — enrol must fail
     r = a.post(f"/admissions/{app_id}/enroll", json={"cohort_id": str(cohort.id)}, headers=auth)
     assert r.status_code == 400
-
 
 def test_enroll_blocked_by_incomplete_onboarding(app_client, tenant_a, admin_session, api_actor):
     a = client_for(app_client, tenant_a.slug)
@@ -150,19 +143,15 @@ def test_enroll_blocked_by_incomplete_onboarding(app_client, tenant_a, admin_ses
     r = a.post(f"/admissions/{app_id}/enroll", json={"cohort_id": str(cohort.id)}, headers=auth)
     assert r.status_code == 400  # outstanding onboarding tasks
 
-
 def test_enroll_reuses_existing_person(app_client, tenant_a, admin_session, api_actor):
     """An email that is already a Person (e.g. an employee) is reused, not duplicated."""
-    from app.models.person import Person
 
     a = client_for(app_client, tenant_a.slug)
     auth = api_actor(app_client, tenant_a)["headers"]
     cohort, track = _cohort(admin_session, tenant_a)
 
     admin_session.rollback()
-    existing = Person(
-        tenant_id=tenant_a.id, email="staff@a.ex", first_name="Staff", last_name="Member"
-    )
+    existing = make_person_party(admin_session, tenant_id=tenant_a.id, email="staff@a.ex", first_name="Staff", last_name="Member")
     admin_session.add(existing)
     admin_session.commit()
     admin_session.refresh(existing)

@@ -1,58 +1,142 @@
 """Canonical account identity helpers.
 
-``Person.email`` is the account's source of truth.  ``UserCredential.email`` is
-kept in sync for compatibility with the existing schema, but authentication and
-account recovery resolve identity through ``Person``.
+Kernel Party and PartyPerson supply canonical identity. Academy-owned credential
+policy retains compatible aliases; all account credentials still participate in
+password and lockout transitions. Legacy Person lookup and credential-row
+synchronization helpers have no callers in this prepared assembly and are retired.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.identity import normalize_email as normalize_identity_email
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.auth import UserCredential
-from app.models.person import Person
+
+def normalize_email(email: str | None) -> str:
+    """Retain Academy trimming and delegate identity casing to its Kernel owner."""
+    return normalize_identity_email((email or "").strip())
 
 
-def normalize_email(email: str) -> str:
-    """Return the canonical representation used for account identity."""
-    return (email or "").strip().lower()
+def canonical_party_for_email(db: Session, *, tenant_id: UUID, email: str, lock: bool = False):
+    """Canonical lookup for sign-in only; legacy mutable Person callers are gated."""
+    from dotmac_kernel.models import Party
 
-
-def person_for_email(db: Session, *, tenant_id: UUID, email: str) -> Person | None:
-    """Resolve a person using a trimmed, case-insensitive tenant lookup."""
     canonical = normalize_email(email)
     if not canonical:
         return None
-    return db.scalars(
-        select(Person).where(Person.tenant_id == tenant_id).where(func.lower(func.btrim(Person.email)) == canonical)
-    ).first()
+    statement = select(Party).where(Party.tenant_id == tenant_id, func.lower(func.btrim(Party.email)) == canonical)
+    if lock:
+        statement = statement.with_for_update(of=Party)
+    return db.scalars(statement.execution_options(populate_existing=True)).first()
 
 
-def sync_credential_emails(db: Session, *, person: Person) -> list[UserCredential]:
-    """Make Person authoritative while preserving legacy credential rows.
+def sync_canonical_credential_emails(db: Session, *, party, now: datetime) -> None:
+    """Preserve unordered compatible-alias selection in the product policy table."""
+    from dotmac_kernel.models import UserCredential as CanonicalCredential
 
-    Older databases can contain more than one credential for a person, while
-    the credential table also requires email uniqueness.  Only one compatible
-    row can therefore carry the canonical email; every row still participates
-    in password and lockout transitions by ``person_id``.
-    """
-    canonical = normalize_email(person.email)
-    person.email = canonical
+    from app.models.identity_extensions import AcademyCredentialPolicy
+
     credentials = list(
         db.scalars(
-            select(UserCredential)
-            .where(UserCredential.tenant_id == person.tenant_id)
-            .where(UserCredential.person_id == person.id)
+            select(CanonicalCredential)
+            .where(CanonicalCredential.tenant_id == party.tenant_id, CanonicalCredential.party_id == party.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).all()
     )
-    if credentials:
-        canonical_credential = next(
-            (credential for credential in credentials if normalize_email(credential.email) == canonical),
-            credentials[0],
+    policies = list(
+        db.scalars(
+            select(AcademyCredentialPolicy)
+            .where(
+                AcademyCredentialPolicy.tenant_id == party.tenant_id,
+                AcademyCredentialPolicy.credential_id.in_([row.id for row in credentials]),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+    )
+    by_id = {row.credential_id: row for row in policies}
+    if not credentials or len(by_id) != len(credentials):
+        from dotmac_kernel.credential_lifecycle import CredentialCohortDrift
+
+        raise CredentialCohortDrift("complete persisted alias policy is required")
+    canonical = normalize_email(party.email)
+    selected = next((row for row in credentials if normalize_email(by_id[row.id].email) == canonical), credentials[0])
+    party.email = canonical
+    if by_id[selected.id].email != canonical:
+        by_id[selected.id].email = canonical
+        by_id[selected.id].updated_at = now
+    db.flush()
+
+
+@dataclass(frozen=True, slots=True)
+class AcademyCurrentAccount:
+    """Live request projection of a genuine Party; never writer authorization.
+
+    Fields are read anew for each guard invocation. This immutable object is
+    neither a mutable legacy Person nor a capability for a later action. Writer
+    ports must revalidate current session/principal/grants under their locks.
+    """
+
+    id: UUID
+    tenant_id: UUID
+    email: str
+    first_name: str
+    last_name: str
+    status: str
+    avatar_path: str | None
+    _prefs: object = field(repr=False)
+
+    @property
+    def prefs(self) -> object:
+        """Return genuine JSON values without exposing snapshot or ORM aliases."""
+        return deepcopy(self._prefs)
+
+
+def current_account(db: Session, *, tenant_id: UUID, party_id: UUID) -> AcademyCurrentAccount | None:
+    """Read one fresh tenant-local active person account from genuine records."""
+    from dotmac_kernel.models import Party, PartyPerson, PartyType
+
+    from app.models.identity_extensions import AcademyAccountProfile
+
+    row = db.execute(
+        select(Party, PartyPerson, AcademyAccountProfile)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
         )
-        canonical_credential.email = canonical
-    return credentials
+        .where(
+            Party.tenant_id == tenant_id,
+            Party.id == party_id,
+            Party.party_type == PartyType.person,
+            Party.is_active.is_(True),
+            AcademyAccountProfile.tenant_id == tenant_id,
+            AcademyAccountProfile.status == "active",
+        )
+        .execution_options(populate_existing=True)
+    ).first()
+    if row is None:
+        return None
+    party, person, profile = row
+    if any(type(value) is not str for value in (party.email, person.first_name, person.last_name, profile.status)):
+        return None
+    if not party.email.strip():
+        return None
+    return AcademyCurrentAccount(
+        party.id,
+        party.tenant_id,
+        party.email,
+        person.first_name,
+        person.last_name,
+        profile.status,
+        profile.avatar_path,
+        deepcopy(profile.prefs),
+    )

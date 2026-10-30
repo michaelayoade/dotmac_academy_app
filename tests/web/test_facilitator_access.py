@@ -2,35 +2,31 @@
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
+from dotmac_kernel.models import Party
+
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
 from app.services.facilitator_access import facilitator_access
-from app.services.security import hash_password
+from app.services.roles import role_slugs
 from app.web.instructor import _assessment_person_ids_for_course
+from tests.conftest import make_canonical_account
 from tests.web.test_reports import _seed_cohort
 
 
-def _scoped_user(db, tenant, *, email: str) -> Person:
-    person = Person(
+def _scoped_user(db, tenant, *, email: str) -> Party:
+    # A scoped facilitator is an ordinary student account (student grant only,
+    # so the web facet admits it) whose teaching authority comes afterwards
+    # from an active nomination — never from a staff role grant.
+    person = make_canonical_account(
+        db,
         tenant_id=tenant.id,
         email=email,
         first_name="Scoped",
         last_name="Facilitator",
-    )
-    db.add(person)
-    db.flush()
-    db.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=person.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+        password="password1",
+        role="student",
     )
     db.flush()
     return person
@@ -92,14 +88,11 @@ def test_active_cohort_nomination_is_scoped_without_person_role(app_client, admi
     )
     admin_session.commit()
 
-    assert (
-        admin_session.query(PersonRole)
-        .filter(PersonRole.tenant_id == tenant_a.id)
-        .filter(PersonRole.person_id == facilitator.id)
-        .count()
-        == 0
-    )
-    headers = _login(app_client, facilitator.email)
+    # The nomination confers no staff grant: the account still holds only its
+    # ordinary student role (composed equivalent of MAIN's zero-PersonRole
+    # assertion, where MAIN accounts needed no grant to authenticate).
+    assert role_slugs(admin_session, tenant_a.id, facilitator.id) == {"student"}
+    headers = _login(app_client, "cohort-facilitator@a.edu")
     home = app_client.get("/instructor", headers=headers)
     assert home.status_code == 200
     assert cohort.name in home.text
@@ -131,7 +124,7 @@ def test_active_course_nomination_cannot_read_whole_cohort_data(app_client, admi
     access = facilitator_access(admin_session, tenant_id=tenant_a.id, person_id=facilitator.id)
     assert access.allows_offering(offering.id) is True
     assert access.allows_cohort(cohort.id) is False
-    headers = _login(app_client, facilitator.email)
+    headers = _login(app_client, "course-facilitator@a.edu")
     assert app_client.get("/instructor", headers=headers).status_code == 200
     assert app_client.get("/instructor/gradebook", headers=headers).status_code == 403
     assert app_client.get(f"/instructor/gradebook/{cohort.id}", headers=headers).status_code == 403
@@ -161,7 +154,7 @@ def test_cross_tenant_target_is_404_before_scope_check(app_client, admin_session
     )
     admin_session.commit()
 
-    headers = _login(app_client, facilitator.email)
+    headers = _login(app_client, "tenant-facilitator@a.edu")
     assert app_client.get(f"/instructor/gradebook/{other.id}", headers=headers).status_code == 404
     assert app_client.get(f"/instructor/reports/cohort/{other.id}", headers=headers).status_code == 404
 

@@ -1,37 +1,20 @@
-# app/web/admin_home.py
-"""Admin Console — the admin-area landing page (GET /admin).
-
-Admin only: gated by require_web_role("admin") (exact match), which is correct
-here because only admins should ever see the console.
-
-Routing note: this router uses prefix="/admin" with route path "" so it resolves
-to exactly "/admin" and does NOT shadow the sibling /admin/settings and
-/admin/users routes, which live on their own routers (app/web/settings.py and
-app/web/accounts.py) with distinct full paths. Separate routers + distinct full
-paths means no shadowing regardless of include order.
-
-IMPORTANT: no db.commit() inside the handler — get_db owns the transaction and
-commits after the response (a mid-handler commit clears the RLS tenant GUC).
-"""
-
 from __future__ import annotations
 
+import dotmac_learning as learning
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.cohort import Cohort
-from app.models.course import Course
 from app.models.lab import LabInstance
-from app.models.person import Person
-from app.services.web_auth import require_web_role
+from app.services.api_identity_reads import count_all_people
+from app.services.product_admin_access import require_admin_home_access
 from app.web.templating import templates
 
 router = APIRouter(
     prefix="/admin",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("admin"))],
+    dependencies=[Depends(require_tenant), Depends(require_admin_home_access)],
 )
 
 
@@ -46,9 +29,9 @@ def admin_console(request: Request, db: Session = Depends(get_db)):
         return db.execute(stmt).scalar_one()
 
     stats = {
-        "people": _count(Person),
-        "cohorts": _count(Cohort),
-        "courses": _count(Course),
+        "people": count_all_people(db, tenant_id=tenant.id),
+        "cohorts": len(learning.instructor_cohort_choices(db, tenant_id=tenant.id)),
+        "courses": len(learning.all_courses(db, tenant_id=tenant.id)),
         "labs": _count(
             LabInstance,
             LabInstance.status.in_(("active", "provisioning", "resetting")),

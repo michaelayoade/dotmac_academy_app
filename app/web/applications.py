@@ -14,10 +14,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_tenant
 from app.models.admissions import APPLICANT_STATUSES, Applicant
 from app.models.email_outbox import EmailOutbox
-from app.models.person import Person
-from app.models.rbac import AuditEvent
 from app.services import admissions as admissions_service
+from app.services.api_identity_reads import newest_applicant_invitation_event
 from app.services.csv_reports import sanitize_cell
+from app.services.identity import AcademyCurrentAccount
 from app.services.web_auth import require_web_role
 from app.web.pagination import pagination_context
 from app.web.templating import templates
@@ -45,24 +45,7 @@ def _invitation_export_info(db: Session, applicant: Applicant) -> dict[str, str]
         .where(EmailOutbox.kind.in_(("entrance_invite", "onboarding_invite", "enrollment_welcome")))
         .order_by(EmailOutbox.created_at.desc())
     ).first()
-    event = db.scalars(
-        select(AuditEvent)
-        .where(AuditEvent.tenant_id == applicant.tenant_id)
-        .where(AuditEvent.entity_type == "applicant")
-        .where(AuditEvent.entity_id == str(applicant.id))
-        .where(
-            AuditEvent.action.in_(
-                (
-                    "applicant.invitation_resent",
-                    "applicant.assessment_reinvite",
-                    "applicant.assessment_reset",
-                    "applicant.transition",
-                    "applicant.transition_baseline",
-                )
-            )
-        )
-        .order_by(AuditEvent.created_at.desc())
-    ).first()
+    event = newest_applicant_invitation_event(db, tenant_id=applicant.tenant_id, applicant_id=applicant.id)
     status = "not_sent"
     sent_date = ""
     method = ""
@@ -254,7 +237,7 @@ def application_intake(
     request: Request,
     intake_choice: str = Form(...),
     reason: str = Form(""),
-    actor: Person = Depends(require_web_role("admin")),
+    actor: AcademyCurrentAccount = Depends(require_web_role("admin")),
     db: Session = Depends(get_db),
 ):
     try:
@@ -267,7 +250,7 @@ def application_intake(
         applicant_id=applicant_id,
         cohort_id=cohort_id,
         track_id=track_id,
-        actor_person_id=actor.id,
+        request=request,
         reason=reason.strip() or None,
     )
     return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)
@@ -280,15 +263,14 @@ def application_action(
     action: str = Form(...),
     reason: str = Form(""),
     extend_access: bool = Form(False),
-    actor: Person = Depends(require_web_role("admin")),
+    actor: AcademyCurrentAccount = Depends(require_web_role("admin")),
     db: Session = Depends(get_db),
 ):
     if action == "resend_invitation" and extend_access:
         admissions_service.resend_applicant_invitation(
             db,
             applicant_id=applicant_id,
-            actor_person_id=actor.id,
-            base_url=str(request.base_url).rstrip("/"),
+            request=request,
             extend_access=True,
             reason=reason.strip() or None,
         )
@@ -297,8 +279,7 @@ def application_action(
             db,
             applicant_id=applicant_id,
             action=action,
-            actor_person_id=actor.id,
-            base_url=str(request.base_url).rstrip("/"),
+            request=request,
             reason=reason.strip() or None,
         )
     return RedirectResponse(f"/admin/applications/{applicant_id}", status_code=303)

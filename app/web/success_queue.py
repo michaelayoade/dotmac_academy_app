@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from dotmac_learning import SuccessPersonFact
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -19,9 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.cohort import Cohort
-from app.models.person import Person
 from app.services import success_queue as queue_service
 from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.identity import AcademyCurrentAccount
 from app.services.roles import role_slugs
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
@@ -45,7 +46,7 @@ def _require_staff(db: Session, tenant_id: UUID, person_id: UUID) -> None:
 @router.get("/success-queue", response_class=HTMLResponse)
 def queue_index(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -55,9 +56,11 @@ def queue_index(
     cohort_raw = request.query_params.get("cohort") or None
     cohort_id = UUID(cohort_raw) if cohort_raw else None
     entries = queue_service.list_entries(
-        db, tenant_id=tenant.id,
+        db,
+        tenant_id=tenant.id,
         status=None if status == "all" else status,
-        severity=severity, cohort_id=cohort_id,
+        severity=severity,
+        cohort_id=cohort_id,
     )
     cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
     return templates.TemplateResponse(
@@ -79,7 +82,7 @@ def queue_action(
     entry_id: UUID,
     action: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -87,8 +90,7 @@ def queue_action(
     if action not in {"acknowledge", "assign", "resolve"}:
         raise HTTPException(status_code=404)
     try:
-        entry = queue_service.transition(db, tenant_id=tenant.id, entry_id=entry_id,
-                                         action=action, actor_person_id=person.id)
+        entry = queue_service.transition(db, tenant_id=tenant.id, entry_id=entry_id, action=action, request=request)
     except NotFoundError:
         raise HTTPException(status_code=404) from None
     except BadRequestError as exc:
@@ -102,7 +104,7 @@ def queue_action(
 @router.get("/success-queue/message", response_class=HTMLResponse)
 def message_form(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -112,17 +114,15 @@ def message_form(
     if segment not in _SEGMENT_LABELS:
         raise HTTPException(status_code=404)
     cohorts = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id)).all()
-    members: list[Person] = []
+    members: list[SuccessPersonFact] = []
     cohort = None
     if cohort_raw:
         cohort = db.scalars(
-            select(Cohort).where(Cohort.tenant_id == tenant.id)
-            .where(Cohort.id == UUID(cohort_raw))
+            select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.id == UUID(cohort_raw))
         ).first()
         if cohort is None:
             raise HTTPException(status_code=404)
-        members = queue_service.segment_members(
-            db, tenant_id=tenant.id, cohort_id=cohort.id, segment=segment)
+        members = queue_service.segment_members(db, tenant_id=tenant.id, cohort_id=cohort.id, segment=segment)
     return templates.TemplateResponse(
         request,
         "instructor/segment_message.html",
@@ -144,22 +144,25 @@ def message_send(
     segment: str = Form(...),
     subject: str = Form(...),
     body: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     _require_staff(db, tenant.id, person.id)
     if segment not in _SEGMENT_LABELS:
         raise HTTPException(status_code=404)
-    cohort = db.scalars(
-        select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cohort_id)
-    ).first()
+    cohort = db.scalars(select(Cohort).where(Cohort.tenant_id == tenant.id).where(Cohort.id == cohort_id)).first()
     if cohort is None:
         raise HTTPException(status_code=404)
     try:
         result = queue_service.message_segment(
-            db, tenant_id=tenant.id, cohort_id=cohort_id, segment=segment,
-            subject=subject, body=body, actor_person_id=person.id,
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            segment=segment,
+            subject=subject,
+            body=body,
+            request=request,
         )
     except BadRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None

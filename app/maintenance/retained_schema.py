@@ -1,8 +1,9 @@
 """Private historical retained-schema contract; no DDL or adoption authority.
 
 Pins derive from the genuine a5/096 frozen 62-file chain through 0061.
-PostgreSQL16 rendering pins remain candidate; full qualification is unsupported;
-this source slice never issues a successful admission proof or product receipt.
+The fixed rendering profile is the observed PostgreSQL 16.15 Debian context.
+Schema conformity never issues an admission proof or product receipt; the
+independent environment gate and product qualification remain closed.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ class RetainedSchemaRefused(RuntimeError):
 
 
 class RetainedSchemaUnsupported(RetainedSchemaRefused):
-    """Source matches inspected structure; hosted expression qualification owed."""
+    """The actual rendering context has no fixed qualified source profile."""
 
 
 def _require(condition):
@@ -617,7 +618,7 @@ _RENDERING_GATE = (
 )
 
 
-# Candidate PostgreSQL16 deparser pins, derived from frozen DDL plus the
+# Fixed PostgreSQL16.15 deparser pins, derived from frozen DDL plus the
 # independently source-bound full62 Genesis replay. Not a target/live baseline.
 # Casts, parentheses, enum order and NULL guards are intentionally exact.
 _CHECK_RENDERINGS = (
@@ -669,18 +670,25 @@ _BTREE_TYPE_OPCLASSES = (
 )
 
 
+# Immutable technical compatibility identity from the genuine full62 hosted
+# observation; neither a business default nor a caller-selectable expectation.
+_RENDERING_CONTEXT = (
+    160015,
+    "16.15 (Debian 16.15-1.pgdg13+2)",
+    '"$user", public',
+    ("pg_catalog", "public"),
+    "off",
+    "on",
+)
+
+
 def _check_rendering_context(packet):
-    """Candidate deparser context only; never deployment/security approval."""
+    """Exact observed deparser context only; never environment approval."""
     context = packet.get("rendering_context", ())
     if len(context) != 1:
         raise RetainedSchemaUnsupported("Historical retained rendering context unsupported")
     row = context[0]
-    if not (
-        len(row) == 6
-        and type(row[0]) is int
-        and 160000 <= row[0] < 170000
-        and row[2:] == ('"$user", public', ("pg_catalog", "public"), "off", "on")
-    ):
+    if not (len(row) == 6 and type(row[0]) is int and row == _RENDERING_CONTEXT):
         raise RetainedSchemaUnsupported("Historical retained rendering context unsupported")
 
 
@@ -1895,17 +1903,233 @@ def _check_structure(packet):
     _check_ri_graph(packet)
 
 
-def _verify_historical_retained_schema(connection):
-    """Strict historical public-only structural verifier, currently unsupported.
+# PostgreSQL REL_16_15 source identities, not a captured cluster allowlist:
+# src/include/catalog/pg_authid.dat; bootstrap memberships are declared in
+# src/backend/catalog/system_functions.sql. user.c fixes GRANT defaults.
+_PG_ROLES = (
+    (6171, "pg_database_owner"),
+    (6181, "pg_read_all_data"),
+    (6182, "pg_write_all_data"),
+    (3373, "pg_monitor"),
+    (3374, "pg_read_all_settings"),
+    (3375, "pg_read_all_stats"),
+    (3377, "pg_stat_scan_tables"),
+    (4569, "pg_read_server_files"),
+    (4570, "pg_write_server_files"),
+    (4571, "pg_execute_server_program"),
+    (4200, "pg_signal_backend"),
+    (4544, "pg_checkpoint"),
+    (4550, "pg_use_reserved_connections"),
+    (6304, "pg_create_subscription"),
+)
+_DISPATCHERS = ("outbox_dispatcher", "platform_outbox_dispatcher")
 
-    NO successful proof, caller packet, expected override, namespace selector,
-    baseline blessing or mutation. All structural and effective-right checks
-    run before the unconditional hosted qualification gate. No caller can use
-    equality with a previous live observation to bypass fixed semantics.
+
+def _observe_cluster_authority(connection):
+    """Actual all-role metadata only; no caller identity or authority input."""
+    root = _preflight(connection)
+    queries = {
+        "cluster_roles": """
+            SELECT oid,rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,
+                   rolcanlogin,rolreplication,rolbypassrls,rolconfig IS NULL
+            FROM pg_catalog.pg_roles ORDER BY rolname
+        """,
+        "cluster_memberships": """
+            SELECT roleid,member,grantor,admin_option,inherit_option,set_option
+            FROM pg_catalog.pg_auth_members ORDER BY 1,2,3,4,5,6
+        """,
+        "cluster_tables": """
+            SELECT c.relname,r.rolname,p,pg_catalog.has_table_privilege(r.oid,c.oid,p)
+            FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            CROSS JOIN pg_catalog.pg_roles r
+            CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+            WHERE n.nspname='public' AND c.relname=ANY(:names) ORDER BY 1,2,3
+        """,
+        "cluster_columns": """
+            SELECT c.relname,a.attname,r.rolname,p,pg_catalog.has_column_privilege(r.oid,c.oid,a.attnum,p)
+            FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid
+            CROSS JOIN pg_catalog.pg_roles r
+            CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) p
+            WHERE n.nspname='public' AND c.relname=ANY(:names) AND a.attnum>0 AND NOT a.attisdropped
+            ORDER BY 1,2,3,4
+        """,
+        "cluster_database_owner": """
+            SELECT pg_catalog.pg_get_userbyid(datdba)
+            FROM pg_catalog.pg_database WHERE datname=current_database()
+        """,
+        "cluster_schema_owner": """
+            SELECT pg_catalog.pg_get_userbyid(nspowner)
+            FROM pg_catalog.pg_namespace WHERE nspname='public'
+        """,
+        "cluster_schema_acl": """
+            SELECT pg_catalog.pg_get_userbyid(a.grantor),
+                   CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,
+                   a.privilege_type,a.is_grantable
+            FROM pg_catalog.pg_namespace n,
+                 LATERAL pg_catalog.aclexplode(coalesce(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) a
+            WHERE n.nspname='public' ORDER BY 1,2,3,4
+        """,
+        "cluster_database_acl": """
+            SELECT pg_catalog.pg_get_userbyid(a.grantor),
+                   CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END,
+                   a.privilege_type,a.is_grantable
+            FROM pg_catalog.pg_database d,
+                 LATERAL pg_catalog.aclexplode(coalesce(d.datacl,pg_catalog.acldefault('d',d.datdba))) a
+            WHERE d.datname=current_database() ORDER BY 1,2,3,4
+        """,
+        "cluster_schema_rights": """
+            SELECT r.rolname,p,pg_catalog.has_schema_privilege(r.oid,'public',p)
+            FROM pg_catalog.pg_roles r CROSS JOIN unnest(ARRAY['USAGE','CREATE']) p ORDER BY 1,2
+        """,
+        "cluster_database_rights": """
+            SELECT r.rolname,p,pg_catalog.has_database_privilege(r.oid,current_database(),p)
+            FROM pg_catalog.pg_roles r CROSS JOIN unnest(ARRAY['CONNECT','CREATE','TEMPORARY']) p ORDER BY 1,2
+        """,
+        "cluster_ownership": """
+            SELECT r.rolname,d.classid,d.objid,d.objsubid
+            FROM pg_catalog.pg_shdepend d JOIN pg_catalog.pg_roles r ON r.oid=d.refobjid
+            WHERE d.refclassid='pg_catalog.pg_authid'::regclass AND d.deptype='o'
+              AND (d.dbid=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())
+                   OR (d.dbid=0 AND d.classid='pg_catalog.pg_database'::regclass
+                       AND d.objid=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())))
+            ORDER BY 1,2,3,4
+        """,
+        "cluster_role_settings": """
+            SELECT setrole,setdatabase FROM pg_catalog.pg_db_role_setting
+            WHERE setdatabase=0 OR setdatabase=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())
+            ORDER BY 1,2
+        """,
+    }
+    packet = {name: _rows(connection, sql, names=list(_NAMES)) for name, sql in queries.items()}
+    _require(connection.get_transaction() is root and root.is_active)
+    return packet
+
+
+def _cluster_privileges(table, role):
+    # Never pass unknown roles to _table_privileges: its final branch describes
+    # a known application role, not a permissive cluster-wide fallback.
+    if role in _ROLES:
+        return _table_privileges(table, role)
+    if role == "postgres":
+        return _PRIVILEGES
+    # aclchk.c gives predefined roles these implicit relation privileges.
+    if role == "pg_read_all_data":
+        return ("SELECT",)
+    if role == "pg_write_all_data":
+        return ("INSERT", "UPDATE", "DELETE")
+    return ()
+
+
+def _check_cluster_authority(packet):
+    """Fixed source semantics over every actual role; unknown inert roles work."""
+    rows = packet["cluster_roles"]
+    _require(all(len(r) == 10 and type(r[0]) is int and r[0] > 0 for r in rows))
+    _require(all(all(type(v) is bool for v in r[2:]) for r in rows))
+    roles = {r[1]: r for r in rows}
+    _require(len(roles) == len(rows) and len({r[0] for r in rows}) == len(rows))
+    _require(set(_ROLES + _DISPATCHERS + ("postgres",)).issubset(roles))
+    for oid, name in _PG_ROLES:
+        _require(roles.get(name) == (oid, name, False, True, False, False, False, False, False, True))
+    _require(roles["postgres"] == (10, "postgres", True, True, True, True, True, True, True, True))
+    known = set(_ROLES + _DISPATCHERS) | {"postgres"} | {name for _, name in _PG_ROLES}
+    for name, row in roles.items():
+        if name in _ROLES + _DISPATCHERS:
+            _require(
+                row[2:]
+                == (
+                    False,
+                    name != "academy_lab_worker",
+                    False,
+                    False,
+                    True,
+                    False,
+                    name in ("app_admin", "academy_lab_worker"),
+                    True,
+                )
+            )
+        elif name not in known:
+            # LOGIN and INHERIT alone confer no authority without any edges.
+            _require(not any((row[2], row[4], row[5], row[7], row[8])) and row[9] is True)
+    _require(
+        packet["cluster_memberships"] == tuple(sorted((oid, 3373, 10, False, True, True) for oid in (3374, 3375, 3377)))
+    )
+    _require(not packet["cluster_role_settings"])
+    _require(packet["cluster_database_owner"] == (("app_admin",),))
+    _require(packet["cluster_schema_owner"] == (("pg_database_owner",),))
+    schema_acl = [("pg_database_owner", "PUBLIC", "USAGE", False)]
+    schema_acl.extend(
+        ("pg_database_owner", r, p, False) for r in ("pg_database_owner", "app_admin") for p in ("CREATE", "USAGE")
+    )
+    schema_acl.extend(("pg_database_owner", r, "USAGE", False) for r in ("app_user", "platform_api"))
+    _require(packet["cluster_schema_acl"] == tuple(sorted(schema_acl)))
+    database_acl = [("app_admin", "PUBLIC", p, False) for p in ("CONNECT", "TEMPORARY")]
+    database_acl.extend(("app_admin", "app_admin", p, False) for p in ("CONNECT", "CREATE", "TEMPORARY"))
+    _require(packet["cluster_database_acl"] == tuple(sorted(database_acl)))
+    for key, expected in (
+        (
+            "cluster_schema_rights",
+            tuple(
+                sorted(
+                    (r, p, p == "USAGE" or r in ("postgres", "app_admin", "pg_database_owner"))
+                    for r in roles
+                    for p in ("CREATE", "USAGE")
+                )
+            ),
+        ),
+        (
+            "cluster_database_rights",
+            tuple(
+                sorted(
+                    (r, p, p != "CREATE" or r in ("postgres", "app_admin"))
+                    for r in roles
+                    for p in ("CONNECT", "CREATE", "TEMPORARY")
+                )
+            ),
+        ),
+        (
+            "cluster_tables",
+            tuple(
+                sorted((t, r, p, p in _cluster_privileges(t, r)) for t in _NAMES for r in roles for p in _PRIVILEGES)
+            ),
+        ),
+        (
+            "cluster_columns",
+            tuple(
+                sorted(
+                    (
+                        t,
+                        c[0],
+                        r,
+                        p,
+                        p in _cluster_privileges(t, r)
+                        or (r == "app_user" and p == "INSERT" and c[0] in dict(_REQUEST_COLUMNS).get(t, ())),
+                    )
+                    for t, columns in _COLUMNS
+                    for c in columns
+                    for r in roles
+                    for p in _COLUMN_PRIVILEGES
+                )
+            ),
+        ),
+    ):
+        actual = packet[key]
+        _require(all(type(row[-1]) is bool for row in actual))
+        _require(actual == expected)
+    _require(all(row[0] in ("postgres", "app_admin", "pg_database_owner") for row in packet["cluster_ownership"]))
+
+
+def _verify_historical_retained_schema(connection):
+    """Check fixed historical public-only schema conformity; return no proof.
+
+    Reads the actual connection under the same active root. No caller packet,
+    expected override, namespace selector, baseline blessing or mutation. A
+    normal None return means only that all fixed schema checks passed; it is
+    never environment qualification, a product receipt or adoption authority.
     """
     root = _preflight(connection)
     packet = _observe_historical_catalog(connection)
     _check_structure(packet)
     _check_security(packet)
+    _check_cluster_authority(_observe_cluster_authority(connection))
     _require(connection.get_transaction() is root and root.is_active)
-    raise RetainedSchemaUnsupported("Historical retained PG rendering/security qualification pending")

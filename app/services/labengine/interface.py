@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from app.config import LabExecutionPolicy
+
 
 @dataclass
 class ExecResult:
@@ -22,6 +24,12 @@ class LabHandle:
 
 
 class LabEngine(ABC):
+    @property
+    @abstractmethod
+    def execution_policy(self) -> LabExecutionPolicy:
+        """The exact immutable policy shared with this pass's claimed operations."""
+        ...
+
     @abstractmethod
     def inventory(self) -> dict[str, str]:
         """Return running lab names mapped to their authoritative topology paths."""

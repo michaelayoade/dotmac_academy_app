@@ -2,31 +2,27 @@
 
 from __future__ import annotations
 
+from dotmac_kernel.models import Party, PartyRoleGrant
+
 from app.models.auth import UserCredential
-from app.models.person import Person
-from app.models.rbac import PersonRole, Role
+from app.models.rbac import Role
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
     """Seed a Person + credential (password 'password1') + the given role."""
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Seed", last_name="User")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Seed", last_name="User")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role_slug].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
     return p
-
 
 def _login(app_client, email, password="password1"):
     """Log in and return (headers, csrf_token)."""
@@ -35,12 +31,10 @@ def _login(app_client, email, password="password1"):
     csrf = app_client.cookies.get("csrf_token", "")
     return h, csrf
 
-
 def test_student_forbidden_on_users_page(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "stud@a.edu", "student")
     h, _ = _login(app_client, "stud@a.edu")
     assert app_client.get("/admin/users", headers=h).status_code == 403
-
 
 def test_instructor_can_list_users(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "inst@a.edu", "instructor")
@@ -48,7 +42,6 @@ def test_instructor_can_list_users(app_client, admin_session, tenant_a):
     r = app_client.get("/admin/users", headers=h)
     assert r.status_code == 200
     assert "inst@a.edu" in r.text
-
 
 def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "inst2@a.edu", "instructor")
@@ -70,7 +63,7 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     assert r.headers.get("HX-Redirect") == "/admin/users"
 
     person = (
-        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "created-stud@a.edu").one()
+        admin_session.query(Party).filter(Party.tenant_id == tenant_a.id, Party.email == "created-stud@a.edu").one()
     )
     cred = (
         admin_session.query(UserCredential)
@@ -80,12 +73,11 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     assert cred is not None
     student_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "student").one()
     grant = (
-        admin_session.query(PersonRole)
-        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        admin_session.query(PartyRoleGrant)
+        .filter(PartyRoleGrant.tenant_id == tenant_a.id, PartyRoleGrant.party_id == person.id)
         .one()
     )
     assert grant.role_id == student_role.id
-
 
 def test_instructor_cannot_create_admin(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "inst3@a.edu", "instructor")
@@ -105,10 +97,9 @@ def test_instructor_cannot_create_admin(app_client, admin_session, tenant_a):
     )
     assert r.status_code == 403
     assert (
-        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "no-admin@a.edu").count()
+        admin_session.query(Party).filter(Party.tenant_id == tenant_a.id, Party.email == "no-admin@a.edu").count()
         == 0
     )
-
 
 def test_admin_can_create_admin(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "admin@a.edu", "admin")
@@ -129,15 +120,14 @@ def test_admin_can_create_admin(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     admin_role = admin_session.query(Role).filter(Role.tenant_id == tenant_a.id, Role.slug == "admin").one()
     person = (
-        admin_session.query(Person).filter(Person.tenant_id == tenant_a.id, Person.email == "extra-admin@a.edu").one()
+        admin_session.query(Party).filter(Party.tenant_id == tenant_a.id, Party.email == "extra-admin@a.edu").one()
     )
     grant = (
-        admin_session.query(PersonRole)
-        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == person.id)
+        admin_session.query(PartyRoleGrant)
+        .filter(PartyRoleGrant.tenant_id == tenant_a.id, PartyRoleGrant.party_id == person.id)
         .one()
     )
     assert grant.role_id == admin_role.id
-
 
 def test_created_student_can_login_and_reach_learner_page(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "inst4@a.edu", "instructor")
@@ -172,7 +162,6 @@ def test_created_student_can_login_and_reach_learner_page(app_client, admin_sess
         dash = student_client.get("/", headers=sh)
         assert dash.status_code == 200
 
-
 def test_admin_can_search_users(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "admin-search@a.edu", "admin")
     _seed_user(admin_session, tenant_a, "needle.user@a.edu", "student")
@@ -185,7 +174,6 @@ def test_admin_can_search_users(app_client, admin_session, tenant_a):
     assert "needle.user@a.edu" in r.text
     assert "other.user@a.edu" not in r.text
     assert "Showing results for" in r.text
-
 
 def test_admin_can_change_existing_user_role(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "role-admin@a.edu", "admin")
@@ -204,15 +192,14 @@ def test_admin_can_change_existing_user_role(app_client, admin_session, tenant_a
     grants = (
         admin_session.query(Role.slug)
         .join(
-            PersonRole,
-            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+            PartyRoleGrant,
+            (PartyRoleGrant.role_id == Role.id) & (PartyRoleGrant.tenant_id == Role.tenant_id),
         )
-        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .filter(PartyRoleGrant.tenant_id == tenant_a.id, PartyRoleGrant.party_id == target.id)
         .order_by(Role.slug)
         .all()
     )
     assert [slug for (slug,) in grants] == ["instructor"]
-
 
 def test_instructor_cannot_change_existing_user_role(app_client, admin_session, tenant_a):
     _seed_user(admin_session, tenant_a, "role-inst@a.edu", "instructor")
@@ -230,15 +217,14 @@ def test_instructor_cannot_change_existing_user_role(app_client, admin_session, 
     grants = (
         admin_session.query(Role.slug)
         .join(
-            PersonRole,
-            (PersonRole.role_id == Role.id) & (PersonRole.tenant_id == Role.tenant_id),
+            PartyRoleGrant,
+            (PartyRoleGrant.role_id == Role.id) & (PartyRoleGrant.tenant_id == Role.tenant_id),
         )
-        .filter(PersonRole.tenant_id == tenant_a.id, PersonRole.person_id == target.id)
+        .filter(PartyRoleGrant.tenant_id == tenant_a.id, PartyRoleGrant.party_id == target.id)
         .order_by(Role.slug)
         .all()
     )
     assert [slug for (slug,) in grants] == ["student"]
-
 
 def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a):
     from sqlalchemy import select
@@ -283,7 +269,7 @@ def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a
     assert r.status_code == 200
     assert "Invite Track track in Track Cohort" in r.text
     invited = admin_session.scalars(
-        select(Person).where(Person.tenant_id == tenant_a.id).where(Person.email == "track-student@a.edu")
+        select(Party).where(Party.tenant_id == tenant_a.id).where(Party.email == "track-student@a.edu")
     ).first()
     enrollment = admin_session.scalars(
         select(Enrollment)

@@ -21,17 +21,13 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 
+import dotmac_learning as learning
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.models.assessment import Activity, Score, Submission
-from app.models.certificate import Certificate
-from app.models.cohort import Cohort, Enrollment
-from app.models.completion import CourseCompletion
-from app.models.course import Course
-from app.models.offering import CourseOffering
-from app.models.person import Person
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.reminder import (
     EVENT_KINDS,
     STATUS_QUEUED,
@@ -42,7 +38,7 @@ from app.models.reminder import (
 )
 from app.services import learning_events, notifications
 from app.services import todo as todo_service
-from app.services.audit import write_audit_event
+from app.services.api_identity_reads import ApiPersonView, contact_selection
 from app.services.email_outbox import enqueue_email
 from app.services.localtime import academy_zone
 from app.services.scheduling import list_for_person
@@ -175,14 +171,8 @@ def _detect_events(
     lookback = now - timedelta(hours=POINT_EVENT_LOOKBACK_HOURS)
 
     # New enrollments -> course_assigned.
-    rows = db.execute(
-        select(Enrollment.id, Cohort.name)
-        .join(Cohort, (Cohort.id == Enrollment.cohort_id) & (Cohort.tenant_id == Enrollment.tenant_id))
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.person_id == person_id)
-        .where(Enrollment.status == "active")
-        .where(Enrollment.created_at >= lookback)
-    ).all()
+    rows = [(r.enrollment_id, r.cohort_name) for r in learning.recent_assignments(
+        db, tenant_id=tenant_id, person_id=person_id, since=lookback)]
     for enr_id, cohort_name in rows:
         events.append(
             {
@@ -194,21 +184,8 @@ def _detect_events(
         )
 
     # Offerings opening within 72h -> course_starting.
-    offering_rows = db.execute(
-        select(CourseOffering.id, Course.title, CourseOffering.starts_at)
-        .join(Course, (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id))
-        .join(
-            Enrollment,
-            (Enrollment.cohort_id == CourseOffering.cohort_id) & (Enrollment.tenant_id == CourseOffering.tenant_id),
-        )
-        .where(CourseOffering.tenant_id == tenant_id)
-        .where(Enrollment.person_id == person_id)
-        .where(Enrollment.status == "active")
-        .where(CourseOffering.status == "active")
-        .where(CourseOffering.starts_at.is_not(None))
-        .where(CourseOffering.starts_at > now)
-        .where(CourseOffering.starts_at <= now + timedelta(hours=72))
-    ).all()
+    offering_rows = [(r.offering_id, r.course_title, r.starts_at) for r in learning.opening_offerings(
+        db, tenant_id=tenant_id, person_id=person_id, after=now, through=now + timedelta(hours=72))]
     for off_id, course_title, _starts in offering_rows:
         events.append(
             {
@@ -282,15 +259,8 @@ def _detect_events(
     # Grades -> graded. Only non-auto scores: auto-graded quiz results are shown
     # on screen the instant the learner submits, so emailing them is pure noise
     # (one message per practice attempt). Manual/override grading is the news.
-    rows = db.execute(
-        select(Score.id, Activity.title)
-        .join(Submission, (Submission.id == Score.submission_id) & (Submission.tenant_id == Score.tenant_id))
-        .join(Activity, (Activity.id == Submission.activity_id) & (Activity.tenant_id == Submission.tenant_id))
-        .where(Score.tenant_id == tenant_id)
-        .where(Submission.person_id == person_id)
-        .where(Score.source != "auto")
-        .where(Score.created_at >= lookback)
-    ).all()
+    rows = [(r.score_id, r.activity_title) for r in learning.recent_manual_results(
+        db, tenant_id=tenant_id, person_id=person_id, since=lookback)]
     for score_id, activity_title in rows:
         events.append(
             {
@@ -302,15 +272,8 @@ def _detect_events(
         )
 
     # Completions -> course_completed.
-    rows = db.execute(
-        select(CourseCompletion.id, Course.title)
-        .join(Course, (Course.id == CourseCompletion.course_id) & (Course.tenant_id == CourseCompletion.tenant_id))
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.person_id == person_id)
-        .where(CourseCompletion.status == "completed")
-        .where(CourseCompletion.completed_at.is_not(None))
-        .where(CourseCompletion.completed_at >= lookback)
-    ).all()
+    rows = [(r.completion_id, r.course_title) for r in learning.recent_completed_courses(
+        db, tenant_id=tenant_id, person_id=person_id, since=lookback)]
     for comp_id, course_title in rows:
         events.append(
             {
@@ -323,13 +286,8 @@ def _detect_events(
 
     # Certificates -> certificate_issued. (The Certificate model has no expiry
     # field, so certificate-expiry reminders are out of scope until it does.)
-    rows = db.execute(
-        select(Certificate.id, Course.title)
-        .join(Course, (Course.id == Certificate.course_id) & (Course.tenant_id == Certificate.tenant_id))
-        .where(Certificate.tenant_id == tenant_id)
-        .where(Certificate.person_id == person_id)
-        .where(Certificate.issued_at >= lookback)
-    ).all()
+    rows = [(r.certificate_id, r.course_title) for r in learning.recent_certificates(
+        db, tenant_id=tenant_id, person_id=person_id, since=lookback)]
     for cert_id, course_title in rows:
         events.append(
             {
@@ -357,12 +315,7 @@ def _detect_events(
     last_touch = learning_events.last_activity_at(db, tenant_id=tenant_id, person_id=person_id)
     anchor = last_touch
     if anchor is None:
-        anchor = db.scalar(
-            select(func.min(Enrollment.created_at))
-            .where(Enrollment.tenant_id == tenant_id)
-            .where(Enrollment.person_id == person_id)
-            .where(Enrollment.status == "active")
-        )
+        anchor = learning.earliest_active_enrollment_at(db, tenant_id=tenant_id, person_id=person_id)
     if anchor is not None and anchor < now - timedelta(days=inactivity_days):
         never_started = last_touch is None
         spell = anchor.date().isoformat()
@@ -463,19 +416,12 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
 
     # Student reminders are for students: an instructor enrolment must not draw
     # due-date nags or inactivity chides for coursework that isn't theirs.
-    person_rows = (
-        db.execute(
-            select(Person)
-            .join(Enrollment, (Enrollment.person_id == Person.id) & (Enrollment.tenant_id == Person.tenant_id))
-            .where(Person.tenant_id == tenant_id)
-            .where(Person.status == "active")
-            .where(Enrollment.status == "active")
-            .where(Enrollment.role_in_cohort == "student")
-            .distinct()
-        )
-        .scalars()
-        .all()
-    )
+    person_rows = [ApiPersonView(row.id, row.email, row.first_name, row.last_name) for row in db.execute(
+        contact_selection(tenant_id).join(AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id))
+        .where(Party.is_active.is_(True), AcademyAccountProfile.status == "active",
+               Party.id.in_(learning.active_student_person_ids_select(tenant_id=tenant_id)))
+    ).all()]
 
     counts = {"detected": 0, "sent": 0, "queued": 0, "skipped": 0, "flushed": 0}
 
@@ -585,7 +531,9 @@ def sweep(db: Session, *, tenant_id: UUID, now: datetime | None = None) -> dict:
     return counts
 
 
-def _flush_queued(db: Session, *, tenant_id: UUID, person: Person, branding: str, base_url: str, now: datetime) -> int:
+def _flush_queued(
+    db: Session, *, tenant_id: UUID, person: ApiPersonView, branding: str, base_url: str, now: datetime,
+) -> int:
     queued = db.scalars(
         select(ReminderLog)
         .where(ReminderLog.tenant_id == tenant_id)
@@ -646,8 +594,10 @@ def recent_log(
 ) -> list:
     """Recent ledger rows joined with the person for the admin history page."""
     stmt = (
-        select(ReminderLog, Person)
-        .join(Person, (Person.id == ReminderLog.person_id) & (Person.tenant_id == ReminderLog.tenant_id))
+        select(ReminderLog, Party, PartyPerson)
+        .join(Party, (Party.id == ReminderLog.person_id) & (Party.tenant_id == ReminderLog.tenant_id))
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.party_type == PartyType.person)
         .where(ReminderLog.tenant_id == tenant_id)
     )
     if status:
@@ -658,50 +608,18 @@ def recent_log(
         pattern = f"%{term}%"
         stmt = stmt.where(
             or_(
-                Person.email.ilike(pattern),
+                Party.email.ilike(pattern),
                 ReminderLog.title.ilike(pattern),
                 ReminderLog.event_kind.ilike(pattern),
             )
         )
-    return list(db.execute(stmt.order_by(ReminderLog.created_at.desc()).limit(limit).offset(offset)).all())
+    return [(log, ApiPersonView(party.id, party.email, person.first_name, person.last_name))
+            for log, party, person in db.execute(
+                stmt.order_by(ReminderLog.created_at.desc()).limit(limit).offset(offset)).all()]
 
 
-def resend(db: Session, *, tenant_id: UUID, log_id: UUID, actor_person_id: UUID) -> ReminderLog:
-    """Authorized re-delivery of one ledger entry through a fresh outbox row."""
-    log = db.scalars(
-        select(ReminderLog).where(ReminderLog.tenant_id == tenant_id).where(ReminderLog.id == log_id)
-    ).first()
-    if log is None:
-        raise ValueError("reminder not found")
-    person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.id == log.person_id)).first()
-    if person is None:
-        raise ValueError("person not found")
-    cfg = effective(db)
-    branding = str(cfg.get("branding_name", "Dotmac Academy"))
-    base_url = str(cfg.get("academy_base_url", "https://academy.dotmac.io")).rstrip("/")
-    outbox_key = f"reminder_resend:{log.id}:{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    subject, html, text = _email_for(log.title, log.link, branding, base_url)
-    enqueue_email(
-        db,
-        tenant_id=tenant_id,
-        idempotency_key=outbox_key,
-        kind=f"reminder_{log.event_kind}",
-        recipient=person.email,
-        subject=subject,
-        html_body=html,
-        text_body=text,
-    )
-    log.status = STATUS_SENT
-    log.outbox_key = outbox_key
-    log.sent_at = datetime.now(UTC)
-    write_audit_event(
-        db,
-        tenant_id=tenant_id,
-        actor_person_id=actor_person_id,
-        action="reminder.resend",
-        entity_type="reminder_log",
-        entity_id=str(log.id),
-        details={"event_kind": log.event_kind},
-    )
-    db.flush()
-    return log
+def resend(db: Session, *, request, tenant_id: UUID, log_id: UUID) -> ReminderLog:
+    """A bounded genuine-cookie command; no caller UUID confers authority."""
+    from app.services.reminder_resend import resend_reminder
+
+    return resend_reminder(db, request=request, tenant_id=tenant_id, log_id=log_id)

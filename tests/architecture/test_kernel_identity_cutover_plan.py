@@ -18,13 +18,10 @@ import tomllib
 from uuid import UUID
 
 import pytest
+import sqlalchemy as sa
 from dotmac_kernel.migrations import versions_dir as kernel_versions_dir
 
-import app.models  # register product metadata for the census
-import app.models.auth  # not exported from app.models
-import app.models.person
-import app.models.rbac  # noqa: F401  (not exported from app.models)
-from app.models.base import Base
+from app.canonical_models import kernel_owned_tables, product_owned_tables
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "docs" / "inventories" / "kernel_identity_lineage_cutover.toml"
@@ -100,18 +97,56 @@ def _baseline() -> set[str]:
     }
 
 
+# The legacy Academy-owned identity tables below no longer exist as Academy
+# models: the composed tree gets them from the installed Kernel under party
+# spellings (audit_events.actor_party_id, auth_sessions/user_credentials
+# party_id, party_role_grants). The inventory keeps them as the legacy design
+# baseline for the cutover; the composed census does not see them.
+RETIRED_LEGACY_IDENTITY_COLUMNS = {
+    ("audit_events", "actor_person_id"),
+    ("auth_sessions", "person_id"),
+    ("person_roles", "person_id"),
+    ("user_credentials", "person_id"),
+}
+
+
+def _composed_tables() -> dict[str, sa.Table]:
+    """Product-owned + Learning-owned + Kernel-owned tables of the D1 graph.
+
+    app.models registers nothing in the composed tree, so the census reads the
+    explicit owner declarations instead of an Academy Base.metadata.
+    """
+    import importlib
+
+    for module in ("curriculum_models", "attempt_models", "participation_models", "delivery_models", "models"):
+        importlib.import_module(f"dotmac_learning.{module}")
+    from dotmac_learning.models import KernelBase
+
+    learning = [table for key, table in KernelBase.metadata.tables.items() if key.startswith("mod_learning.")]
+    tables: dict[tuple[str, str], sa.Table] = {}
+    for table in (*product_owned_tables(), *learning, *kernel_owned_tables()):
+        tables.setdefault((table.schema or "public", table.name), table)
+    by_name: dict[str, sa.Table] = {}
+    for table in tables.values():
+        assert table.name not in by_name, f"table name collides across owners: {table.name}"
+        by_name[table.name] = table
+    return by_name
+
+
 def _person_columns() -> dict[tuple[str, str], str]:
     found: dict[tuple[str, str], str] = {}
-    for table in Base.metadata.tables.values():
+    for table in _composed_tables().values():
         for column in table.columns:
             if "person" not in column.name and (table.name, column.name) not in PERSON_IDENTITY_ALIASES:
                 continue
-            has_people_fk = any(
-                element.parent.name == column.name and element.target_fullname.startswith("people.")
+            # Strong = a database FK to the canonical party identity (formerly people.*).
+            has_party_fk = any(
+                element.parent.name == column.name
+                and element.target_fullname.rsplit(".", 2)[-2] in {"parties", "party_persons"}
                 for constraint in table.foreign_key_constraints
                 for element in constraint.elements
             )
-            found[(table.name, column.name)] = "strong" if has_people_fk else "logical"
+            found[(table.name, column.name)] = "strong" if has_party_fk else "logical"
     return found
 
 
@@ -148,11 +183,16 @@ def test_every_person_identity_column_is_classified_with_its_real_integrity() ->
         for entry in references
     }
     assert len(planned) == len(references), "identity reference appears more than once"
-    assert planned == _person_columns()
+    # The inventory still carries the 30 legacy design coordinates; the composed
+    # D1 graph exposes exactly those minus the four now Kernel-owned party tables.
     assert len(planned) == 30
-    assert list(planned.values()).count("strong") == 13
-    assert list(planned.values()).count("logical") == 17
-    assert PERSON_IDENTITY_ALIASES <= set(planned)
+    assert RETIRED_LEGACY_IDENTITY_COLUMNS <= set(planned)
+    composed = _person_columns()
+    assert {key: value for key, value in planned.items() if key not in RETIRED_LEGACY_IDENTITY_COLUMNS} == composed
+    assert len(composed) == 26
+    assert list(composed.values()).count("strong") == 10
+    assert list(composed.values()).count("logical") == 16
+    assert PERSON_IDENTITY_ALIASES <= set(composed)
 
 
 def test_lab_requester_is_nullable_human_attribution_not_worker_fencing() -> None:
@@ -171,7 +211,7 @@ def test_lab_requester_is_nullable_human_attribution_not_worker_fencing() -> Non
         "introduced_by": "0055_lab_operations",
         "excluded_worker_identity": "lab_operations.claimed_by",
     }
-    columns = Base.metadata.tables["lab_operations"].c
+    columns = _composed_tables()["lab_operations"].c
     assert columns.requested_by.nullable
     assert columns.requested_by.type.python_type is UUID
     assert columns.claimed_by.type.python_type is str

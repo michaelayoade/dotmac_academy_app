@@ -1,8 +1,12 @@
 # app/web/instructor.py
 """Instructor portal routes.
 
-All routes require an authenticated tenant user.  Each handler then authorizes
-either legacy staff access or the exact active facilitator scope it serves.
+All routes require an authenticated tenant user. Each handler then authorizes
+either legacy staff access or the exact active facilitator scope it serves:
+per-route ``require_web_role("instructor")`` dependencies preserve the legacy
+staff-only surfaces, bank routes keep their product-admin gates, and every
+other route calls ``_access_or_403`` (or a helper built on it) before reading
+or writing anything.
 
 IMPORTANT: no db.commit() calls inside any handler. The get_db dependency manages the
 transaction: it does SET LOCAL app.current_tenant (transaction-scoped) and commits
@@ -13,10 +17,28 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from html import escape
+from typing import cast
+from urllib.parse import urlencode
 from uuid import UUID
 
+from dotmac_kernel.audit import resolve_event_attribution
+from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_kernel.web_surfaces import surface_path
+from dotmac_learning import (
+    AttemptAuditContext,
+    BankLifecycleError,
+    ChapterFact,
+    CoursePatch,
+    CreateCohortCommand,
+    ReferenceNotFound,
+    authoring_chapters,
+    get_activity,
+    patch_course,
+)
+from dotmac_learning import create_cohort as create_learning_cohort
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
@@ -28,17 +50,16 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.facilitator import FacilitatorNomination
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.track import Track
 from app.services import announcements as ann_svc
-from app.services import attempt_policy, scheduling
+from app.services import attempt_policy, learning_policy, scheduling
+from app.services import bank_authoring as _banks
 from app.services import tracks as track_svc
-from app.services.account_invitations import CohortAssignment, invite_and_enroll
 from app.services.analytics import item_analysis
 from app.services.assessment import override_score, pending_grading
-from app.services.audit import write_audit_event
 from app.services.authoring import create_course, delete_chapter, editable_chapter_source, upsert_chapter
+from app.services.canonical_lifecycle import set_web_account_status
 from app.services.dashboards import cohort_overview
 from app.services.email_outbox import enqueue_email
 from app.services.exceptions import BadRequestError, NotFoundError
@@ -55,12 +76,21 @@ from app.services.facilitator_nominations import (
     nominate,
     revoke,
 )
-from app.services.lifecycle import set_account_status
+from app.services.identity import AcademyCurrentAccount
+from app.services.invitation_issuance import cohort_fact, invite_web_cohort_account, track_fact
 from app.services.localtime import local_to_utc
 from app.services.lookups import cohort_or_404
+from app.services.product_admin_access import (
+    require_bank_author_access,
+    require_bank_export_access,
+    require_bank_publish_access,
+    require_bank_repoint_access,
+    require_bank_retire_access,
+)
 from app.services.roles import role_slugs
 from app.services.roster import bulk_enroll, set_roster_state
 from app.services.security import hash_token
+from app.services.settings_store import effective
 from app.services.web_auth import require_web_role, require_web_user
 from app.web.pagination import pagination_context
 from app.web.responses import hx_redirect
@@ -82,10 +112,46 @@ def _e(value: object) -> str:
     return escape(str(value))
 
 
+@dataclass(frozen=True, slots=True)
+class _RosterPerson:
+    """Purpose-specific roster display values; never request authority."""
+
+    id: UUID
+    email: str
+    first_name: str
+    last_name: str
+    status: str
+
+
+def _roster_statement():
+    return (
+        select(
+            Enrollment,
+            Party.id,
+            Party.email,
+            PartyPerson.first_name,
+            PartyPerson.last_name,
+            AcademyAccountProfile.status,
+        )
+        .select_from(Enrollment)
+        .join(Party, (Party.id == Enrollment.person_id) & (Party.tenant_id == Enrollment.tenant_id))
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .where(Party.party_type == PartyType.person)
+    )
+
+
+def _roster_pairs(rows):
+    return [(row[0], _RosterPerson(*row[1:])) for row in rows]
+
+
 @router.get("/cohorts", response_class=HTMLResponse)
 def cohorts_list(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -102,15 +168,13 @@ def cohorts_list(
         .where(Cohort.id.in_(visible_cohort_ids))
         .order_by(Cohort.name)
     ).all()
-    roster_rows = db.execute(
-        select(Enrollment, Person)
-        .join(
-            Person,
-            (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
-        )
-        .where(Enrollment.tenant_id == tenant.id)
-        .order_by(Person.last_name, Person.first_name, Person.email)
-    ).all()
+    roster_rows = _roster_pairs(
+        db.execute(
+            _roster_statement()
+            .where(Enrollment.tenant_id == tenant.id)
+            .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
+        ).all()
+    )
     # Every enrollment is shown regardless of Enrollment.status, Enrollment.role_in_cohort
     # or Person.status (finding #3): a dropped/waitlisted student or a suspended account
     # must stay visible so an instructor can act on it, not disappear silently.
@@ -125,19 +189,41 @@ def cohorts_list(
         if is_active_student:
             active_student_counts[enrollment.cohort_id] += 1
         roster_by_cohort[enrollment.cohort_id].append({"enrollment": enrollment, "person": student})
-    facilitator_candidates = list(
-        db.scalars(
-            select(Person)
-            .where(Person.tenant_id == tenant.id)
-            .where(Person.status == "active")
-            .order_by(Person.last_name, Person.first_name, Person.email)
+    # Any active user may be nominated (#188): eligibility is the snapshotted
+    # completion requirement, not a pre-held instructor grant.
+    facilitator_candidates = [
+        _RosterPerson(*row)
+        for row in db.execute(
+            select(Party.id, Party.email, PartyPerson.first_name, PartyPerson.last_name, AcademyAccountProfile.status)
+            .join(PartyPerson, PartyPerson.party_id == Party.id)
+            .join(
+                AcademyAccountProfile,
+                (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+            )
+            .where(Party.tenant_id == tenant.id, Party.party_type == PartyType.person)
+            .where(AcademyAccountProfile.status == "active")
+            .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
         ).all()
-    )
+    ]
     nomination_rows = db.execute(
-        select(FacilitatorNomination, Person, CourseOffering, Course)
+        select(
+            FacilitatorNomination,
+            Party.id,
+            Party.email,
+            PartyPerson.first_name,
+            PartyPerson.last_name,
+            AcademyAccountProfile.status,
+            CourseOffering,
+            Course,
+        )
         .join(
-            Person,
-            (Person.id == FacilitatorNomination.person_id) & (Person.tenant_id == FacilitatorNomination.tenant_id),
+            Party,
+            (Party.id == FacilitatorNomination.person_id) & (Party.tenant_id == FacilitatorNomination.tenant_id),
+        )
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
         )
         .outerjoin(
             CourseOffering,
@@ -148,20 +234,28 @@ def cohorts_list(
             Course,
             (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
         )
+        .where(Party.party_type == PartyType.person)
         .where(FacilitatorNomination.tenant_id == tenant.id)
         .where(FacilitatorNomination.status.in_(("pending", "active")))
         .where(
             (FacilitatorNomination.cohort_id.in_(visible_cohort_ids))
             | (CourseOffering.cohort_id.in_(visible_cohort_ids))
         )
-        .order_by(Person.last_name, Person.first_name, Person.email)
+        .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
     ).all()
     facilitators_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
-    for nomination, nominee, offering, course in nomination_rows:
+    for nomination, nominee_id, nominee_email, nominee_first, nominee_last, nominee_status, offering, course in (
+        nomination_rows
+    ):
         scope_cohort_id = nomination.cohort_id if nomination.scope_type == "cohort" else offering.cohort_id
         if scope_cohort_id in facilitators_by_cohort:
             facilitators_by_cohort[scope_cohort_id].append(
-                {"nomination": nomination, "person": nominee, "offering": offering, "course": course}
+                {
+                    "nomination": nomination,
+                    "person": _RosterPerson(nominee_id, nominee_email, nominee_first, nominee_last, nominee_status),
+                    "offering": offering,
+                    "course": course,
+                }
             )
     tracks_by_cohort = {
         cohort.id: track_svc.list_cohort_tracks(db, tenant_id=tenant.id, cohort_id=cohort.id) for cohort in rows
@@ -188,7 +282,7 @@ def cohorts_list(
         or 0
     )
     offering_rows = db.execute(
-        select(CourseOffering.cohort_id, Course)
+        select(CourseOffering, Course)
         .join(
             Course,
             (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
@@ -197,13 +291,10 @@ def cohorts_list(
         .where(CourseOffering.status == "active")
         .order_by(Course.title)
     ).all()
-    courses_by_cohort: dict[UUID, list[Course]] = {cohort.id: [] for cohort in rows}
-    seen_course_pairs: set[tuple[UUID, UUID]] = set()
-    for cohort_id, course in offering_rows:
-        key = (cohort_id, course.id)
-        if cohort_id in courses_by_cohort and key not in seen_course_pairs:
-            courses_by_cohort[cohort_id].append(course)
-            seen_course_pairs.add(key)
+    offerings_by_cohort: dict[UUID, list[dict]] = {cohort.id: [] for cohort in rows}
+    for offering, course in offering_rows:
+        if offering.cohort_id in offerings_by_cohort:
+            offerings_by_cohort[offering.cohort_id].append({"offering": offering, "course": course})
     cohort_rows = [
         {
             "cohort": cohort,
@@ -211,20 +302,7 @@ def cohorts_list(
             "active_student_count": active_student_counts.get(cohort.id, 0),
             "facilitators": facilitators_by_cohort.get(cohort.id, []),
             "available_facilitators": facilitator_candidates,
-            "offerings": [
-                {"offering": offering, "course": course}
-                for offering, course in db.execute(
-                    select(CourseOffering, Course)
-                    .join(
-                        Course,
-                        (Course.id == CourseOffering.course_id) & (Course.tenant_id == CourseOffering.tenant_id),
-                    )
-                    .where(CourseOffering.tenant_id == tenant.id)
-                    .where(CourseOffering.cohort_id == cohort.id)
-                    .where(CourseOffering.status == "active")
-                    .order_by(Course.title)
-                ).all()
-            ],
+            "offerings": offerings_by_cohort.get(cohort.id, []),
             "tracks": tracks_by_cohort.get(cohort.id, []),
             "available_courses": courses,
         }
@@ -251,12 +329,12 @@ def create_cohort(
     request: Request,
     name: str = Form(...),
     discipline: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     _global_staff_or_403(db, tenant_id=tenant.id, person_id=person.id)
-    db.add(Cohort(tenant_id=tenant.id, name=name, discipline=discipline, status="active"))
+    create_learning_cohort(db, CreateCohortCommand(tenant_id=tenant.id, name=name, discipline=discipline))
     # No db.commit() here — get_db commits after the response is returned.
     return hx_redirect(request, "/instructor/cohorts")
 
@@ -305,7 +383,7 @@ def _cohort_action_target(cohort_id: UUID, return_to: str) -> str:
 def cohort_detail(
     cohort_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
     limit: int = Query(12, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -315,17 +393,13 @@ def cohort_detail(
     _cohort_access_or_403(db, tenant_id=tenant.id, person_id=person.id, cohort_id=cohort_id)
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
 
-    roster_pairs = list(
+    roster_pairs = _roster_pairs(
         db.execute(
-            select(Enrollment, Person)
-            .join(
-                Person,
-                (Person.id == Enrollment.person_id) & (Person.tenant_id == Enrollment.tenant_id),
-            )
+            _roster_statement()
             .where(Enrollment.tenant_id == tenant.id)
             .where(Enrollment.cohort_id == cohort_id)
             .where(Enrollment.role_in_cohort == "student")
-            .order_by(Person.last_name, Person.first_name, Person.email)
+            .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
         ).all()
     )
     student_ids = [student.id for _, student in roster_pairs]
@@ -413,24 +487,41 @@ def cohort_detail(
     average_progress = sum(row["completion_pct"] for row in active_rows) / len(active_rows) if active_rows else 0.0
     student_rows = student_rows_all[offset : offset + limit]
 
-    facilitator_pairs = list(
-        db.execute(
-            select(FacilitatorNomination, Person)
+    # Facilitators are active nominations (#188), not instructor enrollments.
+    # The template unpacks (assignment, person) pairs and reads only the
+    # person's display fields, so nominations keep that pair shape.
+    facilitator_pairs = [
+        (nomination, _RosterPerson(nominee_id, nominee_email, nominee_first, nominee_last, nominee_status))
+        for nomination, nominee_id, nominee_email, nominee_first, nominee_last, nominee_status in db.execute(
+            select(
+                FacilitatorNomination,
+                Party.id,
+                Party.email,
+                PartyPerson.first_name,
+                PartyPerson.last_name,
+                AcademyAccountProfile.status,
+            )
             .join(
-                Person,
-                (Person.id == FacilitatorNomination.person_id) & (Person.tenant_id == FacilitatorNomination.tenant_id),
+                Party,
+                (Party.id == FacilitatorNomination.person_id) & (Party.tenant_id == FacilitatorNomination.tenant_id),
+            )
+            .join(PartyPerson, PartyPerson.party_id == Party.id)
+            .join(
+                AcademyAccountProfile,
+                (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
             )
             .outerjoin(
                 CourseOffering,
                 (CourseOffering.id == FacilitatorNomination.offering_id)
                 & (CourseOffering.tenant_id == FacilitatorNomination.tenant_id),
             )
+            .where(Party.party_type == PartyType.person)
             .where(FacilitatorNomination.tenant_id == tenant.id)
             .where(FacilitatorNomination.status == "active")
             .where((FacilitatorNomination.cohort_id == cohort_id) | (CourseOffering.cohort_id == cohort_id))
-            .order_by(Person.last_name, Person.first_name, Person.email)
+            .order_by(PartyPerson.last_name, PartyPerson.first_name, Party.email)
         ).all()
-    )
+    ]
 
     offered_course_ids = [course.id for _, course in offering_pairs]
     chapters_by_course: dict[UUID, list[Chapter]] = {course_id: [] for course_id in offered_course_ids}
@@ -632,7 +723,7 @@ def nominate_facilitator(
     facilitator_id: UUID = Form(...),
     scope: FacilitatorScope = Form(FacilitatorScope.COHORT),
     offering_id: UUID | None = Form(None),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -671,7 +762,7 @@ def nominate_facilitator(
 def revoke_facilitator_nomination(
     nomination_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -699,7 +790,7 @@ def enroll_student(
     email: str = Form(""),
     track_id: str = Form(""),
     return_to: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Bulk-enroll people by email; reports unknown emails instead of silently
@@ -720,7 +811,7 @@ def enroll_student(
         cohort_id=cohort_id,
         emails=_split_emails(emails, email),
         track_id=track_uuid,
-        actor_is_admin=_is_admin(db, tenant.id, person.id),
+        request=request,
     )
     enrolled = len(result["enrolled"])
     reactivated = len(result["reactivated"])
@@ -756,7 +847,7 @@ def change_roster_state(
     request: Request,
     state: str = Form(...),
     return_to: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Drop / waitlist / reactivate a roster member (finding #6).
@@ -774,10 +865,20 @@ def change_roster_state(
         .where(Enrollment.cohort_id == cohort_id)
         .where(Enrollment.person_id == person_id)
     ).first()
-    if target is not None and target.role_in_cohort != "student" and not _is_admin(db, tenant.id, person.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    actor_is_admin = False
+    if target is not None and target.role_in_cohort != "student":
+        actor_is_admin = _is_admin(db, tenant.id, person.id)
+        if not actor_is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     try:
-        set_roster_state(db, tenant_id=tenant.id, cohort_id=cohort_id, person_id=person_id, state=state)
+        set_roster_state(
+            db,
+            tenant_id=tenant.id,
+            cohort_id=cohort_id,
+            person_id=person_id,
+            state=state,
+            request=request,
+        )
     except NotFoundError as exc:
         return _hx_error(request, f"roster-state-error-{cohort_id}-{person_id}", str(exc))
     return hx_redirect(request, _cohort_action_target(cohort_id, return_to))
@@ -870,8 +971,8 @@ async def reorder_track(
 
     A Track is tenant-level, not cohort-scoped (CohortTrack is the join), so
     this route is not nested under a specific cohort. Gated the same as
-    other track-management actions (require_web_role("instructor"), already
-    the router-level default) — this is not the admin-only case.
+    other track-management actions (per-route
+    require_web_role("instructor")) — this is not the admin-only case.
     """
     tenant = require_tenant(request)
     submitted: list[UUID] = [UUID(raw) for raw in course_ids if raw]
@@ -922,7 +1023,7 @@ def clear_roster_track(
     cohort_id: UUID,
     person_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Admin-only recovery: null out a stuck learner's track assignment.
@@ -951,7 +1052,7 @@ def invite_to_cohort(
     last_name: str = Form("Learner"),
     track_id: str = Form(""),
     return_to: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Invite a new person (no account yet) and enroll them — closes the #6 gap
@@ -964,7 +1065,9 @@ def invite_to_cohort(
     """
     tenant = require_tenant(request)
     track_uuid = UUID(track_id) if track_id else None
-    cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    cohort = cohort_fact(db, tenant_id=tenant.id, cohort_id=cohort_id)
+    if cohort is None:
+        raise NotFoundError("cohort not found for tenant")
     track = None
     if track_uuid is not None:
         cohort_track = track_svc.cohort_track_or_404(
@@ -973,67 +1076,64 @@ def invite_to_cohort(
             cohort_id=cohort_id,
             track_id=track_uuid,
         )
-        track = db.scalars(
-            select(Track).where(Track.tenant_id == tenant.id).where(Track.id == cohort_track.track_id)
-        ).first()
+        track = track_fact(db, tenant_id=tenant.id, cohort_id=cohort_id, track_id=cohort_track.track_id)
     try:
-        result = invite_and_enroll(
+        with invite_web_cohort_account(
             db,
-            tenant_id=tenant.id,
+            request=request,
             email=email,
             first_name=first_name,
             last_name=last_name,
-            role="student",
-            actor_is_admin=_is_admin(db, tenant.id, person.id),
-            assignments=(CohortAssignment(cohort=cohort, track=track),),
-        )
+            cohort_id=cohort.id,
+            track_id=track.id if track is not None else None,
+        ) as result:
+            invited_person = result.person
+            sent = False
+            if result.token is not None:
+                link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': result.token})}"
+                link_e = _e(link)
+                sent = enqueue_email(
+                    db,
+                    tenant_id=tenant.id,
+                    idempotency_key=f"account-invite:{invited_person.id}:{hash_token(result.token)}",
+                    kind="account_invite",
+                    recipient=invited_person.email,
+                    subject="You're invited to Dotmac Academy",
+                    html_body=(
+                        f"<p>Hi {_e(invited_person.first_name)},</p>"
+                        f"<p>You have been invited to Dotmac Academy.</p>"
+                        f'<p><a href="{link_e}">Set up your account</a></p>'
+                        f"<p>If the button does not work, open this link: {link_e}</p>"
+                    ),
+                    text_body=(
+                        f"Hi {invited_person.first_name},\n\n"
+                        f"You have been invited to Dotmac Academy.\n\n"
+                        f"Set up your account: {link}\n"
+                    ),
+                )
+            if result.token is None:
+                status = "Student enrolled. Existing account can sign in."
+            else:
+                status = "Invite email queued." if sent else "Invite email could not be queued."
+            target = _cohort_action_target(cohort_id, return_to)
+            if request.headers.get("HX-Request") and target != "/instructor/cohorts":
+                return hx_redirect(request, target)
+            # Surface _apply_assignment's descriptions (e.g. "reactivated (was
+            # dropped)", "already an instructor, role unchanged") — previously
+            # computed but silently discarded on this surface.
+            assignments_html = ""
+            if result.assignments:
+                items = "".join(f"<li>{_e(item)}</li>" for item in result.assignments)
+                assignments_html = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
+            return HTMLResponse(
+                f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
+                f'<p class="font-semibold">{_e(status)}</p>'
+                f"<p>Student: {_e(invited_person.email)}</p>"
+                f"{assignments_html}"
+                f"</div>"
+            )
     except BadRequestError as exc:
         return _hx_error(request, f"invite-result-{cohort_id}", str(exc))
-    invited_person = result.person
-    sent = False
-    if result.token is not None:
-        link = str(request.url_for("accept_form").include_query_params(token=result.token))
-        link_e = _e(link)
-        sent = enqueue_email(
-            db,
-            tenant_id=tenant.id,
-            idempotency_key=f"account-invite:{invited_person.id}:{hash_token(result.token)}",
-            kind="account_invite",
-            recipient=invited_person.email,
-            subject="You're invited to Dotmac Academy",
-            html_body=(
-                f"<p>Hi {_e(invited_person.first_name)},</p>"
-                f"<p>You have been invited to Dotmac Academy.</p>"
-                f'<p><a href="{link_e}">Set up your account</a></p>'
-                f"<p>If the button does not work, open this link: {link_e}</p>"
-            ),
-            text_body=(
-                f"Hi {invited_person.first_name},\n\n"
-                f"You have been invited to Dotmac Academy.\n\n"
-                f"Set up your account: {link}\n"
-            ),
-        )
-    if result.token is None:
-        status = "Student enrolled. Existing account can sign in."
-    else:
-        status = "Invite email queued." if sent else "Invite email could not be queued."
-    target = _cohort_action_target(cohort_id, return_to)
-    if request.headers.get("HX-Request") and target != "/instructor/cohorts":
-        return hx_redirect(request, target)
-    # Surface _apply_assignment's descriptions (e.g. "reactivated (was
-    # dropped)", "already an instructor, role unchanged") — previously
-    # computed but silently discarded on this surface.
-    assignments_html = ""
-    if result.assignments:
-        items = "".join(f"<li>{_e(item)}</li>" for item in result.assignments)
-        assignments_html = f'<ul class="mt-1 list-disc pl-5 text-ink-soft">{items}</ul>'
-    return HTMLResponse(
-        f'<div class="invite-summary rounded-lg bg-sand-100 p-3 text-sm" role="status">'
-        f'<p class="font-semibold">{_e(status)}</p>'
-        f"<p>Student: {_e(invited_person.email)}</p>"
-        f"{assignments_html}"
-        f"</div>"
-    )
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -1056,14 +1156,14 @@ def _parse_dt(value: str | None) -> datetime | None:
 def cohort_timetable(
     cohort_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """A cohort's class-session timetable, with add/cancel controls."""
     tenant = require_tenant(request)
     _cohort_access_or_403(db, tenant_id=tenant.id, person_id=person.id, cohort_id=cohort_id)
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
-    sessions = scheduling.list_for_cohort(db, cohort_id=cohort_id)
+    sessions = scheduling.list_for_cohort(db, tenant_id=tenant.id, cohort_id=cohort_id)
     return templates.TemplateResponse(
         request,
         "instructor/timetable.html",
@@ -1072,6 +1172,7 @@ def cohort_timetable(
             "cohort": cohort,
             "sessions": sessions,
             "session_types": list(scheduling.SESSION_TYPES),
+            "default_session_type": cast(str, effective(db, require_store=True)["learning_default_session_type"]),
             "delivery_modes": sorted(scheduling.DELIVERY_MODES),
         },
     )
@@ -1083,7 +1184,7 @@ def create_class_session(
     request: Request,
     title: str = Form(...),
     starts_at: str = Form(...),
-    session_type: str = Form("live_class"),
+    session_type: str | None = Form(None),
     ends_at: str = Form(""),
     location: str = Form(""),
     join_url: str = Form(""),
@@ -1115,9 +1216,9 @@ def create_class_session(
 
 @router.post("/sessions/{session_id}/cancel", dependencies=[Depends(require_web_role("instructor"))])
 def cancel_class_session(session_id: UUID, request: Request, db: Session = Depends(get_db)):
-    require_tenant(request)
+    tenant = require_tenant(request)
     try:
-        session = scheduling.cancel_session(db, session_id=session_id)
+        session = scheduling.cancel_session(db, tenant_id=tenant.id, session_id=session_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404) from exc
     return _timetable_redirect(request, session.cohort_id)
@@ -1132,7 +1233,7 @@ def edit_class_session_form(session_id: UUID, request: Request, db: Session = De
     """Edit form for a single session (start time shown/edited in academy time)."""
     tenant = require_tenant(request)
     try:
-        session = scheduling.get_session(db, session_id=session_id)
+        session = scheduling.get_session(db, tenant_id=tenant.id, session_id=session_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404) from exc
     cohort = cohort_or_404(db, tenant_id=tenant.id, cohort_id=session.cohort_id)
@@ -1154,21 +1255,25 @@ def edit_class_session(
     request: Request,
     title: str = Form(...),
     starts_at: str = Form(...),
-    session_type: str = Form("live_class"),
+    session_type: str | None = Form(None),
     ends_at: str = Form(""),
     location: str = Form(""),
     join_url: str = Form(""),
     notes: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     starts = _parse_dt(starts_at)
     if starts is None:
         raise HTTPException(status_code=400, detail="A start time is required.")
+    if session_type is None:
+        session_type = cast(str, effective(db, require_store=True)["learning_default_session_type"])
     try:
         session, changes = scheduling.update_session(
             db,
+            request=request,
+            tenant_id=tenant.id,
             session_id=session_id,
             title=title,
             starts_at=starts,
@@ -1181,16 +1286,6 @@ def edit_class_session(
     except (BadRequestError, NotFoundError) as exc:
         code = 404 if isinstance(exc, NotFoundError) else 400
         raise HTTPException(status_code=code, detail=str(exc)) from exc
-    if changes:
-        write_audit_event(
-            db,
-            tenant_id=tenant.id,
-            actor_person_id=person.id,
-            action="scheduling.update_session",
-            entity_type="class_session",
-            entity_id=str(session.id),
-            details={"changes": changes},
-        )
     return _timetable_redirect(request, session.cohort_id)
 
 
@@ -1207,7 +1302,7 @@ def set_cohort_delivery_mode(
     tenant = require_tenant(request)
     cohort_or_404(db, tenant_id=tenant.id, cohort_id=cohort_id)
     try:
-        scheduling.set_delivery_mode(db, cohort_id=cohort_id, mode=mode)
+        scheduling.set_delivery_mode(db, tenant_id=tenant.id, cohort_id=cohort_id, mode=mode)
     except BadRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _timetable_redirect(request, cohort_id)
@@ -1230,15 +1325,14 @@ def change_account_status(
     Admin-only: account suspension is privileged, so a plain instructor cannot
     suspend admins or peer instructors (the whole route requires the admin role).
     """
-    tenant = require_tenant(request)
-    set_account_status(db, tenant_id=tenant.id, person_id=person_id, status=status_value)
+    set_web_account_status(db, request, person_id=person_id, status=status_value, forbidden_detail="Forbidden")
     return hx_redirect(request, "/instructor/cohorts")
 
 
 @router.get("/courses", response_class=HTMLResponse)
 def author_courses_list(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Instructor content management scoped to assigned courses."""
@@ -1258,7 +1352,7 @@ def author_create_course(
     slug: str = Form(...),
     title: str = Form(...),
     discipline: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Create a new draft course in-app. Admin-only because assignment is admin-owned."""
@@ -1274,18 +1368,13 @@ def author_create_course(
 def author_course_page(
     course_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Authoring page for an assigned course."""
     tenant = require_tenant(request)
     course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    chapters = db.scalars(
-        select(Chapter)
-        .where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course_id)
-        .order_by(Chapter.number)
-    ).all()
+    chapters = authoring_chapters(db, tenant_id=tenant.id, course_id=course_id)
     chapter_rows = [{"chapter": chapter, "source": editable_chapter_source(chapter)} for chapter in chapters]
     return templates.TemplateResponse(
         request,
@@ -1298,18 +1387,13 @@ def author_course_page(
 def preview_course(
     course_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Read-only instructor preview for an assigned course."""
     tenant = require_tenant(request)
     course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    chapters = db.scalars(
-        select(Chapter)
-        .where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id)
-        .order_by(Chapter.number)
-    ).all()
+    chapters = authoring_chapters(db, tenant_id=tenant.id, course_id=course.id)
     chapter = chapters[0] if chapters else None
     return _preview_course_response(request, db, tenant.id, course, chapters, chapter)
 
@@ -1319,18 +1403,13 @@ def preview_course_chapter(
     course_id: UUID,
     chapter_number: int,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Read-only instructor preview for one chapter in an assigned course."""
     tenant = require_tenant(request)
     course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    chapters = db.scalars(
-        select(Chapter)
-        .where(Chapter.tenant_id == tenant.id)
-        .where(Chapter.course_id == course.id)
-        .order_by(Chapter.number)
-    ).all()
+    chapters = authoring_chapters(db, tenant_id=tenant.id, course_id=course.id)
     chapter = next((row for row in chapters if row.number == chapter_number), None)
     if chapter is None:
         raise HTTPException(status_code=404)
@@ -1342,8 +1421,8 @@ def _preview_course_response(
     db: Session,
     tenant_id: UUID,
     course: Course,
-    chapters: Sequence[Chapter],
-    chapter: Chapter | None,
+    chapters: Sequence[ChapterFact],
+    chapter: ChapterFact | None,
 ) -> HTMLResponse:
     activity = None
     reading_minutes = 0
@@ -1357,7 +1436,7 @@ def _preview_course_response(
             .where(Activity.chapter_number == chapter.number)
         ).first()
         words = len(re.sub(r"<[^>]+>", " ", chapter.body_html or "").split())
-        reading_minutes = max(1, round(words / 200))
+        reading_minutes = learning_policy.reading_minutes(db, words)
         previous_chapter = next((row for row in reversed(chapters) if row.number < chapter.number), None)
         next_chapter = next((row for row in chapters if row.number > chapter.number), None)
     return templates.TemplateResponse(
@@ -1384,7 +1463,7 @@ def author_upsert_chapter(
     title: str = Form(...),
     body_md: str = Form(...),
     part: str = Form(""),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Create or update a chapter for an assigned course."""
@@ -1400,7 +1479,7 @@ def author_delete_chapter(
     course_id: UUID,
     chapter_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Delete a chapter from an assigned course."""
@@ -1416,15 +1495,21 @@ def set_course_status(
     course_id: UUID,
     request: Request,
     status_value: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Set lifecycle status for an assigned course."""
     tenant = require_tenant(request)
     if status_value not in ("draft", "published", "completed"):
         raise HTTPException(status_code=400, detail="invalid status")
-    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
-    course.status = status_value
+    _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    # The owner re-reads the authorized row; retain the source's staging-only
+    # behavior rather than flushing pending caller work on that extra SELECT.
+    try:
+        with db.no_autoflush:
+            patch_course(db, CoursePatch(id=course_id, tenant_id=tenant.id, status=status_value))
+    except ReferenceNotFound as exc:
+        raise HTTPException(status_code=404) from exc
     target = f"/instructor/courses/{course_id}/edit"
     return hx_redirect(request, target)
 
@@ -1432,16 +1517,22 @@ def set_course_status(
 @router.get("/results", response_class=HTMLResponse)
 def results(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
     course_ids = _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id)
     raw_rows = db.execute(
-        select(Person.id, Person.email, Activity.course_id, Activity.title, Score)
+        select(Party.id, Party.email, Activity.course_id, Activity.title, Score)
+        .select_from(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
         .join(
             Submission,
-            (Submission.person_id == Person.id) & (Submission.tenant_id == Person.tenant_id),
+            (Submission.person_id == Party.id) & (Submission.tenant_id == Party.tenant_id),
         )
         .join(
             Activity,
@@ -1451,7 +1542,7 @@ def results(
             Score,
             (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id),
         )
-        .where(Person.tenant_id == tenant.id)
+        .where(Party.tenant_id == tenant.id, Party.party_type == PartyType.person)
         .where(Activity.course_id.in_(course_ids))
     ).all()
     allowed_people: dict[UUID, frozenset[UUID] | None] = {}
@@ -1473,7 +1564,7 @@ def results(
 @router.get("/grading", response_class=HTMLResponse)
 def grading_queue(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Manual grading queue: submissions awaiting a score (finding #4)."""
@@ -1509,7 +1600,7 @@ def grading_queue(
 def cohort_dashboard(
     cohort_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Cohort progress + at-risk learners (finding #9)."""
@@ -1527,7 +1618,7 @@ def cohort_dashboard(
 def item_analytics(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Per-question difficulty (p-value) for an activity (finding #4/#9)."""
@@ -1543,12 +1634,12 @@ def item_analytics(
         instructor_id=person.id,
         course_id=act.course_id,
     )
-    items = item_analysis(
-        db,
-        tenant_id=tenant.id,
-        activity_id=activity_id,
-        person_ids=people,
-    )
+    if people is not None:
+        # FAIL CLOSED (plan §3.2 fallback): released Learning item_analysis is
+        # (db, *, tenant_id, activity_id) with no person filter, so a scoped
+        # facilitator can never be served tenant-wide item statistics here.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    items = item_analysis(db, tenant_id=tenant.id, activity_id=activity_id)
     return templates.TemplateResponse(
         request,
         "instructor/item_analytics.html",
@@ -1563,7 +1654,7 @@ def override(
     score_value: float = Form(...),
     max_score: float = Form(...),
     reason: str = Form(...),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -1604,10 +1695,10 @@ def override(
 def grant_attempt(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     person_id: UUID = Form(...),
     reason: str = Form(...),
-    extra_attempts: int = Form(1),
+    extra_attempts: int | None = Form(None),
     db: Session = Depends(get_db),
 ):
     """Give one learner another go at this activity.
@@ -1617,7 +1708,7 @@ def grant_attempt(
     keeps the reason.
     """
     tenant = require_tenant(request)
-    act = db.scalars(select(Activity).where(Activity.tenant_id == tenant.id).where(Activity.id == activity_id)).first()
+    act = get_activity(db, tenant_id=tenant.id, activity_id=activity_id)
     if act is None:
         raise HTTPException(status_code=404)
     if act.course_id not in _assessment_course_ids(db, tenant_id=tenant.id, instructor_id=person.id):
@@ -1634,6 +1725,12 @@ def grant_attempt(
         # Nothing to grant: the activity is already uncapped, and recording a
         # grant against it would imply a limit that does not exist.
         raise HTTPException(status_code=400, detail="This activity has no attempt limit.")
+    audit_context = AttemptAuditContext(
+        tenant_id=tenant.id,
+        actor_type="user",
+        actor_id=str(person.id),
+        source_application=resolve_event_attribution(None),
+    )
     try:
         attempt_policy.grant_extra_attempt(
             db,
@@ -1643,6 +1740,7 @@ def grant_attempt(
             reason=reason,
             granted_by=person.id,
             extra_attempts=extra_attempts,
+            audit_context=audit_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1669,7 +1767,7 @@ def announcements_list(request: Request, db: Session = Depends(get_db)):
 @router.post("/announcements", dependencies=[Depends(require_web_role("instructor"))])
 def announcements_create(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     title: str = Form(...),
     body_md: str = Form(...),
     cohort_id: str = Form(""),
@@ -1709,3 +1807,384 @@ def announcement_delete(
     tenant = require_tenant(request)
     ann_svc.delete(db, tenant_id=tenant.id, announcement_id=announcement_id)
     return hx_redirect(request, "/instructor/announcements")
+
+
+# --- question-bank authoring (thin composition over Learning) -------------
+#
+# Learning owns every bank write and performs no role checks. Academy
+# authorizes here: bank_author_roles + course assignment for draft work;
+# publish/repoint/export/retire each have their own settings role list
+# (admin-only by default). No handler commits: get_db owns the boundary.
+# Lifecycle refusals re-render with an error and a normal return so
+# Learning's staged refusal audit / refreshed lint state commits.
+
+_BANK_ERRORS = (BankLifecycleError, BadRequestError, ValueError)
+
+
+def _bank_course_or_404(db: Session, *, tenant_id: UUID, person_id: UUID, course_id: UUID, bank_id: UUID):
+    course = _authorable_course_or_404(db, tenant_id=tenant_id, person_id=person_id, course_id=course_id)
+    try:
+        bank = _banks.bank_or_404(db, tenant_id=tenant_id, bank_id=bank_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404) from None
+    if bank.course_id != course.id:
+        raise HTTPException(status_code=404)
+    return course, bank
+
+
+def _bank_page(request, *, course, bank, db, tenant_id, error=None, notice=None, violations=(), edit=None):
+    history = _banks.version_history(db, tenant_id=tenant_id, bank_id=bank.id)
+    draft = next((fact for fact in history if fact.state == "draft"), None)
+    draft_questions = ()
+    if draft is not None:
+        draft_questions = _banks.version_questions(db, tenant_id=tenant_id, version_id=draft.id).questions
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(Activity.tenant_id == tenant_id)
+            .where(Activity.bank_id == bank.id)
+            .order_by(Activity.title)
+        ).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "instructor/bank.html",
+        {
+            "request": request,
+            "course": course,
+            "bank": bank,
+            "history": history,
+            "draft": draft,
+            "draft_questions": draft_questions,
+            "activities": activities,
+            "error": error,
+            "notice": notice,
+            "violations": list(violations),
+            "edit": edit,
+        },
+    )
+
+
+@router.get("/courses/{course_id}/banks", response_class=HTMLResponse)
+def course_banks(
+    course_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    banks = _banks.list_course_banks(db, tenant_id=tenant.id, course_id=course.id)
+    histories = {bank.id: _banks.version_history(db, tenant_id=tenant.id, bank_id=bank.id) for bank in banks}
+    return templates.TemplateResponse(
+        request,
+        "instructor/banks.html",
+        {"request": request, "course": course, "banks": banks, "histories": histories, "error": None, "notice": None},
+    )
+
+
+@router.post("/courses/{course_id}/banks/drafts")
+def bank_create_draft(
+    course_id: UUID,
+    request: Request,
+    kind: str = Form(...),
+    chapter_number: str = Form(""),
+    from_empty: str = Form(""),
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    chapter = int(chapter_number) if chapter_number.strip() else None
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        fact = _banks.create_draft(
+            db,
+            tenant_id=tenant.id,
+            course_id=course.id,
+            chapter_number=chapter,
+            kind=kind.strip(),
+            context=context,
+            from_empty=bool(from_empty),
+        )
+    except _BANK_ERRORS as exc:  # lifecycle refusal: show it, keep audit staged writes
+        banks = _banks.list_course_banks(db, tenant_id=tenant.id, course_id=course.id)
+        histories = {b.id: _banks.version_history(db, tenant_id=tenant.id, bank_id=b.id) for b in banks}
+        return templates.TemplateResponse(
+            request,
+            "instructor/banks.html",
+            {"request": request, "course": course, "banks": banks, "histories": histories,
+             "error": str(exc), "notice": None},
+            status_code=400,
+        )
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{fact.bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/import")
+async def bank_import_yaml(
+    course_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    """Upload YAML as a draft for this course. Never publishes."""
+    tenant = require_tenant(request)
+    course = _authorable_course_or_404(db, tenant_id=tenant.id, person_id=person.id, course_id=course_id)
+    form = await request.form()
+    upload = form.get("bank_file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(status_code=400, detail="bank_file is required")
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        # Decode + parse inside the handled region: malformed uploads
+        # (non-UTF8, bad YAML, missing keys) render the error page with
+        # a content-free message instead of a 500.
+        text = _banks.decode_bank_text(await upload.read())
+        report = _banks.import_yaml_as_draft(
+            db,
+            tenant_id=tenant.id,
+            course_id=course.id,
+            text=text,
+            context=context,
+            replace_imported_draft=bool(form.get("replace_imported_draft")),
+        )
+    except _BANK_ERRORS as exc:
+        banks = _banks.list_course_banks(db, tenant_id=tenant.id, course_id=course.id)
+        histories = {b.id: _banks.version_history(db, tenant_id=tenant.id, bank_id=b.id) for b in banks}
+        return templates.TemplateResponse(
+            request,
+            "instructor/banks.html",
+            {"request": request, "course": course, "banks": banks, "histories": histories,
+             "error": str(exc), "notice": None},
+            status_code=400,
+        )
+    if report.version_id is None:
+        return hx_redirect(request, f"/instructor/courses/{course_id}/banks")
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{report.bank_id}")
+
+
+@router.get("/courses/{course_id}/banks/{bank_id}", response_class=HTMLResponse)
+def bank_detail(
+    course_id: UUID,
+    bank_id: UUID,
+    request: Request,
+    edit: str = "",
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    edit_question = None
+    if edit:
+        draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+        if draft is not None:
+            for question in _banks.version_questions(db, tenant_id=tenant.id, version_id=draft.id).questions:
+                if question.ext_id == edit:
+                    edit_question = question
+                    break
+    return _bank_page(request, course=course, bank=bank, db=db, tenant_id=tenant.id, edit=edit_question)
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/draft/questions")
+def bank_upsert_question(
+    course_id: UUID,
+    bank_id: UUID,
+    request: Request,
+    ext_id: str = Form(...),
+    stem: str = Form(...),
+    question_type: str = Form(...),
+    rubric_category: str = Form(...),
+    category: str = Form(""),
+    weight: int = Form(...),
+    options_text: str = Form(""),
+    correct_text: str = Form(""),
+    explanation: str = Form(""),
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+    if draft is None:
+        raise HTTPException(status_code=400, detail="Create a draft before editing questions")
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        write = _banks.draft_question_from_lines(
+            ext_id=ext_id, stem=stem, type_=question_type, rubric_category=rubric_category,
+            options_text=options_text, correct_text=correct_text, category=category,
+            explanation=explanation, weight=weight,
+        )
+        _banks.upsert_question(db, tenant_id=tenant.id, version_id=draft.id, question=write, context=context)
+    except _BANK_ERRORS as exc:
+        return _bank_page(request, course=course, bank=bank, db=db, tenant_id=tenant.id, error=str(exc))
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/draft/questions/{ext_id}/delete")
+def bank_delete_question(
+    course_id: UUID,
+    bank_id: UUID,
+    ext_id: str,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+    if draft is None:
+        raise HTTPException(status_code=400, detail="No draft to edit")
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    _banks.delete_question(db, tenant_id=tenant.id, version_id=draft.id, ext_id=ext_id, context=context)
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/draft/discard")
+def bank_discard_draft(
+    course_id: UUID,
+    bank_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    _course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+    if draft is None:
+        raise HTTPException(status_code=400, detail="No draft to discard")
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    _banks.discard_draft(db, tenant_id=tenant.id, version_id=draft.id, context=context)
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/draft/lint", response_class=HTMLResponse)
+def bank_lint_draft(
+    course_id: UUID,
+    bank_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_author_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+    if draft is None:
+        raise HTTPException(status_code=400, detail="No draft to lint")
+    result = _banks.lint_draft(db, tenant_id=tenant.id, version_id=draft.id, course_slug=course.slug)
+    notice = "Lint clean." if not result.violations else f"{len(result.violations)} lint violation(s)."
+    return _bank_page(
+        request, course=course, bank=bank, db=db, tenant_id=tenant.id,
+        notice=notice, violations=result.violations,
+    )
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/draft/publish")
+def bank_publish(
+    course_id: UUID,
+    bank_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_publish_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    draft = _banks.draft_of(db, tenant_id=tenant.id, bank_id=bank.id)
+    if draft is None:
+        raise HTTPException(status_code=400, detail="No draft to publish")
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        _banks.publish(db, tenant_id=tenant.id, version_id=draft.id, context=context, course_slug=course.slug)
+    except _BANK_ERRORS as exc:
+        return _bank_page(request, course=course, bank=bank, db=db, tenant_id=tenant.id, error=str(exc))
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/versions/{version_id}/retire")
+def bank_retire(
+    course_id: UUID,
+    bank_id: UUID,
+    version_id: UUID,
+    request: Request,
+    reason: str = Form(...),
+    person: AcademyCurrentAccount = Depends(require_bank_retire_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    if _banks.version_questions(db, tenant_id=tenant.id, version_id=version_id).version.bank_id != bank.id:
+        raise HTTPException(status_code=404)
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        _banks.retire(db, tenant_id=tenant.id, version_id=version_id, reason=reason, context=context)
+    except _BANK_ERRORS as exc:
+        return _bank_page(request, course=course, bank=bank, db=db, tenant_id=tenant.id, error=str(exc))
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.post("/courses/{course_id}/banks/{bank_id}/versions/{version_id}/repoint")
+def bank_repoint(
+    course_id: UUID,
+    bank_id: UUID,
+    version_id: UUID,
+    request: Request,
+    activity_id: UUID = Form(...),
+    person: AcademyCurrentAccount = Depends(require_bank_repoint_access),
+    db: Session = Depends(get_db),
+):
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    if _banks.version_questions(db, tenant_id=tenant.id, version_id=version_id).version.bank_id != bank.id:
+        raise HTTPException(status_code=404)
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    try:
+        _banks.repoint_activity(
+            db, tenant_id=tenant.id, activity_id=activity_id, version_id=version_id, context=context
+        )
+    except _BANK_ERRORS as exc:
+        return _bank_page(request, course=course, bank=bank, db=db, tenant_id=tenant.id, error=str(exc))
+    return hx_redirect(request, f"/instructor/courses/{course_id}/banks/{bank_id}")
+
+
+@router.get("/courses/{course_id}/banks/{bank_id}/versions/{version_id}/export")
+def bank_export(
+    course_id: UUID,
+    bank_id: UUID,
+    version_id: UUID,
+    request: Request,
+    person: AcademyCurrentAccount = Depends(require_bank_export_access),
+    db: Session = Depends(get_db),
+):
+    """Download one version as YAML (audited; contains answer keys)."""
+    tenant = require_tenant(request)
+    course, bank = _bank_course_or_404(
+        db, tenant_id=tenant.id, person_id=person.id, course_id=course_id, bank_id=bank_id
+    )
+    facts = _banks.version_questions(db, tenant_id=tenant.id, version_id=version_id)
+    if facts.version.bank_id != bank.id:
+        raise HTTPException(status_code=404)
+    context = _banks.web_bank_audit_context(tenant_id=tenant.id, account=person)
+    text = _banks.export_yaml(
+        db, tenant_id=tenant.id, version_id=version_id, course_slug=course.slug, context=context
+    )
+    filename = f"bank-{course.slug}-{bank.kind}-v{facts.version.version_no or 'draft'}.yaml"
+    return Response(
+        content=text,
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

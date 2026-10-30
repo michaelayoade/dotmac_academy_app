@@ -3,27 +3,25 @@
 
 from __future__ import annotations
 
-from app.models.auth import UserCredential
+from dotmac_kernel.models import PartyRoleGrant
+
 from app.models.cohort import Cohort
-from app.models.person import Person
-from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _admin_login(app_client, db, tenant, email="adm@a.edu"):
     roles = ensure_roles(db, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="Ad", last_name="Min")
+    p = make_person_party(db, tenant_id=tenant.id, email=email, first_name="Ad", last_name="Min")
     db.add(p)
     db.flush()
-    db.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                          password_hash=hash_password("password1")))
-    db.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["admin"].id))
+    db.add(make_person_credential(db, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
+    db.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles["admin"].id))
     db.commit()
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return h, app_client.cookies.get("csrf_token", "")
-
 
 def test_announcement_bad_cohort_id_returns_400(app_client, admin_session, tenant_a):
     h, csrf = _admin_login(app_client, admin_session, tenant_a)
@@ -33,7 +31,6 @@ def test_announcement_bad_cohort_id_returns_400(app_client, admin_session, tenan
         data={"title": "T", "body_md": "b", "cohort_id": "not-a-uuid"},
     )
     assert r.status_code == 400
-
 
 def test_announcement_cross_tenant_cohort_returns_400(app_client, admin_session, tenant_a, tenant_b):
     h, csrf = _admin_login(app_client, admin_session, tenant_a)

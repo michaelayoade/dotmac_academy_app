@@ -6,14 +6,14 @@ Requires a migrated disposable Postgres (skipped otherwise by the fixtures).
 from __future__ import annotations
 
 from app.models.course import Chapter, Course
-from app.models.person import Person
 from app.services import reading_progress
+from tests.conftest import make_person_party
 
 
 def _seed(db, tid, *, slug="rp-course"):
     course = Course(tenant_id=tid, slug=slug, title="RP", discipline="networking",
                     source_ref="x", version=1, status="published")
-    person = Person(tenant_id=tid, email=f"{slug}@a.edu", first_name="R", last_name="P")
+    person = make_person_party(db, tenant_id=tid, email=f"{slug}@a.edu", first_name="R", last_name="P")
     db.add_all([course, person])
     db.flush()
     ch1 = Chapter(tenant_id=tid, course_id=course.id, number=1, title="One", part="I",
@@ -23,7 +23,6 @@ def _seed(db, tid, *, slug="rp-course"):
     db.add_all([ch1, ch2])
     db.flush()
     return course, person, ch1, ch2
-
 
 def test_mark_complete_is_idempotent(admin_session, tenant_a):
     tid = tenant_a.id
@@ -44,11 +43,10 @@ def test_mark_complete_is_idempotent(admin_session, tenant_a):
     assert second is False  # already there, no duplicate row
     assert done == {"alpha"}
 
-
 def test_progress_is_scoped_to_person_and_chapter(admin_session, tenant_a):
     tid = tenant_a.id
     _, person, ch1, ch2 = _seed(admin_session, tid, slug="rp-scope")
-    other = Person(tenant_id=tid, email="rp-other@a.edu", first_name="O", last_name="T")
+    other = make_person_party(admin_session, tenant_id=tid, email="rp-other@a.edu", first_name="O", last_name="T")
     admin_session.add(other)
     admin_session.flush()
 
@@ -70,7 +68,6 @@ def test_progress_is_scoped_to_person_and_chapter(admin_session, tenant_a):
     assert mine_ch1 == {"alpha"}      # not polluted by ch2 or by the other learner
     assert theirs_ch1 == {"beta"}
 
-
 def test_batched_lookup_returns_one_entry_per_chapter(admin_session, tenant_a):
     tid = tenant_a.id
     _, person, ch1, ch2 = _seed(admin_session, tid, slug="rp-batch")
@@ -91,7 +88,6 @@ def test_batched_lookup_returns_one_entry_per_chapter(admin_session, tenant_a):
 
     assert by_chapter == {ch1.id: {"alpha", "beta"}, ch2.id: {"gamma"}}
     assert empty == {}
-
 
 def test_blank_slug_is_not_recorded(admin_session, tenant_a):
     tid = tenant_a.id

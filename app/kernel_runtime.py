@@ -1,6 +1,6 @@
 """Academy's narrow instrumentation adapter around the kernel runtime.
 
-Kernel 0.1.0a38 owns construction, product startup checks/hooks, browser
+Kernel owns construction, product startup checks/hooks, browser
 security policy, platform-surface composition, and every generic runtime
 control. Academy keeps only product-specific request metrics and GlitchTip
 request correlation here.
@@ -13,13 +13,19 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from dotmac_kernel import create_app
+from dotmac_kernel import ProductAssemblySpec, create_app
+from dotmac_kernel.middleware.csrf import CSRF_COOKIE, CSRF_HOST_COOKIE
+from dotmac_kernel.modules import ModuleRegistry
 from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.assembly import assembly
+from app.assembly import OWNER_DECLARATIONS, assembly
+from app.canonical_models import ModelOwnershipError
+from app.config import settings
+from app.owner_composition import inspect_owner_registry
+from app.web.labs import ws_router
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +73,8 @@ class AcademyInstrumentationMiddleware:
                 logger.debug("metrics observation failed", exc_info=True)
 
 
-# The ONLY unsafe-method route family exempted from the kernel's double-submit
-# CSRF header: POSTs to a node's console sub-resources (RouterOS WebFig talks to
+# The ONLY unsafe-method route family with an origin-proven CSRF header bridge:
+# POSTs to a node's console sub-resources (RouterOS WebFig talks to
 # ``POST .../console/<node>/jsproxy`` from vendor JavaScript we cannot modify to
 # add an ``X-CSRF-Token`` header). Everything else keeps full CSRF protection.
 _CONSOLE_POST_PATH = re.compile(r"^/labs/instances/[0-9a-fA-F-]{36}/console/[A-Za-z0-9_.-]+/[^?#]+$")
@@ -81,10 +87,11 @@ def _is_console_post_path(path: str) -> bool:
 class ConsoleProxyCsrfBridge:
     """Narrow, fail-closed CSRF bridge for the per-lab console proxy POST.
 
-    The kernel CSRFMiddleware (double-submit cookie/header) has no per-route
+    The kernel CSRF dependency (signed, session-bound cookie/header) has no per-route
     exemption and WebFig cannot send the header. For ``POST`` requests to the
     console sub-resource path only, this middleware supplies the header from
-    the request's own ``csrf_token`` cookie **iff** the browser proves the
+    the request's own signed CSRF cookie (``__Host-csrf_token`` in production)
+    **iff** the browser proves the
     request is same-origin: a present ``Origin`` header whose host equals the
     ``Host`` header (browsers always send Origin on same-origin POST and script
     cannot forge or suppress it on a cross-site request) and, when sent,
@@ -110,15 +117,17 @@ class ConsoleProxyCsrfBridge:
         request = Request(scope)
         origin = request.headers.get("origin")
         host = request.headers.get("host")
-        cookie = request.cookies.get("csrf_token")
+        cookie_name = CSRF_HOST_COOKIE if settings.is_production else CSRF_COOKIE
+        cookie = request.cookies.get(cookie_name)
         if not origin or not host or not cookie:
             return scope
         if request.headers.get("sec-fetch-site", "same-origin").lower() != "same-origin":
             return scope
         try:
             parsed_origin = urlsplit(origin)
-            forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-            request_scheme = forwarded_scheme if forwarded_scheme in {"http", "https"} else request.url.scheme.lower()
+            # The ASGI server applies forwarded scheme only for trusted peers.
+            # Raw client forwarding headers cannot supply browser-origin proof.
+            request_scheme = request.url.scheme.lower()
             if (
                 parsed_origin.scheme.lower() != request_scheme
                 or parsed_origin.netloc.lower() != host.lower()
@@ -135,9 +144,18 @@ class ConsoleProxyCsrfBridge:
         return {**scope, "headers": headers}
 
 
-def create_academy_app() -> FastAPI:
+def create_academy_app(spec: ProductAssemblySpec = assembly) -> FastAPI:
     """Build Academy through the public kernel assembly contract."""
-    app = create_app(assembly)
+    declared_registry = ModuleRegistry(spec.modules)
+    declared_graph = inspect_owner_registry(declared_registry, declarations=OWNER_DECLARATIONS)
+    app = create_app(spec)
+    actual_graph = inspect_owner_registry(app.state.module_registry, declarations=OWNER_DECLARATIONS)
+    if actual_graph.owners != declared_graph.owners:
+        raise ModelOwnershipError("factory registry changed declared model ownership")
+    # Kernel a107 has no facet/WebSocket composition and its web mounter copies
+    # only HTTP routes, so mount the lab console socket directly; its handler
+    # self-authenticates exactly as before (see app/web/labs.py console_ws).
+    app.include_router(ws_router)
     app.add_middleware(ConsoleProxyCsrfBridge)
     app.add_middleware(AcademyInstrumentationMiddleware)
     return app

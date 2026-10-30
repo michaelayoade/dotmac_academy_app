@@ -13,6 +13,9 @@ from app.services.audit import list_events
 from app.services.csv_reports import sanitize_cell
 from app.services.exceptions import BadRequestError
 from app.services.localtime import local_to_utc
+from tests.services.roster_request_fixtures import roster_actors
+
+assert roster_actors
 
 
 def _cohort(admin_session, tenant):
@@ -22,59 +25,93 @@ def _cohort(admin_session, tenant):
     return c
 
 
-def test_update_session_converts_local_and_audits(admin_session, tenant_a):
+def test_update_session_converts_local_and_audits(roster_actors):
+    admin_session = roster_actors.account.db
+    tenant_a = roster_actors.account.tenant
     cohort = _cohort(admin_session, tenant_a)
     s = scheduling.create_session(
-        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, title="Old",
+        admin_session,
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        title="Old",
         starts_at=local_to_utc(datetime(2026, 8, 1, 10, 0)),
     )
     admin_session.flush()
     # Instructor edits to 14:00 Lagos wall-clock -> stored 13:00 UTC.
     new_start = local_to_utc(datetime(2026, 8, 1, 14, 0))
     session, changes = scheduling.update_session(
-        admin_session, session_id=s.id, title="New title", starts_at=new_start,
+        admin_session,
+        request=roster_actors.instructor.request,
+        tenant_id=tenant_a.id,
+        session_id=s.id,
+        title="New title",
+        starts_at=new_start,
     )
     assert session.title == "New title"
     assert session.starts_at.astimezone(UTC).hour == 13
     assert "title" in changes and "starts_at" in changes
     admin_session.flush()
-    from app.services.audit import write_audit_event
-    write_audit_event(admin_session, tenant_id=tenant_a.id, actor_person_id=None,
-                      action="scheduling.update_session", entity_type="class_session",
-                      entity_id=str(session.id), details={"changes": changes})
-    admin_session.flush()
     assert any(e.action == "scheduling.update_session" for e in list_events(admin_session, tenant_id=tenant_a.id))
 
 
-def test_update_session_rejects_end_before_start(admin_session, tenant_a):
+def test_update_session_rejects_end_before_start(roster_actors):
+    admin_session = roster_actors.account.db
+    tenant_a = roster_actors.account.tenant
     cohort = _cohort(admin_session, tenant_a)
     s = scheduling.create_session(
-        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, title="S",
+        admin_session,
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        title="S",
         starts_at=local_to_utc(datetime(2026, 8, 1, 10, 0)),
     )
     admin_session.flush()
     with pytest.raises(BadRequestError):
-        scheduling.update_session(admin_session, session_id=s.id,
-                                  ends_at=local_to_utc(datetime(2026, 8, 1, 9, 0)))
+        scheduling.update_session(
+            admin_session,
+            request=roster_actors.instructor.request,
+            tenant_id=tenant_a.id,
+            session_id=s.id,
+            ends_at=local_to_utc(datetime(2026, 8, 1, 9, 0)),
+        )
 
 
-def test_join_url_scheme_rejected_on_create_and_update(admin_session, tenant_a):
+def test_join_url_scheme_rejected_on_create_and_update(roster_actors):
+    admin_session = roster_actors.account.db
+    tenant_a = roster_actors.account.tenant
     cohort = _cohort(admin_session, tenant_a)
     with pytest.raises(BadRequestError):
         scheduling.create_session(
-            admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, title="X",
+            admin_session,
+            tenant_id=tenant_a.id,
+            cohort_id=cohort.id,
+            title="X",
             starts_at=local_to_utc(datetime(2026, 8, 1, 10, 0)),
             join_url="javascript:alert(1)",
         )
     s = scheduling.create_session(
-        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, title="X",
+        admin_session,
+        tenant_id=tenant_a.id,
+        cohort_id=cohort.id,
+        title="X",
         starts_at=local_to_utc(datetime(2026, 8, 1, 10, 0)),
     )
     admin_session.flush()
     with pytest.raises(BadRequestError):
-        scheduling.update_session(admin_session, session_id=s.id, join_url="ftp://x/y")
-    session, _ = scheduling.update_session(admin_session, session_id=s.id,
-                                           join_url="https://meet.example/room")
+        scheduling.update_session(
+            admin_session,
+            request=roster_actors.instructor.request,
+            tenant_id=tenant_a.id,
+            session_id=s.id,
+            join_url="ftp://x/y",
+        )
+    session, _ = scheduling.update_session(
+        admin_session,
+        request=roster_actors.instructor.request,
+        tenant_id=tenant_a.id,
+        session_id=s.id,
+        join_url="https://meet.example/room",
+    )
     assert session.join_url == "https://meet.example/room"
 
 

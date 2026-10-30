@@ -3,10 +3,10 @@
 Two-tenant setup: every isolation test gets `tenant_a` and `tenant_b` and a
 `client_for(tenant)` helper that issues requests against the right subdomain.
 
-These tests REQUIRE a real Postgres with RLS — SQLite has no RLS. CI/dev should
-spin up a disposable Postgres (testcontainers, docker compose, or a per-test schema).
+Database tests require a real PostgreSQL with RLS. CI provisions a disposable
+service; development database rehearsals use the dedicated test server.
 
-This skeleton uses `os.getenv("TEST_DATABASE_URL")` — set it before running tests.
+Set `TEST_DATABASE_URL` before running database tests.
 """
 
 from __future__ import annotations
@@ -20,20 +20,44 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+# Expose the genuine shared fixture chain in every requesting test module.
+pytest_plugins = ("tests.canonical_identity_fixtures",)
+
+
+def pytest_sessionstart(session):
+    if os.environ.get("CI") != "true":
+        return
+    # This one explicit prequalification canary owns isolated historical/fresh
+    # roots and cannot commit. It runs before the application DB exists.
+    discovery = "tests/test_fresh_product_entry_hosted.py::test_historical_and_fresh_catalogs_converge"
+    if session.config.args == [discovery]:
+        return
+    from scripts.ci_bootstrap_composed_db import bootstrap
+
+    try:
+        bootstrap(os.environ, expected_database="academy", verify_only=True)
+    except Exception:
+        raise pytest.UsageError("CI application database is not independently qualified and bootstrapped") from None
+
+
+def _missing_database(message):
+    if os.environ.get("CI") == "true":
+        pytest.fail(message)
+    pytest.skip(message)
+
 
 @pytest.fixture(scope="session")
 def admin_engine():
-    """Migration/superuser connection (postgres in CI), not the worker role.
+    """Migration-authority connection (app_admin in CI).
 
     Bound to ``TEST_MIGRATION_DATABASE_URL`` (falling back to
-    ``TEST_DATABASE_URL``), which in CI authenticates as the ``postgres``
-    superuser used to run migrations — it is not RLS-bypassed via the
-    ``app_admin`` role. Dedicated worker privilege tests use the separate
-    ``lab_worker_engine``/``lab_worker_session`` fixtures below.
+    ``TEST_DATABASE_URL``), which in CI authenticates as the non-superuser
+    ``app_admin`` migration role with BYPASSRLS. Dedicated worker privilege tests
+    use the separate ``lab_worker_engine``/``lab_worker_session`` fixtures below.
     """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
+        _missing_database("TEST_DATABASE_URL not set — these tests require a real Postgres")
     engine = create_engine(url, future=True)
     yield engine
     engine.dispose()
@@ -72,10 +96,10 @@ def _no_real_console_spawn(monkeypatch):
 
 @pytest.fixture
 def admin_session(admin_engine) -> Generator[Session, None, None]:
-    """Migration/superuser session used by fixtures to set up cross-tenant data.
+    """Migration-authority session used by fixtures to set up cross-tenant data.
 
     Bound to ``admin_engine`` — see that fixture's docstring: this is the
-    migration/superuser connection, not an ``app_admin`` connection.
+    ``app_admin`` connection in CI.
     """
     SessionLocal = sessionmaker(bind=admin_engine, autocommit=False, autoflush=False)
     db = SessionLocal()
@@ -99,7 +123,7 @@ def lab_worker_engine():
     """
     url = os.getenv("TEST_LAB_WORKER_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_LAB_WORKER_DATABASE_URL not set — lab-worker privilege tests skipped")
+        _missing_database("TEST_LAB_WORKER_DATABASE_URL not set — lab-worker privilege tests require their role")
     engine = create_engine(url, future=True)
     with engine.connect() as conn:
         current_user = conn.execute(text("SELECT current_user")).scalar()
@@ -170,7 +194,7 @@ def app_user_session() -> Generator[Session, None, None]:
     """Connection as app_user for RLS visibility assertions."""
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_DATABASE_URL not set — these tests require a real Postgres")
+        _missing_database("TEST_DATABASE_URL not set — these tests require a real Postgres")
     engine = create_engine(url, future=True)
     SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     db = SessionLocal()
@@ -233,17 +257,176 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     return client
 
 
+def make_canonical_account(
+    db: Session,
+    *,
+    tenant_id,
+    email: str,
+    first_name: str,
+    last_name: str,
+    password: str,
+    role: str,
+):
+    """Create one genuine canonical account (Party/PartyPerson/profile/
+    credential/policy/grant) for tests with no web request to authorize via.
+
+    Mirrors the canonical fixtures in tests/services/test_canonical_lifecycle.py
+    plus a role grant; ``create_web_user`` is not drop-in here because it
+    requires a live actor cookie. Caller owns commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, UserCredential
+
+    from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
+    from app.services.bootstrap import ensure_roles
+    from app.services.identity import canonical_party_for_email, normalize_email
+    from app.services.security import hash_password
+
+    roles = ensure_roles(db, tenant_id)
+    if role not in roles:
+        raise ValueError(f"Invalid role {role!r}; expected one of {sorted(roles)}")
+    email = normalize_email(email)
+    if canonical_party_for_email(db, tenant_id=tenant_id, email=email) is not None:
+        raise ValueError(f"A person with email {email!r} already exists in this tenant")
+    now = datetime.now(UTC)
+    party = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}".strip(),
+        email=email,
+        is_active=True,
+    )
+    db.add(party)
+    db.flush()
+    db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id, party_id=party.id, status="active",
+            prefs={}, created_at=now, updated_at=now,
+        )
+    )
+    credential = UserCredential(
+        tenant_id=tenant_id, party_id=party.id, password_hash=hash_password(password)
+    )
+    db.add(credential)
+    db.flush()
+    db.add(
+        AcademyCredentialPolicy(
+            tenant_id=tenant_id, credential_id=credential.id, email=email,
+            failed_login_attempts=0, locked_until=None, lifecycle_version=0,
+            reset_required=False, created_at=now, updated_at=now,
+        )
+    )
+    db.add(PartyRoleGrant(tenant_id=tenant_id, party_id=party.id, role_id=roles[role].id))
+    db.flush()
+    return party
+
+
+def make_person_party(
+    db: Session,
+    *,
+    tenant_id,
+    email: str,
+    first_name: str,
+    last_name: str,
+    status: str = "active",
+    prefs=None,
+    avatar_path: str | None = None,
+):
+    """Canonical stand-in for a retired ``Person`` row in test fixtures.
+
+    Creates the Party + PartyPerson subtype + AcademyAccountProfile triple
+    (the composed owners of the legacy person's email/names and of its
+    status/prefs/avatar columns) and returns the Party, whose ``id`` is the
+    ``person_id`` every Learning/retained table now references. No credential
+    or role grant is created — add those explicitly (see
+    ``make_person_credential`` / ``PartyRoleGrant``) or use
+    ``make_canonical_account`` for a full login-capable account. Caller owns
+    commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import Party, PartyPerson, PartyType
+
+    from app.models.identity_extensions import AcademyAccountProfile
+
+    now = datetime.now(UTC)
+    party = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        display_name=f"{first_name} {last_name}".strip(),
+        email=email,
+        is_active=True,
+    )
+    db.add(party)
+    db.flush()
+    db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id,
+            party_id=party.id,
+            status=status,
+            avatar_path=avatar_path,
+            prefs={} if prefs is None else prefs,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.flush()
+    return party
+
+
+def make_person_credential(
+    db: Session,
+    *,
+    tenant_id,
+    party_id,
+    email: str,
+    password_hash: str,
+):
+    """Canonical stand-in for a legacy ``UserCredential(person_id=, email=)`` row.
+
+    The kernel credential carries ``party_id`` only; the login email and
+    lockout/reset bookkeeping live on AcademyCredentialPolicy. Returns the
+    credential. Caller owns commit/rollback.
+    """
+    from datetime import UTC, datetime
+
+    from dotmac_kernel.models import UserCredential
+
+    from app.models.identity_extensions import AcademyCredentialPolicy
+
+    now = datetime.now(UTC)
+    credential = UserCredential(tenant_id=tenant_id, party_id=party_id, password_hash=password_hash)
+    db.add(credential)
+    db.flush()
+    db.add(
+        AcademyCredentialPolicy(
+            tenant_id=tenant_id,
+            credential_id=credential.id,
+            email=email,
+            failed_login_attempts=0,
+            locked_until=None,
+            lifecycle_version=0,
+            reset_required=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.flush()
+    return credential
+
+
 @pytest.fixture
 def api_actor(admin_session):
     """Create a real tenant account and return its authenticated API context."""
 
     def _create(client: TestClient, tenant, *, role: str = "admin", email: str | None = None):
-        from app.services.accounts import create_user
-
         password = "correct horse battery staple"
         email = email or f"{role}-{uuid4().hex[:10]}@test.example"
         admin_session.rollback()
-        person = create_user(
+        person = make_canonical_account(
             admin_session,
             tenant_id=tenant.id,
             email=email,

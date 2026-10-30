@@ -65,13 +65,11 @@ class EntryPlan:
     catalog: Catalog = field(repr=False)
 
 
-def config_for(connection, directory: Path, script_root: Path, applied: list, fail_after=None):
-    """Use actual source files in place; env is the only fixture adaptation."""
+def _fixture_config(connection, script_root, applied, fail_after, cfg):
+    """Keep the genuine supplied-connection adapter and revision callbacks."""
     script_root.mkdir(parents=True, exist_ok=True)
     (script_root / "env.py").write_bytes((FIXTURE / "env.py").read_bytes())
-    cfg = Config()
     cfg.set_main_option("script_location", str(script_root))
-    cfg.set_main_option("version_locations", str(directory))
     cfg.attributes["connection"] = connection
 
     def on_apply(*, ctx, step, heads, run_args):
@@ -83,6 +81,21 @@ def config_for(connection, directory: Path, script_root: Path, applied: list, fa
 
     cfg.attributes["on_version_apply"] = on_apply
     return cfg
+
+
+def config_for(connection, directory: Path, script_root: Path, applied: list, fail_after=None):
+    """Legacy-only or installed-Kernel replay; never a composed graph entry."""
+    cfg = Config()
+    cfg.set_main_option("version_locations", str(directory))
+    return _fixture_config(connection, script_root, applied, fail_after, cfg)
+
+
+def composed_config_for(connection, script_root: Path, applied: list, fail_after=None):
+    """Configure every installed owner/binding before fixture graph discovery."""
+    from app.migration_graph import ordinary_migration_config
+
+    cfg = ordinary_migration_config()
+    return _fixture_config(connection, script_root, applied, fail_after, cfg)
 
 
 def verify_legacy_source():

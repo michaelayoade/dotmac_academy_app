@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Check out the evaluated product revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # Runs before the standards job so the failure a reviewer reads names the
       # missing approval, rather than GitHub's opaque "unable to resolve action".
@@ -48,6 +50,8 @@ jobs:
     steps:
       - name: Check out the evaluated product revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # Keep in step with GOVERNANCE_REF above and governance_model.revision in
       # .dotmac/standards-profile.json.

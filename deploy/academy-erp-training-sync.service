@@ -1,5 +1,5 @@
 [Unit]
-Description=Dotmac Academy → ERP training-report sync (one-shot)
+Description=Dotmac Academy → ERP v2 staff training progress sync (one-shot)
 After=network-online.target
 Wants=network-online.target
 

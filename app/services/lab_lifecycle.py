@@ -1,8 +1,7 @@
 """Lab lifecycle service (Task 6): quota-gated request, provision, grade→ledger.
 
-Mirrors ``app/services/assessment.submit_activity`` for the grade path: it
-builds a ``Submission`` + ``Score`` directly (no MCQ grader) from the check
-engine result so lab attempts flow into the same Score/ledger spine.
+The grade path retains product live checks and delegates their graded result
+to the public Learning ledger writer in the caller's transaction.
 
 Inc1 rule: these functions take ``db`` and ``flush`` only — they NEVER
 ``commit``. The request handler / CLI owns the transaction boundary.
@@ -22,11 +21,18 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from dotmac_learning import (
+    GradedResult,
+    LabResultCommand,
+    ScoreFact,
+    get_activity,
+    record_lab_result,
+)
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.assessment import Activity, Score, Submission
+from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabTemplate
 from app.services.checks.engine import run_checks
 from app.services.exceptions import ConflictError
@@ -151,9 +157,7 @@ def console_processes(
     scope = str(instance_id) if instance_id is not None else r"[0-9a-f-]+"
     pattern = rf"ttyd .* -b {_CONSOLE_BASE}{scope}/console/"
     try:
-        proc = subprocess.run(
-            ["pgrep", "-af", pattern], check=False, capture_output=True, text=True
-        )
+        proc = subprocess.run(["pgrep", "-af", pattern], check=False, capture_output=True, text=True)
     except Exception as exc:
         logger.warning("console process scan failed: %s", exc)
         return None
@@ -163,9 +167,7 @@ def console_processes(
     found: dict[str, dict[str, list[tuple[int, int | None]]]] = {}
     for line in proc.stdout.splitlines():
         pid_text, _, cmdline = line.partition(" ")
-        match = re.search(
-            rf"-b {_CONSOLE_BASE}([0-9a-f-]+)/console/([^\s]+)", cmdline
-        )
+        match = re.search(rf"-b {_CONSOLE_BASE}([0-9a-f-]+)/console/([^\s]+)", cmdline)
         port_match = re.search(r"(?:^|\s)-p\s+(\d+)(?:\s|$)", cmdline)
         if match is None or not pid_text.isdigit():
             continue
@@ -198,9 +200,7 @@ def stop_consoles(instance: LabInstance) -> int:
     Returns a count rather than ``None`` so callers (and the orphan sweep) can log
     what actually happened — a silent no-op here is how consoles leaked before.
     """
-    return kill_consoles(
-        pid for pids in console_pids(instance.id).values() for pid in pids
-    )
+    return kill_consoles(pid for pids in console_pids(instance.id).values() for pid in pids)
 
 
 def kill_consoles(pids) -> int:
@@ -262,9 +262,7 @@ def _attempt_seed_id(person_id, activity_id, n: int) -> int:
 
 def _launch_lock_key(tenant_id, person_id, activity_id) -> int:
     """Stable signed bigint key for one learner/activity launch stream."""
-    digest = hashlib.sha256(
-        f"lab-launch:{tenant_id}:{person_id}:{activity_id}".encode()
-    ).digest()
+    digest = hashlib.sha256(f"lab-launch:{tenant_id}:{person_id}:{activity_id}".encode()).digest()
     unsigned = int.from_bytes(digest[:8], "big")
     return unsigned if unsigned < (1 << 63) else unsigned - (1 << 64)
 
@@ -277,13 +275,7 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     non-reaped instance. Seed generation, instance creation, and the deploy
     intent otherwise occur atomically in the same request transaction.
     """
-    db.execute(
-        select(
-            func.pg_advisory_xact_lock(
-                _launch_lock_key(tenant_id, person_id, activity.id)
-            )
-        )
-    )
+    db.execute(select(func.pg_advisory_xact_lock(_launch_lock_key(tenant_id, person_id, activity.id))))
     current = db.scalars(
         select(LabInstance)
         .where(LabInstance.tenant_id == tenant_id)
@@ -326,8 +318,12 @@ def request_lab(db: Session, *, tenant_id, person_id, activity: Activity, templa
     from app.services import learning_events
 
     learning_events.emit(
-        db, tenant_id=tenant_id, person_id=person_id, kind="lab_launched",
-        course_id=activity.course_id, subject_id=activity.id,
+        db,
+        tenant_id=tenant_id,
+        person_id=person_id,
+        kind="lab_launched",
+        course_id=activity.course_id,
+        subject_id=activity.id,
         detail={"instance": str(inst.id)},
     )
     return inst
@@ -413,9 +409,7 @@ def _build_consoles_from_handle(instance: LabInstance, handle: LabHandle) -> dic
     return consoles
 
 
-def _rebuild_consoles_from_live_inspection(
-    db: Session, instance: LabInstance, engine: LabEngine
-) -> None:
+def _rebuild_consoles_from_live_inspection(db: Session, instance: LabInstance, engine: LabEngine) -> None:
     """Resync ``consoles``/``status``/``error`` for a conditional deploy
     whose runtime is observed present, UNCONDITIONALLY — never gated on
     whether ``consoles`` already looks populated.
@@ -568,9 +562,7 @@ def resync_present_preliminary(db: Session, instance: LabInstance, engine: LabEn
     construction.
     """
     _rebuild_consoles_from_live_inspection(db, instance, engine)
-    if instance.runtime_presence != "present" and instance.status in (
-        "queued", "provisioning", "resetting"
-    ):
+    if instance.runtime_presence != "present" and instance.status in ("queued", "provisioning", "resetting"):
         # Leaving a transient-looking status unresolved here, with no open
         # operation once this settles, would match reconcile_stuck's own
         # stuck-row sweep trigger shape and force an UNCONDITIONAL
@@ -581,11 +573,9 @@ def resync_present_preliminary(db: Session, instance: LabInstance, engine: LabEn
         # rather than leaving ambiguity looking like an ordinary in-flight
         # reservation.
         instance.error = (
-            f"{instance.error}; conditional deploy could not confirm "
-            "runtime presence; manual verification required"
+            f"{instance.error}; conditional deploy could not confirm " "runtime presence; manual verification required"
             if instance.error
-            else "conditional deploy could not confirm runtime presence; "
-            "manual verification required"
+            else "conditional deploy could not confirm runtime presence; " "manual verification required"
         )
         instance.status = "error"
         db.flush()
@@ -663,9 +653,7 @@ def provision_if_absent(
     :func:`_rebuild_consoles_from_live_inspection` itself already sets
     ``status="active"``/``error=None`` authoritatively.
     """
-    topology_text = _set_topology_name(
-        interpolate(template.topology, instance.seed), instance.instance_name
-    )
+    topology_text = _set_topology_name(interpolate(template.topology, instance.seed), instance.instance_name)
     # Set immediately before invocation, mirroring provision()'s own
     # reasoning: an exception at or after this point does not prove the
     # runtime is absent.
@@ -701,8 +689,7 @@ def provision_if_absent(
                     f"{restored_error}; conditional deploy could not confirm "
                     "runtime presence; manual verification required"
                     if restored_error
-                    else "conditional deploy could not confirm runtime presence; "
-                    "manual verification required"
+                    else "conditional deploy could not confirm runtime presence; " "manual verification required"
                 )
             instance.status = restored_status
             instance.error = restored_error
@@ -762,19 +749,15 @@ def grade(
     handle: LabHandle,
     *,
     before_each_check: Callable[[], None] | None = None,
-) -> Score:
-    """Run the template checks against the live instance and write Submission+Score.
+) -> ScoreFact:
+    """Check the live instance and delegate its result in the caller's transaction.
 
-    The caller supplies ``handle`` (the live :class:`LabHandle` — see the web/CLI
-    callers which reconstruct it via the engine); this keeps grade pure and
-    testable. Mirrors ``submit_activity``: ``attempt_no`` = max+1, flush, no commit.
+    The caller supplies the authorized live ``handle`` and check-operation
+    context. Command identifiers correlate that operation; they do not grant
+    authority. Learning owns ledger and required completion/certificate writes.
     """
     if instance.status != "active" or instance.error is not None:
-        detail = (
-            f"status {instance.status!r}"
-            if instance.status != "active"
-            else "an unresolved infrastructure error"
-        )
+        detail = f"status {instance.status!r}" if instance.status != "active" else "an unresolved infrastructure error"
         raise ConflictError(f"cannot check a lab instance with {detail}")
     result = run_checks(
         template.checks,
@@ -787,91 +770,49 @@ def grade(
     max_score = result["max_score"]
     fraction = (score_val / max_score) if max_score else 0.0
 
+    activity = get_activity(db, tenant_id=instance.tenant_id, activity_id=instance.activity_id)
     threshold = template.limits.get("pass_threshold")
     if threshold is None:
-        act = db.scalars(
-            select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
-        ).first()
-        threshold = act.pass_threshold if act is not None else 0.0
+        threshold = activity.pass_threshold if activity is not None else 0.0
 
-    prev = db.scalar(
-        select(func.coalesce(func.max(Submission.attempt_no), 0))
-        .where(Submission.tenant_id == instance.tenant_id)
-        .where(Submission.activity_id == instance.activity_id)
-        .where(Submission.person_id == instance.person_id)
-    )
-    sub = Submission(
+    command = LabResultCommand(
         tenant_id=instance.tenant_id,
-        activity_id=instance.activity_id,
         person_id=instance.person_id,
-        answers={"seed": instance.seed, "instance": str(instance.id)},
-        attempt_no=int(prev or 0) + 1,
+        activity_id=instance.activity_id,
+        instance_id=instance.id,
+        seed=instance.seed,
+        grading=GradedResult(
+            score=score_val,
+            max_score=max_score,
+            fraction=fraction,
+            passed=(max_score > 0 and fraction >= threshold),
+            per_item=result["per_check"],
+        ),
     )
-    db.add(sub)
-    db.flush()
-
-    score = Score(
-        tenant_id=instance.tenant_id,
-        submission_id=sub.id,
-        score=score_val,
-        max_score=max_score,
-        fraction=fraction,
-        passed=(max_score > 0 and fraction >= threshold),
-        per_item=result["per_check"],
-        source="auto",
-    )
-    db.add(score)
+    # Validate before mutating the product stamp; Learning flushes the stamp
+    # with its writes before required consequences in this caller transaction.
     instance.last_active_at = _now()
-    db.flush()
-    from app.services import learning_events
+    written = record_lab_result(db, command)
+    score = written.score
+    if score is None:
+        raise ValueError("lab result requires a returned score")
+    if written.completion is None:
+        raise ValueError("lab result requires a returned completion result")
+    from app.services.completion import deliver_completion_notifications
 
-    _course_id = None
-    _act_for_event = db.scalars(
-        select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
-    ).first()
-    if _act_for_event is not None:
-        _course_id = _act_for_event.course_id
-    learning_events.emit(
-        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
-        kind="submission_made", course_id=_course_id, subject_id=sub.id,
-        detail={"activity_id": str(instance.activity_id), "lab": True,
-                "attempt_no": sub.attempt_no},
-    )
-    learning_events.emit(
-        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
-        kind="work_graded", course_id=_course_id, subject_id=sub.id,
-        detail={"activity_id": str(instance.activity_id), "lab": True,
-                "passed": score.passed, "fraction": float(fraction)},
-    )
-    learning_events.emit(
-        db, tenant_id=instance.tenant_id, person_id=instance.person_id,
-        kind="lab_check_passed" if score.passed else "lab_check_failed",
-        course_id=_course_id, subject_id=instance.activity_id,
-        detail={"instance": str(instance.id),
-                "checks": len(result.get("per_check") or [])},
-    )
-    if _course_id is not None:
-        from app.services.completion import recompute_completion
-
-        # Completion, certificate, and check settlement share the caller's
-        # transaction. The completion aggregate owns serialization.
-        recompute_completion(
-            db, tenant_id=instance.tenant_id, person_id=instance.person_id,
-            course_id=_course_id,
-        )
+    deliver_completion_notifications(db, written.completion)
     # Auto-on-pass notification — best effort, must never break grading.
     try:
-        from app.models.person import Person
+        from app.services.completion import _notification_recipient
         from app.services.email import notify_score_if_first_pass
 
-        act = db.scalars(
-            select(Activity).where(Activity.tenant_id == instance.tenant_id).where(Activity.id == instance.activity_id)
-        ).first()
-        person = db.get(Person, instance.person_id)
-        if act is not None:
-            # The optional-intent owner rolls back its own savepoints before
-            # returning False; this caller retains the grading transaction.
-            notify_score_if_first_pass(db, score=score, activity=act, person=person)
+        with db.begin_nested():
+            act = get_activity(db, tenant_id=instance.tenant_id, activity_id=instance.activity_id)
+            person = _notification_recipient(db, tenant_id=instance.tenant_id, person_id=instance.person_id)
+            if act is not None:
+                # Preparation reads and the owner's nested optional intents
+                # all leave the caller's grading transaction usable on failure.
+                notify_score_if_first_pass(db, score=score, activity=act, person=person)
     except Exception as exc:
         logger.warning("auto-on-pass notification failed: %s", exc)
     return score

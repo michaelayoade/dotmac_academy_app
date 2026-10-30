@@ -6,19 +6,17 @@ from datetime import UTC, datetime
 from html import unescape
 
 from app.models.assessment import Activity
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.models.prerequisite import CoursePrerequisite
 from app.services.entitlements import course_access_states
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
-
 
 def _course(admin_session, tid, slug):
     c = Course(tenant_id=tid, slug=slug, title=slug.title(), discipline="networking",
@@ -31,14 +29,12 @@ def _course(admin_session, tid, slug):
     admin_session.flush()
     return c, act
 
-
 def _setup(admin_session, tenant):
     """Learner entitled to course B which requires course A. Returns (person, A, B, actB)."""
-    p = Person(tenant_id=tenant.id, email="pre@a.edu", first_name="Pre", last_name="Req")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email="pre@a.edu", first_name="Pre", last_name="Req")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email="pre@a.edu",
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="pre@a.edu", password_hash=hash_password("password1")))
     a, _ = _course(admin_session, tenant.id, "alpha")
     a.title = "Fiber Fundamentals"
     b, act_b = _course(admin_session, tenant.id, "beta")
@@ -54,16 +50,13 @@ def _setup(admin_session, tenant):
     admin_session.flush()
     return p, a, b, act_b
 
-
 def _login(app_client):
     app_client.post("/login", headers=H, data={"email": "pre@a.edu", "password": "password1"})
-
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()
     admin_session.query(Cohort).filter(Cohort.tenant_id == tenant.id).delete()
     admin_session.commit()
-
 
 def test_prerequisite_incomplete_blocks_access(app_client, admin_session, tenant_a):
     p, a, b, act_b = _setup(admin_session, tenant_a)
@@ -87,7 +80,6 @@ def test_prerequisite_incomplete_blocks_access(app_client, admin_session, tenant
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_prerequisite_completed_allows_access(app_client, admin_session, tenant_a):
     p, a, b, act_b = _setup(admin_session, tenant_a)
     admin_session.add(CourseCompletion(tenant_id=tenant_a.id, person_id=p.id, course_id=a.id,
@@ -101,9 +93,8 @@ def test_prerequisite_completed_allows_access(app_client, admin_session, tenant_
     finally:
         _cleanup(admin_session, tenant_a)
 
-
 def test_track_order_lock_reason_names_previous_course(admin_session, tenant_a):
-    person = Person(tenant_id=tenant_a.id, email="track@a.edu", first_name="Track", last_name="Learner")
+    person = make_person_party(admin_session, tenant_id=tenant_a.id, email="track@a.edu", first_name="Track", last_name="Learner")
     admin_session.add(person)
     first, _ = _course(admin_session, tenant_a.id, "fiber-fundamentals")
     first.title = "Fiber Fundamentals"

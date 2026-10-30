@@ -9,7 +9,7 @@
         {% if value is not none and value != "" %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endif %}
       {% endfor %}
       <label for="rows-per-page-{{ label | replace(' ', '-') }}">Rows per page</label>
-      <select id="rows-per-page-{{ label | replace(' ', '-') }}" name="limit" onchange="this.form.submit()">
+      <select id="rows-per-page-{{ label | replace(' ', '-') }}" name="limit" data-submit-on-change>
         {% for size in page_sizes %}<option value="{{ size }}" {% if pagination.limit == size %}selected{% endif %}>{{ size }}</option>{% endfor %}
       </select>
       <input type="hidden" name="offset" value="0">

@@ -12,6 +12,10 @@ The pre-existing :func:`admin_session` remains the generic offline session used
 by unrelated scheduled jobs and metrics; keeping the two credentials separate
 prevents the web host from needing the lab worker DSN.
 
+These two named offline credential boundaries use Kernel Session construction
+with their dedicated engines. They do not bind the online runtime or enter its
+tenant/platform boundaries; callers retain explicit transaction ownership.
+
 * :func:`drain_once` — claim and execute durable ``lab_operations`` rows.
 * :func:`request_idle_reaps` — enqueue destroy intents without touching the
   engine (the web-host timer calls this).
@@ -25,12 +29,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
+from dotmac_kernel.session_runtime import DatabaseRuntime
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  # ensure all FK target tables are registered for CLI workers
-from app.config import settings
+from app.config import LabExecutionPolicy, settings
 from app.models.lab import LabConsoleActivity, LabInstance, LabOperation
 from app.services import lab_operations
 from app.services.host_lock import HostLockUnavailable
@@ -51,12 +56,14 @@ def admin_session() -> Iterator[Session]:
     Containerlab ownership paths must use :func:`lab_worker_session` instead.
     """
     engine = create_engine(settings.migration_database_url, future=True)
-    factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-    db = factory()
     try:
-        yield db
+        runtime = DatabaseRuntime(engine=engine)
+        db = runtime.session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
     finally:
-        db.close()
         engine.dispose()
 
 
@@ -71,25 +78,24 @@ def lab_worker_session() -> Iterator[Session]:
     if worker_role != "academy_lab_worker":
         raise RuntimeError("LAB_WORKER_DATABASE_URL must authenticate as academy_lab_worker")
     engine = create_engine(worker_url, future=True)
-    factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-    db = factory()
     try:
-        if db.scalar(text("SELECT current_user")) != "academy_lab_worker":
-            raise RuntimeError("lab worker database session is not academy_lab_worker")
-        # ``lab_operations`` has FORCE ROW LEVEL SECURITY with a tenant_id GUC
-        # policy (see 0055_lab_operations.py). Being the worker role is not
-        # enough on its own — if BYPASSRLS were ever missing or revoked from
-        # an already-existing role, the worker would silently see an empty
-        # queue (RLS resolves against a NULL tenant GUC) and stop processing
-        # with no error at all. Check the actual role attribute, not just the
-        # role name, so that failure mode raises instead of going quiet.
-        if not db.scalar(
-            text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'academy_lab_worker'")
-        ):
-            raise RuntimeError("academy_lab_worker role does not have BYPASSRLS")
-        safe_posture = db.scalar(
-            text(
-                """SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+        runtime = DatabaseRuntime(engine=engine)
+        db = runtime.session_factory()
+        try:
+            if db.scalar(text("SELECT current_user")) != "academy_lab_worker":
+                raise RuntimeError("lab worker database session is not academy_lab_worker")
+            # ``lab_operations`` has FORCE ROW LEVEL SECURITY with a tenant_id GUC
+            # policy (see 0055_lab_operations.py). Being the worker role is not
+            # enough on its own — if BYPASSRLS were ever missing or revoked from
+            # an already-existing role, the worker would silently see an empty
+            # queue (RLS resolves against a NULL tenant GUC) and stop processing
+            # with no error at all. Check the actual role attribute, not just the
+            # role name, so that failure mode raises instead of going quiet.
+            if not db.scalar(text("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'academy_lab_worker'")):
+                raise RuntimeError("academy_lab_worker role does not have BYPASSRLS")
+            safe_posture = db.scalar(
+                text(
+                    """SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
                     AND NOT rolreplication AND NOT rolinherit
                     AND NOT EXISTS (
                         SELECT 1 FROM pg_auth_members m
@@ -97,15 +103,13 @@ def lab_worker_session() -> Iterator[Session]:
                     )
                 FROM pg_roles r
                 WHERE r.rolname = 'academy_lab_worker'"""
+                )
             )
-        )
-        if not safe_posture:
-            raise RuntimeError(
-                "academy_lab_worker role has unsafe attributes or role memberships"
-            )
-        owns = db.scalar(
-            text(
-                """SELECT EXISTS (
+            if not safe_posture:
+                raise RuntimeError("academy_lab_worker role has unsafe attributes or role memberships")
+            owns = db.scalar(
+                text(
+                    """SELECT EXISTS (
                     SELECT 1 FROM pg_database
                     WHERE datname = current_database()
                       AND pg_get_userbyid(datdba) = 'academy_lab_worker'
@@ -123,13 +127,14 @@ def lab_worker_session() -> Iterator[Session]:
                       AND n.nspname NOT LIKE 'pg_toast%'
                       AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
                 )"""
+                )
             )
-        )
-        if owns:
-            raise RuntimeError("academy_lab_worker must not own the database, schema, or application relations")
-        yield db
+            if owns:
+                raise RuntimeError("academy_lab_worker must not own the database, schema, or application relations")
+            yield db
+        finally:
+            db.close()
     finally:
-        db.close()
         engine.dispose()
 
 
@@ -137,6 +142,7 @@ def drain_once(
     db: Session,
     engine: LabEngine,
     *,
+    policy: LabExecutionPolicy,
     claimed_by: str | None = None,
     claimed_host: str | None = None,
     claimed_epoch: str | None = None,
@@ -158,6 +164,8 @@ def drain_once(
     since an arbitrary test string isn't necessarily a real
     ``WorkerIdentity``-shaped value.
     """
+    if engine.execution_policy is not policy:
+        raise ValueError("engine must share the worker pass policy")
     if claimed_by is None:
         identity = lab_operations.worker_identity_parts()
         worker = identity.claimed_by
@@ -169,6 +177,7 @@ def drain_once(
     while True:
         op = lab_operations.claim_next(
             db,
+            policy=policy,
             claimed_by=worker,
             claimed_host=claimed_host,
             claimed_epoch=claimed_epoch,
@@ -181,6 +190,7 @@ def drain_once(
         outcome = lab_operations.run_claimed(
             db,
             operation_id=operation_id,
+            policy=policy,
             claimed_by=worker,
             engine=engine,
         )
@@ -236,26 +246,21 @@ def sweep_orphan_consoles(db: Session) -> int:
     live = {
         str(row)
         for row in db.scalars(
-            select(LabInstance.id).where(
-                LabInstance.runtime_presence.in_(("present", "unknown"))
-            )
+            select(LabInstance.id).where(LabInstance.runtime_presence.in_(("present", "unknown")))
         ).all()
     }
-    return kill_consoles(
-        pid
-        for instance_id, pids in running.items()
-        if instance_id not in live
-        for pid in pids
-    )
+    return kill_consoles(pid for instance_id, pids in running.items() if instance_id not in live for pid in pids)
 
 
-def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
+def recover_missing_consoles(db: Session, engine: LabEngine, *, policy: LabExecutionPolicy) -> int:
     """Recreate missing Linux-node consoles for live instances.
 
     The worker is the sole executor of this path.  A fresh, ownership-checked
     inspection must succeed before any ttyd process or projection is changed;
     an open operation, unknown/absent runtime, or inspection failure is skipped.
     """
+    if engine.execution_policy is not policy:
+        raise ValueError("engine must share the worker pass policy")
     open_operation = (
         select(LabOperation.id)
         .where(LabOperation.instance_id == LabInstance.id)
@@ -276,9 +281,7 @@ def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
         recorded = instance.consoles or {}
         existing = running.get(str(instance.id), {})
         recorded_linux = {
-            node: spec
-            for node, spec in recorded.items()
-            if not str(spec.get("kind") or "").startswith("vr")
+            node: spec for node, spec in recorded.items() if not str(spec.get("kind") or "").startswith("vr")
         }
         # A normal successful provision records every node.  Empty projection
         # is therefore suspicious; otherwise inspect only when a Linux node is
@@ -287,10 +290,7 @@ def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
         needs_recovery = not recorded or any(
             node not in existing
             or not existing[node]
-            or (
-                existing[node][0][1] is not None
-                and existing[node][0][1] != spec.get("port")
-            )
+            or (existing[node][0][1] is not None and existing[node][0][1] != spec.get("port"))
             for node, spec in recorded_linux.items()
         )
         if not needs_recovery:
@@ -314,15 +314,9 @@ def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
                 # A matching process with an unparseable port must not cause a
                 # duplicate ttyd launch. Preserve the old projection until the
                 # next unambiguous observation instead.
-                spec["port"] = (
-                    live_port
-                    if live_port is not None
-                    else (recorded.get(node) or {}).get("port")
-                )
+                spec["port"] = live_port if live_port is not None else (recorded.get(node) or {}).get("port")
             else:
-                port = start_console(
-                    cname, f"/labs/instances/{instance.id}/console/{node}"
-                )
+                port = start_console(cname, f"/labs/instances/{instance.id}/console/{node}")
                 spec["port"] = port
                 if port is not None:
                     recovered += 1
@@ -332,7 +326,7 @@ def recover_missing_consoles(db: Session, engine: LabEngine) -> int:
     return recovered
 
 
-def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
+def reconcile_runtime(db: Session, engine: LabEngine, *, policy: LabExecutionPolicy) -> tuple[int, int]:
     """Cross-check containerlab inventory against rows and repair drift.
 
     Returns ``(queued_repairs, destroyed_rowless_orphans)``. Only Academy's
@@ -381,6 +375,8 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
     simply retries on its own 1-minute timer.
     """
     # Phase 1 — locked inventory.
+    if engine.execution_policy is not policy:
+        raise ValueError("engine must share the worker pass policy")
     runtime = engine.inventory()
 
     # Phase 2 — database reads and repair-plan calculation; no locks held.
@@ -389,20 +385,15 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
         raise RuntimeError("duplicate lab instance names prevent safe runtime reconciliation")
     by_name = {row.instance_name: row for row in rows}
     open_instance_ids = set(
-        db.scalars(
-            select(LabOperation.instance_id).where(
-                LabOperation.state.in_(lab_operations.OPEN_STATES)
-            )
-        ).all()
+        db.scalars(select(LabOperation.instance_id).where(LabOperation.state.in_(lab_operations.OPEN_STATES))).all()
     )
 
-    rowless_orphans = [
-        name for name in sorted(runtime) if name.startswith("dal-") and name not in by_name
-    ]
+    rowless_orphans = [name for name in sorted(runtime) if name.startswith("dal-") and name not in by_name]
     db_only_repairs = [
         instance
         for name in sorted(runtime)
-        if name.startswith("dal-") and (instance := by_name.get(name)) is not None
+        if name.startswith("dal-")
+        and (instance := by_name.get(name)) is not None
         # "error" is deliberately excluded from eligibility, not just from the
         # live-status tuple below: Stream A's destroy-escalation feature sets
         # status="error" specifically to stop automatic destroy retries once
@@ -447,11 +438,7 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
     # destroys can each take minutes, plenty of time for a concurrent,
     # unrelated operation to appear against one of these instances.
     fresh_open_instance_ids = set(
-        db.scalars(
-            select(LabOperation.instance_id).where(
-                LabOperation.state.in_(lab_operations.OPEN_STATES)
-            )
-        ).all()
+        db.scalars(select(LabOperation.instance_id).where(LabOperation.state.in_(lab_operations.OPEN_STATES))).all()
     )
 
     queued = 0
@@ -488,11 +475,7 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             origin="runtime_cleanup",
             runtime_precondition="present",
         )
-        if (
-            op.kind != "destroy"
-            or op.origin != "runtime_cleanup"
-            or op.runtime_precondition != "present"
-        ):
+        if op.kind != "destroy" or op.origin != "runtime_cleanup" or op.runtime_precondition != "present":
             # Lost the race to a genuinely concurrent operation (this pass's
             # OWN intended (kind, origin, runtime_precondition) tuple did not
             # come back) — enqueue() returned some other operation instead of
@@ -551,11 +534,7 @@ def reconcile_runtime(db: Session, engine: LabEngine) -> tuple[int, int]:
             origin="runtime_repair",
             runtime_precondition="absent",
         )
-        if (
-            op.kind != "deploy"
-            or op.origin != "runtime_repair"
-            or op.runtime_precondition != "absent"
-        ):
+        if op.kind != "deploy" or op.origin != "runtime_repair" or op.runtime_precondition != "absent":
             # Same race as the destroy branch above: this pass's own intended
             # (kind, origin, runtime_precondition) tuple did not come back —
             # a genuinely concurrent operation won, so this pass enqueued

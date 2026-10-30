@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import pytest
+from dotmac_learning import course_grade
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.services.gradebook import cohort_gradebook, course_grade
+from app.services.gradebook import cohort_gradebook
+from tests.conftest import make_person_party
 
 
 def _seed_course_with_activities(db, tid, *, weight_a=1.0, weight_b=3.0):
@@ -24,7 +25,6 @@ def _seed_course_with_activities(db, tid, *, weight_a=1.0, weight_b=3.0):
     db.flush()
     return course, a1, a2
 
-
 def _add_score(db, tid, *, activity_id, person_id, fraction):
     sub = Submission(tenant_id=tid, activity_id=activity_id, person_id=person_id,
                      answers={}, attempt_no=1)
@@ -35,30 +35,28 @@ def _add_score(db, tid, *, activity_id, person_id, fraction):
     db.add(score)
     db.flush()
 
-
 def test_weighted_average_25_percent(admin_session, tenant_a):
     """Weight 1 x fraction 1.0 + weight 3 x fraction 0.0 = 25%."""
     tid = tenant_a.id
     course, a1, a2 = _seed_course_with_activities(admin_session, tid, weight_a=1.0, weight_b=3.0)
-    student = Person(tenant_id=tid, email="stu@g.edu", first_name="S", last_name="T")
+    student = make_person_party(admin_session, tenant_id=tid, email="stu@g.edu", first_name="S", last_name="T")
     admin_session.add(student)
     admin_session.flush()
     _add_score(admin_session, tid, activity_id=a1.id, person_id=student.id, fraction=1.0)
     admin_session.commit()
 
     result = course_grade(admin_session, tenant_id=tid, person_id=student.id, course_id=course.id)
-    assert result["pct"] == 25
-    assert len(result["per_activity"]) == 2
-    fractions = {item["activity"].id: item["fraction"] for item in result["per_activity"]}
+    assert result.pct == 25
+    assert len(result.per_activity) == 2
+    fractions = {item.activity.id: item.fraction for item in result.per_activity}
     assert fractions[a1.id] == 1.0
     assert fractions[a2.id] == 0.0
-
 
 def test_missing_submission_counts_as_zero(admin_session, tenant_a):
     """No submission for an activity → fraction 0, weight still in denominator."""
     tid = tenant_a.id
     course, a1, a2 = _seed_course_with_activities(admin_session, tid, weight_a=2.0, weight_b=2.0)
-    student = Person(tenant_id=tid, email="stu2@g.edu", first_name="S", last_name="U")
+    student = make_person_party(admin_session, tenant_id=tid, email="stu2@g.edu", first_name="S", last_name="U")
     admin_session.add(student)
     admin_session.flush()
     # Only score a1 (fraction=0.5), a2 has no submission
@@ -67,22 +65,20 @@ def test_missing_submission_counts_as_zero(admin_session, tenant_a):
 
     result = course_grade(admin_session, tenant_id=tid, person_id=student.id, course_id=course.id)
     # (0.5*2 + 0.0*2) / (2+2) = 1.0/4.0 = 0.25 → 25%
-    assert result["pct"] == 25
-
+    assert result.pct == 25
 
 def test_all_zero_weights_returns_zero(admin_session, tenant_a):
     """Total weight=0 guard → pct 0."""
     tid = tenant_a.id
     course, a1, a2 = _seed_course_with_activities(admin_session, tid, weight_a=0.0, weight_b=0.0)
-    student = Person(tenant_id=tid, email="stu3@g.edu", first_name="S", last_name="V")
+    student = make_person_party(admin_session, tenant_id=tid, email="stu3@g.edu", first_name="S", last_name="V")
     admin_session.add(student)
     admin_session.flush()
     _add_score(admin_session, tid, activity_id=a1.id, person_id=student.id, fraction=1.0)
     admin_session.commit()
 
     result = course_grade(admin_session, tenant_id=tid, person_id=student.id, course_id=course.id)
-    assert result["pct"] == 0
-
+    assert result.pct == 0
 
 def test_no_activities_returns_zero(admin_session, tenant_a):
     """Empty course → pct 0, empty per_activity."""
@@ -90,14 +86,13 @@ def test_no_activities_returns_zero(admin_session, tenant_a):
     course = Course(tenant_id=tid, slug="g-empty", title="Empty", discipline="net",
                     source_ref="x", version=1)
     admin_session.add(course)
-    student = Person(tenant_id=tid, email="stu4@g.edu", first_name="S", last_name="W")
+    student = make_person_party(admin_session, tenant_id=tid, email="stu4@g.edu", first_name="S", last_name="W")
     admin_session.add(student)
     admin_session.commit()
 
     result = course_grade(admin_session, tenant_id=tid, person_id=student.id, course_id=course.id)
-    assert result["pct"] == 0
-    assert result["per_activity"] == []
-
+    assert result.pct == 0
+    assert result.per_activity == ()
 
 def test_cohort_gradebook_structure(admin_session, tenant_a):
     """cohort_gradebook returns correct keys and computes final_pct per student."""
@@ -108,7 +103,7 @@ def test_cohort_gradebook_structure(admin_session, tenant_a):
     admin_session.flush()
     admin_session.add(CourseOffering(tenant_id=tid, cohort_id=cohort.id, course_id=course.id, status="active"))
 
-    stu = Person(tenant_id=tid, email="gb@stu.edu", first_name="G", last_name="B")
+    stu = make_person_party(admin_session, tenant_id=tid, email="gb@stu.edu", first_name="G", last_name="B")
     admin_session.add(stu)
     admin_session.flush()
     admin_session.add(Enrollment(tenant_id=tid, cohort_id=cohort.id, person_id=stu.id,
@@ -127,7 +122,6 @@ def test_cohort_gradebook_structure(admin_session, tenant_a):
     assert len(row["cells"]) == 2
     assert row["cells"][0]["pct"] == 100  # a1 fraction=1.0
     assert row["cells"][1]["pct"] == 0    # a2 missing
-
 
 def test_cohort_gradebook_404_wrong_tenant(admin_session, tenant_a, tenant_b):
     """Cohort in tenant_b raises NotFoundError when queried as tenant_a."""

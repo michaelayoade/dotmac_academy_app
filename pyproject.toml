@@ -42,7 +42,8 @@ sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.66.1"}
 # platform-surface omission, product startup checks/hooks, and typed
 # CSP/COOP/CORP policy. Earlier releases require local runtime adapters and can
 # silently skip included-route permission/capability validation on FastAPI 0.140.
-dotmac-kernel = { version = "0.1.0a38", source = "forgejo" }
+dotmac-kernel = { version = "0.1.0a107", source = "forgejo" }
+dotmac-learning = { version = "0.1.0a3", source = "forgejo" }
 
 # Shared presentation contract. Pinned exactly for the same reason as the
 # kernel: token/API adoption is reviewed deliberately, never pulled in by an

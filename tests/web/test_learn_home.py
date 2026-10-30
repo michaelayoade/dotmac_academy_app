@@ -3,31 +3,24 @@
 from __future__ import annotations
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 
 def _login(app_client, admin_session, tenant, email="stu@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Stu", last_name="Dent")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Stu", last_name="Dent")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id,
-            person_id=p.id,
-            email=email,
-            password_hash=hash_password("password1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
     return p, h
-
 
 def test_learn_home_shows_course_completion_and_results(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a)
@@ -68,7 +61,6 @@ def test_learn_home_shows_course_completion_and_results(app_client, admin_sessio
     assert "50%" in r.text
     # Recent results: the passed activity shows up.
     assert "Ch1 Test" in r.text
-
 
 def test_learn_home_empty_state_when_not_enrolled(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a, email="lonely@a.edu")

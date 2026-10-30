@@ -9,16 +9,14 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.dashboards import cohort_overview
+from tests.conftest import make_person_party
 
 NOW = datetime(2026, 6, 27, tzinfo=UTC)
-
 
 def _enroll(db, tid, coh, person):
     db.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=person.id,
                       role_in_cohort="student", status="active"))
-
 
 def _activity_score(db, tid, course, person, created_at):
     act = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
@@ -34,7 +32,6 @@ def _activity_score(db, tid, course, person, created_at):
     db.add(s)
     db.flush()
 
-
 def test_cohort_overview_flags_at_risk(admin_session, tenant_a):
     tid = tenant_a.id
     course = Course(tenant_id=tid, slug="net", title="Net", discipline="networking",
@@ -45,9 +42,9 @@ def test_cohort_overview_flags_at_risk(admin_session, tenant_a):
     admin_session.add(CourseOffering(tenant_id=tid, cohort_id=coh.id, course_id=course.id, status="active"))
 
     # Strong learner: full completion + recent activity → not at risk.
-    strong = Person(tenant_id=tid, email="strong@a.edu", first_name="Str", last_name="Ong")
+    strong = make_person_party(admin_session, tenant_id=tid, email="strong@a.edu", first_name="Str", last_name="Ong")
     # Weak learner: low completion + no activity → at risk.
-    weak = Person(tenant_id=tid, email="weak@a.edu", first_name="Wea", last_name="K")
+    weak = make_person_party(admin_session, tenant_id=tid, email="weak@a.edu", first_name="Wea", last_name="K")
     admin_session.add_all([strong, weak])
     admin_session.flush()
     _enroll(admin_session, tid, coh, strong)

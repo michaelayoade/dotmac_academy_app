@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, or_, select
@@ -19,16 +20,16 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.email_outbox import EmailOutbox
-from app.models.person import Person
 from app.models.reminder import EVENT_KINDS, ReminderLog
 from app.services import reminders as reminders_service
-from app.services.web_auth import require_web_role, require_web_user
+from app.services.identity import AcademyCurrentAccount
+from app.services.product_admin_access import require_reminders_admin_access
 from app.web.pagination import pagination_context
 from app.web.templating import templates
 
 router = APIRouter(
     prefix="/admin",
-    dependencies=[Depends(require_tenant), Depends(require_web_role("admin"))],
+    dependencies=[Depends(require_tenant), Depends(require_reminders_admin_access)],
 )
 
 
@@ -47,9 +48,11 @@ def reminders_history(
         select(func.count())
         .select_from(ReminderLog)
         .join(
-            Person,
-            (Person.id == ReminderLog.person_id) & (Person.tenant_id == ReminderLog.tenant_id),
+            Party,
+            (Party.id == ReminderLog.person_id) & (Party.tenant_id == ReminderLog.tenant_id),
         )
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.party_type == PartyType.person)
         .where(ReminderLog.tenant_id == tenant.id)
     )
     if delivery_status:
@@ -60,7 +63,7 @@ def reminders_history(
         pattern = f"%{term}%"
         count_stmt = count_stmt.where(
             or_(
-                Person.email.ilike(pattern),
+                Party.email.ilike(pattern),
                 ReminderLog.title.ilike(pattern),
                 ReminderLog.event_kind.ilike(pattern),
             )
@@ -128,11 +131,11 @@ def reminders_resend(
     log_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_reminders_admin_access),
 ) -> HTMLResponse:
     tenant = require_tenant(request)
     try:
-        log = reminders_service.resend(db, tenant_id=tenant.id, log_id=log_id, actor_person_id=person.id)
+        log = reminders_service.resend(db, tenant_id=tenant.id, request=request, log_id=log_id)
     except ValueError as exc:
         return HTMLResponse(f'<span class="text-sm font-semibold text-red-700">{exc}</span>')
     return HTMLResponse(f'<span class="text-sm font-semibold text-brand-700">Requeued ({log.outbox_key})</span>')

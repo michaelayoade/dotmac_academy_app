@@ -20,14 +20,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
 from app.models.admissions import Applicant
-from app.models.assessment import Question
 from app.models.cohort import Cohort
 from app.models.track import CohortTrack, Track
 from app.services import admissions as admissions_service
 from app.services import applicant_email, entrance_exam
 from app.services import erp_applicant_assessments as erp_registration
 from app.services.entrance_exam import academy_default_bank_id
-from app.services.exceptions import BadRequestError, NotFoundError
+from app.services.exceptions import BadRequestError
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
@@ -85,34 +84,15 @@ def _open_track_choices(db: Session, tenant_id: UUID) -> list[dict[str, object]]
     ]
 
 
-def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list[Question]:
-    bank_id = entrance_exam.resolve_bank_id(db, applicant=applicant)
-    questions = list(
-        db.scalars(select(Question).where(Question.tenant_id == tenant_id).where(Question.bank_id == bank_id)).all()
-    )
-    # The same deterministic subset the grader will reproduce, so what the
-    # candidate sits is exactly what gets scored.
-    return entrance_exam.sample_for(
-        applicant, questions, entrance_exam.questions_per_category(db)
-    )
+def _exam_questions(db: Session, tenant_id: UUID, applicant: Applicant) -> list:
+    """Server-side sampled facts (count/autosave ids only; never rendered).
 
-
-def _exam_view(applicant: Applicant, questions: list[Question]) -> list[dict]:
-    """Questions as the candidate sees them: options shuffled per-applicant.
-
-    Deterministic in (applicant, question), so the order is stable across a reload
-    or a resumed sitting — otherwise autosaved answers would line up against the
-    wrong options.
+    The same deterministic subset of the pinned bank version that the
+    grader reproduces, so what the candidate sits is what gets scored.
+    Candidate rendering goes through ``entrance_sitting_view``.
     """
-    return [
-        {
-            "ext_id": q.ext_id,
-            "stem": q.stem,
-            "type": q.type,
-            "options": entrance_exam.options_for(applicant, q),
-        }
-        for q in questions
-    ]
+    facts, _version_id, _state = entrance_exam.sampled_facts(db, tenant_id=tenant_id, applicant=applicant)
+    return facts
 
 
 def _notice(request: Request, title: str, body: str) -> HTMLResponse:
@@ -265,14 +245,14 @@ def assessment_page(request: Request, token: str = "", db: Session = Depends(get
             "Your entrance-assessment time has expired. If you were cut off before you "
             "could finish, contact us and we can reopen your sitting.",
         )
-    questions = _exam_questions(db, tenant.id, applicant)
     return templates.TemplateResponse(
         request,
         "apply_assessment.html",
         {
             "request": request,
             "token": token,
-            "questions": _exam_view(applicant, questions),
+            # Key-free Learning sitting projection (options only).
+            "questions": entrance_exam.entrance_sitting_view(db, tenant_id=tenant.id, applicant=applicant),
             # Autosaved progress, so a resumed sitting comes back with answers intact.
             "saved": applicant.assessment_answers or {},
             "elapsed_seconds": timing["elapsed_seconds"],
@@ -331,39 +311,19 @@ async def assessment_autosave(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/apply/assessment", response_class=HTMLResponse)
 async def assessment_submit(request: Request, token: str = Form(...), db: Session = Depends(get_db)):
-    tenant = require_tenant(request)
-    applicant = entrance_exam.applicant_for_token(db, tenant_id=tenant.id, raw=token, lock=True)
-    if applicant is None or applicant.assessment_taken_at is not None:
-        return _notice(request, "Already completed", "This assessment was already submitted, or the link is invalid.")
-    if entrance_exam.past_deadline(applicant):
-        return _deadline_closed_notice(request)
-    questions = _exam_questions(db, tenant.id, applicant)
-    form = await request.form()
-    # Start from anything autosaved, then let this submission win where it answered.
-    # Matters on the auto-submit at zero, and after a resumed sitting: an answer the
-    # candidate gave earlier must not be dropped just because it wasn't re-posted.
-    answers: dict[str, list[str]] = dict(applicant.assessment_answers or {})
-    for q in questions:
-        posted = [v for v in form.getlist(q.ext_id) if isinstance(v, str)]
-        if posted:
-            answers[q.ext_id] = posted
+    from app.admission_assessment_context import AssessmentGradeRejected, submit_applicant_assessment
+
     try:
-        entrance_exam.grade_and_record(db, tenant_id=tenant.id, applicant=applicant, answers=answers)
-    except (BadRequestError, NotFoundError):
+        submission = await submit_applicant_assessment(db, request=request)
+    except AssessmentGradeRejected:
         return HTMLResponse(
             _RESULT.format(title="Could not submit", body="Something went wrong recording your assessment.")
         )
-    # Auto-progression: the admissions policy may accept (offer email with the
-    # onboarding link) or waitlist on the spot. The on-screen message stays
-    # neutral either way — every submitter gets an outcome email.
-    raw = admissions_service.apply_assessment_policy(db, applicant=applicant)
-    if raw:
-        base = str(request.base_url).rstrip("/")
-        applicant_email.send_onboarding_invite(db, applicant=applicant, url=f"{base}/onboarding?token={raw}")
-    elif applicant.status == "waitlisted":
-        applicant_email.send_waitlist_notice(db, applicant=applicant)
-    else:
-        applicant_email.send_results_received(db, applicant=applicant)
+    if submission.disposition == "already_completed":
+        return _notice(request, "Already completed", "This assessment was already submitted, or the link is invalid.")
+    if submission.disposition == "deadline_closed":
+        return _deadline_closed_notice(request)
+    applicant = submission.applicant
     if applicant.assessment_return_url:
         try:
             return_url = erp_registration.validate_return_url(applicant.assessment_return_url)

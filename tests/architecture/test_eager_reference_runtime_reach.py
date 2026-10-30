@@ -1,55 +1,9 @@
-"""Per-entry-point-family reach of the eager `dotmac_kernel.db` reference
-runtime — a ratchet, not a gate, companion to the runtime-readiness inventory
-in `docs/2026-09-09-eager-reference-runtime-readiness-inventory.md`.
+"""Guard the retired eager runtime across the five actual entry families.
 
-Academy is slated as the first pilot for a Kernel product-bound database
-runtime seam (`ProductAssemblySpec.database_runtime` /
-`require_database_runtime`, landing on a sibling Kernel branch as of this
-writing). That pilot needs an exact, current map of what still reaches the
-eager reference runtime (`dotmac_kernel.db`'s two module-scope
-`create_engine(...)` calls) — and it needs to be told the instant that map
-changes, in either direction.
-
-## Why two-directional, not a one-way "must not increase" gate
-
-A count reaching zero for every family does NOT mean the eager reference
-runtime stopped executing. It could mean:
-
-* a genuine retirement (the pilot happened, the seam is in use) — good, but
-  this file must be edited to say so in the same change, or
-* the reach moved somewhere these five families don't cover (a new script,
-  a new router file this test's file lists don't enumerate) — bad, and
-  exactly the kind of "the grep found nothing" false confidence the
-  `docs/kernel-alignment-gap-analysis.md` incident already cost this repo
-  once (`app/db.py` silently drifting from `dotmac_kernel/db.py`).
-
-So this ratchet fails on growth (a family newly reaching the eager runtime)
-AND on shrink (a family that stops reaching it, without the baseline file
-being lowered on purpose) — same shape as
-`test_kernel_duplication.py`'s baseline, applied to `dotmac_kernel.db` reach
-instead of model-name duplication.
-
-## What "reach" means here, precisely
-
-* **Direct** — an AST-detected `from dotmac_kernel.db import ...` /
-  `from dotmac_kernel import db` / `import dotmac_kernel.db` at the top of a
-  file in the family's own file list. Cheap, static, no execution.
-* **Transitive** — whether importing the family's one representative entry
-  module, in a FRESH subprocess, leaves `dotmac_kernel.db` in
-  `sys.modules` afterward. This is the half a grep misses: Academy's own
-  `app.main`/`app.kernel_runtime` never mention `dotmac_kernel.db` by name,
-  yet importing either eagerly builds the reference engine, because
-  resolving `dotmac_kernel.create_app` pulls in the kernel's own
-  `app_factory` → `middleware.tenant` → `dotmac_kernel.db` chain — none of
-  it Academy code. See the inventory doc's "one sentence that matters most"
-  for the full chain with file:line citations.
-
-A subprocess is required, not a `sys.modules` check in-process: other
-architecture tests (`test_kernel_assembly.py`) already import `app.main` at
-module scope, so by the time this file's tests run, `dotmac_kernel.db` is
-already loaded in the pytest process for unrelated reasons. Only a clean
-child process can tell you whether a GIVEN entry point, on its own, reaches
-it.
+D1 uses Kernel a107 product-bound composition. The pre-cutover inventory is
+retained as history; its retirement disposition is recorded in the same file.
+Probe children must return the exact final marker: NOT_REACHED contains the
+substring REACHED and must never be interpreted as a positive observation.
 """
 
 from __future__ import annotations
@@ -163,7 +117,9 @@ def _measure_transitive_reach(module: str) -> bool:
         f"probe import of {module!r} failed (exit {result.returncode}):\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    return "REACHED" in result.stdout
+    marker = result.stdout.strip().splitlines()[-1]
+    assert marker in {"REACHED", "NOT_REACHED"}, "probe did not return its final marker"
+    return marker == "REACHED"
 
 
 def _measure_family(name: str) -> _FamilyReach:
@@ -240,3 +196,8 @@ def test_the_ast_detector_does_not_flag_a_comment_or_docstring_near_miss() -> No
         "x = 'dotmac_kernel.db'\n"
     )
     assert _imports_dotmac_kernel_db(near_miss) is False
+
+
+def test_transitive_probe_distinguishes_both_markers() -> None:
+    assert _measure_transitive_reach("json") is False
+    assert _measure_transitive_reach("dotmac_kernel.db") is True

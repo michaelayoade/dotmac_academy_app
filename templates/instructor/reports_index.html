@@ -35,12 +35,12 @@
 
 {% if comparison %}
 <h2 class="mt-10 text-xl font-medium text-ink">Cohort comparison</h2>
-<p class="mt-1 text-sm text-ink-soft">Active = any learning event in the last 7 days.</p>
+<p class="mt-1 text-sm text-ink-soft">Active = any learning event in the last {{ insight_terms.active_window_days }} days.</p>
 <div class="card table-frame mt-4" role="region" aria-label="Cohort comparison table; scroll horizontally to see all columns" tabindex="0">
   <table class="data-table">
     <thead>
       <tr class="border-b border-sand-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-soft">
-        <th scope="col" class="p-3">Cohort</th><th scope="col" class="p-3">Learners</th><th scope="col" class="p-3">Active (7d)</th>
+        <th scope="col" class="p-3">Cohort</th><th scope="col" class="p-3">Learners</th><th scope="col" class="p-3">Active ({{ insight_terms.active_window_days }}d)</th>
         <th scope="col" class="p-3">Completed</th><th scope="col" class="p-3">Completion</th>
       </tr>
     </thead>

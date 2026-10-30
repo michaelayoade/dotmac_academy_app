@@ -6,7 +6,7 @@ import time
 
 import yaml
 
-from app.config import settings
+from app.config import LabExecutionPolicy, settings
 from app.services.host_lock import host_lock
 
 from .interface import ExecResult, LabEngine, LabHandle, WrongLabHostError
@@ -14,16 +14,11 @@ from .interface import ExecResult, LabEngine, LabHandle, WrongLabHostError
 # containerlab needs root (netns/bridges); the app/worker run unprivileged, so
 # invoke it via passwordless sudo. docker exec / ssh stay unprivileged.
 _CLAB = ("sudo", "-n", "containerlab")
-_INSPECT_TIMEOUT_SECONDS = 60
-_DEPLOY_TIMEOUT_SECONDS = 900
-_DESTROY_TIMEOUT_SECONDS = 420
-_CHECK_COMMAND_TIMEOUT_SECONDS = 480
 
 # How long to wait, after SIGTERM-ing an abandoned command's process group,
 # before escalating to SIGKILL. Short on purpose: this only runs once a
 # command has already blown its own (much longer) timeout or the call was
 # otherwise cancelled, so there is no remaining budget to wait politely.
-_GROUP_KILL_GRACE_SECONDS = 5
 
 # How often to re-check whether the whole process group has exited while
 # waiting out the grace period above. Short enough that the grace period
@@ -71,7 +66,7 @@ def _unblock_worker_signals_in_child() -> None:
     signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
 
 
-def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
+def _terminate_process_group(proc: "subprocess.Popen[str]", *, grace_seconds: int) -> None:
     """Best-effort teardown of ``proc`` and every process it spawned.
 
     Every external command this module runs is started with
@@ -115,7 +110,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
     ``ProcessLookupError`` only once *every* process sharing that pgid has
     exited, so it stays true as long as any single member (direct child or
     any grandchild) is still alive. The loop below polls that probe on a
-    bounded ``time.monotonic()`` deadline set ``_GROUP_KILL_GRACE_SECONDS``
+    bounded ``time.monotonic()`` deadline set ``grace_seconds``
     in the future, sleeping between polls via a short, bounded
     ``proc.wait(timeout=...)`` so the direct child's own zombie is reaped
     along the way without letting its exit end the grace period early —
@@ -131,7 +126,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
 
     The final reap of the direct child (after the SIGTERM/grace/SIGKILL
     sequence above has run) is itself bounded by
-    ``_GROUP_KILL_GRACE_SECONDS``, not an unbounded ``proc.wait()``. SIGKILL
+    ``grace_seconds``, not an unbounded ``proc.wait()``. SIGKILL
     cannot interrupt a process stuck inside an uninterruptible kernel sleep
     (D-state, e.g. from stuck I/O) — the kill is queued but only takes effect
     once that syscall returns, which can be indefinitely far in the future.
@@ -175,7 +170,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
         except ProcessLookupError:
             pass
         else:
-            deadline = time.monotonic() + _GROUP_KILL_GRACE_SECONDS
+            deadline = time.monotonic() + grace_seconds
             group_gone = False
             while True:
                 try:
@@ -217,7 +212,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
                 except ProcessLookupError:
                     pass
         try:
-            proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
+            proc.wait(timeout=grace_seconds)
         except Exception:  # noqa: S110 - best-effort reap; never mask the caller's real exception
             pass
     finally:
@@ -225,7 +220,7 @@ def _terminate_process_group(proc: "subprocess.Popen[str]") -> None:
 
 
 def _run_contained(
-    cmd: list[str] | tuple[str, ...], *, timeout: float
+    cmd: list[str] | tuple[str, ...], *, timeout: float, grace_seconds: int
 ) -> "subprocess.CompletedProcess[str]":
     """Run ``cmd`` in its own process group, guaranteeing group teardown.
 
@@ -330,7 +325,7 @@ def _run_contained(
         signal.pthread_sigmask(signal.SIG_UNBLOCK, _DEFERRED_SIGNALS)
         stdout, stderr = proc.communicate(timeout=timeout)
     except BaseException:
-        _terminate_process_group(proc)
+        _terminate_process_group(proc, grace_seconds=grace_seconds)
         raise
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
@@ -347,8 +342,7 @@ def _requires_kvm(topology_text: str) -> bool:
     def _walk(value: object) -> bool:
         if isinstance(value, dict):
             return any(
-                (key == "kind" and isinstance(child, str) and child.startswith("vr-"))
-                or _walk(child)
+                (key == "kind" and isinstance(child, str) and child.startswith("vr-")) or _walk(child)
                 for key, child in value.items()
             )
         if isinstance(value, list):
@@ -362,23 +356,30 @@ class ContainerlabEngine(LabEngine):
     def __init__(
         self,
         workdir: str,
+        *,
+        execution_policy: LabExecutionPolicy,
         lab_host_role: str | None = None,
         lock_label: str = "containerlab-engine",
     ):
+        if not isinstance(execution_policy, LabExecutionPolicy):
+            raise TypeError("an immutable lab execution policy is required")
+        self._execution_policy = execution_policy
         self.workdir = workdir
         self.lab_host_role = lab_host_role if lab_host_role is not None else settings.lab_host_role
         # Identifies this engine's caller (worker vs. reconciler) in the host
         # lock file / contention messages — see app.services.host_lock.
         self.lock_label = lock_label
 
+    @property
+    def execution_policy(self) -> LabExecutionPolicy:
+        return self._execution_policy
+
     def _require_lab_host(self) -> None:
         if self.lab_host_role.lower() != "lab":
             from app.metrics import LAB_WRONG_HOST_REFUSALS
 
             LAB_WRONG_HOST_REFUSALS.inc()
-            raise WrongLabHostError(
-                f"containerlab operations require LAB_HOST_ROLE=lab (got {self.lab_host_role!r})"
-            )
+            raise WrongLabHostError(f"containerlab operations require LAB_HOST_ROLE=lab (got {self.lab_host_role!r})")
 
     def _topo_path(self, instance_name: str) -> str:
         return os.path.join(self.workdir, instance_name, "topo.clab.yml")
@@ -386,7 +387,8 @@ class ContainerlabEngine(LabEngine):
     def _inspect_all(self) -> object:
         result = _run_contained(
             [*_CLAB, "inspect", "--all", "--format", "json"],
-            timeout=_INSPECT_TIMEOUT_SECONDS,
+            timeout=self.execution_policy.lab_command_timeout_seconds_by_action["inspect"],
+            grace_seconds=self.execution_policy.lab_process_termination_grace_seconds,
         )
         if result.returncode != 0:
             raise RuntimeError(f"inspect failed: {result.stderr}")
@@ -501,7 +503,8 @@ class ContainerlabEngine(LabEngine):
             f.write(topology_text)
         r = _run_contained(
             [*_CLAB, "deploy", "-t", path, "--format", "json"],
-            timeout=_DEPLOY_TIMEOUT_SECONDS,
+            timeout=self.execution_policy.lab_command_timeout_seconds_by_action["deploy"],
+            grace_seconds=self.execution_policy.lab_process_termination_grace_seconds,
         )
         if r.returncode != 0:
             raise RuntimeError(f"deploy failed: {r.stderr}")
@@ -517,7 +520,7 @@ class ContainerlabEngine(LabEngine):
         for item in items:
             cname = item["name"]
             # strip the known prefix so dashed node names (e.g. client-a) survive
-            logical = cname[len(prefix):] if cname.startswith(prefix) else cname.split("-")[-1]
+            logical = cname[len(prefix) :] if cname.startswith(prefix) else cname.split("-")[-1]
             nodes[logical] = cname
             mgmt[logical] = (item.get("ipv4_address") or "").split("/")[0]
             kinds[logical] = item.get("kind", "linux")
@@ -552,7 +555,11 @@ class ContainerlabEngine(LabEngine):
             f"{user}@{ip}",
             command,
         ]
-        r = _run_contained(ssh, timeout=_CHECK_COMMAND_TIMEOUT_SECONDS)
+        r = _run_contained(
+            ssh,
+            timeout=self.execution_policy.lab_command_timeout_seconds_by_action["check"],
+            grace_seconds=self.execution_policy.lab_process_termination_grace_seconds,
+        )
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)
 
     def ssh_exec(
@@ -594,7 +601,8 @@ class ContainerlabEngine(LabEngine):
                 )
         r = _run_contained(
             [*_CLAB, "destroy", "-t", path, "--cleanup"],
-            timeout=_DESTROY_TIMEOUT_SECONDS,
+            timeout=self.execution_policy.lab_command_timeout_seconds_by_action["destroy"],
+            grace_seconds=self.execution_policy.lab_process_termination_grace_seconds,
         )
         if r.returncode != 0:
             raise RuntimeError(f"destroy failed: {r.stderr}")
@@ -651,7 +659,8 @@ class ContainerlabEngine(LabEngine):
         cname = handle.nodes[node]
         r = _run_contained(
             ["docker", "exec", cname, *command],
-            timeout=_CHECK_COMMAND_TIMEOUT_SECONDS,
+            timeout=self.execution_policy.lab_command_timeout_seconds_by_action["check"],
+            grace_seconds=self.execution_policy.lab_process_termination_grace_seconds,
         )
         return ExecResult(stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode)
 
@@ -729,11 +738,7 @@ class ContainerlabEngine(LabEngine):
                     group_key = path if isinstance(path, str) and path else None
                     cname = value.get("name")
                     if isinstance(cname, str) and cname:
-                        logical = (
-                            cname[len(prefix):]
-                            if cname.startswith(prefix)
-                            else cname.split("-")[-1]
-                        )
+                        logical = cname[len(prefix) :] if cname.startswith(prefix) else cname.split("-")[-1]
                         ip = (value.get("ipv4_address") or "").split("/")[0]
                         kind = value.get("kind", "linux")
                         group = groups.setdefault(group_key, {})

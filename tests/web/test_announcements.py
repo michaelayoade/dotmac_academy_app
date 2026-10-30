@@ -2,46 +2,37 @@
 instructor GET/POST /instructor/announcements."""
 from __future__ import annotations
 
+from dotmac_kernel.models import PartyRoleGrant
 from sqlalchemy import text
 
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort
-from app.models.person import Person
-from app.models.rbac import PersonRole
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
-
 
 def _set_tenant(db, tenant_id):
     db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant_id)})
 
-
 def _make_user(admin_session, tenant, email="ann_stu@a.edu", role=None):
     roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email=email, first_name="A", last_name="B")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="A", last_name="B")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
-            tenant_id=tenant.id, person_id=p.id, email=email,
-            password_hash=hash_password("pw1"),
-        )
+        make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("pw1"))
     )
     if role:
-        admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles[role].id))
+        admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id))
     admin_session.commit()
     return p
-
 
 def _login(app_client, email="ann_stu@a.edu"):
     app_client.post("/login", headers=H, data={"email": email, "password": "pw1"})
 
-
 def _csrf(app_client):
     return app_client.cookies.get("csrf_token", "")
-
 
 # ── Learner GET /announcements ─────────────────────────────────────────────────
 
@@ -50,14 +41,12 @@ def test_announcements_requires_auth(app_client, tenant_a):
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
 
-
 def test_announcements_learner_200(app_client, admin_session, tenant_a):
     _make_user(admin_session, tenant_a, "ann_l200@a.edu")
     _login(app_client, "ann_l200@a.edu")
     r = app_client.get("/announcements", headers=H)
     assert r.status_code == 200
     assert "Announcements" in r.text
-
 
 def test_announcements_shows_tenant_wide(app_client, admin_session, tenant_a):
     """Tenant-wide announcements appear on the learner page."""
@@ -79,7 +68,6 @@ def test_announcements_shows_tenant_wide(app_client, admin_session, tenant_a):
     assert r.status_code == 200
     assert "Big news for everyone" in r.text
 
-
 # ── Instructor GET /instructor/announcements ───────────────────────────────────
 
 def test_instructor_announcements_requires_role(app_client, admin_session, tenant_a):
@@ -89,14 +77,12 @@ def test_instructor_announcements_requires_role(app_client, admin_session, tenan
     r = app_client.get("/instructor/announcements", headers=H)
     assert r.status_code == 403
 
-
 def test_instructor_announcements_200(app_client, admin_session, tenant_a):
     _make_user(admin_session, tenant_a, "ann_ins@a.edu", role="instructor")
     _login(app_client, "ann_ins@a.edu")
     r = app_client.get("/instructor/announcements", headers=H)
     assert r.status_code == 200
     assert "New announcement" in r.text
-
 
 def test_instructor_create_announcement(app_client, admin_session, tenant_a):
     """Instructor POST creates announcement and redirects."""
@@ -121,7 +107,6 @@ def test_instructor_create_announcement(app_client, admin_session, tenant_a):
     titles = [a.title for a in items]
     assert "New Class Schedule" in titles
 
-
 def test_student_403_on_instructor_announcements_post(app_client, admin_session, tenant_a):
     """Student cannot POST to instructor announcements."""
     _make_user(admin_session, tenant_a, "ann_stu_post@a.edu")
@@ -135,7 +120,6 @@ def test_student_403_on_instructor_announcements_post(app_client, admin_session,
         follow_redirects=False,
     )
     assert r.status_code == 403
-
 
 def test_instructor_delete_announcement(app_client, admin_session, tenant_a):
     """Instructor can delete an announcement via POST /{id}/delete."""
@@ -168,7 +152,6 @@ def test_instructor_delete_announcement(app_client, admin_session, tenant_a):
     items = ann_svc.list_for_tenant(admin_session, tenant_id=tenant_a.id)
     assert not any(a.id == ann.id for a in items)
 
-
 def test_instructor_create_cohort_targeted(app_client, admin_session, tenant_a):
     """Instructor can create a cohort-targeted announcement."""
     _make_user(admin_session, tenant_a, "ann_coh@a.edu", role="instructor")
@@ -198,7 +181,6 @@ def test_instructor_create_cohort_targeted(app_client, admin_session, tenant_a):
     assert len(matched) == 1
     assert matched[0].cohort_id == coh.id
 
-
 def test_learn_home_surfaces_announcements(app_client, admin_session, tenant_a):
     """The learn home page shows the latest 3 announcements."""
     p = _make_user(admin_session, tenant_a, "ann_home@a.edu")
@@ -218,7 +200,6 @@ def test_learn_home_surfaces_announcements(app_client, admin_session, tenant_a):
     r = app_client.get("/", headers=H)
     assert r.status_code == 200
     assert "Home page announcement" in r.text
-
 
 def test_announcements_nav_item_in_learn_sidebar(app_client, admin_session, tenant_a):
     """The learn sidebar contains an Announcements link."""

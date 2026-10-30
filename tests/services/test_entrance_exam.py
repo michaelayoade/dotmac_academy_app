@@ -14,6 +14,7 @@ from app.models.course import Course
 from app.models.track import CohortTrack, Track
 from app.services import admissions, entrance_exam, onboarding
 from app.services.exceptions import BadRequestError
+from tests.services.admission_request_fixtures import admission_admin_request
 
 
 def _bank_with_questions(admin_session, tenant):
@@ -24,6 +25,8 @@ def _bank_with_questions(admin_session, tenant):
         discipline="fiber",
         source_ref="x",
         version=1,
+        status="published",
+        listed=False,
     )
     admin_session.add(course)
     admin_session.flush()
@@ -71,9 +74,7 @@ def _applicant(admin_session, tenant, cohort, *, started=True):
         last_name="B",
         status="applied",
         cohort_id=cohort.id,
-        assessment_started_at=(
-            datetime.now(UTC) - timedelta(minutes=15) if started else None
-        ),
+        assessment_started_at=(datetime.now(UTC) - timedelta(minutes=15) if started else None),
     )
     admin_session.add(a)
     admin_session.flush()
@@ -138,6 +139,7 @@ def test_grade_requires_explicit_server_start(admin_session, tenant_a):
 
 
 def test_completed_assessment_satisfies_onboarding_task(admin_session, tenant_a):
+    actor_request = admission_admin_request(admin_session, tenant_a)
     bank = _bank_with_questions(admin_session, tenant_a)
     cohort = _cohort(admin_session, tenant_a, bank)
     track = Track(
@@ -168,7 +170,9 @@ def test_completed_assessment_satisfies_onboarding_task(admin_session, tenant_a)
         answers={"q1": ["A"], "q2": ["A"], "q3": ["A"], "q4": ["A"]},
     )
     for nxt in ("screened", "accepted", "onboarding"):
-        admissions.transition_applicant(admin_session, applicant_id=applicant.id, to_status=nxt)
+        admissions.transition_api_applicant(
+            admin_session, request=actor_request, applicant_id=applicant.id, to_status=nxt
+        )
     tasks = onboarding.list_tasks(admin_session, tenant_id=tenant_a.id, applicant_id=applicant.id)
     entrance = next(t for t in tasks if t.key == "entrance_assessment")
     assert entrance.status == "done"
@@ -331,15 +335,12 @@ def test_untimed_cohort_never_exceeds(admin_session, tenant_a):
 
 
 def test_falls_back_to_tenant_default_bank(admin_session, tenant_a):
-
     bank = _bank_with_questions(admin_session, tenant_a)
     cohort = _cohort(admin_session, tenant_a, bank=None)  # cohort has no own bank
     applicant = _applicant(admin_session, tenant_a, cohort)
     assert entrance_exam.has_entrance_exam(admin_session, applicant=applicant) is False
 
-    entrance_exam.set_academy_defaults(
-        admin_session, tenant_id=tenant_a.id, bank_id=bank.id, time_limit_minutes=30
-    )
+    entrance_exam.set_academy_defaults(admin_session, tenant_id=tenant_a.id, bank_id=bank.id, time_limit_minutes=30)
     admin_session.flush()
 
     assert entrance_exam.has_entrance_exam(admin_session, applicant=applicant) is True
@@ -353,7 +354,6 @@ def test_falls_back_to_tenant_default_bank(admin_session, tenant_a):
 
 
 def test_cohort_bank_overrides_tenant_default(admin_session, tenant_a):
-
     cohort_bank = _bank_with_questions(admin_session, tenant_a)
     default_bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank=cohort_bank))
@@ -501,8 +501,11 @@ def test_invite_mints_a_working_link_and_sets_a_deadline(admin_session, tenant_a
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
 
     res = entrance_exam.invite(
-        admin_session, applicant=applicant, base_url="https://academy.example",
-        deadline_days=7, send=False,          # don't touch SMTP in a test
+        admin_session,
+        applicant=applicant,
+        base_url="https://academy.example",
+        deadline_days=7,
+        send=False,  # don't touch SMTP in a test
     )
 
     assert res["url"].startswith("https://academy.example/apply/assessment?token=")
@@ -516,7 +519,7 @@ def test_invite_mints_a_working_link_and_sets_a_deadline(admin_session, tenant_a
 def test_past_deadline_closes_the_exam(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
-    assert entrance_exam.past_deadline(applicant) is False        # no deadline = open
+    assert entrance_exam.past_deadline(applicant) is False  # no deadline = open
 
     applicant.assessment_deadline = datetime.now(UTC) - timedelta(hours=1)
     assert entrance_exam.past_deadline(applicant) is True
@@ -529,24 +532,24 @@ def test_past_deadline_closes_the_exam(admin_session, tenant_a):
 def test_reset_clears_the_deadline_so_a_reinvite_reopens_it(admin_session, tenant_a):
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
-    entrance_exam.invite(admin_session, applicant=applicant,
-                         base_url="https://x.example", send=False)
-    applicant.assessment_deadline = datetime.now(UTC) - timedelta(days=1)   # they missed it
+    entrance_exam.invite(admin_session, applicant=applicant, base_url="https://x.example", send=False)
+    applicant.assessment_deadline = datetime.now(UTC) - timedelta(days=1)  # they missed it
 
     entrance_exam.reset_exam(admin_session, applicant=applicant)
 
     assert applicant.assessment_deadline is None
-    assert entrance_exam.past_deadline(applicant) is False        # reopened
+    assert entrance_exam.past_deadline(applicant) is False  # reopened
     admin_session.rollback()
 
 
 def test_profile_completeness_is_reported(admin_session, tenant_a):
     from datetime import date as _date
+
     bank = _bank_with_questions(admin_session, tenant_a)
     applicant = _applicant(admin_session, tenant_a, _cohort(admin_session, tenant_a, bank))
 
     assert applicant.profile_complete is False
-    assert "date_of_birth" in applicant.missing_profile_fields   # can't evaluate this yet
+    assert "date_of_birth" in applicant.missing_profile_fields  # can't evaluate this yet
 
     applicant.date_of_birth = _date(1998, 5, 1)
     applicant.state = "Lagos"
@@ -564,8 +567,11 @@ def test_profile_completeness_is_reported(admin_session, tenant_a):
 
 def test_reapplying_blank_does_not_wipe_a_supplied_profile(admin_session, tenant_a):
     a = admissions.submit_application(
-        admin_session, tenant_id=tenant_a.id, email=f"p{uuid.uuid4().hex[:6]}@x.ex",
-        first_name="A", last_name="B",
+        admin_session,
+        tenant_id=tenant_a.id,
+        email=f"p{uuid.uuid4().hex[:6]}@x.ex",
+        first_name="A",
+        last_name="B",
         profile={"state": "Lagos", "years_experience": 3, "date_of_birth": date(1997, 1, 1)},
     )
     assert a.state == "Lagos" and a.years_experience == 3
@@ -573,18 +579,22 @@ def test_reapplying_blank_does_not_wipe_a_supplied_profile(admin_session, tenant
     # they re-apply and leave the optional fields blank — that must not erase what
     # they already told us
     again = admissions.submit_application(
-        admin_session, tenant_id=tenant_a.id, email=a.email,
-        first_name="A", last_name="B",
+        admin_session,
+        tenant_id=tenant_a.id,
+        email=a.email,
+        first_name="A",
+        last_name="B",
         profile={"state": None, "years_experience": None, "city": "Ikeja"},
     )
     assert again.id == a.id
-    assert again.state == "Lagos"          # preserved
-    assert again.years_experience == 3     # preserved
-    assert again.city == "Ikeja"           # newly supplied
+    assert again.state == "Lagos"  # preserved
+    assert again.years_experience == 3  # preserved
+    assert again.city == "Ikeja"  # newly supplied
     admin_session.rollback()
 
 
 # --- stratified sampling ---------------------------------------------------
+
 
 class _Q:
     def __init__(self, ext_id, category):
@@ -592,22 +602,28 @@ class _Q:
         self.category = category
         self.options = ["a", "b", "c", "d"]
 
+
 class _A:
     def __init__(self, id_):
         self.id = id_
 
+
 def _bank(per_cat=6, cats=("numeracy", "safety", "reading")):
     return [_Q(f"{c}-{i}", c) for c in cats for i in range(per_cat)]
+
 
 def test_sample_for_zero_returns_the_whole_bank():
     """The pre-sampling behaviour has to survive untouched."""
     from app.services.entrance_exam import sample_for
+
     bank = _bank()
     assert len(sample_for(_A("app-1"), bank, 0)) == len(bank)
+
 
 def test_sample_for_is_stratified_by_category():
     """Every candidate must be measured on the same shape, or profiles differ."""
     from app.services.entrance_exam import sample_for
+
     bank = _bank(per_cat=6)
     for applicant in ("a", "b", "c", "d", "e"):
         got = sample_for(_A(applicant), bank, 2)
@@ -616,25 +632,55 @@ def test_sample_for_is_stratified_by_category():
             counts[q.category] = counts.get(q.category, 0) + 1
         assert counts == {"numeracy": 2, "safety": 2, "reading": 2}
 
+
 def test_sample_for_is_deterministic_per_applicant():
     """A reload or resumed sitting must not redraw the paper."""
     from app.services.entrance_exam import sample_for
+
     bank = _bank()
     first = [q.ext_id for q in sample_for(_A("app-1"), bank, 3)]
     again = [q.ext_id for q in sample_for(_A("app-1"), bank, 3)]
     assert first == again
 
+
 def test_sample_for_differs_between_applicants():
     """Otherwise the bank leaks exactly as a fixed paper does."""
     from app.services.entrance_exam import sample_for
+
     bank = _bank(per_cat=8)
     a = {q.ext_id for q in sample_for(_A("app-1"), bank, 3)}
     b = {q.ext_id for q in sample_for(_A("app-2"), bank, 3)}
     assert a != b
 
+
 def test_sample_for_takes_all_of_a_short_category():
     """A category smaller than the draw must not silently vanish from the profile."""
     from app.services.entrance_exam import sample_for
+
     bank = [*_bank(per_cat=6), _Q("tech-0", "technical")]
     got = sample_for(_A("app-1"), bank, 4)
     assert sum(1 for q in got if q.category == "technical") == 1
+
+
+@pytest.fixture(autouse=True)
+def _explicit_learning_policy_settings(monkeypatch):
+    # Characterization data belongs to the product fixture, never the library.
+    from app.services import settings_store
+
+    original = settings_store.effective
+
+    def effective(db, *, require_store=False):
+        if require_store:
+            return {
+                "learning_missing_question_weight": 1,
+                "learning_default_extra_attempts": 1,
+                "learning_default_course_status": "published",
+                "learning_default_course_listed": False,
+                "learning_exam_seconds_per_question": 12.0,
+                "learning_exam_near_chance_margin": 1.33,
+                "learning_exam_fallback_score_floor": 1.0 / 3.0,
+                "learning_exam_fallback_duration_seconds": 360.0,
+            }
+        return original(db)
+
+    monkeypatch.setattr(settings_store, "effective", effective)

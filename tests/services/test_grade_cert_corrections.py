@@ -5,20 +5,21 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from dotmac_learning import attempted_grade
+
 from app.models.assessment import Activity, Score, Submission
 from app.models.certificate import Certificate
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services import success_queue
 from app.services.certificates import issue_certificate
 from app.services.completion import recompute_completion
-from app.services.gradebook import attempted_grade
+from tests.conftest import make_person_party
 
 
 def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
-    person = Person(tenant_id=tenant.id, email=f"{slug}@a.edu", first_name="G", last_name="C")
+    person = make_person_party(admin_session, tenant_id=tenant.id, email=f"{slug}@a.edu", first_name="G", last_name="C")
     admin_session.add(person)
     course = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
                     discipline="fiber", source_ref="t@1", status="published")
@@ -39,7 +40,6 @@ def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
     admin_session.flush()
     return person, course, acts
 
-
 def _score(admin_session, tenant, person, act, fraction):
     sub = Submission(tenant_id=tenant.id, activity_id=act.id, person_id=person.id, answers={})
     admin_session.add(sub)
@@ -49,17 +49,15 @@ def _score(admin_session, tenant, person, act, fraction):
                             per_item=[], source="auto"))
     admin_session.flush()
 
-
 def test_attempted_grade_is_graded_only(admin_session, tenant_a):
     person, course, acts = _course_with_activities(admin_session, tenant_a, "att-grade", n=4)
     _score(admin_session, tenant_a, person, acts[0], 0.4)  # graded
     _score(admin_session, tenant_a, person, acts[1], 0.6)  # graded
     admin_session.commit()
     g = attempted_grade(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
-    assert g["graded_count"] == 2
-    assert g["graded_weight_fraction"] == 0.5          # 2 of 4 equal-weight activities
-    assert g["pct"] == 50                               # (0.4 + 0.6)/2 — course_grade would say 25
-
+    assert g.graded_count == 2
+    assert g.graded_weight_fraction == 0.5          # 2 of 4 equal-weight activities
+    assert g.pct == 50                               # (0.4 + 0.6)/2 — course_grade would say 25
 
 def test_below_passing_fires_with_volume_gate(admin_session, tenant_a):
     person, course, acts = _course_with_activities(admin_session, tenant_a, "bp-fire", n=5)
@@ -73,7 +71,6 @@ def test_below_passing_fires_with_volume_gate(admin_session, tenant_a):
     assert hit is not None
     facts = hit[0]
     assert facts["grade_pct"] == 25 and facts["graded_count"] == 2 and facts["graded_weight_pct"] == 40
-
 
 def test_below_passing_silent_below_volume_gate(admin_session, tenant_a):
     # One graded activity: below the 2-graded minimum -> no false positive.
@@ -95,7 +92,6 @@ def test_below_passing_silent_below_volume_gate(admin_session, tenant_a):
         course_ids=[c2.id], min_grade_pct=60,
     ) is None
 
-
 def test_certificate_auto_issued_on_completion(admin_session, tenant_a):
     person, course, acts = _course_with_activities(admin_session, tenant_a, "cert-auto", n=2)
     for a in acts:
@@ -112,7 +108,6 @@ def test_certificate_auto_issued_on_completion(admin_session, tenant_a):
     # Idempotent: a second issue returns the same record.
     again = issue_certificate(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
     assert again.id == cert.id
-
 
 def test_certificate_blocked_only_after_grace(admin_session, tenant_a):
     person, course, acts = _course_with_activities(admin_session, tenant_a, "cert-block", n=1)

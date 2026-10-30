@@ -1,0 +1,1 @@
+# Exact JUnit classname::name identities only; every entry requires review.

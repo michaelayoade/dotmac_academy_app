@@ -10,9 +10,9 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.exceptions import NotFoundError
 from app.services.reports import cohort_matrix, student_transcript
+from tests.conftest import make_person_party
 
 
 def _seed(db, tid):
@@ -37,8 +37,8 @@ def _seed(db, tid):
     db.add(coh)
     db.flush()
 
-    stu_a = Person(tenant_id=tid, email="a@stu.edu", first_name="Aaa", last_name="Student")
-    stu_b = Person(tenant_id=tid, email="b@stu.edu", first_name="Bbb", last_name="Student")
+    stu_a = make_person_party(db, tenant_id=tid, email="a@stu.edu", first_name="Aaa", last_name="Student")
+    stu_b = make_person_party(db, tenant_id=tid, email="b@stu.edu", first_name="Bbb", last_name="Student")
     db.add_all([stu_a, stu_b])
     db.flush()
 
@@ -63,7 +63,6 @@ def _seed(db, tid):
     _score(stu_b, a2, 0.8, True)
     return c, coh, a1, a2, stu_a, stu_b
 
-
 def test_cohort_matrix_shape_and_best(admin_session, tenant_a):
     c, coh, a1, a2, stu_a, stu_b = _seed(admin_session, tenant_a.id)
     m = cohort_matrix(admin_session, tenant_id=tenant_a.id, cohort_id=coh.id)
@@ -81,7 +80,6 @@ def test_cohort_matrix_shape_and_best(admin_session, tenant_a):
     assert rb["completion"] == 1.0
     admin_session.rollback()
 
-
 def test_cohort_matrix_uses_best_score(admin_session, tenant_a):
     """A later, lower-scoring submission must not override the best."""
     c, coh, a1, a2, stu_a, stu_b = _seed(admin_session, tenant_a.id)
@@ -98,7 +96,6 @@ def test_cohort_matrix_uses_best_score(admin_session, tenant_a):
     rows = {r["email"]: r for r in m["rows"]}
     assert rows["a@stu.edu"]["cells"][a1.id].fraction == 1.0
     admin_session.rollback()
-
 
 def test_cohort_matrix_scoped_to_offerings_not_discipline(admin_session, tenant_a):
     """Finding #2: a same-discipline course with no offering is excluded from the matrix."""
@@ -119,12 +116,10 @@ def test_cohort_matrix_scoped_to_offerings_not_discipline(admin_session, tenant_
     assert ids == [a1.id, a2.id]
     admin_session.rollback()
 
-
 def test_cohort_matrix_unknown_cohort_raises(admin_session, tenant_a):
     with pytest.raises(NotFoundError):
         cohort_matrix(admin_session, tenant_id=tenant_a.id, cohort_id=uuid4())
     admin_session.rollback()
-
 
 def test_student_transcript(admin_session, tenant_a):
     c, coh, a1, a2, stu_a, stu_b = _seed(admin_session, tenant_a.id)

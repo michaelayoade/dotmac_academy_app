@@ -22,15 +22,16 @@ from __future__ import annotations
 import re
 from html import escape as _html_escape
 from html.parser import HTMLParser
-from typing import ClassVar
+from typing import ClassVar, Protocol, cast
 from uuid import UUID
 
+import dotmac_learning as learning
 import markdown as md
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.course import Chapter, Course
+from app.services import settings_store
 from app.services.exceptions import ConflictError, NotFoundError
+from app.services.learning_policy import creation_defaults
 
 _MD_EXTENSIONS = ["tables", "fenced_code"]
 
@@ -38,34 +39,74 @@ _MD_EXTENSIONS = ["tables", "fenced_code"]
 # HTML sanitisation — strip unsafe tags, event-handler attrs, bad URL schemes
 # ---------------------------------------------------------------------------
 
-_SAFE_TAGS: frozenset[str] = frozenset({
-    "p", "div",
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li", "blockquote", "pre", "code", "hr", "br",
-    "em", "strong", "a", "img", "span",
-    "del", "ins", "sub", "sup",
-    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
-    "figure", "figcaption",
-})
+_SAFE_TAGS: frozenset[str] = frozenset(
+    {
+        "p",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "pre",
+        "code",
+        "hr",
+        "br",
+        "em",
+        "strong",
+        "a",
+        "img",
+        "span",
+        "del",
+        "ins",
+        "sub",
+        "sup",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "th",
+        "td",
+        "caption",
+        "figure",
+        "figcaption",
+    }
+)
 
-_SAFE_ATTRS: frozenset[str] = frozenset({
-    "class", "id",
-    "href", "src", "alt", "title", "target", "rel",
-    "colspan", "rowspan", "align", "valign",
-    "width", "height", "start", "type",
-})
+_SAFE_ATTRS: frozenset[str] = frozenset(
+    {
+        "class",
+        "id",
+        "href",
+        "src",
+        "alt",
+        "title",
+        "target",
+        "rel",
+        "colspan",
+        "rowspan",
+        "align",
+        "valign",
+        "width",
+        "height",
+        "start",
+        "type",
+    }
+)
 
 _VOID_TAGS: frozenset[str] = frozenset({"br", "hr", "img"})
 _URL_ATTRS: frozenset[str] = frozenset({"href", "src"})
 
 # Tags whose start/end *and content* are entirely suppressed.
-_SUPPRESS_TAGS: frozenset[str] = frozenset(
-    {"script", "style", "noscript", "iframe", "object", "embed"}
-)
+_SUPPRESS_TAGS: frozenset[str] = frozenset({"script", "style", "noscript", "iframe", "object", "embed"})
 
-_UNSAFE_SCHEME_RE: re.Pattern[str] = re.compile(
-    r"(?:javascript|vbscript|data):", re.IGNORECASE
-)
+_UNSAFE_SCHEME_RE: re.Pattern[str] = re.compile(r"(?:javascript|vbscript|data):", re.IGNORECASE)
 
 
 def _safe_url(url: str) -> str:
@@ -137,42 +178,24 @@ def _sanitize_html(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 # Match any <a …>…</a> in the sanitised output.
-_ANCHOR_RE: re.Pattern[str] = re.compile(
-    r"<a([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL
-)
+_ANCHOR_RE: re.Pattern[str] = re.compile(r"<a([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 # Extract href="…" from an attribute string (sanitiser always uses double quotes).
 _HREF_RE: re.Pattern[str] = re.compile(r'\bhref="([^"]*)"', re.IGNORECASE)
 
 # YouTube watch URL — host must be exactly (www.)youtube.com
-_YT_WATCH_HOST_RE: re.Pattern[str] = re.compile(
-    r"^https?://(?:www\.)?youtube\.com/watch\?(.+)$", re.IGNORECASE
-)
+_YT_WATCH_HOST_RE: re.Pattern[str] = re.compile(r"^https?://(?:www\.)?youtube\.com/watch\?(.+)$", re.IGNORECASE)
 # Extract the v= parameter (handles &amp; entity in sanitised HTML)
-_YT_V_PARAM_RE: re.Pattern[str] = re.compile(
-    r"(?:^|&amp;|&)v=([A-Za-z0-9_-]+)"
-)
+_YT_V_PARAM_RE: re.Pattern[str] = re.compile(r"(?:^|&amp;|&)v=([A-Za-z0-9_-]+)")
 # youtu.be short links
-_YT_SHORT_RE: re.Pattern[str] = re.compile(
-    r"^https?://youtu\.be/([A-Za-z0-9_-]+)", re.IGNORECASE
-)
+_YT_SHORT_RE: re.Pattern[str] = re.compile(r"^https?://youtu\.be/([A-Za-z0-9_-]+)", re.IGNORECASE)
 # Vimeo — numeric ID only
-_VIMEO_RE: re.Pattern[str] = re.compile(
-    r"^https?://(?:www\.)?vimeo\.com/(\d+)(?:[/?#]|$)", re.IGNORECASE
-)
+_VIMEO_RE: re.Pattern[str] = re.compile(r"^https?://(?:www\.)?vimeo\.com/(\d+)(?:[/?#]|$)", re.IGNORECASE)
 # Self-hosted video file extensions
-_VIDEO_EXT_RE: re.Pattern[str] = re.compile(
-    r"\.(?:mp4|webm|ogg)(?:[?#]|$)", re.IGNORECASE
-)
+_VIDEO_EXT_RE: re.Pattern[str] = re.compile(r"\.(?:mp4|webm|ogg)(?:[?#]|$)", re.IGNORECASE)
 # Document / downloadable file extensions
-_DOC_EXT_RE: re.Pattern[str] = re.compile(
-    r"\.(?:pdf|zip|csv|pcap)(?:[?#]|$)", re.IGNORECASE
-)
+_DOC_EXT_RE: re.Pattern[str] = re.compile(r"\.(?:pdf|zip|csv|pcap)(?:[?#]|$)", re.IGNORECASE)
 
-_IFRAME_TPL = (
-    '<div class="embed-responsive">'
-    '<iframe src="{src}" frameborder="0" allowfullscreen></iframe>'
-    '</div>'
-)
+_IFRAME_TPL = '<div class="embed-responsive">' '<iframe src="{src}" frameborder="0" allowfullscreen></iframe>' "</div>"
 
 
 def _youtube_embed(href: str) -> str | None:
@@ -255,10 +278,36 @@ class _EditorTextParser(HTMLParser):
     """Convert existing rendered HTML into readable editor text."""
 
     _BLOCK_TAGS: ClassVar[set[str]] = {
-        "address", "article", "aside", "blockquote", "div", "figcaption",
-        "figure", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header",
-        "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody",
-        "td", "tfoot", "th", "thead", "tr", "ul",
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "div",
+        "figcaption",
+        "figure",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "ul",
     }
 
     def __init__(self) -> None:
@@ -299,7 +348,17 @@ class _EditorTextParser(HTMLParser):
         return "\n".join(out).strip()
 
 
-def editable_chapter_source(chapter: Chapter) -> str:
+class EditableChapter(Protocol):
+    """Only the stored text fields the product editor reads."""
+
+    @property
+    def body_md(self) -> str: ...
+
+    @property
+    def body_html(self) -> str: ...
+
+
+def editable_chapter_source(chapter: EditableChapter) -> str:
     """Return instructor-friendly source text for a chapter editor textarea."""
     if chapter.body_md.strip():
         return chapter.body_md
@@ -320,69 +379,58 @@ def render_markdown(body_md: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def create_course(db: Session, *, tenant_id: UUID, slug: str, title: str,
-                  discipline: str) -> Course:
-    """Create a new draft course. Raises ConflictError if the slug is taken."""
-    slug = (slug or "").strip().lower()
-    existing = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.slug == slug)
-    ).first()
-    if existing is not None:
-        raise ConflictError(f"a course with slug {slug!r} already exists")
-    course = Course(tenant_id=tenant_id, slug=slug, title=title, discipline=discipline,
-                    source_ref="in-app", version=1, status="draft")
-    db.add(course)
-    db.flush()
-    return course
+def create_course(
+    db: Session, *, tenant_id: UUID, slug: str, title: str, discipline: str, listed: bool | None = None
+) -> learning.CourseFact:
+    """Create a draft through the canonical owner, preserving product errors."""
+    defaults = creation_defaults(db)
+    try:
+        return learning.create_draft_course(
+            db,
+            learning.CourseCreate(
+                tenant_id=tenant_id,
+                slug=slug,
+                title=title,
+                discipline=discipline,
+                completion_fraction=defaults.completion_fraction,
+                certificate_auto_issue=defaults.certificate_auto_issue,
+                certificate_validity_days=defaults.certificate_validity_days,
+                prerequisite_composition=defaults.prerequisite_default_composition,
+                listed=(
+                    cast(bool, settings_store.effective(db, require_store=True)["learning_default_course_listed"])
+                    if listed is None
+                    else listed
+                ),
+            ),
+        )
+    except learning.CurriculumConflict as exc:
+        raise ConflictError(str(exc)) from None
 
 
-def upsert_chapter(db: Session, *, tenant_id: UUID, course_id: UUID, number: int,
-                   title: str, body_md: str, part: str = "") -> Chapter:
-    """Create or update a chapter from markdown, rendering HTML and bumping the
-    course content version."""
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
-    ).first()
-    if course is None:
-        raise NotFoundError("course not found for tenant")
-
-    body_html = render_markdown(body_md)
-    chapter = db.scalars(
-        select(Chapter)
-        .where(Chapter.tenant_id == tenant_id)
-        .where(Chapter.course_id == course_id)
-        .where(Chapter.number == number)
-    ).first()
-    if chapter is None:
-        chapter = Chapter(tenant_id=tenant_id, course_id=course_id, number=number,
-                          title=title, part=part, body_md=body_md, body_html=body_html,
-                          order_index=number)
-        db.add(chapter)
-    else:
-        chapter.title = title
-        chapter.part = part
-        chapter.body_md = body_md
-        chapter.body_html = body_html
-    course.version += 1
-    db.flush()
-    return chapter
+def upsert_chapter(
+    db: Session, *, tenant_id: UUID, course_id: UUID, number: int, title: str, body_md: str, part: str = ""
+) -> learning.ChapterFact:
+    """Delegate course lookup, product rendering, then canonical chapter write."""
+    try:
+        return learning.author_chapter(
+            db,
+            learning.AuthorChapterCommand(
+                tenant_id=tenant_id,
+                course_id=course_id,
+                number=number,
+                title=title,
+                body_md=body_md,
+                part=part,
+            ),
+            render_markdown=render_markdown,
+        )
+    except learning.CurriculumNotFound as exc:
+        raise NotFoundError(str(exc)) from None
 
 
 def delete_chapter(db: Session, *, tenant_id: UUID, course_id: UUID, chapter_id: UUID) -> None:
-    """Delete one chapter from a tenant course and bump the course version."""
-    course = db.scalars(
-        select(Course).where(Course.tenant_id == tenant_id).where(Course.id == course_id)
-    ).first()
-    if course is None:
-        raise NotFoundError("course not found for tenant")
-    chapter = db.scalars(
-        select(Chapter)
-        .where(Chapter.tenant_id == tenant_id)
-        .where(Chapter.course_id == course_id)
-        .where(Chapter.id == chapter_id)
-    ).first()
-    if chapter is None:
-        raise NotFoundError("chapter not found for tenant")
-    db.delete(chapter)
-    course.version += 1
-    db.flush()
+    """Delete through the canonical owner; required failures remain uncaught."""
+    try:
+        learning.delete_chapter(db, tenant_id=tenant_id, course_id=course_id, chapter_id=chapter_id)
+    except learning.CurriculumNotFound as exc:
+        raise NotFoundError(str(exc)) from None

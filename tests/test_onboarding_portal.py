@@ -11,6 +11,13 @@ from sqlalchemy import text
 from tests.conftest import client_for
 
 
+def _csrf(web, token):
+    assert web.get(f"/onboarding?token={token}").status_code == 200
+    value = web.cookies.get("csrf_token")
+    assert value
+    return {"x-csrf-token": value}
+
+
 def _cohort(admin_session, tenant, name="Fiber intake"):
     from app.models.cohort import Cohort
     from app.models.track import CohortTrack, Track
@@ -67,6 +74,7 @@ def _applicant_in_onboarding(client, auth, admin_session, tenant, email):
     from uuid import UUID
 
     from app.models.admissions import Applicant
+
     admin_session.rollback()
     applicant = admin_session.get(Applicant, UUID(app_id))
     raw = admissions_service.mint_onboarding_token(admin_session, applicant=applicant)
@@ -142,14 +150,14 @@ def test_completing_checklist_auto_enrolls_and_invites(
     )
     admin_session.commit()
 
-    r = a.post("/onboarding/confirm", data={"token": token}, follow_redirects=False)
+    r = a.post("/onboarding/confirm", data={"token": token}, headers=_csrf(a, token), follow_redirects=False)
     assert r.status_code == 303
     # Not yet enrolled — orientation still pending.
     admin_session.rollback()
     status = admin_session.execute(text("SELECT status FROM applicants WHERE id=:a"), {"a": app_id}).scalar()
     assert status == "onboarding"
 
-    r = a.post("/onboarding/orientation", data={"token": token}, follow_redirects=False)
+    r = a.post("/onboarding/orientation", data={"token": token}, headers=_csrf(a, token), follow_redirects=False)
     assert r.status_code == 303
 
     admin_session.rollback()
@@ -163,8 +171,8 @@ def test_completing_checklist_auto_enrolls_and_invites(
     assert enr == 1
     role = admin_session.execute(
         text(
-            "SELECT count(*) FROM person_roles pr JOIN roles r ON r.id=pr.role_id "
-            "WHERE pr.person_id=:p AND r.slug='student'"
+            "SELECT count(*) FROM party_role_grants pr JOIN roles r ON r.id=pr.role_id "
+            "WHERE pr.party_id=:p AND r.slug='student'"
         ),
         {"p": str(row.person_id)},
     ).scalar()
@@ -176,7 +184,7 @@ def test_completing_checklist_auto_enrolls_and_invites(
     assert invites == 1
 
     # Idempotent: re-posting completes nothing twice and never re-invites.
-    a.post("/onboarding/orientation", data={"token": token})
+    a.post("/onboarding/orientation", data={"token": token}, headers=_csrf(a, token))
     admin_session.rollback()
     invites2 = admin_session.execute(
         text("SELECT count(*) FROM account_tokens WHERE person_id=:p AND kind='invite'"),
@@ -203,18 +211,35 @@ def test_invite_token_activates_student_login(
     admin_session.execute(text("UPDATE onboarding_tasks SET status='done' WHERE applicant_id=:a"), {"a": app_id})
     admin_session.commit()
     # Any completed task POST triggers the auto-enrol check.
-    a.post("/onboarding/confirm", data={"token": token})
+    a.post("/onboarding/confirm", data={"token": token}, headers=_csrf(a, token))
 
     admin_session.rollback()
     person_id = admin_session.execute(text("SELECT person_id FROM applicants WHERE id=:a"), {"a": app_id}).scalar()
-    # Recover a usable invite the same way lifecycle would issue it: mint another.
-    from app.services import lifecycle
+    assert person_id is not None
+    # Use the actual transactional welcome consequence, never a legacy re-mint.
+    from urllib.parse import parse_qs, urlparse
 
-    raw = lifecycle.issue_invite_for_person(admin_session, tenant_id=tenant_a.id, person_id=person_id)
-    admin_session.commit()
+    from sqlalchemy import select
+
+    from app.models.email_outbox import EmailOutbox
+
+    welcome = admin_session.scalars(
+        select(EmailOutbox).where(
+            EmailOutbox.tenant_id == tenant_a.id,
+            EmailOutbox.recipient == "login@a.ex",
+            EmailOutbox.kind == "enrollment_welcome",
+        )
+    ).one()
+    setup_url = next(line for line in welcome.text_body.splitlines() if "/accept-invite?token=" in line)
+    raw = parse_qs(urlparse(setup_url).query)["token"][0]
 
     fresh = client_for(TestClient(app_client.app), tenant_a.slug)
-    r = fresh.post("/accept-invite", data={"token": raw, "password": "a fine password"})
+    assert fresh.get(setup_url).status_code == 200
+    r = fresh.post(
+        "/accept-invite",
+        data={"token": raw, "password": "a fine password"},
+        headers={"x-csrf-token": fresh.cookies.get("csrf_token", "")},
+    )
     assert r.status_code == 200, r.text
     login = fresh.post("/auth/login", json={"email": "login@a.ex", "password": "a fine password"})
     assert login.status_code == 200, login.text

@@ -1,0 +1,566 @@
+{
+  "evidence_type": "read_only_current_main_43_path_disposition",
+  "observed_date": "2026-10-28",
+  "repository": "michaelayoade/dotmac_academy_app",
+  "compare": {
+    "base": "444ce556e91e00423e7b6112f174253bec4b84d4",
+    "head": "201cf4bfb701c1ee5deb98c9b77dd4b21b299905",
+    "merge_base": "444ce556e91e00423e7b6112f174253bec4b84d4",
+    "status": "ahead",
+    "ahead_by": 18,
+    "behind_by": 0,
+    "total_commits": 18,
+    "reviewed_source_commit": "8776f410dc60d35aa1ff3980ffcdc78187fb00e4",
+    "current_local_head": "bde50c940192714cdb0608652e94417199565f64",
+    "path_hash_coordinate": "bde50c940192714cdb0608652e94417199565f64"
+  },
+  "counts": {
+    "compared_paths": 43,
+    "exact_current_main_blobs": 10,
+    "changed_but_local_present": 25,
+    "main_only_paths": 7,
+    "main_removed_paths": 1
+  },
+  "source_review": {
+    "artifact": "/private/tmp/academy-d1-erp-successor-independent-review-20261028.json",
+    "artifact_sha256": "813113543ebd2033a2626e135d2f8526042de05008546d693ba357501f79c48c",
+    "status": "SOURCE_REVIEW_PASS_NOT_RUNTIME_QUALIFICATION",
+    "open_P1": 0,
+    "open_P2": 0,
+    "all15_frozen_hashes_match_before_and_after_checks": true,
+    "verified_at_local_commit": "8776f410dc60d35aa1ff3980ffcdc78187fb00e4",
+    "source_sha256": {
+      "app/models/erp_completion_checkpoint.py": "9689bc38f2001a7dc94ad60bf93108605a3c04139708f9239ad676e519e07172",
+      "app/services/erp_sync.py": "124fa2aec70677caee3770eddb55460de8a680721b87297d542556ad67078ee9",
+      "app/maintenance/erp_progress_transition.py": "f0b313921312aed127fc6e6755ffa4ffe2487ae3712119ab4016b373542ca720",
+      "app/maintenance/erp_successor_catalog.py": "16453597a104c7a32b4cd43d26de7d6ef959c1a17bd3f6ebc6f81d4b5ae663df",
+      "app/maintenance/product_adoption.py": "a7dc00ab7c86ffb37eb7eb0b02a4d42f6f83b521a5ceb8bbc6e48e1591957155",
+      "app/maintenance/fresh_product.py": "1cb0dd3924b7dac43ea28eb34eacaccad55550254b9f1106caae8d6713ad54ef",
+      "alembic/identity_assembly_versions/a011_erp_progress_checkpoint.py": "a110465aa4051eba83180058e2f1b4a5c73a1755d454ba49b6d57ff4c30dbfda",
+      "tests/services/test_erp_sync.py": "53b0413e0f6c871f91fbfc78d5f0acdf8325ba7256a3754b4cb16b2eb9929ede",
+      "tests/services/test_erp_sync_contract.py": "7f47a8c8c83ae16b9cdc7e09d20da6fd0ad8ef9a8e8eedab4a21802e5d2b61a2",
+      "tests/test_erp_progress_transition.py": "c24c9a29cebd57d73cdc257a2ff1f3dbda3d135e9ed01b72ae8a498df9fd2fc1",
+      "tests/test_erp_progress_transition_hosted.py": "4d0bef14d6c403b1a72aa5fa2ec1bfb5fbfd89801aa0fd83ab4d0b657d64d1cc",
+      "tests/test_fresh_product_entry.py": "f2c92e0ab9d837fd66ee0ab5102bc3493a5c9e2eb9eb925072c8c07946680b1e",
+      "tests/test_fresh_product_entry_hosted.py": "c259fb0af30e78d5a0c08f85786c5bc275369d3fed958cde1604a3529fd31248",
+      "tests/test_ordinary_migration_graph.py": "de228745cbf24e60f0b7ee7239f7cc5629f4baff5a3040d1d36cc34763e76e2a",
+      "tests/test_product_provenance_successor_boundary.py": "4846d2613dd25d5b79350b0620c0495e26f7b055a3035d99473e4f4e1e9d0b18"
+    },
+    "disposition": "ERP successor source review is closed at the reviewed 15 frozen paths; this does not prove runtime H==F or hosted DB qualification.",
+    "governance_reconciliation": {
+      "status": "FINAL_RECORD_SOURCE_AND_GENUINE_DERIVED_SCOPE_REVIEW_PASS",
+      "proposed_baseline": 3,
+      "old_classification": {
+        "app/maintenance/checkpoint_transition.py": [
+          "sync_checkpoint"
+        ],
+        "app/models/erp_completion_checkpoint.py": [
+          "sync_checkpoint"
+        ],
+        "app/services/erp_sync.py": [
+          "outbound_transport"
+        ]
+      },
+      "current_classification": {
+        "app/maintenance/checkpoint_transition.py": [
+          "sync_checkpoint"
+        ],
+        "app/models/erp_completion_checkpoint.py": [
+          "sync_checkpoint"
+        ],
+        "app/services/erp_sync.py": [
+          "outbound_transport",
+          "sync_checkpoint"
+        ]
+      },
+      "source_evidence": "Pinned _holds_a_checkpoint flags any class with checkpoint in its name. ERPCheckpointInvariantError has docstring-only RuntimeError body and expresses the already-reviewed fail-closed imported-checkpoint guard. No new durable table, transport or provider credential follows from this exception class. Maintenance source remains byte-unchanged.",
+      "test_module": "tests/services/test_erp_sync_contract.py",
+      "test_module_sha256": "7f47a8c8c83ae16b9cdc7e09d20da6fd0ad8ef9a8e8eedab4a21802e5d2b61a2",
+      "conserved": [
+        {
+          "symbol": "_AbsentCheckpoint",
+          "category": "sync_checkpoint"
+        },
+        {
+          "symbol": "_LostImportedCheckpointSession",
+          "category": "sync_checkpoint"
+        }
+      ],
+      "guard_tests_passed": 15,
+      "disposition": "Honest baseline3 and exact two conserved test declarations are supported within the reviewed ERP scope; do not rename/hide the error to avoid measurement. Must correct profile and measured evidence together and verify full clean-candidate derived scope. No waiver of detector, runtime Integrator migration, provider credential/egress retirement or DB qualification."
+    },
+    "source_hash_scope_note": "All 15 immutable ERP source hashes match bytes at 8776f410; bde50c9 is the current report comparison head, with the subsequent lineage/metadata source delta reviewed separately in its own artifact."
+  },
+  "hosted_qualification": {
+    "strict_fresh_canonical_pin": "None/unset; H==F not proven.",
+    "db_suites": "not claimed by this evidence audit",
+    "populated_0065_0066": "unsupported/fail-closed; no lossless predecessor acceptance claim",
+    "integration": "main integration/merge ancestry still planned after coordinator evidence",
+    "dependency_evidence": {
+      "run_id": 40757181473,
+      "run_head_sha": "e0c54a00f9512cfa2bfd0b6704596451d3fd4a8f",
+      "run_lock_blob": "2a5c1cc623e820caecf0aa79a656863fcb7fd0b8",
+      "same_as_current_head_lock": true,
+      "steps_observed": [
+        "Install dependencies: success",
+        "Dependency audit: success"
+      ],
+      "overall_run_conclusion": "failure at fresh schema discovery; DB qualification not established"
+    }
+  },
+  "paths": [
+    {
+      "path": ".dotmac/standards-profile.json",
+      "main_status": "modified",
+      "main_blob": "9bcd5bbee151d3d05c7a9b047d345d76fdf8fea3",
+      "local_blob": "2dba6bef398ba67e0af0e346c420589eb5e00775",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Reviewed current checkpoint-classification count3 and exact conserved test findings; pinned Governance conformance and 15 adoption guards pass. No detector waiver."
+    },
+    {
+      "path": "alembic/versions/0065_erp_progress_projection.py",
+      "main_status": "added",
+      "main_blob": "e6bc589b88a4af1cd08cd782eb28bd970addc3c5",
+      "local_blob": null,
+      "disposition": "legacy_populated_predecessor_held",
+      "reason": "Main-only populated-predecessor migration is intentionally not imported. Current D1 successor route is staged/guarded a007-a011; populated legacy 0065 path remains explicitly unsupported and fail-closed pending separate custody/no-loss proof."
+    },
+    {
+      "path": "alembic/versions/0066_erp_completion_checkpoint.py",
+      "main_status": "added",
+      "main_blob": "872ab24d0bbd568d2d99198eadf2a89176e0aa70",
+      "local_blob": null,
+      "disposition": "legacy_populated_predecessor_held",
+      "reason": "Main-only populated-predecessor checkpoint migration is intentionally not imported. Current D1 successor route is staged/guarded a007-a011; populated legacy 0066 path remains explicitly unsupported and fail-closed pending separate custody/no-loss proof."
+    },
+    {
+      "path": "app/cli.py",
+      "main_status": "modified",
+      "main_blob": "f36b65d0da698b38d43ef9faac65f88f7f7bb68c",
+      "local_blob": "224a441a95805a900ee5c3e65c34fbc1bbf852e8",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Keep canonical D1 adapters and ERP v2 command/report wording. Remaining cohort intake setters are explicitly unretired pending a new Learning owner API; no writer-closure claim."
+    },
+    {
+      "path": "app/config.py",
+      "main_status": "modified",
+      "main_blob": "aa6368fbefa9846a0b6c369e1a11430e7b557da2",
+      "local_blob": "fc7cb12c113da4b04bf2fcb01fc7dc7d5829cfec",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Retain main console body limit and D1 product settings/validators. Strict first-party CSP remains; no D1 production console deployment before separately authorized Kernel a108 scope/release/pin."
+    },
+    {
+      "path": "app/kernel_runtime.py",
+      "main_status": "modified",
+      "main_blob": "b585a8fe3cb4a8168be6c871c6ef71e07e9e98a5",
+      "local_blob": "cdda0596d232b095ae2d28c150444f4ca97eee97",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Use released a107 runtime/security facilities and exact signed console-POST path policy; no eager runtime construction."
+    },
+    {
+      "path": "app/models/__init__.py",
+      "main_status": "modified",
+      "main_blob": "0c59b8a5632f94d6b151907a3a41cb8cc51d8b7c",
+      "local_blob": "b727bce9f4e0c2bf0e828bfb670bd12ea50de8b0",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Register actual canonical Kernel/Learning owners and retained Academy models rather than legacy duplicate mappings."
+    },
+    {
+      "path": "app/models/completion.py",
+      "main_status": "modified",
+      "main_blob": "79804733cf2c6d7de2d9af370681b0a3ce7ed2e4",
+      "local_blob": "e15d03bd7a879e1a65d30f2ea11d0b52d8b24e44",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Facade reexports the actual Learning completion owner. ERP delivery markers are Academy-owned and no longer completion fields."
+    },
+    {
+      "path": "app/models/erp_completion_checkpoint.py",
+      "main_status": "added",
+      "main_blob": "b052dddfe4fe7327457705f3dd1cd721fd8fdd13",
+      "local_blob": "b057f88b204630d41e8729d3003020a7ecbd6905",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Academy owns raw acknowledgement/progress checkpoint and imported-key membership; canonical Learning completion FK retained. a005/a011 hosted conservation remains due."
+    },
+    {
+      "path": "app/services/certificates.py",
+      "main_status": "modified",
+      "main_blob": "b4faddff7942c82759a8ed7bf573177b288e600c",
+      "local_blob": "ea806aec4568e08abf191cdbe35054886729790d",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Retain current-main renderer/artwork behavior while preserving canonical issuance/notification; independent PDF/raster source review passes."
+    },
+    {
+      "path": "app/services/erp_sync.py",
+      "main_status": "modified",
+      "main_blob": "a33c9ec621cbbdca108990a5c0960918e850956b",
+      "local_blob": "9d61c8a84b99d11fa01ce832bb67fa2eb551253b",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Retain stable employee_ref/progress events through canonical read facts and Academy-only delivery custody; checkpoint/membership refusal prevents missing-import replay. No Learning writes."
+    },
+    {
+      "path": "app/web/console_proxy.py",
+      "main_status": "added",
+      "main_blob": "d8f23cb1b5ca844b3b6096c75d0f566e598a29b8",
+      "local_blob": "979512c291f53bd3f7a6a6bc54383f6518c353bc",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Port current-main streaming text/JavaScript rewrite and complete upstream cleanup; binary behavior, redirect confinement and bounded overlap reviewed."
+    },
+    {
+      "path": "app/web/labs.py",
+      "main_status": "modified",
+      "main_blob": "8066ab316e0a660d2d4d7995a5610a8ec39205b7",
+      "local_blob": "49674acc07a6e7f604829c1f3f52e1f2e8468ce8",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Port WebFig POST/cookies/redirect/polling while preserving canonical tenant/owner/entitlement and signed a107 CSRF checks; inherited malformed/encoded-dot redirects fixed."
+    },
+    {
+      "path": "content/management/figures-src/generate_cert_frame.py",
+      "main_status": "added",
+      "main_blob": "4ceb9e6c73e45408c783bb860c4a4df03a4d4229",
+      "local_blob": "4ceb9e6c73e45408c783bb860c4a4df03a4d4229",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "deploy/academy-erp-training-sync.timer",
+      "main_status": "modified",
+      "main_blob": "601e2e0da56d0076c1237a0ea39b56ddb1349c00",
+      "local_blob": "ff76273becc9fe26956b81ec4f096bdcce5625b9",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Same hourly schedule; description now accurately includes progress and completion delivery."
+    },
+    {
+      "path": "docs/2026-09-09-eager-reference-runtime-readiness-inventory.md",
+      "main_status": "added",
+      "main_blob": "96e6b710e563d2de6a67b16335424d6e103cd2dc",
+      "local_blob": "a806cbda50eeab4c91ac0a61d68fa67364839a72",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Preserve historical observations and append D1 source retirement disposition; no hosted runtime-readiness claim."
+    },
+    {
+      "path": "docs/SOT_RELATIONSHIP_MAP.md",
+      "main_status": "modified",
+      "main_blob": "f2546b19ab7f52570d10768b3df8de38fbf1ffa7",
+      "local_blob": "140dbcc912b79605ee54768f50d6e29a443cbe26",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Canonical Learning owns completion facts; Academy retains ERP delivery markers. No Integrator cutover is claimed."
+    },
+    {
+      "path": "docs/erp-training-events-v2.md",
+      "main_status": "added",
+      "main_blob": "a356662e41d044358d014067f8a44568212c159d",
+      "local_blob": "a573af109168d8e9665ccc1943c8a8a81b2138f5",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Document main stable employee_ref/progress contract and canonical D1 sender/checkpoint boundaries; populated legacy0065/0066 predecessor remains refused."
+    },
+    {
+      "path": "docs/external-connector-surface.md",
+      "main_status": "modified",
+      "main_blob": "20a18b24017be4680cddd20fc75fd69799c54059",
+      "local_blob": "3e5a4c2d96e20f84116e6312192d7411121ec639",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Preserve historical baseline and record independently reviewed current measured count3, source-only test conservation and existing Integrator/egress debt."
+    },
+    {
+      "path": "docs/inventories/kernel_identity_lineage_cutover.toml",
+      "main_status": "modified",
+      "main_blob": "45c6c718cf406665fc4a62cde216a9cbd9bb9970",
+      "local_blob": "4b0b7f7dfbadc0bd6e009a3b7b1e5d0c23e55807",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Append reviewed a011 source checkpoint while preserving a010 history and census26=10physical+16logical; design-only and production-false remain."
+    },
+    {
+      "path": "docs/kernel-runtime-composition.json",
+      "main_status": "modified",
+      "main_blob": "d6e6f98d94ef6e1a8ca87642bd4b6b481a015c3d",
+      "local_blob": "5bc167a6f5427abb9efe4c6d3112635167a0a737",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Released Kernel107/Learning3 plus current lock/runtime observations; nine pinned composition observations verify."
+    },
+    {
+      "path": "docs/runbooks/ERP_COMPLETION_CHECKPOINT.md",
+      "main_status": "added",
+      "main_blob": "2963a7ff66a73b35b8f7021ce4ddb98fb30a8234",
+      "local_blob": "409ad2b29182d62de3bc3a476397324bea59e0fc",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Document immutable raw acknowledgement/imported-key custody and fail-closed recovery. No hosted populated migration or production repair executed."
+    },
+    {
+      "path": "poetry.lock",
+      "main_status": "modified",
+      "main_blob": "95a76289745884d51c24807ab24772b15063a18b",
+      "local_blob": "2a5c1cc623e820caecf0aa79a656863fcb7fd0b8",
+      "disposition": "semantic_dependency_parity_verified",
+      "reason": "All main public package versions/artifact hashes retained. Intentional Kernel38->107 and added Learning3; same Pillow83 artifact pairs, order-only difference and unselected tests-extra metadata. Dependency install/audit passed at identical hosted lock; no DB proof."
+    },
+    {
+      "path": "static/fonts/certificate/Fraunces-SemiBold.ttf",
+      "main_status": "added",
+      "main_blob": "0b244f85e81276a478cfe3c983c706031538544f",
+      "local_blob": "0b244f85e81276a478cfe3c983c706031538544f",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/Manrope-Regular.ttf",
+      "main_status": "added",
+      "main_blob": "d2588e248282d7175c3b2aba4f105373fe9a2ec3",
+      "local_blob": "d2588e248282d7175c3b2aba4f105373fe9a2ec3",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/Manrope-SemiBold.ttf",
+      "main_status": "added",
+      "main_blob": "c4684f8bba3a2b124b7227432cc03e6469addc3a",
+      "local_blob": "c4684f8bba3a2b124b7227432cc03e6469addc3a",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/OFL-Pacifico.txt",
+      "main_status": "added",
+      "main_blob": "33864cc8de4dd3ea8f3daab1154be28577918bae",
+      "local_blob": "33864cc8de4dd3ea8f3daab1154be28577918bae",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/OFL-fraunces.txt",
+      "main_status": "added",
+      "main_blob": "22fa7ce5733434d0c634f6e55116f410858e938c",
+      "local_blob": "22fa7ce5733434d0c634f6e55116f410858e938c",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/OFL-manrope.txt",
+      "main_status": "added",
+      "main_blob": "472064afc4b8dec9079fab03b8ffafb617a1b2d8",
+      "local_blob": "472064afc4b8dec9079fab03b8ffafb617a1b2d8",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/fonts/certificate/Pacifico-Regular.ttf",
+      "main_status": "added",
+      "main_blob": "27765d02ac13f241b1e207dbda7b2dd1b68280da",
+      "local_blob": "27765d02ac13f241b1e207dbda7b2dd1b68280da",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/img/cert-frame.jpg",
+      "main_status": "added",
+      "main_blob": "4d687c8c4f3c758182931eec583b3ce8c3646475",
+      "local_blob": "4d687c8c4f3c758182931eec583b3ce8c3646475",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "static/img/cert-frame.png",
+      "main_status": "removed",
+      "main_blob": null,
+      "local_blob": null,
+      "disposition": "removed_in_current_main",
+      "reason": "Main deletes the PNG; current D1 has no PNG and exact main JPEG plus licensed fonts/generator."
+    },
+    {
+      "path": "templates/labs/_status.html",
+      "main_status": "modified",
+      "main_blob": "67a60306828cb11ec923b4e220d3e006c3d2f25a",
+      "local_blob": "67a60306828cb11ec923b4e220d3e006c3d2f25a",
+      "disposition": "exact_current_main_blob",
+      "reason": "Blob SHA is identical at local 8776f410 and immutable current-main 201cf4b."
+    },
+    {
+      "path": "tests/architecture/eager_reference_runtime_reach_baseline.txt",
+      "main_status": "added",
+      "main_blob": "1d626b4f2092261e2f8b54772ea2a367037c2e32",
+      "local_blob": "0b7429d4a22b3b7c0168a8bf4376ef697c21bc34",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Keep exact canonical-owner reachability inventory rather than obsolete legacy graph."
+    },
+    {
+      "path": "tests/architecture/test_eager_reference_runtime_reach.py",
+      "main_status": "added",
+      "main_blob": "b6498e181732ec653e5e03417f5ef64fe3153964",
+      "local_blob": "88e7be0da83b364a4b57d0d242932c48cc175690",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Five real entrypoint families with exact probe marker comparison and sensitivity controls; no substring false pass."
+    },
+    {
+      "path": "tests/architecture/test_erp_checkpoint_ownership.py",
+      "main_status": "added",
+      "main_blob": "1ebcab0a68bcc2d570da6043c670cc05016590fc",
+      "local_blob": null,
+      "disposition": "main_only_legacy_test_held_with_successor_contracts",
+      "reason": "Main-only guard is replaced by D1 canonical model ownership coverage including checkpoint markers and canonical completion references."
+    },
+    {
+      "path": "tests/architecture/test_kernel_identity_autogenerate_gate.py",
+      "main_status": "added",
+      "main_blob": "767b5b4cd35ba71ec3e836973258c0cca2643fb1",
+      "local_blob": "f7f5eebb0fc9bb4eb25f6b834184865fd696683b",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Real public Alembic dialect context refuses autogenerate before DB; actual installed-owner graph/missing/duplicate controls replace obsolete identity scanners."
+    },
+    {
+      "path": "tests/services/test_erp_sync.py",
+      "main_status": "modified",
+      "main_blob": "d373cb8d3ebd57fc7d83eb7502dfe6bf1a129617",
+      "local_blob": "e99ed85d12832551621af4cdbd2b9c92e630f47f",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Canonical Learning read facts plus Academy ERP v2 progress/acknowledgement expectations; mocked tests are not hosted transaction proof."
+    },
+    {
+      "path": "tests/test_erp_completion_checkpoint_migration.py",
+      "main_status": "added",
+      "main_blob": "73105e715607a9762791b0dfff989bf7dbe93a4d",
+      "local_blob": null,
+      "disposition": "main_only_legacy_test_held_with_successor_contracts",
+      "reason": "Main-only populated checkpoint migration test is not carried because legacy predecessor is held; D1 tests cover staged successor contracts, not populated-0066 no-loss."
+    },
+    {
+      "path": "tests/test_migration_0064_roundtrip.py",
+      "main_status": "modified",
+      "main_blob": "584d606a450282b2ad46a3c166b4e83b48826043",
+      "local_blob": null,
+      "disposition": "main_only_legacy_test_held_with_successor_contracts",
+      "reason": "Main-only migration-specific test is not carried; D1 frozen-history and ordinary-graph contracts use current canonical migration graph. Does not establish populated 0065/0066 acceptance."
+    },
+    {
+      "path": "tests/test_migration_roundtrip.py",
+      "main_status": "modified",
+      "main_blob": "55b930a6cc76577b6ffc5b61b4a7d08f4ebaaf7e",
+      "local_blob": "14bf5a045b1593ad7aeaabab5d11559ef42d6256",
+      "disposition": "intentional_canonical_port_or_current_inventory",
+      "reason": "Ordinary graph uses installed Kernel/Learning and a001-a011. Legacy history stays immutable frozen62 through0061; historical successors are separately held custody."
+    },
+    {
+      "path": "tests/web/test_console_proxy_rewrite.py",
+      "main_status": "added",
+      "main_blob": "ac186945fc152f3131c144fbf38bca362b23e81f",
+      "local_blob": null,
+      "disposition": "main_only_legacy_test_held_with_successor_contracts",
+      "reason": "Main-only proxy rewrite assertions are covered by D1 current WebFig proxy tests against canonical adapter."
+    },
+    {
+      "path": "tests/web/test_console_webfig_proxy.py",
+      "main_status": "added",
+      "main_blob": "45d04e8ebaac2d4afdd2b96be3fc01fde18e3622",
+      "local_blob": null,
+      "disposition": "main_only_legacy_test_held_with_successor_contracts",
+      "reason": "Main-only WebFig test module is replaced by current D1 proxy/auth/tenant tests and independently reviewed source."
+    }
+  ],
+  "dependency_parity": {
+    "main_lock_blob": "95a76289745884d51c24807ab24772b15063a18b",
+    "current_head_lock_blob": "2a5c1cc623e820caecf0aa79a656863fcb7fd0b8",
+    "hosted_run_40757181473_lock_blob": "2a5c1cc623e820caecf0aa79a656863fcb7fd0b8",
+    "package_count": {
+      "main": 91,
+      "head": 92
+    },
+    "main_only_package_versions": [
+      "dotmac-kernel==0.1.0a38"
+    ],
+    "head_only_package_versions": [
+      "dotmac-kernel==0.1.0a107",
+      "dotmac-learning==0.1.0a3"
+    ],
+    "other_shared_package_version_changes": [],
+    "changed_shared_package_records": [
+      {
+        "name": "pillow",
+        "version": "13.0.0",
+        "fields": [
+          "extras",
+          "files"
+        ]
+      }
+    ],
+    "security_fix_package_records": {
+      "dnspython": {
+        "main_version": "2.9.0",
+        "head_version": "2.9.0",
+        "package_record_identical": true
+      },
+      "fpdf2": {
+        "main_version": "2.8.8",
+        "head_version": "2.8.8",
+        "package_record_identical": true
+      },
+      "msgpack": {
+        "main_version": "1.2.3",
+        "head_version": "1.2.3",
+        "package_record_identical": true
+      }
+    },
+    "pillow_13_0_0": {
+      "main_file_count": 83,
+      "head_file_count": 83,
+      "filename_hash_pairs_equal": true,
+      "file_array_order_equal": false,
+      "extras_diff": {
+        "tests": {
+          "main": [
+            "coverage (>=7.4.2)",
+            "defusedxml",
+            "markdown2",
+            "olefile",
+            "packaging",
+            "pytest",
+            "pytest-cov",
+            "pytest-timeout",
+            "pytest-xdist",
+            "setuptools",
+            "trove-classifiers (>=2024.10.12)"
+          ],
+          "head": [
+            "coverage (>=7.4.2)",
+            "defusedxml",
+            "markdown2",
+            "olefile",
+            "packaging",
+            "psutil ; sys_platform == \"linux\" or sys_platform == \"darwin\"",
+            "pytest",
+            "pytest-cov",
+            "pytest-timeout",
+            "pytest-xdist",
+            "setuptools",
+            "trove-classifiers (>=2024.10.12)"
+          ]
+        }
+      },
+      "tests_extra_selected_by_project": false,
+      "project_declares": {
+        "fpdf2": "^2.8.7",
+        "pillow_extra_selection": null
+      }
+    },
+    "disposition": "No open runtime dependency-parity issue identified; preserve lock as-is. Do not rewrite solely to normalize ordering.",
+    "hosted_run_lock_source": "GitHub read-only fetch_file at commit e0c54a00f9512cfa2bfd0b6704596451d3fd4a8f; SHA matched current HEAD bde50c9 lock blob."
+  },
+  "lineage_metadata_review": {
+    "artifact": "/private/tmp/academy-d1-lineage-metadata-independent-review-20261028.json",
+    "sha256": "b123a90132525d58cc3be1f9203d51202730311da9daf2561e8e998263139815",
+    "matches_coordinator_supplied_sha256": true,
+    "scope_note": "Current bde50c9 lineage metadata/ADR change reviewed separately; ERP 15-path source review remains pinned to its 8776f410 ancestor."
+  },
+  "coordinator_disposition": {
+    "status": "REVIEWED_SOURCE_PORT_FOR_MAIN_ANCESTRY_NOT_C4_OR_C5_QUALIFICATION",
+    "source_baseline": "bde50c940192714cdb0608652e94417199565f64",
+    "main_parent": "201cf4bfb701c1ee5deb98c9b77dd4b21b299905",
+    "exact_object_transport": "All18commits,180trees,47missingblobs imported via GitHub read API and recomputed Git object SHA1; connectivity check passes; existing refs untouched during import.",
+    "record_source_sha256": "9d0848a9c9c8324e54a4ce8294b7a947b2ed40ac64641e229fe536f5eb349a1c",
+    "future_gates": [
+      "historical/fresh PostgreSQL convergence and separate fresh fingerprint pin",
+      "both exact-head hosted workflows",
+      "all displaced caller writers including CLI intake and demo seed",
+      "draft-only scratch bank rehearsal",
+      "production predecessor0065/0066 custody unsupported",
+      "separate production/kernel108/live-console/bank gates"
+    ]
+  }
+}

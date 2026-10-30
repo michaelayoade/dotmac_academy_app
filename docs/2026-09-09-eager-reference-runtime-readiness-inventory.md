@@ -1,3 +1,18 @@
+# D1 source integration disposition — 2026-10-28
+
+The pre-cutover inventory below is retained as historical evidence from main
+`201cf4b`. D1 uses Kernel `0.1.0a107` through the declared Academy database
+runtime and actual installed owner registry. Fresh interpreter probes of all
+five listed entry families now report no direct or transitive import of
+`dotmac_kernel.db`. This is a deliberate source retirement, not hosted database
+or production execution evidence. The two-directional baseline is changed to
+zero in the same source change; actual entry imports remain probed.
+
+The inherited probe used a substring comparison: `REACHED` also occurs inside
+`NOT_REACHED`. The integrated guard compares the exact final marker and tests
+both outcomes, so a negative child result cannot be counted as positive reach.
+The AST detector's planted import and prose near-miss controls remain in place.
+
 # `dotmac_kernel.db` runtime-readiness inventory — `dotmac_academy_app`
 
 **Status:** characterization only. No repin, no migration activation, no
@@ -400,3 +415,21 @@ close on CI, not locally:
   package installed, and that only happens inside CI's subprocess calls).
 - I did not verify mypy type-correctness of the new test file by any means;
   report this as an open gap rather than an inferred pass.
+
+
+## D1 source retirement — 2026-10-28: standalone demo writer
+
+The historical `scripts/seed_academy_demo.py:51-52` observation above is retained
+as history. The entrypoint now refuses with status 2 before configuration,
+credential reads or database/runtime imports. Its direct Kernel/Learning writes
+and embedded demo content are removed. Merely importing canonical model facades
+had preserved a second writer and did not satisfy caller retirement.
+
+`docs/runbooks/RETIRED_DEMO_SEED.md` maps operator setup to current canonical
+bootstrap, Admin/instructor authoring and draft-only import workflows. No
+one-command replacement or identical historical demo rows are promised.
+`tests/test_retired_demo_seed.py` exercises cold import/invocation, planted
+import/file/environment-access detection and secret non-echo. The watched
+scripts/tasks family remains in the eager guard; it is not excluded or waived.
+This source retirement does not execute bootstrap, qualify a database or
+establish C5/production acceptance.

@@ -8,11 +8,10 @@ so scanners cannot mint label values.
 Gunicorn runs multiple workers, each with its own process registry, so prod
 must set ``PROMETHEUS_MULTIPROC_DIR`` (a per-boot scratch dir, e.g. a systemd
 ``RuntimeDirectory``); the client library then aggregates across workers at
-scrape time (DB-derived snapshot gauges use ``mostrecent``, probe gauges
-``max``; see the comments at each gauge). Without the env var (dev, tests, single process) the default
+scrape time. Without the env var (dev, tests, single process) the default
 in-process registry is used.
 
-The ``/metrics`` endpoint itself lives in ``app.main`` and is inert unless
+The ``/metrics`` endpoint itself lives in ``app.operational`` and is inert unless
 ``METRICS_TOKEN`` is configured — the app is on the public internet, and
 operational metrics are internal.
 """
@@ -23,6 +22,9 @@ import logging
 import os
 import socket
 import time
+from dataclasses import dataclass
+from threading import Lock
+from uuid import UUID
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -34,6 +36,9 @@ from prometheus_client import (
     generate_latest,
     multiprocess,
 )
+from prometheus_client.core import GaugeMetricFamily
+
+from app.config import settings
 
 HTTP_REQUESTS = Counter(
     "academy_http_requests_total",
@@ -65,150 +70,138 @@ LAB_WRONG_HOST_REFUSALS = Counter(
     "Lab engine calls refused because this process is not on the declared lab host.",
 )
 
-# Pipeline state, as bounded snapshots. Labels are closed enumerations from the
-# models (7 applicant statuses, 6 lab statuses), so cardinality cannot grow with
-# traffic or data volume — per the Dotmac metrics-scrape safety rule. Refreshed
-# from ONE cheap grouped COUNT per family, cached, so scrapes carry a fixed
-# query budget rather than scaling with scrape frequency.
-# These gauges are DB snapshots, refreshed (TTL-cached) by whichever gunicorn
-# worker happens to serve a scrape. Every worker's mmap file keeps its last
-# written value, so multiprocess_mode="max" let a worker that last refreshed
-# while a lab was queued report queued=1 forever (false
-# AcademyLabsQueuedNotDraining alert). "mostrecent" takes the value from the
-# most recently written file, i.e. the freshest snapshot. Do not use "max"
-# here; "max" is only right for per-worker probes such as LAB_HOST_UP.
-APPLICANTS_BY_STATUS = Gauge(
-    "academy_applicants",
-    "Applicants by admissions pipeline status.",
-    ("status",),
-    multiprocess_mode="mostrecent",
-)
 
-LAB_INSTANCES_BY_STATUS = Gauge(
-    "academy_lab_instances",
-    "Lab instances by lifecycle status.",
-    ("status",),
-    multiprocess_mode="mostrecent",
-)
+# Pipeline series are deliberately absent from the process/mmap registry. They
+# belong to the authenticated request's snapshot, never a previous tenant.
+@dataclass(frozen=True)
+class PipelineSnapshot:
+    applicants: tuple[tuple[str, int], ...]
+    labs: tuple[tuple[str, int], ...]
+    valid: int
+    invalid: int
+    capacity: int
 
-LAB_CAPACITY = Gauge(
-    "academy_lab_capacity",
-    "Configured maximum concurrent lab instances.",
-    multiprocess_mode="mostrecent",
-)
 
-ENTRANCE_SITTINGS = Gauge(
-    "academy_entrance_sittings",
-    "Graded entrance sittings by validity ('valid', 'invalid').",
-    ("validity",),
-    multiprocess_mode="mostrecent",
-)
-
-_PROBE_TTL_SECONDS = 30.0
-_PROBE_TIMEOUT_SECONDS = 2.0
-_last_probe: tuple[float, float] = (0.0, 0.0)  # (checked_at, value)
-
-_PIPELINE_TTL_SECONDS = 60.0
-_last_pipeline_refresh = 0.0
-
+_probe_lock = Lock()
+_pipeline_lock = Lock()
+_last_probe: tuple[tuple[object, ...], float, float] | None = None
+_last_pipeline: tuple[tuple[object, ...], float, PipelineSnapshot] | None = None
 logger = logging.getLogger(__name__)
+_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "CONNECT", "TRACE"})
+_LAB_STATUSES = ("queued", "provisioning", "resetting", "active", "error", "reaped")
 
 
 def observe_request(*, method: str, route: str, status_code: int, duration_seconds: float) -> None:
-    status = f"{status_code // 100}xx"
+    method = method if method in _METHODS else "OTHER"
+    status = f"{status_code // 100}xx" if 100 <= status_code <= 599 else "other"
     HTTP_REQUESTS.labels(method=method, route=route, status=status).inc()
     HTTP_DURATION.labels(method=method, route=route).observe(duration_seconds)
 
 
 def refresh_lab_host_probe(host: str, port: int) -> None:
-    """Refresh :data:`LAB_HOST_UP` with a cached TCP reachability probe.
-
-    Called on scrape rather than from a background task so it works uniformly
-    across gunicorn workers. Cached for ``_PROBE_TTL_SECONDS`` and bounded by a
-    short timeout, so a down lab host cannot slow scrapes down materially.
-    A same-host deployment (loopback) is trivially up.
-    """
+    """One bounded cache entry, keyed by destination and process probe policy."""
     global _last_probe
-    now = time.monotonic()
-    checked_at, value = _last_probe
-    if checked_at and (now - checked_at) < _PROBE_TTL_SECONDS:
+    ttl = settings.metrics_lab_probe_ttl_seconds
+    timeout = settings.metrics_lab_probe_timeout_seconds
+    context = (host, port, timeout, ttl)
+    with _probe_lock:
+        now = time.monotonic()
+        if _last_probe is not None and _last_probe[0] == context and now - _last_probe[1] < ttl:
+            LAB_HOST_UP.set(_last_probe[2])
+            return
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                value = 1.0
+        except Exception:
+            logger.debug("lab host probe failed")
+            value = 0.0
+        _last_probe = (context, time.monotonic(), value)
         LAB_HOST_UP.set(value)
-        return
-    try:
-        with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_SECONDS):
-            value = 1.0
-    except OSError:
-        value = 0.0
-    except Exception:  # never let a probe break a scrape
-        logger.debug("lab host probe failed unexpectedly", exc_info=True)
-        value = 0.0
-    _last_probe = (now, value)
-    LAB_HOST_UP.set(value)
 
 
-def refresh_pipeline_metrics() -> None:
-    """Refresh the admissions/lab snapshot gauges from the database.
+def refresh_pipeline_metrics(tenant_id: UUID) -> PipelineSnapshot | None:
+    """Refresh three grouped counts and one capacity read in a tenant read-only transaction.
 
-    Cached for ``_PIPELINE_TTL_SECONDS``; three grouped COUNTs per refresh, so
-    the query cost is fixed regardless of how often Prometheus scrapes. Failures
-    are swallowed — stale gauges are far better than a broken scrape (and the
-    scrape target going down would mask everything else).
+    The cache holds only one context. A failed refresh may reuse its own stale
+    snapshot; another context's snapshot is never returned or rendered.
     """
-    global _last_pipeline_refresh
-    now = time.monotonic()
-    if _last_pipeline_refresh and (now - _last_pipeline_refresh) < _PIPELINE_TTL_SECONDS:
-        return
-    _last_pipeline_refresh = now
-    try:
-        from sqlalchemy import func, select
+    global _last_pipeline
+    ttl = settings.metrics_pipeline_ttl_seconds
+    context = (tenant_id, ttl)
+    with _pipeline_lock:
+        now = time.monotonic()
+        previous = _last_pipeline if _last_pipeline is not None and _last_pipeline[0] == context else None
+        if previous is not None and now - previous[1] < ttl:
+            return previous[2]
+        try:
+            from dotmac_kernel.session_runtime import resolve_database_runtime
+            from sqlalchemy import func, select
 
-        from app.models.admissions import APPLICANT_STATUSES, Applicant
-        from app.models.lab import LabInstance
-        from app.services import lab_jobs
-
-        with lab_jobs.admin_session() as db:
-            counts: dict[str, int] = {
-                str(k): int(v)
-                for k, v in db.execute(select(Applicant.status, func.count()).group_by(Applicant.status)).all()
-            }
-            # Emit every known status, including zeros: a status that vanishes
-            # from the query would otherwise keep its last value forever.
-            for status in APPLICANT_STATUSES:
-                APPLICANTS_BY_STATUS.labels(status=status).set(counts.get(status, 0))
-
-            lab_counts: dict[str, int] = {
-                str(k): int(v)
-                for k, v in db.execute(select(LabInstance.status, func.count()).group_by(LabInstance.status)).all()
-            }
-            for status in ("queued", "provisioning", "resetting", "active", "error", "reaped"):
-                LAB_INSTANCES_BY_STATUS.labels(status=status).set(lab_counts.get(status, 0))
-
-            sittings: dict[bool | None, int] = {
-                k: int(v)
-                for k, v in db.execute(
-                    select(Applicant.assessment_valid, func.count())
-                    .where(Applicant.assessment_taken_at.is_not(None))
-                    .group_by(Applicant.assessment_valid)
-                ).all()
-            }
-            ENTRANCE_SITTINGS.labels(validity="valid").set(sittings.get(True, 0))
-            ENTRANCE_SITTINGS.labels(validity="invalid").set(sittings.get(False, 0) + sittings.get(None, 0))
-
+            from app.models.admissions import APPLICANT_STATUSES, Applicant
+            from app.models.lab import LabInstance
             from app.services.settings_store import effective
 
-            LAB_CAPACITY.set(effective(db).max_concurrent_labs)
-    except Exception:  # never let a metrics query break a scrape
-        logger.debug("pipeline metrics refresh failed", exc_info=True)
+            runtime = resolve_database_runtime()
+            with runtime.readonly_session() as db, runtime.tenant_scope(db, tenant_id):
+                counts: dict[str, int] = dict(db.execute(
+                    select(Applicant.status, func.count())
+                    .where(Applicant.tenant_id == tenant_id).group_by(Applicant.status)
+                ).tuples().all())
+                labs: dict[str, int] = dict(db.execute(
+                    select(LabInstance.status, func.count())
+                    .where(LabInstance.tenant_id == tenant_id).group_by(LabInstance.status)
+                ).tuples().all())
+                sittings: dict[bool | None, int] = dict(db.execute(
+                    select(Applicant.assessment_valid, func.count())
+                    .where(Applicant.tenant_id == tenant_id, Applicant.assessment_taken_at.is_not(None))
+                    .group_by(Applicant.assessment_valid)
+                ).tuples().all())
+                capacity = int(effective(db).max_concurrent_labs)
+                candidate = PipelineSnapshot(
+                    applicants=tuple((status, int(counts.get(status, 0))) for status in APPLICANT_STATUSES),
+                    labs=tuple((status, int(labs.get(status, 0))) for status in _LAB_STATUSES),
+                    valid=int(sittings.get(True, 0)),
+                    invalid=int(sittings.get(False, 0)) + int(sittings.get(None, 0)),
+                    capacity=capacity,
+                )
+            _last_pipeline = (context, time.monotonic(), candidate)
+            return candidate
+        except Exception:
+            logger.debug("pipeline metrics refresh failed")
+            return previous[2] if previous is not None else None
 
 
-def render() -> tuple[bytes, str]:
-    """(payload, content_type) for the /metrics response.
+class _PipelineCollector:
+    def __init__(self, snapshot: PipelineSnapshot) -> None:
+        self.snapshot = snapshot
 
-    In multiprocess mode a fresh registry aggregates every worker's mmap'd
-    series; otherwise the default in-process registry is served directly.
-    """
+    def collect(self):
+        snapshot = self.snapshot
+        for name, description, label, values in (
+            ("academy_applicants", "Applicants by admissions pipeline status.", "status", snapshot.applicants),
+            ("academy_lab_instances", "Lab instances by lifecycle status.", "status", snapshot.labs),
+            ("academy_entrance_sittings", "Graded entrance sittings by validity ('valid', 'invalid').", "validity",
+             (("valid", snapshot.valid), ("invalid", snapshot.invalid))),
+        ):
+            family = GaugeMetricFamily(name, description, labels=[label])
+            for key, value in values:
+                family.add_metric([key], value)
+            yield family
+        yield GaugeMetricFamily(
+            "academy_lab_capacity", "Configured maximum concurrent lab instances.", value=snapshot.capacity,
+        )
+
+
+def render(*, snapshot: PipelineSnapshot | None = None) -> tuple[bytes, str]:
+    """Aggregate actual process metrics and append only this request's pipeline."""
     if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
         registry = CollectorRegistry()
         multiprocess.MultiProcessCollector(registry)
-        return generate_latest(registry), CONTENT_TYPE_LATEST
-    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+    else:
+        registry = REGISTRY
+    payload = generate_latest(registry)
+    if snapshot is not None:
+        pipeline = CollectorRegistry()
+        pipeline.register(_PipelineCollector(snapshot))
+        payload += generate_latest(pipeline)
+    return payload, CONTENT_TYPE_LATEST

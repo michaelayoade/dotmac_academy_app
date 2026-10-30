@@ -21,18 +21,15 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
+from app.config import LabExecutionPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.services import lab_lifecycle
 from app.services.exceptions import ConflictError
 from app.services.host_lock import HostLockUnavailable
 from app.services.labengine.interface import LabEngine, WrongLabHostError
-from app.services.settings_store import effective
 
 OPEN_STATES = ("queued", "claimed")
 KINDS = ("deploy", "destroy", "check")
-LEASE_SECONDS_BY_KIND = {"deploy": 1200, "destroy": 600, "check": 600}
-MAX_ATTEMPTS_BY_KIND = {"deploy": 3, "destroy": 5, "check": 3}
-RETRY_DELAY_SECONDS = 5
 _CAPACITY_LOCK_KEY = 0x44414C  # "DAL"; one global Academy lab-capacity lock.
 _BOOT_TOKEN = uuid4().hex[:8]
 # Marks a `last_error` recorded for an operator-placement refusal (wrong lab
@@ -145,9 +142,7 @@ def _select_open_operation(db: Session, instance: LabInstance) -> LabOperation |
     re-select (see :func:`enqueue`).
     """
     return db.scalars(
-        select(LabOperation)
-        .where(LabOperation.instance_id == instance.id)
-        .where(LabOperation.state.in_(OPEN_STATES))
+        select(LabOperation).where(LabOperation.instance_id == instance.id).where(LabOperation.state.in_(OPEN_STATES))
     ).first()
 
 
@@ -222,6 +217,7 @@ def claim_next(
     claimed_by: str,
     claimed_host: str | None = None,
     claimed_epoch: str | None = None,
+    policy: LabExecutionPolicy,
 ) -> LabOperation | None:
     """Claim the next ready operation; caller must commit immediately.
 
@@ -232,7 +228,7 @@ def claim_next(
     ``WorkerIdentity``), but callers that only need `claimed_by`'s existing
     fencing behavior (most of this test suite) may omit them.
     """
-    now = _now()
+    now = db.scalar(select(func.clock_timestamp()))
     op = db.scalars(
         select(LabOperation)
         .where(LabOperation.state == "queued")
@@ -245,11 +241,14 @@ def claim_next(
             ),
             LabOperation.requested_at.asc(),
         )
+        .execution_options(populate_existing=True)
         .with_for_update(skip_locked=True)
         .limit(1)
     ).first()
     if op is None:
         return None
+    now = db.scalar(select(func.clock_timestamp()))
+    op.claim_lease_seconds = policy.lease_seconds(op.kind)
     op.state = "claimed"
     op.claimed_by = claimed_by
     op.claimed_host = claimed_host
@@ -262,14 +261,37 @@ def claim_next(
 
 
 def heartbeat(db: Session, *, operation_id: UUID, claimed_by: str) -> bool:
-    result = cast(CursorResult, db.execute(
-        update(LabOperation)
+    # Lock acquisition must COMPLETE before the separate clock statement.
+    op = db.scalars(
+        select(LabOperation)
         .where(LabOperation.id == operation_id)
         .where(LabOperation.state == "claimed")
         .where(LabOperation.claimed_by == claimed_by)
-        .values(heartbeat_at=_now())
-    ))
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    ).first()
+    if op is None:
+        return False
+    _claimed_duration(op)
+    now = db.scalar(select(func.clock_timestamp()))
+    result = cast(
+        CursorResult,
+        db.execute(
+            update(LabOperation)
+            .where(LabOperation.id == operation_id)
+            .where(LabOperation.state == "claimed")
+            .where(LabOperation.claimed_by == claimed_by)
+            .values(heartbeat_at=now)
+        ),
+    )
     return bool(result.rowcount)
+
+
+def _claimed_duration(op: LabOperation) -> int:
+    duration = op.claim_lease_seconds
+    if type(duration) is not int or not 0 < duration <= 2147483647:
+        raise ValueError("claimed lab operation has no valid granted lease")
+    return duration
 
 
 def _refresh_claim(db: Session, *, operation_id: UUID, claimed_by: str) -> None:
@@ -302,13 +324,16 @@ def _settle(
     }
     if refund_attempt:
         values["attempts"] = func.greatest(LabOperation.attempts - 1, 0)
-    result = cast(CursorResult, db.execute(
-        update(LabOperation)
-        .where(LabOperation.id == operation_id)
-        .where(LabOperation.state == "claimed")
-        .where(LabOperation.claimed_by == claimed_by)
-        .values(**values)
-    ))
+    result = cast(
+        CursorResult,
+        db.execute(
+            update(LabOperation)
+            .where(LabOperation.id == operation_id)
+            .where(LabOperation.state == "claimed")
+            .where(LabOperation.claimed_by == claimed_by)
+            .values(**values)
+        ),
+    )
     return bool(result.rowcount)
 
 
@@ -324,6 +349,7 @@ def _clear_claim_fields(op: LabOperation) -> None:
     settlement (``_settle``, success or failure) does NOT call this: it
     deliberately retains these fields as audit provenance.
     """
+    op.claim_lease_seconds = None
     op.claimed_by = None
     op.claimed_host = None
     op.claimed_epoch = None
@@ -349,17 +375,28 @@ def _project_requeued_instance_state(instance: LabInstance, kind: str) -> None:
         instance.runtime_presence = "unknown"
 
 
-def _requeue_for_capacity(db: Session, op: LabOperation, instance: LabInstance) -> None:
+def _requeue_for_capacity(
+    db: Session,
+    op: LabOperation,
+    instance: LabInstance,
+    *,
+    policy: LabExecutionPolicy,
+) -> None:
     instance.status = "queued"
     op.state = "queued"
     _clear_claim_fields(op)
-    op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
+    op.not_before = _now() + timedelta(seconds=policy.lab_operation_retry_delay_seconds)
     op.last_error = None
     op.attempts = max(op.attempts - 1, 0)
     db.flush()
 
 
-def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
+def _requeue_operation_after_host_lock(
+    db: Session,
+    op: LabOperation,
+    *,
+    policy: LabExecutionPolicy,
+) -> None:
     """Return a claim's operation row to the queue after transient host-lock
     contention.
 
@@ -371,7 +408,7 @@ def _requeue_operation_after_host_lock(db: Session, op: LabOperation) -> None:
     """
     op.state = "queued"
     _clear_claim_fields(op)
-    op.not_before = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
+    op.not_before = _now() + timedelta(seconds=policy.lab_operation_retry_delay_seconds)
     op.last_error = None
     op.attempts = max(op.attempts - 1, 0)
     db.flush()
@@ -383,6 +420,7 @@ def _automatic_destroy_escalation_message(
     instance_id: UUID,
     current_operation_id: UUID,
     current_operation_attempts: int,
+    policy: LabExecutionPolicy,
 ) -> str | None:
     """Return an escalation message once cumulative automatic destroy
     ATTEMPTS for ``instance_id`` reach the destroy attempt ceiling, else
@@ -395,7 +433,7 @@ def _automatic_destroy_escalation_message(
     counting rows matters because a single operation that hangs and burns its
     full attempt budget via lease-expiry (``reconcile_stuck`` reclaiming and
     re-attempting the same row) already represents up to
-    ``MAX_ATTEMPTS_BY_KIND["destroy"]`` real attempts on its own — it must
+    ``policy.max_attempts("destroy")`` real attempts on its own — it must
     escalate at least as fast as that many separate single-attempt failures
     would, not need several more rows on top of it.
 
@@ -421,7 +459,7 @@ def _automatic_destroy_escalation_message(
     recent ``threshold`` failed rows are always enough to reach it if it can
     be reached at all.
     """
-    threshold = MAX_ATTEMPTS_BY_KIND["destroy"]
+    threshold = policy.max_attempts("destroy")
     last_deploy_success_at = db.scalar(
         select(func.max(LabOperation.finished_at))
         .where(LabOperation.instance_id == instance_id)
@@ -439,39 +477,24 @@ def _automatic_destroy_escalation_message(
         .where(
             or_(
                 LabOperation.last_error.is_(None),
-                ~LabOperation.last_error.startswith(
-                    _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
-                ),
+                ~LabOperation.last_error.startswith(_OPERATOR_REFUSAL_LAST_ERROR_PREFIX),
             )
         )
         .where(
             or_(
                 LabOperation.last_error.is_(None),
-                ~LabOperation.last_error.contains(
-                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True
-                ),
+                ~LabOperation.last_error.contains(_WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True),
             )
         )
     )
     if last_deploy_success_at is not None:
-        prior_failure_query = prior_failure_query.where(
-            LabOperation.finished_at > last_deploy_success_at
-        )
-    bounded = (
-        prior_failure_query.order_by(LabOperation.finished_at.desc())
-        .limit(threshold)
-        .subquery()
-    )
+        prior_failure_query = prior_failure_query.where(LabOperation.finished_at > last_deploy_success_at)
+    bounded = prior_failure_query.order_by(LabOperation.finished_at.desc()).limit(threshold).subquery()
     prior_attempts = int(db.scalar(select(func.sum(bounded.c.attempts))) or 0)
-    cumulative_attempts = min(
-        prior_attempts + current_operation_attempts, threshold
-    )
+    cumulative_attempts = min(prior_attempts + current_operation_attempts, threshold)
     if cumulative_attempts < threshold:
         return None
-    return (
-        f"automatic destroy failed {cumulative_attempts} times; "
-        "manual intervention required"
-    )
+    return f"automatic destroy failed {cumulative_attempts} times; " "manual intervention required"
 
 
 def _automatic_repair_deploy_escalation_message(
@@ -480,6 +503,7 @@ def _automatic_repair_deploy_escalation_message(
     instance_id: UUID,
     current_operation_id: UUID,
     current_operation_attempts: int,
+    policy: LabExecutionPolicy,
 ) -> str | None:
     """Return an escalation message once cumulative automatic repair-deploy
     ATTEMPTS for ``instance_id`` reach the deploy attempt ceiling, else
@@ -523,7 +547,7 @@ def _automatic_repair_deploy_escalation_message(
     branch, does not count as a healthy redeploy and must not reset this
     window either).
     """
-    threshold = MAX_ATTEMPTS_BY_KIND["deploy"]
+    threshold = policy.max_attempts("deploy")
     last_deploy_success_at = db.scalar(
         select(func.max(LabOperation.finished_at))
         .where(LabOperation.instance_id == instance_id)
@@ -542,40 +566,32 @@ def _automatic_repair_deploy_escalation_message(
         .where(
             or_(
                 LabOperation.last_error.is_(None),
-                ~LabOperation.last_error.startswith(
-                    _OPERATOR_REFUSAL_LAST_ERROR_PREFIX
-                ),
+                ~LabOperation.last_error.startswith(_OPERATOR_REFUSAL_LAST_ERROR_PREFIX),
             )
         )
         .where(
             or_(
                 LabOperation.last_error.is_(None),
-                ~LabOperation.last_error.contains(
-                    _WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True
-                ),
+                ~LabOperation.last_error.contains(_WRONG_LAB_HOST_LAST_ERROR_SUBSTRING, autoescape=True),
             )
         )
     )
     if last_deploy_success_at is not None:
-        prior_failure_query = prior_failure_query.where(
-            LabOperation.finished_at > last_deploy_success_at
-        )
-    bounded = (
-        prior_failure_query.order_by(LabOperation.finished_at.desc())
-        .limit(threshold)
-        .subquery()
-    )
+        prior_failure_query = prior_failure_query.where(LabOperation.finished_at > last_deploy_success_at)
+    bounded = prior_failure_query.order_by(LabOperation.finished_at.desc()).limit(threshold).subquery()
     prior_attempts = int(db.scalar(select(func.sum(bounded.c.attempts))) or 0)
     cumulative_attempts = min(prior_attempts + current_operation_attempts, threshold)
     if cumulative_attempts < threshold:
         return None
-    return (
-        f"automatic repair deploy failed {cumulative_attempts} times; "
-        "manual intervention required"
-    )
+    return f"automatic repair deploy failed {cumulative_attempts} times; " "manual intervention required"
 
 
-def _capacity_available(db: Session, instance: LabInstance) -> bool:
+def _capacity_available(
+    db: Session,
+    instance: LabInstance,
+    *,
+    policy: LabExecutionPolicy,
+) -> bool:
     """Serialize admission and evaluate the effective, global capacity limit.
 
     Capacity is now keyed off ``runtime_presence`` ("present" or "unknown"),
@@ -588,7 +604,7 @@ def _capacity_available(db: Session, instance: LabInstance) -> bool:
     capacity-counted" condition.
     """
     db.execute(select(func.pg_advisory_xact_lock(_CAPACITY_LOCK_KEY)))
-    cfg = effective(db)
+    cfg = policy
     consuming = int(
         db.scalar(
             select(func.count())
@@ -610,10 +626,7 @@ def _capacity_available(db: Session, instance: LabInstance) -> bool:
         or 0
     )
     tenant_limit = cfg.max_concurrent_labs_per_tenant or cfg.max_concurrent_labs
-    return (
-        consuming < cfg.max_concurrent_labs
-        and tenant_consuming < tenant_limit
-    )
+    return consuming < cfg.max_concurrent_labs and tenant_consuming < tenant_limit
 
 
 def _run_deploy(
@@ -663,6 +676,7 @@ def run_claimed(
     operation_id: UUID,
     claimed_by: str,
     engine: LabEngine,
+    policy: LabExecutionPolicy,
 ) -> str:
     """Execute and fenced-settle one claimed operation.
 
@@ -673,6 +687,8 @@ def run_claimed(
     if op is None or op.state != "claimed" or op.claimed_by != claimed_by:
         db.rollback()
         return "stale"
+    if _claimed_duration(op) != policy.lease_seconds(op.kind) or engine.execution_policy is not policy:
+        raise ValueError("claimed operation and engine must share their granted policy")
     instance = db.get(LabInstance, op.instance_id)
     if instance is None:
         if not _settle(
@@ -754,22 +770,25 @@ def run_claimed(
                     # docstring) is an accepted residual property, not a gap.
                     lab_lifecycle.resync_present_preliminary(db, instance, engine)
                 else:
-                    if not _capacity_available(db, instance):
-                        _requeue_for_capacity(db, op, instance)
+                    if not _capacity_available(
+                        db,
+                        instance,
+                        policy=policy,
+                    ):
+                        _requeue_for_capacity(
+                            db,
+                            op,
+                            instance,
+                            policy=policy,
+                        )
                         db.commit()
                         return "deferred"
-                    instance.status = (
-                        "resetting"
-                        if instance.status in ("active", "resetting")
-                        else "provisioning"
-                    )
+                    instance.status = "resetting" if instance.status in ("active", "resetting") else "provisioning"
                     instance.runtime_presence = "unknown"
                     db.commit()
                     refreshed_op = db.get(LabOperation, operation_id)
                     refreshed_instance = (
-                        db.get(LabInstance, refreshed_op.instance_id)
-                        if refreshed_op is not None
-                        else None
+                        db.get(LabInstance, refreshed_op.instance_id) if refreshed_op is not None else None
                     )
                     if (
                         refreshed_op is None
@@ -818,13 +837,21 @@ def run_claimed(
                     # but is JUST AS UNCONFIRMED as the escalated case for
                     # the purpose of resetting either escalation window.
                     settle_error = (
-                        f"{instance.error}; conditional deploy could not "
-                        "confirm runtime presence"
+                        f"{instance.error}; conditional deploy could not " "confirm runtime presence"
                         if instance.error
                         else "conditional deploy could not confirm runtime presence"
                     )
-            elif not _capacity_available(db, instance):
-                _requeue_for_capacity(db, op, instance)
+            elif not _capacity_available(
+                db,
+                instance,
+                policy=policy,
+            ):
+                _requeue_for_capacity(
+                    db,
+                    op,
+                    instance,
+                    policy=policy,
+                )
                 db.commit()
                 return "deferred"
             else:
@@ -832,9 +859,7 @@ def run_claimed(
                 # transaction lock before slow external work. A crash now
                 # leaves a counted transient state that reconcile_stuck() can
                 # repair and replay.
-                instance.status = (
-                    "resetting" if instance.status in ("active", "resetting") else "provisioning"
-                )
+                instance.status = "resetting" if instance.status in ("active", "resetting") else "provisioning"
                 # First/authoritative presence assignment for this deploy: this
                 # is the durable reservation, committed before slow external
                 # work, so a crash after this point must already treat the
@@ -842,11 +867,7 @@ def run_claimed(
                 instance.runtime_presence = "unknown"
                 db.commit()
                 refreshed_op = db.get(LabOperation, operation_id)
-                refreshed_instance = (
-                    db.get(LabInstance, refreshed_op.instance_id)
-                    if refreshed_op is not None
-                    else None
-                )
+                refreshed_instance = db.get(LabInstance, refreshed_op.instance_id) if refreshed_op is not None else None
                 if (
                     refreshed_op is None
                     or refreshed_instance is None
@@ -1010,7 +1031,11 @@ def run_claimed(
         # during the subsequent provision call, so blindly restoring the
         # pre-op presence would be a false projection. This is exactly the
         # ambiguity the conditional path above does NOT have.
-        _requeue_operation_after_host_lock(db, refreshed_op)
+        _requeue_operation_after_host_lock(
+            db,
+            refreshed_op,
+            policy=policy,
+        )
         db.commit()
         return "deferred"
     except Exception as exc:
@@ -1021,9 +1046,7 @@ def run_claimed(
             # retryable error. Never commit partial DB consequences from the
             # failed execution merely to settle the operation.
             observed_status = instance.__dict__.get("status")
-            deploy_failure_status = (
-                "active" if observed_status in ("active", "resetting") else "error"
-            )
+            deploy_failure_status = "active" if observed_status in ("active", "resetting") else "error"
             # Capture the presence observed just before rollback. A deploy
             # that fails after a successful destroy but before engine.deploy()
             # was ever invoked (e.g. topology preparation raises inside
@@ -1046,9 +1069,7 @@ def run_claimed(
                 # failed, or the failure happened before provision() ever set
                 # anything) stays conservatively "unknown" — a failed deploy
                 # alone cannot otherwise prove absence.
-                failed_instance.runtime_presence = (
-                    "absent" if observed_presence == "absent" else "unknown"
-                )
+                failed_instance.runtime_presence = "absent" if observed_presence == "absent" else "unknown"
                 if operation_origin == "runtime_repair" and operation_requested_by is None:
                     # Automatic (reconciler-triggered) repair deploys retry
                     # forever otherwise — see this function's own escalation
@@ -1059,6 +1080,7 @@ def run_claimed(
                         instance_id=operation_instance_id,
                         current_operation_id=operation_id,
                         current_operation_attempts=operation_attempts,
+                        policy=policy,
                     )
                     if escalation_message is not None:
                         failed_instance.status = "error"
@@ -1085,6 +1107,7 @@ def run_claimed(
                     instance_id=operation_instance_id,
                     current_operation_id=operation_id,
                     current_operation_attempts=operation_attempts,
+                    policy=policy,
                 )
                 if escalation_message is not None:
                     escalated_instance = db.get(LabInstance, operation_instance_id)
@@ -1127,6 +1150,7 @@ def _fail_operation_at_ceiling(
     *,
     now: datetime,
     last_error: str,
+    policy: LabExecutionPolicy,
 ) -> None:
     """Mark ``op`` "failed" instead of requeuing it, because it has already
     reached its kind's attempt ceiling (``MAX_ATTEMPTS_BY_KIND``).
@@ -1162,6 +1186,7 @@ def _fail_operation_at_ceiling(
             instance_id=op.instance_id,
             current_operation_id=op.id,
             current_operation_attempts=op.attempts,
+            policy=policy,
         )
         if escalation_message is not None:
             instance.status = "error"
@@ -1169,12 +1194,7 @@ def _fail_operation_at_ceiling(
             instance.error = escalation_message
             # Presence stays "unknown" (set above) — never forced to
             # "absent" by escalation.
-    if (
-        instance is not None
-        and op.kind == "deploy"
-        and op.origin == "runtime_repair"
-        and op.requested_by is None
-    ):
+    if instance is not None and op.kind == "deploy" and op.origin == "runtime_repair" and op.requested_by is None:
         # Same reasoning as the destroy branch above, for automatic
         # repair-deploy retries: a stuck/lease-expired/crash-reclaimed
         # conditional deploy is the same persistent-failure signal as a
@@ -1188,6 +1208,7 @@ def _fail_operation_at_ceiling(
             instance_id=op.instance_id,
             current_operation_id=op.id,
             current_operation_attempts=op.attempts,
+            policy=policy,
         )
         if escalation_message is not None:
             instance.status = "error"
@@ -1197,36 +1218,32 @@ def _fail_operation_at_ceiling(
             # "absent" by escalation.
 
 
-def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
+def reconcile_stuck(db: Session, *, policy: LabExecutionPolicy) -> int:
     """Return expired claims and pre-cutover in-flight instances to the queue."""
-    now = _now()
     claimed = db.scalars(
         select(LabOperation)
         .where(LabOperation.state == "claimed")
+        .execution_options(populate_existing=True)
         .with_for_update(skip_locked=True)
     ).all()
+    # Validate every locked claim before effects, and sample time AFTER locks.
+    durations = {op.id: _claimed_duration(op) for op in claimed}
+    now = cast(datetime, db.scalar(select(func.clock_timestamp())))
     stuck = [
         op
         for op in claimed
-        if (op.heartbeat_at or op.claimed_at or op.requested_at)
-        < now
-        - timedelta(
-            seconds=(
-                lease_seconds
-                if lease_seconds is not None
-                else LEASE_SECONDS_BY_KIND.get(op.kind, 600)
-            )
-        )
+        if (op.heartbeat_at or op.claimed_at or op.requested_at) < now - timedelta(seconds=durations[op.id])
     ]
     for op in stuck:
         instance = db.get(LabInstance, op.instance_id)
-        if op.attempts >= MAX_ATTEMPTS_BY_KIND.get(op.kind, 3):
+        if op.attempts >= policy.max_attempts(op.kind):
             _fail_operation_at_ceiling(
                 db,
                 op,
                 instance,
                 now=now,
                 last_error=f"worker lease expired after {op.attempts} attempts",
+                policy=policy,
             )
             continue
         if instance is not None:
@@ -1266,7 +1283,13 @@ def reconcile_stuck(db: Session, *, lease_seconds: int | None = None) -> int:
     return len(stuck) + len(missing)
 
 
-def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
+def reclaim_previous_epoch(
+    db: Session,
+    *,
+    host: str,
+    epoch: str,
+    policy: LabExecutionPolicy,
+) -> int:
     """One-shot startup scan: reclaim every claim this same host took under a
     DIFFERENT (previous, presumably crashed-or-replaced) worker epoch.
 
@@ -1318,20 +1341,23 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
     worker that predates migration 0059) — those remain lease-expiry-only,
     exactly as they were before this function existed.
     """
-    now = _now()
-    db.execute(text("SET LOCAL lock_timeout = '5s'"))
+    db.execute(select(func.set_config("lock_timeout", f"{policy.lab_restart_reclaim_lock_timeout_seconds}s", True)))
     matched = db.scalars(
         select(LabOperation)
         .where(LabOperation.state == "claimed")
         .where(LabOperation.claimed_host == host)
         .where(LabOperation.claimed_epoch.is_not(None))
         .where(LabOperation.claimed_epoch != epoch)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ).all()
     for op in matched:
+        _claimed_duration(op)
+    now = cast(datetime, db.scalar(select(func.clock_timestamp())))
+    for op in matched:
         instance = db.get(LabInstance, op.instance_id)
         old_epoch = op.claimed_epoch
-        if op.attempts >= MAX_ATTEMPTS_BY_KIND.get(op.kind, 3):
+        if op.attempts >= policy.max_attempts(op.kind):
             _fail_operation_at_ceiling(
                 db,
                 op,
@@ -1342,6 +1368,7 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
                     f"superseded by {epoch} on {host}, but already at "
                     f"attempt ceiling after {op.attempts} attempts"
                 ),
+                policy=policy,
             )
             continue
         if instance is not None:
@@ -1349,9 +1376,6 @@ def reclaim_previous_epoch(db: Session, *, host: str, epoch: str) -> int:
         op.state = "queued"
         _clear_claim_fields(op)
         op.not_before = now
-        op.last_error = (
-            f"restart reclaim: previous worker epoch {old_epoch} superseded "
-            f"by {epoch} on {host}"
-        )
+        op.last_error = f"restart reclaim: previous worker epoch {old_epoch} superseded " f"by {epoch} on {host}"
     db.flush()
     return len(matched)

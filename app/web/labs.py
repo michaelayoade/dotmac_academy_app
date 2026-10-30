@@ -21,22 +21,23 @@ from uuid import UUID
 
 import httpx
 import websockets
-from dotmac_kernel.db import SessionLocal
 from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
+from dotmac_kernel.session_runtime import resolve_database_runtime
+from dotmac_learning import LabResultRead, ScoreFact, read_lab_result
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
-from sqlalchemy import desc, select, text
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.deps import get_db, require_tenant
 from app.config import settings
-from app.models.assessment import Activity, Score, Submission
+from app.models.assessment import Activity
 from app.models.lab import LabInstance, LabOperation, LabTemplate
-from app.models.person import Person
 from app.models.tenant import Tenant
 from app.services import lab_console_activity, lab_lifecycle, web_auth
 from app.services.entitlements import require_course_open
+from app.services.identity import AcademyCurrentAccount
 from app.services.lab_content import render_instance_instructions
 from app.services.lab_operations import OPEN_STATES, enqueue
 from app.services.web_auth import require_web_user
@@ -61,7 +62,6 @@ logger = logging.getLogger(__name__)
 _NO_INSTANCE_INSTRUCTIONS = (
     "<p>Launch the lab to view your instance-specific instructions.</p>"
 )
-
 
 #: Instance states in which the learner has (or is getting) a lab, so the
 #: device logins are useful. ``error`` and ``reaped`` show none.
@@ -125,7 +125,7 @@ def _console_target(instance: LabInstance, node: str) -> str | None:
 def _require_instance_entitlement(
     db: Session,
     tenant: _TenantContext,
-    person: Person,
+    person: AcademyCurrentAccount,
     instance: LabInstance,
 ) -> None:
     """Re-check the owner is STILL entitled to the lab's course.
@@ -164,7 +164,7 @@ templates.env.globals["lab_console_live"] = _console_live
 def _authorize_console(
     db: Session,
     tenant: _TenantContext,
-    person: Person,
+    person: AcademyCurrentAccount,
     instance_id: UUID,
     node: str,
 ) -> str:
@@ -191,7 +191,6 @@ def _authorize_console(
     if target is None:
         raise HTTPException(status_code=404)
     return target
-
 
 # Methods the console proxy accepts. RouterOS WebFig polls and submits through
 # ``POST jsproxy``; HEAD is harmless. Nothing else (PUT/DELETE/PATCH/OPTIONS/...).
@@ -324,8 +323,7 @@ async def _proxy_http(request: Request, target: str) -> Response:
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
     )
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-    secure = request.url.scheme == "https" or forwarded_proto == "https"
+    secure = request.url.scheme == "https"
     for raw in upstream.headers.get_list("set-cookie")[:MAX_DEVICE_COOKIES]:
         cookie_out = rewrite_set_cookie(raw, prefix, secure)
         if cookie_out:
@@ -363,7 +361,9 @@ def _lab_template(db: Session, tenant: Tenant, activity_id: UUID) -> LabTemplate
     return tpl
 
 
-def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: UUID) -> LabInstance | None:
+def _current_instance(
+    db: Session, tenant: Tenant, person: AcademyCurrentAccount, activity_id: UUID
+) -> LabInstance | None:
     """Latest non-reaped instance for this person+activity, if any."""
     return db.scalars(
         select(LabInstance)
@@ -375,7 +375,7 @@ def _current_instance(db: Session, tenant: Tenant, person: Person, activity_id: 
     ).first()
 
 
-def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UUID) -> LabInstance:
+def _owned_instance(db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance_id: UUID) -> LabInstance:
     """Load a tenant-scoped instance, assert ownership (404/403) AND current
     entitlement to the lab's course (so revocation propagates to live instances)."""
     inst = db.scalars(
@@ -390,8 +390,8 @@ def _owned_instance(db: Session, tenant: Tenant, person: Person, instance_id: UU
 
 
 def _operation_score(
-    db: Session, tenant: Tenant, person: Person, instance: LabInstance, operation: LabOperation
-) -> Score | None:
+    db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance: LabInstance, operation: LabOperation
+) -> ScoreFact | None:
     """Read only the durable result inside this worker operation's window."""
     if (
         operation.tenant_id != tenant.id or operation.instance_id != instance.id
@@ -401,22 +401,20 @@ def _operation_score(
         or operation.finished_at < operation.claimed_at
     ):
         return None
-    return db.scalars(
-        select(Score)
-        .join(Submission, Score.submission_id == Submission.id)
-        .where(Score.tenant_id == tenant.id)
-        .where(Score.tenant_id == Submission.tenant_id)
-        .where(Submission.tenant_id == tenant.id)
-        .where(Submission.person_id == person.id)
-        .where(Submission.activity_id == instance.activity_id)
-        .where(Submission.answers["instance"].astext == str(instance.id))
-        .where(Submission.created_at >= operation.claimed_at)
-        .where(Submission.created_at <= operation.finished_at)
-        .order_by(Score.created_at.desc(), Score.id.desc())
-    ).first()
+    return read_lab_result(
+        db,
+        LabResultRead(
+            tenant_id=tenant.id,
+            person_id=person.id,
+            activity_id=instance.activity_id,
+            instance_id=instance.id,
+            claimed_at=operation.claimed_at,
+            finished_at=operation.finished_at,
+        ),
+    )
 
 
-def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabInstance) -> dict:
+def _result_context(db: Session, tenant: Tenant, person: AcademyCurrentAccount, instance: LabInstance) -> dict:
     """Recover current work and the last saved check for this runtime journey.
 
     A deploy request (including a reset that subsequently fails) invalidates the
@@ -459,7 +457,7 @@ def _result_context(db: Session, tenant: Tenant, person: Person, instance: LabIn
 def lab_detail(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Lab page: instructions + Launch (if none/reaped) or status/console/Check."""
@@ -497,7 +495,7 @@ def lab_detail(
 def lab_launch(
     activity_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Request a new lab instance (queued/provisioning) → status partial."""
@@ -520,7 +518,7 @@ def lab_launch(
 def lab_status(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """htmx polling target — current instance status + console links when active."""
@@ -536,7 +534,7 @@ def lab_status(
 def lab_check(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Enqueue worker-owned grading and return a polling partial."""
@@ -566,7 +564,7 @@ def lab_check(
 def lab_reset(
     instance_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Enqueue a worker-owned destroy-then-deploy reset/retry."""
@@ -616,7 +614,7 @@ def lab_reset(
 def lab_operation_status(
     operation_id: UUID,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Poll an owned operation; expose a completed check's durable score."""
@@ -652,7 +650,7 @@ async def console(
     instance_id: UUID,
     node: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Auth-gated reverse proxy to a lab node's web console (webfig/ttyd)."""
@@ -689,7 +687,7 @@ async def console_subpath(
     node: str,
     subpath: str,
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Auth-gated proxy for console sub-resources (ttyd assets/token, webfig).
@@ -700,7 +698,9 @@ async def console_subpath(
     tenant = require_tenant(request)
     target = _authorize_console(db, tenant, person, instance_id, node)
     safe = safe_subpath(subpath)
-    # Deliberately no heartbeat here: sub-resources are assets, tokens and
+    if request.method == "GET" and not safe:
+        _note_console_use(db, tenant, instance_id)  # trailing-slash index is an opening
+    # No heartbeat for non-index sub-resources: they are assets, tokens and
     # WebFig polling, not user action, so an idle open page must not keep a lab
     # alive. Typing is counted on the ttyd websocket; opening a console above.
     return await _proxy_http(request, _subpath_target(target, instance_id, node, safe))
@@ -763,20 +763,21 @@ async def _proxy_ws(websocket: WebSocket, upstream_url: str) -> None:
 
     await asyncio.gather(client_to_upstream(), upstream_to_client())
 
-
 _heartbeat_tasks: set[asyncio.Task] = set()
 
 
 def _write_console_heartbeat(tenant_id: UUID, instance_id: UUID) -> None:
-    """Short-lived session for one heartbeat write; failures are swallowed."""
-    db = SessionLocal()
+    """Short-lived session for one heartbeat write; failures are swallowed.
+
+    Uses the composed database runtime (session factory + tenant scope), the
+    same session authority ``console_ws`` itself resolves through.
+    """
+    runtime = resolve_database_runtime()
+    db = runtime.session_factory()
     try:
-        db.execute(
-            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-            {"tenant_id": str(tenant_id)},
-        )
-        lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
-        db.commit()
+        with runtime.tenant_scope(db, tenant_id):
+            lab_console_activity.record(db, tenant_id=tenant_id, instance_id=instance_id, throttled=False)
+            db.commit()
     except Exception as exc:
         lab_console_activity.warn_failure(instance_id, exc)
     finally:
@@ -798,22 +799,20 @@ async def console_ws(websocket: WebSocket, instance_id: UUID, node: str) -> None
         await websocket.close(code=1008)
         return
 
-    db = SessionLocal()
+    runtime = resolve_database_runtime()
+    db = runtime.session_factory()
     try:
-        db.execute(
-            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
-            {"tenant_id": str(tenant.id)},
-        )
-        person = web_auth._current_person(db, tenant.id, websocket.cookies.get(web_auth.COOKIE))
-        if person is None:
-            await websocket.close(code=1008)
-            return
-        try:
-            target = _authorize_console(db, tenant, person, instance_id, node)
-        except HTTPException:
-            await websocket.close(code=1008)
-            return
-        port = urlsplit(target).port
+        with runtime.tenant_scope(db, tenant.id):
+            person = web_auth._current_person(db, tenant.id, websocket.cookies.get(web_auth.COOKIE))
+            if person is None:
+                await websocket.close(code=1008)
+                return
+            try:
+                target = _authorize_console(db, tenant, person, instance_id, node)
+            except HTTPException:
+                await websocket.close(code=1008)
+                return
+            port = urlsplit(target).port
     finally:
         db.close()
 

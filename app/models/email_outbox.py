@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.models import Tenant
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -25,7 +26,7 @@ class EmailOutbox(Base, TimestampMixin):
     id: Mapped[UUID] = uuid_pk()
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

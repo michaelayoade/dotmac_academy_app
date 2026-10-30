@@ -33,9 +33,8 @@ Nothing in CI exercises either property today. This module proves both:
 
 Both tests use Alembic's own ``Config``/``ScriptDirectory``/
 ``MigrationContext``/``Operations`` APIs — never a hand-rolled
-reimplementation of the migration's SQL — and require a real Postgres via
-``TEST_MIGRATION_DATABASE_URL``, matching the ``admin_engine`` fixture's skip
-convention in ``tests/conftest.py``. They cannot be run on this workstation
+reimplementation of the migration's SQL — and require a real Postgres via the dedicated
+``ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL``; missing provisioning fails. They cannot be run on this workstation
 (no live Postgres here); see the accompanying report for what to
 double-check once CI actually executes them.
 """
@@ -44,26 +43,26 @@ from __future__ import annotations
 
 import os
 import pathlib
-from collections.abc import Iterator
-from contextlib import contextmanager
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 
 from alembic import command
-from alembic.config import Config
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from app.config import settings
+from tests.fixtures.kernel_identity_entry.rehearsal import FIXTURE, config_for, verify_legacy_source
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 # Fixed anchor points for this specific migration's round trip — not derived
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0066 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
+# repo head is now 0061 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
 # 0057/0058, and 0058/0059 tests are updated to assert against that instead of
 # assuming an earlier revision is still head.
 DOWN_REVISION = "0055_lab_operations"
@@ -75,7 +74,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # below stop silently assuming an earlier revision is head once a later one
 # exists — mirroring how the 0058->0059 transition itself updated this same
 # constant last time, rather than the fixed boundary constants below it.
-HEAD_REVISION = "0066_erp_completion_checkpoint"
+HEAD_REVISION = "0061_lab_completion_grants"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -121,41 +120,54 @@ LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD = frozenset(
 )
 
 
-def _migration_url() -> str:
-    url = os.getenv("TEST_MIGRATION_DATABASE_URL")
-    if not url:
-        pytest.skip("TEST_MIGRATION_DATABASE_URL not set — migration round-trip tests skipped")
-    return url
+@pytest.fixture(scope="module")
+def admin_engine(tmp_path_factory):
+    """Genuine frozen62 history in its own empty, committing legacy database.
 
-
-def _make_config() -> Config:
-    cfg = Config(str(ALEMBIC_INI))
-    # Set absolute so this works regardless of pytest's invocation cwd.
-    cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
-    return cfg
-
-
-@contextmanager
-def _migration_env(url: str) -> Iterator[None]:
-    """Point ``alembic/env.py``'s ``get_url()`` at the test database.
-
-    ``env.py`` reads ``MIGRATION_DATABASE_URL`` (falling back to
-    ``DATABASE_URL``) itself, rather than accepting a live connection through
-    ``Config`` — so ``command.upgrade``/``command.downgrade`` (which run
-    ``env.py`` as a script) need the env var set for the duration.
+    0056 commits internally, so surrounding this database with a rollback
+    cannot isolate these tests. It must be provisioned independently.
     """
-    previous = os.environ.get("MIGRATION_DATABASE_URL")
-    os.environ["MIGRATION_DATABASE_URL"] = url
+    verify_legacy_source()
+    raw_url = os.environ.get("ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL")
+    if not raw_url:
+        pytest.fail("ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL is required")
+    url = make_url(raw_url)
+    if url.drivername != "postgresql+psycopg" or url.username != "app_admin":
+        pytest.fail("legacy roundtrips require postgresql+psycopg and app_admin")
+    other_urls = [str(settings.database_url)]
+    other_urls.extend(value for name, value in os.environ.items()
+                      if name.endswith("DATABASE_URL") and name != "ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL")
+    if not url.database or any(make_url(other).database == url.database for other in other_urls if other):
+        pytest.fail("legacy roundtrip database must be distinct from every application/test database")
+    engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
     try:
-        yield
+        with engine.connect() as connection:
+            if connection.scalar(text("SELECT current_user")) != "app_admin":
+                pytest.fail("legacy roundtrip owner must be app_admin")
+            count = connection.scalar(text("""
+                SELECT count(*) FROM pg_catalog.pg_class c
+                JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')
+            """))
+            if count:
+                pytest.fail("legacy roundtrip database must start empty")
+            connection.rollback()
+            cfg = config_for(connection, FIXTURE / "alembic" / "versions",
+                             tmp_path_factory.mktemp("legacy-roundtrip-bootstrap"), [])
+            command.upgrade(cfg, HEAD_REVISION)
+        yield engine
     finally:
-        if previous is None:
-            os.environ.pop("MIGRATION_DATABASE_URL", None)
-        else:
-            os.environ["MIGRATION_DATABASE_URL"] = previous
+        engine.dispose()
 
 
-def _head_revision(cfg: Config) -> str | None:
+@pytest.fixture
+def migration_config(admin_engine, tmp_path):
+    verify_legacy_source()
+    with admin_engine.connect() as connection:
+        yield config_for(connection, FIXTURE / "alembic" / "versions", tmp_path / "legacy-env", [])
+
+
+def _head_revision(cfg) -> str | None:
     return ScriptDirectory.from_config(cfg).get_current_head()
 
 
@@ -287,11 +299,10 @@ def _assert_at_0055_grants(conn) -> None:
     )
 
 
-def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine, migration_config):
     """Two downgrade/upgrade cycles across 0056 reproduce the exact starting
     state — constraints, grants, and the recorded ``alembic_version``."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     head = _head_revision(cfg)
     assert head == HEAD_REVISION, (
@@ -310,27 +321,26 @@ def test_0056_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
             "lab_instances": LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD,
         }, "app_user's column-scoped INSERT grants at head don't match 0055/0056's exact column lists"
 
-    with _migration_env(url):
-        try:
-            # command.downgrade(cfg, DOWN_REVISION) from real head (now 0061)
-            # downgrades through every later revision first, landing at 0055 —
-            # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
-            # only cover grants/check-constraints that later revisions never
-            # touch, so passing through them en route doesn't affect what's
-            # asserted here.
-            command.downgrade(cfg, DOWN_REVISION)
-            with admin_engine.connect() as conn:
-                _assert_at_0055_grants(conn)
-            command.upgrade(cfg, TARGET_REVISION)
-            command.downgrade(cfg, DOWN_REVISION)
-            with admin_engine.connect() as conn:
-                _assert_at_0055_grants(conn)
-            command.upgrade(cfg, TARGET_REVISION)
-        finally:
-            # Regardless of outcome, leave the database at head so a failing
-            # or interrupted run here doesn't poison later tests in the same
-            # CI job.
-            command.upgrade(cfg, "head")
+    try:
+        # command.downgrade(cfg, DOWN_REVISION) from real head (now 0061)
+        # downgrades through every later revision first, landing at 0055 —
+        # this test's snapshots (_full_snapshot/_assert_at_0055_grants)
+        # only cover grants/check-constraints that later revisions never
+        # touch, so passing through them en route doesn't affect what's
+        # asserted here.
+        command.downgrade(cfg, DOWN_REVISION)
+        with admin_engine.connect() as conn:
+            _assert_at_0055_grants(conn)
+        command.upgrade(cfg, TARGET_REVISION)
+        command.downgrade(cfg, DOWN_REVISION)
+        with admin_engine.connect() as conn:
+            _assert_at_0055_grants(conn)
+        command.upgrade(cfg, TARGET_REVISION)
+    finally:
+        # Regardless of outcome, leave the database at head so a failing
+        # or interrupted run here doesn't poison later tests in the same
+        # CI job.
+        command.upgrade(cfg, "head")
 
     with admin_engine.connect() as conn:
         final = _full_snapshot(conn)
@@ -352,12 +362,11 @@ class _SimulatedCrash(RuntimeError):
     """
 
 
-def test_0056_interrupted_upgrade_is_resumable(admin_engine):
+def test_0056_interrupted_upgrade_is_resumable(admin_engine, migration_config):
     """A crash after the first ``ADD CONSTRAINT`` commits, but before
     ``upgrade()`` returns, leaves a partial state that a plain, unmodified
     rerun of ``alembic upgrade`` must repair rather than hard-fail on."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     head = _head_revision(cfg)
     assert head == HEAD_REVISION, (
@@ -384,70 +393,69 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
     recovered: dict[str, object] | None = None
     recovered_version: str | None = None
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION)
-            with admin_engine.connect() as conn:
-                _assert_at_0055_grants(conn)
+    try:
+        command.downgrade(cfg, DOWN_REVISION)
+        with admin_engine.connect() as conn:
+            _assert_at_0055_grants(conn)
 
-            # --- simulate a crash between the two halves of the "kind" ------
-            # constraint: op.execute() call #1 (the guarded ADD CONSTRAINT ...
-            # NOT VALID) runs for real and durably commits via its own
-            # autocommit_block(); call #2 (the first VALIDATE CONSTRAINT)
-            # raises instead of executing, standing in for the process dying
-            # right there.
-            with admin_engine.connect() as conn:
-                migration_context = MigrationContext.configure(connection=conn)
-                original_execute = Operations.execute
-                call_count = {"n": 0}
+        # --- simulate a crash between the two halves of the "kind" ------
+        # constraint: op.execute() call #1 (the guarded ADD CONSTRAINT ...
+        # NOT VALID) runs for real and durably commits via its own
+        # autocommit_block(); call #2 (the first VALIDATE CONSTRAINT)
+        # raises instead of executing, standing in for the process dying
+        # right there.
+        with admin_engine.connect() as conn:
+            migration_context = MigrationContext.configure(connection=conn)
+            original_execute = Operations.execute
+            call_count = {"n": 0}
 
-                def _fake_execute(self, sqltext, *, execution_options=None):
-                    call_count["n"] += 1
-                    if call_count["n"] == 2:
-                        raise _SimulatedCrash("simulated crash before VALIDATE CONSTRAINT ck_lab_operations_kind")
-                    return original_execute(self, sqltext, execution_options=execution_options)
+            def _fake_execute(self, sqltext, *, execution_options=None):
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    raise _SimulatedCrash("simulated crash before VALIDATE CONSTRAINT ck_lab_operations_kind")
+                return original_execute(self, sqltext, execution_options=execution_options)
 
-                # Patch the class before installing the `alembic.op` proxy —
-                # `_install_proxy()` binds `getattr(self, "execute")` once, at
-                # install time, so the patch must already be in place.
-                Operations.execute = _fake_execute
-                ops = Operations(migration_context)
-                ops._install_proxy()
-                try:
-                    with pytest.raises(_SimulatedCrash):
-                        upgrade_fn()
-                finally:
-                    # Operations.context()'s own contextmanager has no
-                    # try/finally around _remove_proxy(), so do it explicitly
-                    # here rather than relying on that path.
-                    ops._remove_proxy()
-                    Operations.execute = original_execute
+            # Patch the class before installing the `alembic.op` proxy —
+            # `_install_proxy()` binds `getattr(self, "execute")` once, at
+            # install time, so the patch must already be in place.
+            Operations.execute = _fake_execute
+            ops = Operations(migration_context)
+            ops._install_proxy()
+            try:
+                with pytest.raises(_SimulatedCrash):
+                    upgrade_fn()
+            finally:
+                # Operations.context()'s own contextmanager has no
+                # try/finally around _remove_proxy(), so do it explicitly
+                # here rather than relying on that path.
+                ops._remove_proxy()
+                Operations.execute = original_execute
 
-            with admin_engine.connect() as conn:
-                partial = _constraint_snapshot(conn)
-                assert "ck_lab_operations_kind" in partial, (
-                    "the first ADD CONSTRAINT's autocommit_block should have "
-                    "durably committed before the simulated crash"
-                )
-                assert (
-                    partial["ck_lab_operations_kind"]["validated"] is False
-                ), "the simulated crash happened before VALIDATE CONSTRAINT ran"
-                assert "ck_lab_operations_state" not in partial, "the second constraint's ADD statement never ran"
-                assert _current_version(conn) == DOWN_REVISION, (
-                    "upgrade() never returned, so alembic must not have " "recorded 0056 as applied"
-                )
+        with admin_engine.connect() as conn:
+            partial = _constraint_snapshot(conn)
+            assert "ck_lab_operations_kind" in partial, (
+                "the first ADD CONSTRAINT's autocommit_block should have "
+                "durably committed before the simulated crash"
+            )
+            assert (
+                partial["ck_lab_operations_kind"]["validated"] is False
+            ), "the simulated crash happened before VALIDATE CONSTRAINT ran"
+            assert "ck_lab_operations_state" not in partial, "the second constraint's ADD statement never ran"
+            assert _current_version(conn) == DOWN_REVISION, (
+                "upgrade() never returned, so alembic must not have " "recorded 0056 as applied"
+            )
 
-            # --- recovery: the real, unmodified migration code, no patching -
-            command.upgrade(cfg, TARGET_REVISION)
+        # --- recovery: the real, unmodified migration code, no patching -
+        command.upgrade(cfg, TARGET_REVISION)
 
-            with admin_engine.connect() as conn:
-                recovered = _full_snapshot(conn)
-                recovered_version = _current_version(conn)
-        finally:
-            # Regardless of outcome, leave the database at head so a failing
-            # or interrupted run here doesn't poison later tests in the same
-            # CI job.
-            command.upgrade(cfg, "head")
+        with admin_engine.connect() as conn:
+            recovered = _full_snapshot(conn)
+            recovered_version = _current_version(conn)
+    finally:
+        # Regardless of outcome, leave the database at head so a failing
+        # or interrupted run here doesn't poison later tests in the same
+        # CI job.
+        command.upgrade(cfg, "head")
 
     assert recovered == reference, (
         "recovering from the simulated crash did not converge on the same "
@@ -513,7 +521,7 @@ def _insert_lab_instance(conn, *, instance_id: str, tenant_id: str, instance_nam
     conn.commit()
 
 
-def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine, migration_config):
     """0056 <-> 0057 round trip: the unique index on ``instance_name`` is
     added and removed cleanly across repeated cycles, mirroring the
     0055/0056 round-trip test's shape (D1 above).
@@ -525,8 +533,7 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     the way 0056's ``autocommit_block`` statements could; there is nothing
     analogous to prove resumable here.
     """
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     # Checks the actual repo head (now 0061, not 0057 — see HEAD_REVISION):
     # this test's own upgrade/downgrade calls stay pinned to the 0056/0057
@@ -548,23 +555,22 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         baseline_index = _instance_name_index_snapshot(conn)
         assert baseline_index == {"unique": True, "columns": ["instance_name"]}
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION_0057)
-            with admin_engine.connect() as conn:
-                assert (
-                    _instance_name_index_snapshot(conn) is None
-                ), "downgrade must drop the unique index, not just rename it"
-            command.upgrade(cfg, TARGET_REVISION_0057)
-            command.downgrade(cfg, DOWN_REVISION_0057)
-            with admin_engine.connect() as conn:
-                assert _instance_name_index_snapshot(conn) is None
-            command.upgrade(cfg, TARGET_REVISION_0057)
-        finally:
-            # Regardless of outcome, leave the database at head so a failing
-            # or interrupted run here doesn't poison later tests in the same
-            # CI job.
-            command.upgrade(cfg, "head")
+    try:
+        command.downgrade(cfg, DOWN_REVISION_0057)
+        with admin_engine.connect() as conn:
+            assert (
+                _instance_name_index_snapshot(conn) is None
+            ), "downgrade must drop the unique index, not just rename it"
+        command.upgrade(cfg, TARGET_REVISION_0057)
+        command.downgrade(cfg, DOWN_REVISION_0057)
+        with admin_engine.connect() as conn:
+            assert _instance_name_index_snapshot(conn) is None
+        command.upgrade(cfg, TARGET_REVISION_0057)
+    finally:
+        # Regardless of outcome, leave the database at head so a failing
+        # or interrupted run here doesn't poison later tests in the same
+        # CI job.
+        command.upgrade(cfg, "head")
 
     with admin_engine.connect() as conn:
         final_index = _instance_name_index_snapshot(conn)
@@ -579,13 +585,12 @@ def test_0057_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     assert final_version == HEAD_REVISION
 
 
-def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
+def test_0057_never_rewrites_an_existing_instance_name(admin_engine, migration_config):
     """A row seeded with the OLD ``dal-<t8>-<p8>-<a8>-<n>`` name format must
     survive a 0056<->0057 downgrade/upgrade cycle with its id and
     ``instance_name`` byte-for-byte unchanged — 0057 only adds a constraint
     on future rows, it never touches existing values."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
     legacy_name = "dal-1a2b3c4d-5e6f7a8b-9c0d1e2f-3"
 
     with admin_engine.connect() as conn:
@@ -596,14 +601,13 @@ def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
         _insert_lab_instance(conn, instance_id=instance_id, tenant_id=tenant_id, instance_name=legacy_name)
 
     try:
-        with _migration_env(url):
-            try:
-                command.downgrade(cfg, DOWN_REVISION_0057)
-                command.upgrade(cfg, TARGET_REVISION_0057)
-                command.downgrade(cfg, DOWN_REVISION_0057)
-                command.upgrade(cfg, TARGET_REVISION_0057)
-            finally:
-                command.upgrade(cfg, "head")
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0057)
+            command.upgrade(cfg, TARGET_REVISION_0057)
+            command.downgrade(cfg, DOWN_REVISION_0057)
+            command.upgrade(cfg, TARGET_REVISION_0057)
+        finally:
+            command.upgrade(cfg, "head")
 
         with admin_engine.connect() as conn:
             row = conn.execute(
@@ -621,7 +625,7 @@ def test_0057_never_rewrites_an_existing_instance_name(admin_engine):
 
 
 def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_state(
-    admin_engine,
+    admin_engine, migration_config,
 ):
     """At 0056, two rows sharing an ``instance_name`` (impossible to persist
     at head once 0057's index exists, hence seeding directly at 0056) must
@@ -629,66 +633,64 @@ def test_0057_upgrade_fails_on_existing_duplicate_names_and_leaves_no_partial_st
     in the error, leave ``alembic_version`` at 0056, and leave no
     ``uq_lab_instances_instance_name`` index behind. Removing one of the two
     duplicate rows must then let the same upgrade succeed normally."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
     dup_name = "dal-duplicate-preexisting-name"
 
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
         tenant_id = _insert_tenant(conn, "roundtrip-0057-dupe")
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION_0057)
+    try:
+        command.downgrade(cfg, DOWN_REVISION_0057)
 
-            with admin_engine.connect() as conn:
-                first_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-                second_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-                _insert_lab_instance(conn, instance_id=first_id, tenant_id=tenant_id, instance_name=dup_name)
-                _insert_lab_instance(conn, instance_id=second_id, tenant_id=tenant_id, instance_name=dup_name)
+        with admin_engine.connect() as conn:
+            first_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            second_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+            _insert_lab_instance(conn, instance_id=first_id, tenant_id=tenant_id, instance_name=dup_name)
+            _insert_lab_instance(conn, instance_id=second_id, tenant_id=tenant_id, instance_name=dup_name)
 
-            with pytest.raises(Exception) as excinfo:
-                command.upgrade(cfg, TARGET_REVISION_0057)
-            message = str(excinfo.value)
-            assert dup_name in message, "the raised error must name the actual duplicate value"
-            # A bare "2" in message is not guard-sensitive — SQLAlchemy
-            # exception text commonly contains unrelated digits (e.g. a
-            # trailing `/e/20/...` documentation-link suffix), so assert the
-            # exact fragment the migration's `format('%s (x%s)', ...)` shape
-            # actually produces instead.
-            assert f"{dup_name} (x2)" in message, (
-                "the raised error must name the actual duplicate value's count "
-                "in the exact shape the migration's DO $$ block produces"
-            )
-
-            with admin_engine.connect() as conn:
-                assert (
-                    _current_version(conn) == DOWN_REVISION_0057
-                ), "a failed upgrade must not leave alembic_version at 0057"
-                assert (
-                    _instance_name_index_snapshot(conn) is None
-                ), "a failed upgrade must not leave the unique index behind"
-
-            # Remove one of the two duplicates and retry — must now succeed.
-            with admin_engine.connect() as conn:
-                conn.execute(text("DELETE FROM lab_instances WHERE id = :id"), {"id": second_id})
-                conn.commit()
-
+        with pytest.raises(Exception) as excinfo:
             command.upgrade(cfg, TARGET_REVISION_0057)
+        message = str(excinfo.value)
+        assert dup_name in message, "the raised error must name the actual duplicate value"
+        # A bare "2" in message is not guard-sensitive — SQLAlchemy
+        # exception text commonly contains unrelated digits (e.g. a
+        # trailing `/e/20/...` documentation-link suffix), so assert the
+        # exact fragment the migration's `format('%s (x%s)', ...)` shape
+        # actually produces instead.
+        assert f"{dup_name} (x2)" in message, (
+            "the raised error must name the actual duplicate value's count "
+            "in the exact shape the migration's DO $$ block produces"
+        )
 
-            with admin_engine.connect() as conn:
-                assert _current_version(conn) == TARGET_REVISION_0057
-                assert _instance_name_index_snapshot(conn) == {
-                    "unique": True,
-                    "columns": ["instance_name"],
-                }
-        finally:
-            with admin_engine.connect() as conn:
-                conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
-                conn.commit()
-            command.upgrade(cfg, "head")
-            with admin_engine.connect() as conn:
-                _delete_tenant(conn, tenant_id)
+        with admin_engine.connect() as conn:
+            assert (
+                _current_version(conn) == DOWN_REVISION_0057
+            ), "a failed upgrade must not leave alembic_version at 0057"
+            assert (
+                _instance_name_index_snapshot(conn) is None
+            ), "a failed upgrade must not leave the unique index behind"
+
+        # Remove one of the two duplicates and retry — must now succeed.
+        with admin_engine.connect() as conn:
+            conn.execute(text("DELETE FROM lab_instances WHERE id = :id"), {"id": second_id})
+            conn.commit()
+
+        command.upgrade(cfg, TARGET_REVISION_0057)
+
+        with admin_engine.connect() as conn:
+            assert _current_version(conn) == TARGET_REVISION_0057
+            assert _instance_name_index_snapshot(conn) == {
+                "unique": True,
+                "columns": ["instance_name"],
+            }
+    finally:
+        with admin_engine.connect() as conn:
+            conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
+            conn.commit()
+        command.upgrade(cfg, "head")
+        with admin_engine.connect() as conn:
+            _delete_tenant(conn, tenant_id)
 
 
 # --- 0058: worker-owned `lab_instances.runtime_presence` --------------------
@@ -761,12 +763,11 @@ def _select_runtime_presence(conn, instance_id: str) -> str:
     ).scalar()
 
 
-def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine, migration_config):
     """0057 <-> 0058 round trip: the column, its CHECK constraint, and the
     explicit grant posture are added and removed cleanly across repeated
     cycles, mirroring the 0055/0056 round-trip test's shape (D1 above)."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     head = _head_revision(cfg)
     assert head == HEAD_REVISION, (
@@ -792,21 +793,20 @@ def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
         assert baseline["grants"][("academy_lab_worker", "SELECT")] is True
         assert baseline["grants"][("academy_lab_worker", "UPDATE")] is True
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION_0058)
-            with admin_engine.connect() as conn:
-                assert (
-                    _runtime_presence_column_snapshot(conn) is None
-                ), "downgrade must drop the column, not just rename it"
-                assert _runtime_presence_constraint_snapshot(conn) is None
-            command.upgrade(cfg, TARGET_REVISION_0058)
-            command.downgrade(cfg, DOWN_REVISION_0058)
-            with admin_engine.connect() as conn:
-                assert _runtime_presence_column_snapshot(conn) is None
-            command.upgrade(cfg, TARGET_REVISION_0058)
-        finally:
-            command.upgrade(cfg, "head")
+    try:
+        command.downgrade(cfg, DOWN_REVISION_0058)
+        with admin_engine.connect() as conn:
+            assert (
+                _runtime_presence_column_snapshot(conn) is None
+            ), "downgrade must drop the column, not just rename it"
+            assert _runtime_presence_constraint_snapshot(conn) is None
+        command.upgrade(cfg, TARGET_REVISION_0058)
+        command.downgrade(cfg, DOWN_REVISION_0058)
+        with admin_engine.connect() as conn:
+            assert _runtime_presence_column_snapshot(conn) is None
+        command.upgrade(cfg, TARGET_REVISION_0058)
+    finally:
+        command.upgrade(cfg, "head")
 
     with admin_engine.connect() as conn:
         final = _runtime_presence_full_snapshot(conn)
@@ -820,12 +820,11 @@ def test_0058_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
     assert final_version == HEAD_REVISION
 
 
-def test_0058_backfill_is_exact_for_reaped_vs_every_other_status(admin_engine):
+def test_0058_backfill_is_exact_for_reaped_vs_every_other_status(admin_engine, migration_config):
     """`status == "reaped"` rows become "absent"; every other existing status
     becomes "unknown" — proven across a representative spread, not just one
     status each."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
     reaped_statuses = ("reaped",)
     non_reaped_statuses = ("queued", "provisioning", "active", "resetting", "error")
 
@@ -835,43 +834,42 @@ def test_0058_backfill_is_exact_for_reaped_vs_every_other_status(admin_engine):
 
     ids_by_status: dict[str, str] = {}
     try:
-        with _migration_env(url):
-            try:
-                command.downgrade(cfg, DOWN_REVISION_0058)
-                with admin_engine.connect() as conn:
-                    for status in (*reaped_statuses, *non_reaped_statuses):
-                        instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
-                        conn.execute(
-                            text(
-                                "INSERT INTO lab_instances "
-                                "(id, tenant_id, activity_id, person_id, instance_name, "
-                                "seed, status) VALUES "
-                                "(:id, :tenant_id, gen_random_uuid(), gen_random_uuid(), "
-                                ":name, '{}'::jsonb, :status)"
-                            ),
-                            {
-                                "id": instance_id,
-                                "tenant_id": tenant_id,
-                                "name": f"dal-backfill-{status}",
-                                "status": status,
-                            },
-                        )
-                        ids_by_status[status] = instance_id
-                    conn.commit()
+        try:
+            command.downgrade(cfg, DOWN_REVISION_0058)
+            with admin_engine.connect() as conn:
+                for status in (*reaped_statuses, *non_reaped_statuses):
+                    instance_id = str(conn.execute(text("SELECT gen_random_uuid()")).scalar())
+                    conn.execute(
+                        text(
+                            "INSERT INTO lab_instances "
+                            "(id, tenant_id, activity_id, person_id, instance_name, "
+                            "seed, status) VALUES "
+                            "(:id, :tenant_id, gen_random_uuid(), gen_random_uuid(), "
+                            ":name, '{}'::jsonb, :status)"
+                        ),
+                        {
+                            "id": instance_id,
+                            "tenant_id": tenant_id,
+                            "name": f"dal-backfill-{status}",
+                            "status": status,
+                        },
+                    )
+                    ids_by_status[status] = instance_id
+                conn.commit()
 
-                command.upgrade(cfg, TARGET_REVISION_0058)
+            command.upgrade(cfg, TARGET_REVISION_0058)
 
-                with admin_engine.connect() as conn:
-                    for status in reaped_statuses:
-                        assert (
-                            _select_runtime_presence(conn, ids_by_status[status]) == "absent"
-                        ), f"status={status!r} must backfill to 'absent'"
-                    for status in non_reaped_statuses:
-                        assert (
-                            _select_runtime_presence(conn, ids_by_status[status]) == "unknown"
-                        ), f"status={status!r} must backfill to 'unknown'"
-            finally:
-                command.upgrade(cfg, "head")
+            with admin_engine.connect() as conn:
+                for status in reaped_statuses:
+                    assert (
+                        _select_runtime_presence(conn, ids_by_status[status]) == "absent"
+                    ), f"status={status!r} must backfill to 'absent'"
+                for status in non_reaped_statuses:
+                    assert (
+                        _select_runtime_presence(conn, ids_by_status[status]) == "unknown"
+                    ), f"status={status!r} must backfill to 'unknown'"
+        finally:
+            command.upgrade(cfg, "head")
     finally:
         with admin_engine.connect() as conn:
             conn.execute(text("DELETE FROM lab_instances WHERE tenant_id = :id"), {"id": tenant_id})
@@ -989,12 +987,11 @@ def _claim_ownership_full_snapshot(conn) -> dict[str, object]:
     }
 
 
-def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine, migration_config):
     """0058 <-> 0059 round trip: both structural claim-ownership columns and
     the explicit grant posture are added and removed cleanly across repeated
     cycles, mirroring the 0057/0058 round-trip test's shape."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     head = _head_revision(cfg)
     assert head == HEAD_REVISION, (
@@ -1024,22 +1021,21 @@ def test_0059_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
             assert baseline["grants"][(column, "academy_lab_worker", "INSERT")] is True
             assert baseline["grants"][(column, "academy_lab_worker", "UPDATE")] is True
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION_0059)
-            with admin_engine.connect() as conn:
-                dropped = _claim_ownership_column_snapshot(conn)
-                assert dropped["claimed_host"] is None, "downgrade must drop claimed_host, not just rename it"
-                assert dropped["claimed_epoch"] is None, "downgrade must drop claimed_epoch, not just rename it"
-            command.upgrade(cfg, TARGET_REVISION_0059)
-            command.downgrade(cfg, DOWN_REVISION_0059)
-            with admin_engine.connect() as conn:
-                dropped_again = _claim_ownership_column_snapshot(conn)
-                assert dropped_again["claimed_host"] is None
-                assert dropped_again["claimed_epoch"] is None
-            command.upgrade(cfg, TARGET_REVISION_0059)
-        finally:
-            command.upgrade(cfg, "head")
+    try:
+        command.downgrade(cfg, DOWN_REVISION_0059)
+        with admin_engine.connect() as conn:
+            dropped = _claim_ownership_column_snapshot(conn)
+            assert dropped["claimed_host"] is None, "downgrade must drop claimed_host, not just rename it"
+            assert dropped["claimed_epoch"] is None, "downgrade must drop claimed_epoch, not just rename it"
+        command.upgrade(cfg, TARGET_REVISION_0059)
+        command.downgrade(cfg, DOWN_REVISION_0059)
+        with admin_engine.connect() as conn:
+            dropped_again = _claim_ownership_column_snapshot(conn)
+            assert dropped_again["claimed_host"] is None
+            assert dropped_again["claimed_epoch"] is None
+        command.upgrade(cfg, TARGET_REVISION_0059)
+    finally:
+        command.upgrade(cfg, "head")
 
     with admin_engine.connect() as conn:
         final = _claim_ownership_full_snapshot(conn)
@@ -1175,12 +1171,11 @@ def _insert_lab_operation(
     conn.commit()
 
 
-def test_0060_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
+def test_0060_downgrade_upgrade_roundtrip_is_idempotent(admin_engine, migration_config):
     """0059 <-> 0060 round trip: both columns, the CHECK constraint, and the
     explicit grant posture are added and removed cleanly across repeated
     cycles, mirroring the 0058/0059 round-trip test's shape."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     head = _head_revision(cfg)
     assert head == HEAD_REVISION, (
@@ -1212,23 +1207,22 @@ def test_0060_downgrade_upgrade_roundtrip_is_idempotent(admin_engine):
             assert baseline["grants"][(column, "academy_lab_worker", "INSERT")] is True
             assert baseline["grants"][(column, "academy_lab_worker", "UPDATE")] is True
 
-    with _migration_env(url):
-        try:
-            command.downgrade(cfg, DOWN_REVISION_0060)
-            with admin_engine.connect() as conn:
-                dropped = _conditional_column_snapshot(conn)
-                assert dropped["origin"] is None, "downgrade must drop origin, not just rename it"
-                assert dropped["runtime_precondition"] is None
-                assert _conditional_constraint_snapshot(conn) is None
-            command.upgrade(cfg, TARGET_REVISION_0060)
-            command.downgrade(cfg, DOWN_REVISION_0060)
-            with admin_engine.connect() as conn:
-                dropped_again = _conditional_column_snapshot(conn)
-                assert dropped_again["origin"] is None
-                assert dropped_again["runtime_precondition"] is None
-            command.upgrade(cfg, TARGET_REVISION_0060)
-        finally:
-            command.upgrade(cfg, "head")
+    try:
+        command.downgrade(cfg, DOWN_REVISION_0060)
+        with admin_engine.connect() as conn:
+            dropped = _conditional_column_snapshot(conn)
+            assert dropped["origin"] is None, "downgrade must drop origin, not just rename it"
+            assert dropped["runtime_precondition"] is None
+            assert _conditional_constraint_snapshot(conn) is None
+        command.upgrade(cfg, TARGET_REVISION_0060)
+        command.downgrade(cfg, DOWN_REVISION_0060)
+        with admin_engine.connect() as conn:
+            dropped_again = _conditional_column_snapshot(conn)
+            assert dropped_again["origin"] is None
+            assert dropped_again["runtime_precondition"] is None
+        command.upgrade(cfg, TARGET_REVISION_0060)
+    finally:
+        command.upgrade(cfg, "head")
 
     with admin_engine.connect() as conn:
         final = _conditional_full_snapshot(conn)
@@ -1363,14 +1357,13 @@ def test_0060_check_constraint_rejects_half_null_and_mismatched_tuples(
 
 
 @pytest.mark.parametrize("state", ["queued", "claimed"])
-def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine, state):
+def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine, migration_config, state):
     """A `queued` or `claimed` row with a non-null `runtime_precondition`
     must block the downgrade entirely — dropping the column out from under
     it would leave an old (pre-0060) worker to misinterpret a live
     conditional intent as an unconditional deploy/destroy. The schema,
     constraint, and columns must be left completely intact after refusing."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
@@ -1398,9 +1391,8 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
             )
             baseline = _conditional_full_snapshot(conn)
 
-        with _migration_env(url):
-            with pytest.raises(Exception, match="refusing to downgrade"):
-                command.downgrade(cfg, DOWN_REVISION_0060)
+        with pytest.raises(Exception, match="refusing to downgrade"):
+            command.downgrade(cfg, DOWN_REVISION_0060)
 
         with admin_engine.connect() as conn:
             assert _current_version(conn) == HEAD_REVISION, "a refused downgrade must leave alembic_version untouched"
@@ -1417,7 +1409,7 @@ def test_0060_downgrade_refuses_when_a_live_conditional_row_exists(admin_engine,
             _delete_tenant(conn, tenant_id)
 
 
-def test_0060_downgrade_refuses_offline_sql_generation_outright(admin_engine):
+def test_0060_downgrade_refuses_offline_sql_generation_outright(admin_engine, migration_config):
     """``0060``'s ``downgrade()`` must read live row state (whether any
     queued/claimed conditional operation exists) under a real database
     connection to decide whether to proceed — that decision cannot be made
@@ -1432,19 +1424,17 @@ def test_0060_downgrade_refuses_offline_sql_generation_outright(admin_engine):
     silently generate a downgrade script that — if ever applied — would drop
     ``origin``/``runtime_precondition`` out from under a live conditional
     operation with no live check having run at all."""
-    cfg = _make_config()
-    url = _migration_url()
+    cfg = migration_config
 
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
 
-    with _migration_env(url):
-        # ``--sql`` mode requires an explicit ``<fromrev>:<torev>`` range —
-        # unlike the online-mode calls elsewhere in this file, there is no
-        # live ``alembic_version`` for Alembic to read a starting point
-        # from, since offline mode never opens a connection at all.
-        with pytest.raises(RuntimeError, match="refusing to generate offline SQL"):
-            command.downgrade(cfg, f"{HEAD_REVISION}:{DOWN_REVISION_0060}", sql=True)
+    # ``--sql`` mode requires an explicit ``<fromrev>:<torev>`` range —
+    # unlike the online-mode calls elsewhere in this file, there is no
+    # live ``alembic_version`` for Alembic to read a starting point
+    # from, since offline mode never opens a connection at all.
+    with pytest.raises(RuntimeError, match="refusing to generate offline SQL"):
+        command.downgrade(cfg, f"{HEAD_REVISION}:{DOWN_REVISION_0060}", sql=True)
 
     with admin_engine.connect() as conn:
         assert (

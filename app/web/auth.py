@@ -37,9 +37,9 @@ def login(
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
-    person = web_auth.authenticate(db, tenant.id, email, password)
+    result = web_auth.sign_in(db, tenant_id=tenant.id, email=email, password=password)
     hx = request.headers.get("HX-Request")
-    if person is None:
+    if result is None:
         if hx:
             return PlainTextResponse("Invalid credentials", status_code=200)
         return templates.TemplateResponse(
@@ -48,15 +48,14 @@ def login(
             {"request": request, "error": "Invalid credentials"},
             status_code=401,
         )
-    token = web_auth.start_session(db, tenant.id, person.id)
-    access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
+    access = facilitator_access(db, tenant_id=tenant.id, person_id=result.account.id)
     redirect_to = "/instructor" if access.can_teach and not access.is_admin else "/"
     # No db.commit() here — get_db commits at request end (and a mid-route commit
     # would clear the transaction-scoped app.current_tenant GUC).
     resp = hx_redirect(request, redirect_to, hx_status=204)
     resp.set_cookie(
         web_auth.COOKIE,
-        token,
+        result.session_token,
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",

@@ -11,16 +11,16 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
-from app.models.person import Person
 from app.services import ical as ical_service
 from app.services import todo as todo_service
+from app.services.identity import AcademyCurrentAccount
 from app.services.web_auth import require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
-def _context(request: Request, db: Session, person: Person, *, feed_token: str | None) -> dict:
+def _context(request: Request, db: Session, person: AcademyCurrentAccount, *, feed_token: str | None) -> dict:
     tenant = require_tenant(request)
     return {
         "timeline": todo_service.timeline_for_person(db, tenant_id=tenant.id, person_id=person.id),
@@ -32,7 +32,7 @@ def _context(request: Request, db: Session, person: Person, *, feed_token: str |
 @router.get("/todo", response_class=HTMLResponse)
 def todo_page(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     return templates.TemplateResponse(
@@ -43,12 +43,15 @@ def todo_page(
 @router.post("/todo/calendar-feed", response_class=HTMLResponse)
 def rotate_feed_token(
     request: Request,
-    person: Person = Depends(require_web_user),
+    person: AcademyCurrentAccount = Depends(require_web_user),
     db: Session = Depends(get_db),
 ):
     """Mint (or rotate) the iCal feed token; the raw value is shown exactly once."""
     tenant = require_tenant(request)
     raw = ical_service.mint_feed_token(db, tenant_id=tenant.id, person_id=person.id)
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "todo/index.html", _context(request, db, person, feed_token=raw)
     )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response

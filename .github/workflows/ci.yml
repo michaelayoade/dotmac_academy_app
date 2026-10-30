@@ -11,7 +11,7 @@ jobs:
 
     services:
       db:
-        image: postgres:16
+        image: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
         env:
           POSTGRES_PASSWORD: academy_super
           POSTGRES_DB: academy
@@ -24,25 +24,63 @@ jobs:
           --health-retries 15
 
     env:
-      MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
+      # Composed migration authority (alembic/env.py validate_migration_authority):
+      # migrations run as the bootstrapped BYPASSRLS non-superuser app_admin, and
+      # both the login and effective role must be declared here. The superuser
+      # `postgres` DSN is refused by the composed environment. Passwords are the
+      # throwaway CI-service values from scripts/initdb-roles.sql.
+      MIGRATION_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy
+      MIGRATION_LOGIN_ROLE: app_admin
+      MIGRATION_EFFECTIVE_ROLE: app_admin
       TEST_DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
       # Some modules build their engine from DATABASE_URL at import time (before the
       # conftest fixture can patch it), so it must be present in the job env too.
       DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy
-      TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy
+      TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy
       # Separate disposable database: canonical-entry rehearsals must never move
       # relations in the database used by the application tests.
       KERNEL_ENTRY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_kernel_entry
       RETAINED_SCHEMA_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_schema
       RETAINED_ENVIRONMENT_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_environment
+      RETAINED_HISTORY_DATABASE_URL: postgresql+psycopg://postgres:academy_super@localhost:5437/academy_retained_history
+      # Dedicated empty catalog databases for the hosted-only gates. Both run as
+      # app_admin: the ordinary-graph supplied-connection tests and the account
+      # token fresh-entry assembly revision require that exact session identity.
+      ACADEMY_MIGRATION_GRAPH_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_migration_graph
+      ACCOUNT_TOKEN_FRESH_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_account_token_fresh
+      ACADEMY_FRESH_ENTRY_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_fresh_entry
+      ACADEMY_FACILITATOR_RUNTIME_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_facilitator_runtime
+      ACADEMY_LEGACY_ROUNDTRIP_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_legacy_roundtrip
+      # Non-secret provisioning marker, tied to this exact controlled CI run.
+      ACADEMY_CI_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      ACADEMY_CI_DATABASE_MARKER: academy-ci:${{ github.run_id }}:${{ github.run_attempt }}:${{ github.event.pull_request.head.sha || github.sha }}
       # Explicit non-secret hosted protocol declarations, before observation.
-      ACADEMY_RETAINED_EXPECTED_TARGET_DATABASE: academy_retained_environment
+      # Three distinct disposable targets, one per purpose (environment, history,
+      # assembly); scripts/declare_retained_hosted_bindings.py refuses otherwise
+      # and renders ACADEMY_RETAINED_{ENVIRONMENT,HISTORY,ASSEMBLY}_BINDINGS and
+      # ACADEMY_HOSTED_GENESIS_DECLARATION from these predeclared values only.
+      ACADEMY_RETAINED_EXPECTED_ENVIRONMENT_TARGET_DATABASE: academy_retained_environment
+      ACADEMY_RETAINED_EXPECTED_HISTORY_TARGET_DATABASE: academy_retained_history
+      ACADEMY_RETAINED_EXPECTED_ASSEMBLY_TARGET_DATABASE: academy_retained_assembly
+      ACADEMY_RETAINED_EXPECTED_PLATFORM: linux/amd64
+      ACADEMY_RETAINED_EXPECTED_ICU_LOCALE: 'null'
       ACADEMY_RETAINED_EXPECTED_SETUP_SESSION: postgres
       ACADEMY_RETAINED_EXPECTED_ENCODING: UTF8
       ACADEMY_RETAINED_EXPECTED_LOCALE_PROVIDER: c
       ACADEMY_RETAINED_EXPECTED_LC_COLLATE: en_US.utf8
       ACADEMY_RETAINED_EXPECTED_LC_CTYPE: en_US.utf8
       ACADEMY_RETAINED_EXPECTED_EXTENSION_VERSIONS: '[ ["plpgsql", "1.0"] ]'
+      # Immutable image identity and the facts of that exact image are entered as
+      # typed repository variables (Settings > Variables), never guessed here:
+      #   ACADEMY_RETAINED_PG_IMAGE              name@sha256:<64 hex>  (PostgreSQL 16)
+      #   ACADEMY_RETAINED_PG_SERVER_VERSION_NUM e.g. 16xxxx (major*10000+minor)
+      #   ACADEMY_RETAINED_PG_COLLATION_VERSION  glibc version of that image
+      # An unset variable renders an empty declaration and the declare step
+      # refuses (fail closed).
+      ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
+      ACADEMY_RETAINED_EXPECTED_SERVER_VERSION_NUM: ${{ vars.ACADEMY_RETAINED_PG_SERVER_VERSION_NUM }}
+      ACADEMY_RETAINED_EXPECTED_COLLATION_VERSION: '"${{ vars.ACADEMY_RETAINED_PG_COLLATION_VERSION }}"'
+      ACADEMY_RETAINED_EXPECTED_ACTUAL_COLLATION_VERSION: '"${{ vars.ACADEMY_RETAINED_PG_COLLATION_VERSION }}"'
       # Real dedicated-role evidence for lab-worker privilege tests (see
       # tests/services/test_lab_worker_privileges.py) — distinct from the
       # migration/superuser DSN above.
@@ -60,7 +98,27 @@ jobs:
       POETRY_HTTP_BASIC_FORGEJO_PASSWORD: ${{ secrets.FORGEJO_READ_TOKEN }}
 
     steps:
+      - name: Verify immutable PostgreSQL service image
+        env:
+          IMAGE: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
+          SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE" =~ ^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo 'Immutable PostgreSQL service image declaration required' >&2
+            exit 1
+          fi
+          service_image_id=$(docker inspect "$SERVICE_CONTAINER_ID" --format '{{.Image}}')
+          declared_image_id=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          if [[ -z "$service_image_id" || "$service_image_id" != "$declared_image_id" ]]; then
+            echo 'PostgreSQL service image does not match its declaration' >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -94,14 +152,26 @@ jobs:
         run: npm ci
 
       - name: Bootstrap DB roles
+        if: '!cancelled()'
         env:
           PGPASSWORD: academy_super
         run: psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 -f scripts/initdb-roles.sql
 
-      - name: Run migrations
-        run: poetry run alembic upgrade head
+      # Cluster-level roles the Kernel outbox migrations would otherwise try to
+      # CREATE; app_admin has no CREATEROLE, and a module migration must never
+      # create roles. They must exist before the migration step.
+      - name: Bootstrap outbox dispatcher roles
+        if: '!cancelled()'
+        env:
+          PGPASSWORD: academy_super
+        run: |
+          psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          SQL
 
       - name: Bootstrap isolated Kernel entry rehearsal database
+        if: '!cancelled()'
         env:
           PGPASSWORD: academy_super
         run: |
@@ -109,8 +179,12 @@ jobs:
           CREATE DATABASE academy_kernel_entry OWNER app_admin;
           CREATE DATABASE academy_retained_schema OWNER app_admin;
           CREATE DATABASE academy_retained_environment OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
-          CREATE ROLE outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
-          CREATE ROLE platform_outbox_dispatcher LOGIN NOSUPERUSER NOBYPASSRLS;
+          CREATE DATABASE academy_migration_graph OWNER app_admin;
+          CREATE DATABASE academy_account_token_fresh OWNER app_admin;
+          CREATE DATABASE academy_fresh_entry OWNER app_admin;
+          CREATE DATABASE academy_facilitator_runtime OWNER app_admin;
+          CREATE DATABASE academy_legacy_roundtrip OWNER app_admin;
+          CREATE DATABASE academy_retained_history OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
           SQL
           psql -h localhost -p 5437 -U postgres -d academy_kernel_entry -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
@@ -121,16 +195,56 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy_retained_environment -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
+          psql -h localhost -p 5437 -U postgres -d academy_retained_history -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_migration_graph -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_account_token_fresh -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_fresh_entry -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_facilitator_runtime -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy_legacy_roundtrip -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
+          psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 -v ci_marker="$ACADEMY_CI_DATABASE_MARKER" <<'SQL'
+          ALTER DATABASE academy OWNER TO app_admin;
+          COMMENT ON DATABASE academy IS :'ci_marker';
+          SQL
 
       - name: Declare hosted environment expectations before profile observation
-        env:
-          ACADEMY_RETAINED_SERVICE_CONTAINER_ID: ${{ job.services.db.id }}
+        if: '!cancelled()'
         run: poetry run python scripts/declare_retained_hosted_bindings.py
+
+      # Discovery never commits or qualifies the DB. Before an independently
+      # reviewed H==F pin exists this canary supplies evidence, then the strict
+      # bootstrap below refuses. A discovery-only run cannot qualify this PR.
+      - name: Discover historical and fresh schema convergence without commit
+        if: '!cancelled()'
+        run: >-
+          poetry run pytest -q -s
+          tests/test_fresh_product_entry_hosted.py::test_historical_and_fresh_catalogs_converge
+          --junitxml=artifacts/convergence.xml
+
+      - name: Bootstrap qualified empty composed application database
+        run: poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy
+
+      - name: Verify ordinary migration CLI is a no-op and verify committed schema
+        run: |
+          poetry run python -m app.migration_cli upgrade heads
+          poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy --verify-only
 
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
       # them in one run instead of peeling them off one push at a time.
       - name: Lint (ruff)
+        if: '!cancelled()'
         run: poetry run ruff check .
 
       - name: Type check (mypy)
@@ -151,11 +265,17 @@ jobs:
         if: '!cancelled()'
         run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
 
+      - name: Refuse unreviewed test skips
+        if: '!cancelled()'
+        run: poetry run python scripts/check_ci_test_skips.py artifacts/pytest.xml tests/ci_skip_allowlist.txt
+
       - name: Retain hosted rehearsal execution evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: academy-hosted-tests-${{ github.run_id }}
-          path: artifacts/pytest.xml
+          path: |
+            artifacts/pytest.xml
+            artifacts/convergence.xml
           if-no-files-found: error
           retention-days: 30

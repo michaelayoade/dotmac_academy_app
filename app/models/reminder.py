@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from dotmac_kernel.models import Party, PartyPerson, Tenant
 from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -44,15 +45,21 @@ STATUS_SKIPPED = "skipped"
 class ReminderLog(Base, TimestampMixin):
     __tablename__ = "reminder_log"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "person_id", "occurrence_key",
-                         name="uq_reminder_log_occurrence"),
-        ForeignKeyConstraint(["tenant_id", "person_id"],
-                             ["people.tenant_id", "people.id"],
-                             ondelete="CASCADE", name="fk_reminder_log_tenant_person"),
+        UniqueConstraint("tenant_id", "person_id", "occurrence_key", name="uq_reminder_log_occurrence"),
+        ForeignKeyConstraint(
+            ["tenant_id", "person_id"],
+            [Party.__table__.c.tenant_id, Party.__table__.c.id],
+            ondelete="CASCADE",
+            name="fk_reminder_log_tenant_person",
+        ),
+        ForeignKeyConstraint(
+            ["person_id"], [PartyPerson.__table__.c.party_id], ondelete="CASCADE", name="fk_reminder_log_person"
+        ),
     )
     id: Mapped[UUID] = uuid_pk()
-    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"), nullable=False, index=True
+    )
     person_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     event_kind: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     # Stable identity of the occurrence, e.g. "due_24h:activity:<uuid>".
@@ -70,13 +77,20 @@ class ReminderPreference(Base, TimestampMixin):
     __tablename__ = "reminder_preferences"
     __table_args__ = (
         UniqueConstraint("tenant_id", "person_id", name="uq_reminder_preferences_person"),
-        ForeignKeyConstraint(["tenant_id", "person_id"],
-                             ["people.tenant_id", "people.id"],
-                             ondelete="CASCADE", name="fk_reminder_preferences_tenant_person"),
+        ForeignKeyConstraint(
+            ["tenant_id", "person_id"],
+            [Party.__table__.c.tenant_id, Party.__table__.c.id],
+            ondelete="CASCADE",
+            name="fk_reminder_preferences_tenant_person",
+        ),
+        ForeignKeyConstraint(
+            ["person_id"], [PartyPerson.__table__.c.party_id], ondelete="CASCADE", name="fk_reminder_preferences_person"
+        ),
     )
     id: Mapped[UUID] = uuid_pk()
-    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(Tenant.__table__.c.id, ondelete="CASCADE"), nullable=False, index=True
+    )
     person_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     # immediate | daily_digest | weekly_digest (email channel pacing).
     frequency: Mapped[str] = mapped_column(String(20), nullable=False, default="immediate")

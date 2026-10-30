@@ -1,8 +1,8 @@
 """Genuine frozen62 PostgreSQL structural canaries; AUTHORED, NOT RUN.
 
-The positive is the actual a5 frozen62 replay as app_admin. It deliberately ends
-at Unsupported until the separately reviewed frozen-source PG rendering oracle
-closes the hosted gate. No fake catalog or current ORM is a positive substitute.
+The positive is the actual a5 frozen62 replay as app_admin. A normal return
+checks fixed schema conformity only; environment and product admission remain
+closed. No fake catalog or current ORM is a positive substitute.
 """
 
 import hashlib
@@ -108,8 +108,7 @@ def test_genuine_full_frozen62_source_and_historical_catalog(retained_engine):
         assert "account_tokens" not in retained._NAMES
         assert not any(r[0] == "platform_settings" for r in packet["policies"])
         before = packet
-        with pytest.raises(retained.RetainedSchemaUnsupported):
-            retained._verify_historical_retained_schema(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
         assert retained._observe_historical_catalog(connection) == before
 
 
@@ -295,7 +294,7 @@ def test_catalog_packet_can_be_reviewed_as_source_only_artifact(retained_engine,
         artifact = {
             "source_only": True,
             "admission_authority": False,
-            "unsupported": retained._RENDERING_GATE,
+            "schema_check_categories": retained._RENDERING_GATE,
             "frozen62": retained._FROZEN62,
             "catalog": packet,
         }
@@ -444,8 +443,7 @@ def test_catalog_observes_candidate_rendering_context_without_admission(retained
         assert len(context) == 6
         assert type(context[0]) is int and context[1]
         retained._check_rendering_context(packet)
-        with pytest.raises(retained.RetainedSchemaUnsupported):
-            retained._verify_historical_retained_schema(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
 
 
 @pytest.mark.parametrize(
@@ -506,8 +504,7 @@ def test_natural_helper_public_execute_body_and_policy_dependency_closure(retain
         assert connection.scalar(sa.text("SELECT public.app_current_tenant_id()")) is None
         connection.execute(sa.text("SET LOCAL ROLE app_admin"))
         _structurally_inspected(connection)
-        with pytest.raises(retained.RetainedSchemaUnsupported):
-            retained._verify_historical_retained_schema(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
 
 
 def test_policy_dependency_multiplicity_is_not_deduplicated(retained_engine):
@@ -584,8 +581,7 @@ def test_natural_source_touching_fk_ri_and_dependency_graph(retained_engine):
         assert any(row[1] == row[8] and row[10] == row[9] and row[8] != row[9] for row in external)
         assert any(row[1] == row[9] and row[10] == row[8] and row[8] != row[9] for row in external)
         retained._check_ri_graph(packet)
-        with pytest.raises(retained.RetainedSchemaUnsupported):
-            retained._verify_historical_retained_schema(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
 
 
 @pytest.mark.parametrize("parent", ("applicants", "lab_instances"))
@@ -800,4 +796,225 @@ def test_real_supporting_parent_index_flag_drift_is_refused(retained_engine, sta
         packet = retained._observe_historical_catalog(connection)
         with pytest.raises(retained.RetainedSchemaRefused) as error:
             retained._check_ri_graph(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        (0, 160014),
+        (0, 160016),
+        (0, True),
+        (1, "16.15 (different build)"),
+        (2, "public"),
+        (3, ("pg_catalog", "planted", "public")),
+        (4, "on"),
+        (5, "off"),
+    ),
+)
+def test_fixed_context_identity_rejects_unobserved_profile(retained_engine, field, value):
+    with entry_transaction(retained_engine) as connection:
+        packet = _structurally_inspected(connection)
+        # Negative-only mutation of the actual replay observation. This cannot
+        # substitute for the genuine Connection positive qualification above.
+        context = list(packet["rendering_context"][0])
+        context[field] = value
+        packet["rendering_context"] = (tuple(context),)
+        with pytest.raises(retained.RetainedSchemaUnsupported):
+            retained._check_rendering_context(packet)
+
+
+def test_schema_conformity_returns_no_environment_or_adoption_authority(retained_engine):
+    from app.maintenance import retained_environment
+
+    with entry_transaction(retained_engine) as connection:
+        root = connection.get_transaction()
+        assert retained._verify_historical_retained_schema(connection) is None
+        assert connection.get_transaction() is root and root.is_active
+        with pytest.raises(retained_environment.RetainedEnvironmentUnsupported):
+            retained_environment.observe_retained_environment(connection, None)
+        # A genuine schema check cannot manufacture missing environment custody.
+        assert retained._verify_historical_retained_schema(connection) is None
+        with pytest.raises(retained_environment.RetainedEnvironmentUnsupported):
+            retained_environment.observe_retained_environment(connection, None)
+
+
+def test_schema_requires_actual_connection_and_active_root(retained_engine):
+    with pytest.raises(retained.RetainedSchemaRefused):
+        retained._verify_historical_retained_schema(object())
+    with retained_engine.connect() as connection:
+        assert not connection.in_transaction()
+        with pytest.raises(retained.RetainedSchemaRefused):
+            retained._verify_historical_retained_schema(connection)
+        with connection.begin():
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            with connection.begin_nested(), pytest.raises(retained.RetainedSchemaRefused):
+                retained._verify_historical_retained_schema(connection)
+        with pytest.raises(retained.RetainedSchemaRefused):
+            retained._verify_historical_retained_schema(connection)
+
+
+def test_root_loss_during_actual_observation_cannot_return_conformity(retained_engine, monkeypatch):
+    observe = retained._observe_historical_catalog
+
+    def lose_root(connection):
+        # Observe the genuine database first, then deliberately lose its actual
+        # root. No manufactured catalog or handle is a positive substitute.
+        packet = observe(connection)
+        connection.rollback()
+        return packet
+
+    with retained_engine.connect() as connection:
+        with connection.begin():
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            monkeypatch.setattr(retained, "_observe_historical_catalog", lose_root)
+            with pytest.raises(retained.RetainedSchemaRefused) as error:
+                retained._verify_historical_retained_schema(connection)
+            assert type(error.value) is retained.RetainedSchemaRefused
+        monkeypatch.setattr(retained, "_observe_historical_catalog", observe)
+        # Starting another transaction cannot repair missing environment proof.
+        from app.maintenance import retained_environment
+
+        with connection.begin():
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            assert retained._verify_historical_retained_schema(connection) is None
+            with pytest.raises(retained_environment.RetainedEnvironmentUnsupported):
+                retained_environment.observe_retained_environment(connection, None)
+
+
+def _create_inert_cluster_canary(connection):
+    connection.execute(sa.text("SET LOCAL ROLE NONE"))
+    assert connection.scalar(sa.text("SELECT rolsuper FROM pg_roles WHERE rolname=current_user"))
+    connection.execute(sa.text("CREATE ROLE retained_inert_canary LOGIN"))
+    connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+
+
+def test_complete_predefined_and_unknown_inert_role_baseline(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        assert retained._verify_historical_retained_schema(connection) is None
+        _create_inert_cluster_canary(connection)
+        packet = retained._observe_cluster_authority(connection)
+        retained._check_cluster_authority(packet)
+        names = {row[1] for row in packet["cluster_roles"]}
+        assert {name for _, name in retained._PG_ROLES}.issubset(names)
+        assert "retained_inert_canary" in names
+        assert len(packet["cluster_tables"]) == len(names) * 11 * 7
+        assert len(packet["cluster_columns"]) == len(names) * 166 * 4
+        assert ("retained_inert_canary", "USAGE", True) in packet["cluster_schema_rights"]
+        assert ("retained_inert_canary", "CREATE", False) in packet["cluster_schema_rights"]
+        assert ("retained_inert_canary", "CONNECT", True) in packet["cluster_database_rights"]
+        assert ("retained_inert_canary", "TEMPORARY", True) in packet["cluster_database_rights"]
+        assert retained._cluster_privileges("applicants", "retained_inert_canary") == ()
+        assert retained._verify_historical_retained_schema(connection) is None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "GRANT SELECT ON public.applicants TO retained_inert_canary",
+        "GRANT INSERT(email) ON public.applicants TO retained_inert_canary",
+        "GRANT CREATE ON SCHEMA public TO PUBLIC",
+        "GRANT CREATE ON SCHEMA public TO retained_inert_canary",
+        "ALTER ROLE retained_inert_canary SUPERUSER",
+        "ALTER ROLE retained_inert_canary BYPASSRLS",
+        "ALTER ROLE retained_inert_canary CREATEROLE",
+        "ALTER ROLE retained_inert_canary CREATEDB",
+        "ALTER ROLE retained_inert_canary REPLICATION",
+        "ALTER ROLE retained_inert_canary SET row_security=off",
+        "GRANT app_admin TO retained_inert_canary WITH INHERIT FALSE, SET TRUE",
+        "GRANT app_admin TO retained_inert_canary WITH ADMIN TRUE, INHERIT FALSE, SET FALSE",
+        "GRANT pg_read_all_data TO retained_inert_canary WITH INHERIT FALSE, SET TRUE",
+        "GRANT pg_write_all_data TO retained_inert_canary",
+        "GRANT pg_monitor TO retained_inert_canary",
+        "GRANT retained_inert_canary TO app_user WITH INHERIT FALSE, SET FALSE",
+        "ALTER TABLE public.applicants OWNER TO retained_inert_canary",
+        "ALTER SCHEMA public OWNER TO retained_inert_canary",
+        "ALTER FUNCTION public.app_current_tenant_id() OWNER TO retained_inert_canary",
+        "CREATE SCHEMA retained_owned_canary AUTHORIZATION retained_inert_canary",
+    ),
+)
+def test_unknown_cluster_role_cannot_gain_additional_authority(retained_engine, statement):
+    with entry_transaction(retained_engine) as connection:
+        _create_inert_cluster_canary(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text(statement))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize("change", ("owner", "grant", "role_setting"))
+def test_unknown_cluster_role_target_database_authority_is_refused(retained_engine, change):
+    with entry_transaction(retained_engine) as connection:
+        _create_inert_cluster_canary(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        # quote_ident quotes the genuine disposable target; no caller-selected DB.
+        database = connection.scalar(sa.text("SELECT quote_ident(current_database())"))
+        statement = {
+            "owner": f"ALTER DATABASE {database} OWNER TO retained_inert_canary",
+            "grant": f"GRANT CREATE ON DATABASE {database} TO retained_inert_canary",
+            "role_setting": f"ALTER ROLE retained_inert_canary IN DATABASE {database} SET row_security=off",
+        }[change]
+        connection.execute(sa.text(statement))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE pg_catalog.pg_auth_members SET admin_option=true WHERE roleid=3374",
+        "UPDATE pg_catalog.pg_auth_members SET inherit_option=false WHERE roleid=3374",
+        "UPDATE pg_catalog.pg_auth_members SET set_option=false WHERE roleid=3374",
+        "UPDATE pg_catalog.pg_auth_members SET grantor=(SELECT oid FROM pg_roles WHERE rolname='app_admin') WHERE roleid=3374",
+    ),
+)
+def test_bootstrap_membership_options_and_grantor_are_fixed(retained_engine, statement):
+    with entry_transaction(retained_engine) as connection:
+        assert retained._verify_historical_retained_schema(connection) is None
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text(statement))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+@pytest.mark.parametrize(
+    "key", ("cluster_tables", "cluster_columns", "cluster_schema_rights", "cluster_database_rights")
+)
+@pytest.mark.parametrize("mutation", ("duplicate", "omit", "non_bool"))
+def test_complete_cluster_rights_matrix_cannot_deduplicate_or_coerce(retained_engine, key, mutation):
+    with entry_transaction(retained_engine) as connection:
+        packet = retained._observe_cluster_authority(connection)
+        retained._check_cluster_authority(packet)
+        rows = packet[key]
+        # Negative-only packet mutations exercise complete pure comparison;
+        # the genuine baseline above always reads the actual Connection.
+        if mutation == "duplicate":
+            packet[key] = (*rows, rows[0])
+        elif mutation == "omit":
+            packet[key] = rows[1:]
+        else:
+            packet[key] = ((*rows[0][:-1], int(rows[0][-1])), *rows[1:])
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._check_cluster_authority(packet)
+        assert type(error.value) is retained.RetainedSchemaRefused
+
+
+def test_unknown_role_cannot_own_unrelated_relation_in_target_database(retained_engine):
+    with entry_transaction(retained_engine) as connection:
+        _create_inert_cluster_canary(connection)
+        assert retained._verify_historical_retained_schema(connection) is None
+        connection.execute(sa.text("SET LOCAL ROLE NONE"))
+        connection.execute(sa.text("CREATE TABLE public.retained_owned_canary (id integer)"))
+        connection.execute(sa.text("ALTER TABLE public.retained_owned_canary OWNER TO retained_inert_canary"))
+        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        with pytest.raises(retained.RetainedSchemaRefused) as error:
+            retained._verify_historical_retained_schema(connection)
         assert type(error.value) is retained.RetainedSchemaRefused

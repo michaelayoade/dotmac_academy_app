@@ -10,29 +10,25 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.models.assessment import Activity, Score, Submission
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.person import Person
 from app.models.reading import ChapterRead
 from app.services.security import hash_password
+from tests.conftest import make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
-
 def _login(app_client, admin_session, tenant, email="dash@a.edu"):
-    p = Person(tenant_id=tenant.id, email=email, first_name="Dash", last_name="Board")
+    p = make_person_party(admin_session, tenant_id=tenant.id, email=email, first_name="Dash", last_name="Board")
     admin_session.add(p)
     admin_session.flush()
-    admin_session.add(UserCredential(tenant_id=tenant.id, person_id=p.id, email=email,
-                                     password_hash=hash_password("password1")))
+    admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
     admin_session.commit()
     app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
     return p
-
 
 def _course(admin_session, tid, slug, title, *, chapters=2, threshold=0.7):
     course = Course(tenant_id=tid, slug=slug, title=title,
@@ -51,7 +47,6 @@ def _course(admin_session, tid, slug, title, *, chapters=2, threshold=0.7):
     admin_session.flush()
     return course, acts
 
-
 def _offer(admin_session, tid, person_id, course_id, *, name, starts_at=None, ends_at=None):
     coh = Cohort(tenant_id=tid, name=name, discipline="networking", status="active")
     admin_session.add(coh)
@@ -64,7 +59,6 @@ def _offer(admin_session, tid, person_id, course_id, *, name, starts_at=None, en
     admin_session.flush()
     return off
 
-
 def _pass(admin_session, tid, person_id, activity_id, *, fraction=1.0, passed=True):
     sub = Submission(tenant_id=tid, activity_id=activity_id, person_id=person_id,
                      answers={}, attempt_no=1)
@@ -75,7 +69,6 @@ def _pass(admin_session, tid, person_id, activity_id, *, fraction=1.0, passed=Tr
                             per_item=[], source="auto"))
     admin_session.flush()
     return sub
-
 
 def test_dashboard_states_filters_and_actions(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a)
@@ -121,7 +114,6 @@ def test_dashboard_states_filters_and_actions(app_client, admin_session, tenant_
     assert "Finished Course" in r.text
     assert "Upcoming Course" not in r.text
 
-
 def test_start_action_when_never_touched(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a, email="fresh@a.edu")
     tid = tenant_a.id
@@ -132,7 +124,6 @@ def test_start_action_when_never_touched(app_client, admin_session, tenant_a):
     r = app_client.get("/", headers=H)
     assert ">Start<" in r.text
     assert "/courses/new/chapters/1" in r.text
-
 
 def test_continue_resumes_last_meaningful_touch(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a, email="resume@a.edu")
@@ -153,7 +144,6 @@ def test_continue_resumes_last_meaningful_touch(app_client, admin_session, tenan
     r = app_client.get("/", headers=H)
     assert "Newer Course &middot; Chapter 2" in r.text or "Newer Course · Chapter 2" in r.text
     assert "/courses/newer/chapters/2" in r.text
-
 
 def test_progress_page_rich_content(app_client, admin_session, tenant_a):
     p = _login(app_client, admin_session, tenant_a, email="rich@a.edu")

@@ -11,19 +11,18 @@ because RLS filters it out before the row reaches the application.
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role, require_tenant
-from app.models.person import Person
 from app.models.tenant import Tenant
-from app.services.audit import write_audit_event
-from app.services.identity import normalize_email
+from app.services import api_identity_operations as operations
+from app.services import api_identity_reads as reads
+from app.services.identity import AcademyCurrentAccount
 
 router = APIRouter(
     prefix="/people",
@@ -49,52 +48,39 @@ class PersonRead(BaseModel):
 @router.post("", response_model=PersonRead, status_code=status.HTTP_201_CREATED)
 def create_person(
     payload: PersonCreate,
+    request: Request,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
-    actor: Person = Depends(require_role("admin")),
-) -> Person:
-    person = Person(
-        tenant_id=tenant.id,  # never from payload — always from request state
-        email=normalize_email(str(payload.email)),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-    )
-    db.add(person)
+    actor: AcademyCurrentAccount = Depends(require_role("admin")),
+) -> reads.ApiPersonView:
     try:
-        db.flush()
-        db.refresh(person)
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Email already registered") from exc
-    write_audit_event(
-        db,
-        tenant_id=tenant.id,
-        actor_person_id=actor.id,
-        action="person.create",
-        entity_type="person",
-        entity_id=str(person.id),
-        details={"email": person.email},
-    )
-    return person
+        return operations.create_person(
+            db, request=request, email=str(payload.email), first_name=payload.first_name, last_name=payload.last_name
+        )
+    finally:
+        payload = cast(PersonCreate, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
+        del tenant, actor
 
 
 @router.get("", response_model=list[PersonRead])
 def list_people(
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
-) -> list[Person]:
-    # No explicit tenant filter — RLS does it. If RLS were misconfigured this would
-    # leak; the cross-tenant test catches that.
-    return list(db.scalars(select(Person).order_by(Person.created_at.desc())).all())
+    tenant: Tenant = Depends(require_tenant),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
+) -> list[reads.ApiPersonView]:
+    return reads.list_people(db, tenant_id=tenant.id)
 
 
 @router.get("/{person_id}", response_model=PersonRead)
 def get_person(
     person_id: UUID,
     db: Session = Depends(get_db),
-    _: Person = Depends(require_role("admin")),
-) -> Person:
-    person = db.get(Person, person_id)
+    tenant: Tenant = Depends(require_tenant),
+    _: AcademyCurrentAccount = Depends(require_role("admin")),
+) -> reads.ApiPersonView:
+    person = reads.get_person(db, tenant_id=tenant.id, person_id=person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")
     return person
@@ -103,20 +89,15 @@ def get_person(
 @router.delete("/{person_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_person(
     person_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
-    actor: Person = Depends(require_role("admin")),
+    actor: AcademyCurrentAccount = Depends(require_role("admin")),
 ) -> None:
-    person = db.get(Person, person_id)
-    if person is None:
-        raise HTTPException(status_code=404, detail="Person not found")
-    write_audit_event(
-        db,
-        tenant_id=tenant.id,
-        actor_person_id=actor.id,
-        action="person.delete",
-        entity_type="person",
-        entity_id=str(person.id),
-        details={"email": person.email},
-    )
-    db.delete(person)
+    try:
+        operations.delete_person(db, request=request, person_id=person_id)
+    finally:
+        person_id = cast(UUID, None)
+        request = cast(Request, None)
+        db = cast(Session, None)
+        del tenant, actor

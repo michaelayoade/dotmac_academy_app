@@ -136,13 +136,22 @@ def rewrite_set_cookie(raw: str, prefix: str, secure: bool) -> str | None:
 
 def rewrite_location(location: str, target: str, prefix: str) -> str | None:
     """Keep a device redirect inside the proxy prefix; drop foreign redirects."""
-    base = urlsplit(target)
+    if any(ord(c) < 0x20 or ord(c) == 0x7F or c == "\\" for c in location):
+        return None
     # Resolve relative and dot-segment redirects against the device URL first;
     # returning them unchanged would let ``../../`` escape the proxy prefix in
     # the learner's browser even though the upstream host itself was safe.
-    loc = urlsplit(urljoin(target, location))
+    try:
+        base = urlsplit(target)
+        loc = urlsplit(urljoin(target, location))
+    except ValueError:
+        return None
     if loc.scheme != base.scheme or loc.netloc != base.netloc:
         return None
     path = loc.path or "/"
+    # Browsers normalize percent-encoded dot segments too, unlike urljoin.
+    # Reject those before prefixing without decoding legitimate encoded slashes.
+    if any(re.fullmatch(r"(?:\.|%2e){1,2}", segment, re.IGNORECASE) for segment in path.split("/")):
+        return None
     out = prefix + (path if path.startswith("/") else f"/{path}")
     return out + (f"?{loc.query}" if loc.query else "")

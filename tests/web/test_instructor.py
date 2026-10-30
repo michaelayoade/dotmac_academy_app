@@ -2,38 +2,98 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
 from sqlalchemy import select
 
-from app.models.auth import UserCredential
 from app.models.cohort import Cohort, Enrollment
 from app.models.completion import CourseCompletion
 from app.models.course import Chapter, Course
 from app.models.facilitator import FacilitatorNomination
+from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.offering import CourseOffering
-from app.models.person import Person
-from app.models.rbac import PersonRole
-from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
+from tests.services.roster_request_fixtures import roster_actors
+
+assert roster_actors
+
+
+def _canonical_roles(db, tenant_id):
+    roles = {row.slug: row for row in db.scalars(select(Role).where(Role.tenant_id == tenant_id)).all()}
+    for slug in ("admin", "instructor", "student"):
+        if slug not in roles:
+            roles[slug] = Role(tenant_id=tenant_id, slug=slug, name=slug)
+            db.add(roles[slug])
+    db.flush()
+    return roles
+
+
+def _canonical_person(db, *, tenant_id, email, first_name, last_name, status="active"):
+    person = Party(
+        tenant_id=tenant_id,
+        party_type=PartyType.person,
+        email=email,
+        display_name=f"{first_name} {last_name}",
+        is_active=True,
+    )
+    db.add(person)
+    db.flush()
+    db.add(PartyPerson(party_id=person.id, first_name=first_name, last_name=last_name))
+    db.flush()
+    db.add(
+        AcademyAccountProfile(
+            tenant_id=tenant_id,
+            party_id=person.id,
+            status=status,
+            prefs={},
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
+    db.flush()
+    return person
+
+
+def _canonical_credential(db, *, tenant_id, party_id, email, password_hash):
+    credential = UserCredential(tenant_id=tenant_id, party_id=party_id, password_hash=password_hash)
+    db.add(credential)
+    db.flush()
+    db.add(
+        AcademyCredentialPolicy(
+            tenant_id=tenant_id,
+            credential_id=credential.id,
+            email=email,
+            failed_login_attempts=0,
+            lifecycle_version=0,
+            reset_required=False,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
+    db.flush()
+    return credential
 
 
 def _login_instructor(app_client, admin_session, tenant):
     """Seed an instructor person, log in via TestClient, return Host header dict."""
-    roles = ensure_roles(admin_session, tenant.id)
-    p = Person(tenant_id=tenant.id, email="i@a.edu", first_name="In", last_name="Str")
+    roles = _canonical_roles(admin_session, tenant.id)
+    p = _canonical_person(admin_session, tenant_id=tenant.id, email="i@a.edu", first_name="In", last_name="Str")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
+        _canonical_credential(
+            admin_session,
             tenant_id=tenant.id,
-            person_id=p.id,
+            party_id=p.id,
             email="i@a.edu",
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=p.id, role_id=roles["instructor"].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles["instructor"].id))
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -52,21 +112,23 @@ def _grant_admin(admin_session, tenant):
     """
     from sqlalchemy import select
 
-    roles = ensure_roles(admin_session, tenant.id)
+    roles = _canonical_roles(admin_session, tenant.id)
     person = admin_session.scalars(
-        select(Person).where(Person.tenant_id == tenant.id).where(Person.email == "i@a.edu")
+        select(Party).where(Party.tenant_id == tenant.id).where(Party.email == "i@a.edu")
     ).first()
-    admin_session.add(PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles["admin"].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=person.id, role_id=roles["admin"].id))
     admin_session.commit()
 
 
 def _person_with_role(admin_session, tenant, *, email, role="instructor", status="active"):
-    roles = ensure_roles(admin_session, tenant.id)
-    person = Person(tenant_id=tenant.id, email=email, first_name="Test", last_name="Instructor", status=status)
+    roles = _canonical_roles(admin_session, tenant.id)
+    person = _canonical_person(
+        admin_session, tenant_id=tenant.id, email=email, first_name="Test", last_name="Instructor", status=status
+    )
     admin_session.add(person)
     admin_session.flush()
     if role is not None:
-        admin_session.add(PersonRole(tenant_id=tenant.id, person_id=person.id, role_id=roles[role].id))
+        admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=person.id, role_id=roles[role].id))
     return person
 
 
@@ -305,7 +367,7 @@ def test_bulk_enroll_surfaces_unknown_emails(app_client, admin_session, tenant_a
     """Finding #6: enrolling reports unknown emails instead of silently no-oping."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     # A real student + a cohort.
-    stu = Person(tenant_id=tenant_a.id, email="real@a.edu", first_name="Re", last_name="Al")
+    stu = _canonical_person(admin_session, tenant_id=tenant_a.id, email="real@a.edu", first_name="Re", last_name="Al")
     admin_session.add(stu)
     coh = Cohort(tenant_id=tenant_a.id, name="Roster", discipline="networking", status="active")
     admin_session.add(coh)
@@ -335,7 +397,9 @@ def test_enroll_route_reports_non_admin_reactivation_refusal_without_erroring(ap
     enrollment stays dropped."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="EnrollGate", discipline="networking", status="active")
-    peer = Person(tenant_id=tenant_a.id, email="peer-enroll@a.edu", first_name="Peer", last_name="Enroll")
+    peer = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="peer-enroll@a.edu", first_name="Peer", last_name="Enroll"
+    )
     admin_session.add_all([coh, peer])
     admin_session.flush()
     admin_session.add(
@@ -372,8 +436,12 @@ def test_enroll_route_processes_rest_of_batch_after_a_refused_reactivation(app_c
     outcome contract (like "not_found") continues processing regardless."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="EnrollBatch", discipline="networking", status="active")
-    peer = Person(tenant_id=tenant_a.id, email="peer-batch@a.edu", first_name="Peer", last_name="Batch")
-    fresh = Person(tenant_id=tenant_a.id, email="fresh-batch@a.edu", first_name="Fresh", last_name="Batch")
+    peer = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="peer-batch@a.edu", first_name="Peer", last_name="Batch"
+    )
+    fresh = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="fresh-batch@a.edu", first_name="Fresh", last_name="Batch"
+    )
     admin_session.add_all([coh, peer, fresh])
     admin_session.flush()
     admin_session.add(
@@ -412,8 +480,12 @@ def test_enroll_route_summary_separates_enrolled_from_reactivated(app_client, ad
     """The enroll summary line must not fold reactivations into "Enrolled N"."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="EnrollSummary", discipline="networking", status="active")
-    fresh = Person(tenant_id=tenant_a.id, email="fresh-enroll@a.edu", first_name="Fresh", last_name="Enroll")
-    dropped = Person(tenant_id=tenant_a.id, email="dropped-enroll@a.edu", first_name="Dropped", last_name="Enroll")
+    fresh = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="fresh-enroll@a.edu", first_name="Fresh", last_name="Enroll"
+    )
+    dropped = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="dropped-enroll@a.edu", first_name="Dropped", last_name="Enroll"
+    )
     admin_session.add_all([coh, fresh, dropped])
     admin_session.flush()
     admin_session.add(
@@ -443,7 +515,9 @@ def test_invite_route_refuses_non_admin_reactivating_instructor_enrollment(app_c
     instructor reactivate a dropped fellow instructor's enrollment either."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="InviteGate", discipline="networking", status="active")
-    peer = Person(tenant_id=tenant_a.id, email="peer-invite@a.edu", first_name="Peer", last_name="Invite")
+    peer = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="peer-invite@a.edu", first_name="Peer", last_name="Invite"
+    )
     admin_session.add_all([coh, peer])
     admin_session.flush()
     admin_session.add(
@@ -477,7 +551,9 @@ def test_invite_route_surfaces_reactivation_description(app_client, admin_sessio
     description text (e.g. "reactivated (was dropped)"), not discard it."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="InviteVisible", discipline="networking", status="active")
-    stu = Person(tenant_id=tenant_a.id, email="invite-reactivate@a.edu", first_name="Re", last_name="Activate")
+    stu = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="invite-reactivate@a.edu", first_name="Re", last_name="Activate"
+    )
     admin_session.add_all([coh, stu])
     admin_session.flush()
     admin_session.add(
@@ -507,7 +583,9 @@ def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
     from app.models.course import Course
 
     h = _login_instructor(app_client, admin_session, tenant_a)
-    learner = Person(tenant_id=tenant_a.id, email="learner@a.edu", first_name="Le", last_name="Ar")
+    learner = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="learner@a.edu", first_name="Le", last_name="Ar"
+    )
     course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking", source_ref="x", version=1)
     admin_session.add_all([learner, course])
     admin_session.flush()
@@ -539,7 +617,7 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
     from app.models.course import Course
 
     h = _login_instructor(app_client, admin_session, tenant_a)
-    learner = Person(tenant_id=tenant_a.id, email="il@a.edu", first_name="Il", last_name="A")
+    learner = _canonical_person(admin_session, tenant_id=tenant_a.id, email="il@a.edu", first_name="Il", last_name="A")
     course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking", source_ref="x", version=1)
     admin_session.add_all([learner, course])
     admin_session.flush()
@@ -642,19 +720,20 @@ def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
 
 def test_student_forbidden(app_client, admin_session, tenant_a):
     """A user with only the student role gets 403 on any instructor-gated route."""
-    roles = ensure_roles(admin_session, tenant_a.id)
-    p = Person(tenant_id=tenant_a.id, email="s3@a.edu", first_name="S", last_name="T")
+    roles = _canonical_roles(admin_session, tenant_a.id)
+    p = _canonical_person(admin_session, tenant_id=tenant_a.id, email="s3@a.edu", first_name="S", last_name="T")
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(
-        UserCredential(
+        _canonical_credential(
+            admin_session,
             tenant_id=tenant_a.id,
-            person_id=p.id,
+            party_id=p.id,
             email="s3@a.edu",
             password_hash=hash_password("password1"),
         )
     )
-    admin_session.add(PersonRole(tenant_id=tenant_a.id, person_id=p.id, role_id=roles["student"].id))
+    admin_session.add(PartyRoleGrant(tenant_id=tenant_a.id, party_id=p.id, role_id=roles["student"].id))
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -723,7 +802,7 @@ def test_roster_track_reassign_error_renders_inline_message(app_client, admin_se
     """Finding #1: assign_enrollment_track's NotFoundError (unknown track) renders inline."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="Errs3", discipline="networking", status="active")
-    stu = Person(tenant_id=tenant_a.id, email="stu3@a.edu", first_name="S", last_name="T")
+    stu = _canonical_person(admin_session, tenant_id=tenant_a.id, email="stu3@a.edu", first_name="S", last_name="T")
     admin_session.add_all([coh, stu])
     admin_session.flush()
     admin_session.add(
@@ -781,8 +860,12 @@ def test_roster_shows_dropped_and_waitlisted_enrollments(app_client, admin_sessi
     """Finding #3: the roster table no longer hides non-active-student rows."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="RosterTest", discipline="networking", status="active")
-    dropped_p = Person(tenant_id=tenant_a.id, email="dropped@a.edu", first_name="Drop", last_name="Ped")
-    waitlisted_p = Person(tenant_id=tenant_a.id, email="wait@a.edu", first_name="Wait", last_name="List")
+    dropped_p = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="dropped@a.edu", first_name="Drop", last_name="Ped"
+    )
+    waitlisted_p = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="wait@a.edu", first_name="Wait", last_name="List"
+    )
     admin_session.add_all([coh, dropped_p, waitlisted_p])
     admin_session.flush()
     admin_session.add(
@@ -818,7 +901,9 @@ def test_non_admin_instructor_forbidden_from_changing_instructor_role_enrollment
     access via _assigned_course_ids."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="AuthzTest", discipline="networking", status="active")
-    other_instructor = Person(tenant_id=tenant_a.id, email="peer@a.edu", first_name="Peer", last_name="Instr")
+    other_instructor = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="peer@a.edu", first_name="Peer", last_name="Instr"
+    )
     admin_session.add_all([coh, other_instructor])
     admin_session.flush()
     admin_session.add(
@@ -852,7 +937,9 @@ def test_admin_can_change_instructor_role_enrollment_state(app_client, admin_ses
     h = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="AuthzTest2", discipline="networking", status="active")
-    other_instructor = Person(tenant_id=tenant_a.id, email="peer2@a.edu", first_name="Peer", last_name="Instr")
+    other_instructor = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="peer2@a.edu", first_name="Peer", last_name="Instr"
+    )
     admin_session.add_all([coh, other_instructor])
     admin_session.flush()
     admin_session.add(
@@ -984,7 +1071,9 @@ def test_clear_roster_track_forbidden_for_non_admin_instructor(app_client, admin
         version=1,
         status="published",
     )
-    stu = Person(tenant_id=tenant_a.id, email="clear-stu@a.edu", first_name="C", last_name="S")
+    stu = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="clear-stu@a.edu", first_name="C", last_name="S"
+    )
     admin_session.add_all([coh, course, stu])
     admin_session.flush()
     track = create_cohort_track(
@@ -1031,7 +1120,9 @@ def test_admin_can_clear_a_learners_stuck_track(app_client, admin_session, tenan
         version=1,
         status="published",
     )
-    stu = Person(tenant_id=tenant_a.id, email="clear-admin-stu@a.edu", first_name="C", last_name="A")
+    stu = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="clear-admin-stu@a.edu", first_name="C", last_name="A"
+    )
     admin_session.add_all([coh, course, stu])
     admin_session.flush()
     track = create_cohort_track(
@@ -1069,7 +1160,9 @@ def test_clear_roster_track_error_renders_inline_message(app_client, admin_sessi
     h = _login_instructor(app_client, admin_session, tenant_a)
     _grant_admin(admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="ClearMissing", discipline="networking", status="active")
-    stu = Person(tenant_id=tenant_a.id, email="clear-missing@a.edu", first_name="C", last_name="M")
+    stu = _canonical_person(
+        admin_session, tenant_id=tenant_a.id, email="clear-missing@a.edu", first_name="C", last_name="M"
+    )
     admin_session.add_all([coh, stu])
     admin_session.commit()
 
@@ -1124,7 +1217,7 @@ def test_roster_state_change_error_renders_inline_message(app_client, admin_sess
     """Finding #1: set_roster_state's NotFoundError (invalid state) renders inline."""
     h = _login_instructor(app_client, admin_session, tenant_a)
     coh = Cohort(tenant_id=tenant_a.id, name="Errs4", discipline="networking", status="active")
-    stu = Person(tenant_id=tenant_a.id, email="stu4@a.edu", first_name="S", last_name="U")
+    stu = _canonical_person(admin_session, tenant_id=tenant_a.id, email="stu4@a.edu", first_name="S", last_name="U")
     admin_session.add_all([coh, stu])
     admin_session.flush()
     admin_session.add(
@@ -1141,3 +1234,293 @@ def test_roster_state_change_error_renders_inline_message(app_client, admin_sess
     assert r.status_code == 200
     assert "invalid roster state" in r.text.lower()
     assert r.headers.get("HX-Retarget") == f"#roster-state-error-{coh.id}-{stu.id}"
+
+
+def _genuine_roster_route_case(roster_actors, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from sqlalchemy import event
+    from sqlalchemy.sql import Select
+
+    from app.services.web_auth import require_web_user
+    from app.web import instructor
+
+    a = roster_actors.account
+    cohort = Cohort(tenant_id=a.tid, name="Route context", discipline="networking", status="active")
+    a.admin.add(cohort)
+    a.admin.commit()
+    cohort_id = cohort.id
+    request = roster_actors.admin.request
+    actor = require_web_user(request, a.db)
+    actual_admin = instructor._is_admin
+    admin = Mock(wraps=actual_admin)
+    monkeypatch.setattr(instructor, "_is_admin", admin)
+    for method in ("scalars", "add", "delete", "flush", "commit", "rollback"):
+        monkeypatch.setattr(a.db, method, Mock(wraps=getattr(a.db, method)))
+    reads, cohort_reads = [], []
+
+    def observe(conn, cursor, statement, parameters, context, executemany):
+        compiled = getattr(context, "compiled", None)
+        selection = getattr(compiled, "statement", None)
+        if isinstance(selection, Select):
+            sources = selection.get_final_froms()
+            if any(source.is_derived_from(Enrollment.__table__) for source in sources):
+                reads.append(statement)
+            if any(source.is_derived_from(Cohort.__table__) for source in sources):
+                cohort_reads.append(statement)
+
+    event.listen(a.db.get_bind(), "before_cursor_execute", observe)
+    return SimpleNamespace(
+        route=instructor,
+        tenant=a.tenant,
+        actor=actor,
+        admin=admin,
+        actual_admin=actual_admin,
+        cohort_id=cohort_id,
+        facilitator_id=a.pid,
+        person_id=a.pid,
+        db=a.db,
+        request=request,
+        actors=roster_actors,
+        enrollment_reads=reads,
+        cohort_reads=cohort_reads,
+        observer=observe,
+    )
+
+
+def _removal_request(case, *, htmx=False):
+    from starlette.requests import Request
+
+    headers = list(case.request.scope["headers"])
+    if htmx:
+        headers.append((b"hx-request", b"true"))
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/instructor/cohorts/removal",
+            "query_string": b"actor_is_admin=true&tenant_id=untrusted",
+            "state": {"tenant": case.tenant},
+            "headers": headers,
+        }
+    )
+
+
+def _use_route_actor(case, actor):
+    from app.services.web_auth import require_web_user
+
+    case.request = actor.request
+    case.actor = require_web_user(actor.request, case.db)
+
+
+def _state_target(case, role):
+    if role is None:
+        return None
+    db = case.actors.account.admin
+    row = Enrollment(
+        tenant_id=case.tenant.id,
+        cohort_id=case.cohort_id,
+        person_id=case.person_id,
+        role_in_cohort=role,
+        status="active",
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+# Retired with the enrollment-as-facilitator writer (#188, plan §3.2 roster row):
+# test_facilitator_removal_forwards_authenticated_scope_and_keeps_redirect,
+# test_facilitator_removal_admin_denial_precedes_owner_and_cohort_sql,
+# test_facilitator_removal_preserves_owner_missing_reference_detail,
+# test_facilitator_removal_maps_owner_forbidden_without_redirect,
+# test_facilitator_removal_required_owner_failure_propagates, and
+# test_facilitator_service_forwards_authority_and_preserves_owner_result tested
+# roster.assign_facilitator/remove_facilitator, deleted in C3. Their authority and
+# error-mapping intent is re-proved against the nomination lifecycle by
+# test_admin_nomination_preserves_student_enrollment_and_revoke (web revoke route,
+# admin gate, redirect) and tests/services/test_facilitator_nominations.py
+# (activate/revoke/sweep semantics, tenant isolation, idempotent revoke).
+
+
+
+@pytest.fixture
+def roster_state_route(roster_actors, monkeypatch):
+    from sqlalchemy import event
+
+    case = _genuine_roster_route_case(roster_actors, monkeypatch)
+    try:
+        yield case
+    finally:
+        event.remove(case.db.get_bind(), "before_cursor_execute", case.observer)
+
+
+@pytest.mark.parametrize("initial_role", [None, "student", "instructor"])
+@pytest.mark.parametrize("workspace", [False, True])
+def test_roster_state_route_preserves_shortcircuit_scope_authority_and_redirect(
+    roster_state_route, monkeypatch, initial_role, workspace
+):
+    import dotmac_learning as learning
+
+    case = roster_state_route
+    _state_target(case, initial_role)
+    seen = []
+
+    def admin_lookup(*_args):
+        assert len(case.enrollment_reads) == 1
+        return case.actual_admin(*_args)
+
+    case.admin.side_effect = admin_lookup
+
+    def owner(db, command, *, authority):
+        seen.append((db, command, authority))
+        assert len(case.enrollment_reads) == 1
+        assert case.admin.call_count == (1 if initial_role == "instructor" else 0)
+        return object()
+
+    monkeypatch.setattr(learning, "set_roster_state", owner)
+    return_to = f"/instructor/cohorts/{case.cohort_id}" if workspace else "https://untrusted.invalid/"
+    response = case.route.change_roster_state(
+        case.cohort_id,
+        case.person_id,
+        _removal_request(case),
+        state="waitlisted",
+        return_to=return_to,
+        person=case.actor,
+        db=case.db,
+    )
+    assert seen == [
+        (
+            case.db,
+            learning.RosterStateCommand(
+                tenant_id=case.tenant.id, cohort_id=case.cohort_id, person_id=case.person_id, state="waitlisted"
+            ),
+            learning.RosterAuthority(tenant_id=case.tenant.id, actor_is_admin=True),
+        )
+    ]
+    assert response.status_code == 303
+    assert response.headers["location"] == (return_to if workspace else "/instructor/cohorts")
+    if initial_role == "instructor":
+        case.admin.assert_called_once_with(case.db, case.tenant.id, case.actor.id)
+    else:
+        case.admin.assert_not_called()
+    case.db.flush.assert_called()
+
+
+def test_roster_state_nonadmin_nonstudent_refuses_before_delegate(roster_state_route, monkeypatch):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+    from fastapi import HTTPException
+
+    case = roster_state_route
+    _state_target(case, "instructor")
+    _use_route_actor(case, case.actors.instructor)
+    owner = Mock()
+    monkeypatch.setattr(learning, "set_roster_state", owner)
+    with pytest.raises(HTTPException) as caught:
+        case.route.change_roster_state(
+            case.cohort_id,
+            case.person_id,
+            _removal_request(case),
+            state="bogus",
+            return_to="",
+            person=case.actor,
+            db=case.db,
+        )
+    assert caught.value.status_code == 403 and caught.value.detail == "Forbidden"
+    assert len(case.enrollment_reads) == 1
+    owner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "state,detail", [("bogus", "invalid roster state: bogus"), ("dropped", "enrollment not found")]
+)
+def test_roster_state_owner_errors_keep_inline_detail_and_retarget(roster_state_route, monkeypatch, state, detail):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+    from fastapi.responses import HTMLResponse
+
+    case = roster_state_route
+    _state_target(case, None)
+    owner = Mock(side_effect=learning.ParticipationNotFound(detail))
+    render = Mock(return_value=HTMLResponse(detail))
+    monkeypatch.setattr(learning, "set_roster_state", owner)
+    monkeypatch.setattr(case.route.templates, "TemplateResponse", render)
+    request = _removal_request(case, htmx=True)
+    response = case.route.change_roster_state(
+        case.cohort_id,
+        case.person_id,
+        request,
+        state=state,
+        return_to="",
+        person=case.actor,
+        db=case.db,
+    )
+    render.assert_called_once_with(request, "instructor/_form_error.html", {"request": request, "message": detail})
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == f"#roster-state-error-{case.cohort_id}-{case.person_id}"
+    assert response.headers["HX-Reswap"] == "innerHTML"
+    case.admin.assert_not_called()
+
+
+def test_roster_state_required_owner_read_failure_is_not_an_inline_not_found(roster_state_route, monkeypatch):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+
+    from app.services.audit_context import HumanOperationError
+
+    case = roster_state_route
+    _state_target(case, "student")
+    failure = RuntimeError("required owner read failure")
+    monkeypatch.setattr(learning, "set_roster_state", Mock(side_effect=failure))
+    error_renderer = Mock()
+    monkeypatch.setattr(case.route, "_hx_error", error_renderer)
+    with pytest.raises(HumanOperationError) as caught:
+        case.route.change_roster_state(
+            case.cohort_id,
+            case.person_id,
+            _removal_request(case),
+            state="bogus",
+            return_to="",
+            person=case.actor,
+            db=case.db,
+        )
+    assert caught.value.__context__ is failure
+    error_renderer.assert_not_called()
+    case.admin.assert_not_called()
+    case.db.commit.assert_not_called()
+    case.db.rollback.assert_not_called()
+
+
+def test_roster_state_transaction_changed_refusal_propagates_to_caller_boundary(roster_state_route, monkeypatch):
+    from unittest.mock import Mock
+
+    import dotmac_learning as learning
+
+    case = roster_state_route
+    _state_target(case, "student")
+    failure = learning.TransactionChanged("target has pending caller changes")
+    monkeypatch.setattr(learning, "set_roster_state", Mock(side_effect=failure))
+    error_renderer, redirect = Mock(), Mock()
+    monkeypatch.setattr(case.route, "_hx_error", error_renderer)
+    monkeypatch.setattr(case.route, "hx_redirect", redirect)
+    with pytest.raises(learning.TransactionChanged) as caught:
+        case.route.change_roster_state(
+            case.cohort_id,
+            case.person_id,
+            _removal_request(case),
+            state="dropped",
+            return_to="",
+            person=case.actor,
+            db=case.db,
+        )
+    assert caught.value is failure
+    error_renderer.assert_not_called()
+    redirect.assert_not_called()
+    case.admin.assert_not_called()
+    case.db.commit.assert_not_called()
+    case.db.rollback.assert_not_called()

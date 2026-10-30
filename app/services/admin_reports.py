@@ -19,26 +19,32 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from html import escape
+from typing import cast
 from uuid import UUID
 
+from dotmac_kernel.audit import AuditEvent
+from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role
+from dotmac_learning import (
+    ReportPerson,
+    activity_window_counts,
+)
+from dotmac_learning import (
+    attention_list as learning_attention_list,
+)
+from dotmac_learning import (
+    engagement_snapshot as learning_engagement_snapshot,
+)
+from dotmac_learning import (
+    top_movers as learning_top_movers,
+)
 from sqlalchemy import func, select
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from app.models.admissions import Applicant
-from app.models.assessment import Score, Submission
-from app.models.cohort import Cohort, Enrollment
-from app.models.completion import CourseCompletion
-from app.models.learning_event import KIND_SUBMISSION_MADE, LearningEvent
-from app.models.person import Person
-from app.models.rbac import AuditEvent, PersonRole, Role
-from app.models.success_queue import REASON_INACTIVITY, STATUS_OPEN
-from app.services import success_queue
+from app.models.identity_extensions import AcademyAccountProfile
+from app.services import settings_store
 from app.services.email_outbox import enqueue_email
-
-# How many learners each learner-facing section names. The report is a daily
-# nudge, not a roster dump — the admin UI is where the full lists live.
-TOP_MOVERS_LIMIT = 5
-ATTENTION_LIMIT = 8
 
 # Reason kinds rendered with a human label; anything the Success Queue adds
 # later still shows up, falling back to its slug.
@@ -55,159 +61,60 @@ def _count(db: Session, stmt) -> int:
     return int(db.scalar(stmt) or 0)
 
 
-def _name(person: Person) -> str:
+def _name(person: ReportPerson) -> str | None:
     return f"{person.first_name} {person.last_name}".strip() or person.email
 
 
-def _student_roster(tenant_id: UUID):
-    """Subquery of person ids with an active student enrolment.
-
-    Instructors and inactive enrolments are excluded so engagement rates are
-    measured against the population the Academy actually expects to learn.
-    """
-    return (
-        select(Enrollment.person_id)
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.status == "active")
-        .where(Enrollment.role_in_cohort == "student")
-        .distinct()
-    )
-
-
 def engagement_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
-    """Roster-wide engagement: of everyone enrolled, how many actually show up.
-
-    ``never_started`` is the count with no ledger event *ever* — the number that
-    stays invisible in window-only activity counts.
-    """
-    roster = _student_roster(tenant_id)
-    enrollees = _count(db, select(func.count()).select_from(roster.subquery()))
-
-    active = (
-        select(func.count(func.distinct(LearningEvent.person_id)))
-        .where(LearningEvent.tenant_id == tenant_id)
-        .where(LearningEvent.person_id.in_(roster))
-    )
-    ever_active = _count(db, active)
-    active_in_window = _count(db, active.where(LearningEvent.occurred_at >= since))
-
+    """Serialize the learning owner's roster-wide engagement projection."""
+    snapshot = learning_engagement_snapshot(db, tenant_id=tenant_id, since=since)
     return {
-        "enrollees": enrollees,
-        "ever_active": ever_active,
-        "active_in_window": active_in_window,
-        "never_started": max(enrollees - ever_active, 0),
+        "enrollees": snapshot.enrollees,
+        "ever_active": snapshot.ever_active,
+        "active_in_window": snapshot.active_in_window,
+        "never_started": snapshot.never_started,
     }
 
 
-def top_movers(db: Session, *, tenant_id: UUID, since: datetime, limit: int = TOP_MOVERS_LIMIT) -> list[dict]:
-    """The busiest learners in the window, richest activity first.
-
-    Query count is fixed at four regardless of roster size: rank, then one
-    bounded hydration each for people, cohorts and window grades.
-    """
-    ranked = db.execute(
-        select(
-            LearningEvent.person_id,
-            func.count().label("events"),
-            func.count().filter(LearningEvent.kind == KIND_SUBMISSION_MADE).label("submissions"),
-            func.max(LearningEvent.occurred_at).label("last_seen"),
-        )
-        .where(LearningEvent.tenant_id == tenant_id)
-        .where(LearningEvent.occurred_at >= since)
-        .where(LearningEvent.person_id.in_(_student_roster(tenant_id)))
-        .group_by(LearningEvent.person_id)
-        .order_by(func.count().desc(), LearningEvent.person_id)
-        .limit(limit)
-    ).all()
-    if not ranked:
-        return []
-
-    ids = [row.person_id for row in ranked]
-    people = {
-        p.id: p
-        for p in db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.id.in_(ids)))
-    }
-    cohorts: dict[UUID, str] = {}
-    for person_id, name in db.execute(
-        select(Enrollment.person_id, Cohort.name)
-        .join(Cohort, (Cohort.id == Enrollment.cohort_id) & (Cohort.tenant_id == Enrollment.tenant_id))
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.person_id.in_(ids))
-        .where(Enrollment.status == "active")
-        .order_by(Cohort.name)
-    ).all():
-        cohorts.setdefault(person_id, name)
-
-    graded = {
-        person_id: float(avg)
-        for person_id, avg in db.execute(
-            select(Submission.person_id, func.avg(Score.fraction))
-            .join(Score, (Score.submission_id == Submission.id) & (Score.tenant_id == Submission.tenant_id))
-            .where(Submission.tenant_id == tenant_id)
-            .where(Submission.person_id.in_(ids))
-            .where(Score.created_at >= since)
-            .group_by(Submission.person_id)
-        ).all()
-        if avg is not None
-    }
-
-    out = []
-    for row in ranked:
-        person = people.get(row.person_id)
-        if person is None:  # roster row without a person: skip rather than render a blank
-            continue
-        out.append(
-            {
-                "name": _name(person),
-                "email": person.email,
-                "cohort": cohorts.get(row.person_id, ""),
-                "events": int(row.events),
-                "submissions": int(row.submissions),
-                "avg_score": graded.get(row.person_id),
-            }
-        )
-    return out
+def top_movers(db: Session, *, tenant_id: UUID, since: datetime, limit: int | None = None) -> list[dict]:
+    """Render the owner's busiest learners in its existing rank order."""
+    if limit is None:
+        limit = cast(int, settings_store.effective(db, require_store=True)["learning_top_movers_limit"])
+    movers = learning_top_movers(db, tenant_id=tenant_id, since=since, limit=limit)
+    return [
+        {
+            "name": _name(mover.person),
+            "email": mover.person.email,
+            "cohort": mover.cohort_name,
+            "events": mover.events,
+            "submissions": mover.submissions,
+            "avg_score": mover.avg_score,
+        }
+        for mover in movers
+    ]
 
 
-def attention_list(db: Session, *, tenant_id: UUID, limit: int = ATTENTION_LIMIT) -> dict:
-    """Who needs a human, straight from the open Success Queue.
-
-    ``services.success_queue`` owns the rules and the severity; this reads its
-    entries in the order it already ranks them and splits ``inactivity`` on the
-    ``never_active`` fact it recorded, because "never logged in" and "went
-    quiet" call for different outreach.
-    """
-    entries = success_queue.list_entries(db, tenant_id=tenant_id, status=STATUS_OPEN)
-
-    by_reason: dict[str, int] = {}
-    never_started = 0
-    for item in entries:
-        entry = item["entry"]
-        by_reason[entry.reason_kind] = by_reason.get(entry.reason_kind, 0) + 1
-        if entry.reason_kind == REASON_INACTIVITY and entry.supporting_facts.get("never_active"):
-            never_started += 1
-
-    top = []
-    for item in entries[:limit]:
-        entry, person = item["entry"], item["person"]
-        facts = entry.supporting_facts
-        top.append(
-            {
-                "name": _name(person),
-                "email": person.email,
-                "cohort": item["cohort_name"],
-                "reason": _REASON_LABELS.get(entry.reason_kind, entry.reason_kind),
-                "severity": entry.severity,
-                "days_inactive": facts.get("days_inactive"),
-                "never_active": bool(facts.get("never_active")),
-            }
-        )
-
+def attention_list(db: Session, *, tenant_id: UUID, limit: int | None = None) -> dict:
+    """Render open queue facts without re-deriving rules or severity."""
+    if limit is None:
+        limit = cast(int, settings_store.effective(db, require_store=True)["learning_attention_limit"])
+    snapshot = learning_attention_list(db, tenant_id=tenant_id, limit=limit)
     return {
-        "open_total": len(entries),
-        "by_reason": by_reason,
-        "never_started": never_started,
-        "top": top,
+        "open_total": snapshot.open_total,
+        "by_reason": {item.reason: item.count for item in snapshot.by_reason},
+        "never_started": snapshot.never_started,
+        "top": [
+            {
+                "name": _name(item.person),
+                "email": item.person.email,
+                "cohort": item.cohort_name,
+                "reason": _REASON_LABELS.get(item.reason, item.reason),
+                "severity": item.severity,
+                "days_inactive": item.days_inactive,
+                "never_active": item.never_active,
+            }
+            for item in snapshot.top
+        ],
     }
 
 
@@ -231,15 +138,15 @@ def activity_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
         .where(AuditEvent.tenant_id == tenant_id)
         .where(AuditEvent.action == "applicant.transition")
         .where(AuditEvent.created_at >= since)
-        .where(AuditEvent.details["source"].astext == "assessment_policy")
+        .where(AuditEvent.details.op("->>")("source") == "assessment_policy")
     )
     auto_accepted = _count(
         db,
-        decision_events.where(AuditEvent.details["to_status"].astext == "onboarding"),
+        decision_events.where(AuditEvent.details.op("->>")("to_status") == "onboarding"),
     )
     auto_waitlisted = _count(
         db,
-        decision_events.where(AuditEvent.details["to_status"].astext == "waitlisted"),
+        decision_events.where(AuditEvent.details.op("->>")("to_status") == "waitlisted"),
     )
     invalid_awaiting = _count(
         db,
@@ -250,27 +157,7 @@ def activity_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
 
     pipeline_rows = db.execute(select(A.status, func.count()).where(A.tenant_id == tenant_id).group_by(A.status)).all()
 
-    new_enrollments = _count(
-        db,
-        select(func.count())
-        .select_from(Enrollment)
-        .where(Enrollment.tenant_id == tenant_id)
-        .where(Enrollment.created_at >= since),
-    )
-    submissions = _count(
-        db,
-        select(func.count())
-        .select_from(Submission)
-        .where(Submission.tenant_id == tenant_id)
-        .where(Submission.created_at >= since),
-    )
-    completions = _count(
-        db,
-        select(func.count())
-        .select_from(CourseCompletion)
-        .where(CourseCompletion.tenant_id == tenant_id)
-        .where(CourseCompletion.completed_at >= since),
-    )
+    learning_counts = activity_window_counts(db, tenant_id=tenant_id, since=since)
 
     return {
         "since": since,
@@ -282,27 +169,35 @@ def activity_snapshot(db: Session, *, tenant_id: UUID, since: datetime) -> dict:
         "auto_waitlisted": auto_waitlisted,
         "invalid_awaiting_review": invalid_awaiting,
         "pipeline": {status: n for status, n in pipeline_rows},
-        "new_enrollments": new_enrollments,
-        "submissions": submissions,
-        "completions": completions,
+        "new_enrollments": learning_counts.new_enrollments,
+        "submissions": learning_counts.submissions,
+        "completions": learning_counts.completions,
         "engagement": engagement_snapshot(db, tenant_id=tenant_id, since=since),
         "top_movers": top_movers(db, tenant_id=tenant_id, since=since),
         "attention": attention_list(db, tenant_id=tenant_id),
     }
 
 
-def admin_recipients(db: Session, *, tenant_id: UUID) -> list[Person]:
+def admin_recipients(db: Session, *, tenant_id: UUID) -> list[Row]:
     """Active admin-role people with an email address."""
     return list(
-        db.scalars(
-            select(Person)
-            .join(PersonRole, (PersonRole.person_id == Person.id) & (PersonRole.tenant_id == Person.tenant_id))
-            .join(Role, (Role.id == PersonRole.role_id) & (Role.tenant_id == PersonRole.tenant_id))
-            .where(Person.tenant_id == tenant_id)
-            .where(Person.status == "active")
+        db.execute(
+            select(Party.id, Party.email)
+            .join(PartyPerson, PartyPerson.party_id == Party.id)
+            .join(
+                AcademyAccountProfile,
+                (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+            )
+            .join(
+                PartyRoleGrant,
+                (PartyRoleGrant.party_id == Party.id) & (PartyRoleGrant.tenant_id == Party.tenant_id),
+            )
+            .join(Role, (Role.id == PartyRoleGrant.role_id) & (Role.tenant_id == PartyRoleGrant.tenant_id))
+            .where(Party.tenant_id == tenant_id, Party.party_type == PartyType.person)
+            .where(AcademyAccountProfile.status == "active")
             .where(Role.slug == "admin")
-            .where(Person.email.is_not(None))
-        ).unique()
+            .where(Party.email.is_not(None))
+        ).unique(lambda recipient: recipient.id)
     )
 
 
@@ -386,9 +281,8 @@ def _render(snapshot: dict) -> tuple[str, str]:
         f"<p style='margin-top:16px;font-size:13px;color:#5B6B62;'>Pipeline now — {pipeline}</p>"
         "</div>"
     )
-    text = (
-        f"Dotmac Academy activity report (since {s['since']:%d %b %Y %H:%M} UTC)\n\n"
-        + "\n".join(f"- {label}: {value}" for label, value in rows)
+    text = f"Dotmac Academy activity report (since {s['since']:%d %b %Y %H:%M} UTC)\n\n" + "\n".join(
+        f"- {label}: {value}" for label, value in rows
     )
     if s["top_movers"]:
         text += "\n\nTop movers this window:\n" + "\n".join(f"- {_mover_line(m)}" for m in s["top_movers"])
@@ -401,8 +295,10 @@ def _render(snapshot: dict) -> tuple[str, str]:
     return html, text
 
 
-def send_activity_report(db: Session, *, tenant_id: UUID, hours: int = 24) -> int:
+def send_activity_report(db: Session, *, tenant_id: UUID, hours: int | None = None) -> int:
     """Queue the activity report for every Academy admin."""
+    if hours is None:
+        hours = cast(int, settings_store.effective(db, require_store=True)["learning_activity_report_hours"])
     since = datetime.now(UTC) - timedelta(hours=hours)
     snapshot = activity_snapshot(db, tenant_id=tenant_id, since=since)
     html, text = _render(snapshot)

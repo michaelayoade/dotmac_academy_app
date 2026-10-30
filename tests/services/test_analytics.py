@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.course import Course
-from app.models.person import Person
 from app.services.analytics import item_analysis
+from tests.conftest import make_person_party
 
 
 def _score(db, tid, activity_id, person_id, per_item, fraction, *, attempt_no=1):
@@ -17,7 +17,6 @@ def _score(db, tid, activity_id, person_id, per_item, fraction, *, attempt_no=1)
                  fraction=fraction, passed=fraction >= 0.6, per_item=per_item, source="auto"))
     db.flush()
 
-
 def test_item_analysis_p_values(admin_session, tenant_a):
     tid = tenant_a.id
     c = Course(tenant_id=tid, slug="a", title="A", discipline="networking", source_ref="x", version=1)
@@ -27,8 +26,8 @@ def test_item_analysis_p_values(admin_session, tenant_a):
                    title="Quiz", pass_threshold=0.6)
     admin_session.add(act)
     admin_session.flush()
-    pa = Person(tenant_id=tid, email="pa@a.edu", first_name="P", last_name="A")
-    pb = Person(tenant_id=tid, email="pb@a.edu", first_name="P", last_name="B")
+    pa = make_person_party(admin_session, tenant_id=tid, email="pa@a.edu", first_name="P", last_name="A")
+    pb = make_person_party(admin_session, tenant_id=tid, email="pb@a.edu", first_name="P", last_name="B")
     admin_session.add_all([pa, pb])
     admin_session.flush()
 
@@ -45,7 +44,6 @@ def test_item_analysis_p_values(admin_session, tenant_a):
     assert items["q2"]["p_value"] == 0.5
     admin_session.rollback()
 
-
 def test_item_analysis_uses_best_attempt(admin_session, tenant_a):
     """A worse later attempt must not lower the item stats."""
     tid = tenant_a.id
@@ -56,7 +54,7 @@ def test_item_analysis_uses_best_attempt(admin_session, tenant_a):
                    title="Quiz", pass_threshold=0.6)
     admin_session.add(act)
     admin_session.flush()
-    p = Person(tenant_id=tid, email="p@a.edu", first_name="P", last_name="X")
+    p = make_person_party(admin_session, tenant_id=tid, email="p@a.edu", first_name="P", last_name="X")
     admin_session.add(p)
     admin_session.flush()
 

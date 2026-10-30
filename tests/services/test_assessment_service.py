@@ -7,8 +7,8 @@ from sqlalchemy import func, select
 from app.models.assessment import Activity, Question, QuestionBank
 from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
-from app.models.person import Person
 from app.services.assessment import best_scores_for, override_score, submit_activity
+from tests.conftest import make_person_party
 
 
 def _seed(db, tid):
@@ -28,7 +28,7 @@ def test_submit_and_best(admin_session, tenant_a):
     # better retake, and a passing retake unlocks a learner who failed first.
     # A real person is needed — the passing retake fires a completion notification
     # whose FK references people.
-    p = Person(tenant_id=tenant_a.id, email="sab@stu.edu", first_name="Sa", last_name="B")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="sab@stu.edu", first_name="Sa", last_name="B")
     admin_session.add(p)
     admin_session.flush()
     c, act = _seed(admin_session, tenant_a.id)
@@ -41,11 +41,10 @@ def test_submit_and_best(admin_session, tenant_a):
     assert best[act.id].fraction == 1.0
     admin_session.rollback()
 
-
 def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a):
     """First passing submit queues one durable email; a later pass does not duplicate it."""
     c, act = _seed(admin_session, tenant_a.id)
-    p = Person(tenant_id=tenant_a.id, email="pass@stu.edu", first_name="Pa", last_name="Ss")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="pass@stu.edu", first_name="Pa", last_name="Ss")
     admin_session.add(p)
     admin_session.flush()
 
@@ -71,12 +70,11 @@ def test_submit_activity_auto_on_pass_notifies_once(admin_session, tenant_a):
     assert queued() == 1
     admin_session.rollback()
 
-
 def test_best_is_highest_not_latest(admin_session, tenant_a):
     """best_scores_for returns the highest attempt, not the most recent — pass is sticky."""
     # A real person row is required: a passing attempt fires a course-completion
     # notification whose FK references people.
-    p = Person(tenant_id=tenant_a.id, email="best@stu.edu", first_name="Be", last_name="St")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="best@stu.edu", first_name="Be", last_name="St")
     admin_session.add(p)
     admin_session.flush()
     c, act = _seed(admin_session, tenant_a.id)
@@ -89,15 +87,9 @@ def test_best_is_highest_not_latest(admin_session, tenant_a):
     assert best[act.id].fraction == 1.0, "best_scores_for returned latest (0.0), not highest (1.0)"
     admin_session.rollback()
 
-
 def test_override_score_threshold_and_tenant_validation(admin_session, tenant_a):
     """override_score computes passed vs real threshold and rejects foreign submission_ids."""
-    person = Person(
-        tenant_id=tenant_a.id,
-        email="override@stu.edu",
-        first_name="Over",
-        last_name="Ride",
-    )
+    person = make_person_party(admin_session, tenant_id=tenant_a.id, email="override@stu.edu", first_name="Over", last_name="Ride")
     admin_session.add(person)
     admin_session.flush()
     person_id = person.id
@@ -123,7 +115,6 @@ def test_override_score_threshold_and_tenant_validation(admin_session, tenant_a)
                        score_value=5, max_score=10, reason="should fail")
     admin_session.rollback()
 
-
 def test_lab_activity_cannot_be_graded_as_a_quiz(admin_session, tenant_a):
     """Regression: a lab has no question bank, so grading it here produced a
     permanent 0/0 failed attempt with an empty per_item — no feedback, and it
@@ -131,7 +122,7 @@ def test_lab_activity_cannot_be_graded_as_a_quiz(admin_session, tenant_a):
     from app.models.assessment import Submission
     from app.services.exceptions import BadRequestError
 
-    p = Person(tenant_id=tenant_a.id, email="lab_guard@stu.edu", first_name="La", last_name="B")
+    p = make_person_party(admin_session, tenant_id=tenant_a.id, email="lab_guard@stu.edu", first_name="La", last_name="B")
     admin_session.add(p)
     c, _ = _seed(admin_session, tenant_a.id)
     lab = Activity(tenant_id=tenant_a.id, course_id=c.id, chapter_number=14, type="lab",

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -19,8 +20,8 @@ from sqlalchemy.orm import Session
 from app.models.cohort import Cohort
 from app.models.completion import CourseCompletion
 from app.models.facilitator import FacilitatorNomination, FacilitatorRequirement
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
-from app.models.person import Person
 from app.services.audit import write_audit_event
 from app.services.exceptions import BadRequestError, NotFoundError
 from app.services.notifications import notify
@@ -97,16 +98,27 @@ class _ActivationAttempt:
     activated_now: bool
 
 
-def _person_or_404(db: Session, *, tenant_id: UUID, person_id: UUID) -> Person:
-    person = db.scalars(select(Person).where(Person.tenant_id == tenant_id).where(Person.id == person_id)).first()
+def _person_or_404(db: Session, *, tenant_id: UUID, person_id: UUID) -> Party:
+    person = db.scalars(
+        select(Party)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .where(Party.tenant_id == tenant_id)
+        .where(Party.id == person_id)
+        .where(Party.party_type == PartyType.person)
+    ).first()
     if person is None:
         raise NotFoundError("person not found for tenant")
     return person
 
 
-def _require_active_nominee(db: Session, *, tenant_id: UUID, person_id: UUID) -> Person:
+def _require_active_nominee(db: Session, *, tenant_id: UUID, person_id: UUID) -> Party:
     person = _person_or_404(db, tenant_id=tenant_id, person_id=person_id)
-    if person.status != "active":
+    status = db.scalar(
+        select(AcademyAccountProfile.status)
+        .where(AcademyAccountProfile.tenant_id == tenant_id)
+        .where(AcademyAccountProfile.party_id == person.id)
+    )
+    if status != "active":
         raise BadRequestError("facilitator nominee must be an active user")
     return person
 
@@ -360,7 +372,10 @@ def nominate(db: Session, *, command: NominateFacilitatorCommand) -> Facilitator
     write_audit_event(
         db,
         tenant_id=command.tenant_id,
-        actor_person_id=command.actor_person_id,
+        actor_type="user",
+        actor_id=str(command.actor_person_id),
+        actor_party_id=command.actor_person_id,
+        source_application="dotmac_academy_app",
         action="facilitator_nomination.create",
         entity_type="facilitator_nomination",
         entity_id=str(nomination.id),
@@ -440,7 +455,10 @@ def revoke(db: Session, *, command: RevokeFacilitatorCommand) -> FacilitatorNomi
         write_audit_event(
             db,
             tenant_id=command.tenant_id,
-            actor_person_id=command.actor_person_id,
+            actor_type="user",
+            actor_id=str(command.actor_person_id),
+            actor_party_id=command.actor_person_id,
+            source_application="dotmac_academy_app",
             action="facilitator_nomination.revoke",
             entity_type="facilitator_nomination",
             entity_id=str(nomination.id),
