@@ -28,7 +28,7 @@ source_rejection() {
       /^Suites: trixie( trixie-updates)?$/ {next}
       /^Suites: trixie-security$/ {next}
       /^Components: main$/ {next}
-      /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.gpg$/ {next}
+      /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.pgp$/ {next}
       /^deb(-src)? \[[[:space:]]*signed-by=\/usr\/local\/share\/keyrings\/postgres.gpg.asc[[:space:]]*\] http:\/\/apt.postgresql.org\/pub\/repos\/apt\/? trixie-pgdg main( 16)?$/ {next}
       {
         field="other"
@@ -43,7 +43,7 @@ source_rejection() {
         printf "source_rejected_field\t%s\n",field
         printf "known_uri_match\t%s\n",($0 ~ /https?:\/\/deb.debian.org\/debian(-security)?\/?([[:space:]]|$)/ || $0 ~ /http:\/\/apt.postgresql.org\/pub\/repos\/apt\/?([[:space:]]|$)/)?"true":"false"
         printf "known_suite_match\t%s\n",($0 ~ /(^|[[:space:]])trixie(-updates|-security|-pgdg)?([[:space:]]|$)/)?"true":"false"
-        printf "known_signed_by_match\t%s\n",($0 ~ /\/usr\/share\/keyrings\/debian-archive-keyring.gpg/ || $0 ~ /\/usr\/local\/share\/keyrings\/postgres.gpg.asc/)?"true":"false"
+        printf "known_signed_by_match\t%s\n",($0 ~ /\/usr\/share\/keyrings\/debian-archive-keyring.pgp/ || $0 ~ /\/usr\/local\/share\/keyrings\/postgres.gpg.asc/)?"true":"false"
         printf "leading_whitespace\t%s\n",($0 ~ /^[[:space:]]/)?"true":"false"
         printf "trailing_whitespace\t%s\n",($0 ~ /[[:space:]]$/)?"true":"false"
         printf "carriage_return\t%s\n",($0 ~ /\r/)?"true":"false"
@@ -107,7 +107,7 @@ test "$(dpkg-query -W -f='${Version}' libc6:amd64)" = '2.41-12+deb13u4'
 test "$(dpkg-query -W -f='${Version}' gcc-14-base:amd64)" = '14.2.0-19'
 test "$(dpkg-query -W -f='${Version}' libllvm19:amd64)" = '1:19.1.7-3+b1'
 test -x /usr/bin/gpg
-test -r /usr/share/keyrings/debian-archive-keyring.gpg
+test -r /usr/share/keyrings/debian-archive-keyring.pgp
 test -r /usr/local/share/keyrings/postgres.gpg.asc
 grep -Eq '^[[:space:]]*create_main_cluster[[:space:]]*=[[:space:]]*false[[:space:]]*$' /etc/postgresql-common/createcluster.conf
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
@@ -143,7 +143,7 @@ for file in "${source_files[@]}"; do
       /^Suites: trixie( trixie-updates)?$/ {next}
       /^Suites: trixie-security$/ {next}
       /^Components: main$/ {next}
-      /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.gpg$/ {next}
+      /^Signed-By: \/usr\/share\/keyrings\/debian-archive-keyring.pgp$/ {next}
       /^deb(-src)? \[[[:space:]]*signed-by=\/usr\/local\/share\/keyrings\/postgres.gpg.asc[[:space:]]*\] http:\/\/apt.postgresql.org\/pub\/repos\/apt\/? trixie-pgdg main( 16)?$/ {next}
       {exit 1}
     ' "$file"; then
@@ -184,15 +184,15 @@ for file in /etc/apt/apt.conf.d/*; do
     cp "$file" "/out/apt/inherited/config-$(basename "$file")"
 done
 phase debian_keyring_copy
-cp /usr/share/keyrings/debian-archive-keyring.gpg /out/apt/keys/debian-archive-keyring.gpg
+cp /usr/share/keyrings/debian-archive-keyring.pgp /out/apt/keys/debian-archive-keyring.pgp
 phase pgdg_keyring_copy
 cp /usr/local/share/keyrings/postgres.gpg.asc /out/apt/keys/postgres.gpg.asc
 phase explicit_config_creation
 mkdir /tmp/academy-empty-sourceparts
 cat > /tmp/academy-sources.list <<'SOURCES'
-deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian trixie main
-deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian trixie-updates main
-deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian-security trixie-security main
+deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] http://deb.debian.org/debian trixie main
+deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] http://deb.debian.org/debian trixie-updates main
+deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] http://deb.debian.org/debian-security trixie-security main
 deb [arch=amd64 signed-by=/usr/local/share/keyrings/postgres.gpg.asc] http://apt.postgresql.org/pub/repos/apt trixie-pgdg main 16
 deb-src [arch=amd64 signed-by=/usr/local/share/keyrings/postgres.gpg.asc] http://apt.postgresql.org/pub/repos/apt trixie-pgdg main
 SOURCES
@@ -223,7 +223,7 @@ for key in debian pgdg; do
     phase "${key}_key_home"
     home="/tmp/academy-gpg-$key"
     mkdir -m 0700 "$home"
-    if [ "$key" = debian ]; then public=/out/apt/keys/debian-archive-keyring.gpg;
+    if [ "$key" = debian ]; then public=/out/apt/keys/debian-archive-keyring.pgp;
     else public=/out/apt/keys/postgres.gpg.asc; fi
     awk 'NR==1 {if($0=="-----BEGIN PGP PUBLIC KEY BLOCK-----")print "key_format\tarmored_public_key";else print "key_format\tbinary_or_other";exit}' "$public" >> /out/configuration-diagnostics.tsv
     phase "${key}_key_import"

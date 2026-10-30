@@ -646,7 +646,7 @@ def public_builder_inputs(output):
         "tools": hashes,
         "compiler_target": "x86_64-linux-gnu",
         "signed_releases": releases,
-        "debian_keyring": file_record(output / "apt/keys/debian-archive-keyring.gpg", 4194304),
+        "debian_keyring": file_record(output / "apt/keys/debian-archive-keyring.pgp", 4194304),
         "pgdg_keyring": file_record(output / "apt/keys/postgres.gpg.asc", 1048576),
         "repository_authentication_capture": file_record(output / "repository-authentication.json", 16777216),
         "dependency_closure_capture": file_record(output / "dependency-closure.json", 16777216),
