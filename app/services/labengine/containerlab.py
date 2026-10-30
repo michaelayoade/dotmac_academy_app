@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 import signal
@@ -18,6 +19,9 @@ _INSPECT_TIMEOUT_SECONDS = 60
 _DEPLOY_TIMEOUT_SECONDS = 900
 _DESTROY_TIMEOUT_SECONDS = 420
 _CHECK_COMMAND_TIMEOUT_SECONDS = 480
+_ROUTEROS_READY_TIMEOUT_SECONDS = 180
+_ROUTEROS_READY_POLL_INTERVAL_SECONDS = 2
+_ROUTEROS_READY_REQUEST_TIMEOUT_SECONDS = 2
 
 # How long to wait, after SIGTERM-ing an abandoned command's process group,
 # before escalating to SIGKILL. Short on purpose: this only runs once a
@@ -38,6 +42,20 @@ _GROUP_LIVENESS_POLL_INTERVAL_SECONDS = 0.1
 # exactly the same windows, and `_run_contained`'s own docstring already
 # promises cleanup for cancellation generally, not only for SIGTERM.
 _DEFERRED_SIGNALS = {signal.SIGTERM, signal.SIGINT}
+
+
+def _webfig_ready(address: str, timeout: float) -> bool:
+    """Return whether RouterOS WebFig answers an HTTP request at ``address``."""
+    connection = http.client.HTTPConnection(address, 80, timeout=timeout)
+    try:
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        response.close()
+        return 100 <= response.status < 500
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
 
 
 def _unblock_worker_signals_in_child() -> None:
@@ -529,6 +547,56 @@ class ContainerlabEngine(LabEngine):
         # so reset() gets it too without a second, driftable copy here.
         with host_lock(self.lock_label, directory=self.workdir):
             return self._deploy_unlocked(topology_text, instance_name)
+
+    def wait_ready(self, handle: LabHandle) -> None:
+        """Wait for every RouterOS node's WebFig service before activation.
+
+        ``containerlab deploy`` reports a running vrnetlab container before the
+        RouterOS guest has necessarily finished booting. The web tier proxies
+        WebFig directly, so publishing ``active`` before an HTTP response exists
+        creates a deterministic launch-time 502 race. Linux ttyd readiness is
+        owned separately by ``start_console`` and its recovery sweep.
+
+        One deadline covers the whole topology. This bound plus the containerlab
+        deploy timeout remains strictly below the deploy-operation lease.
+        """
+        self._require_lab_host()
+        pending = {
+            node: str(handle.mgmt.get(node) or "")
+            for node, kind in handle.kinds.items()
+            if str(kind or "").startswith("vr-")
+        }
+        if not pending:
+            return
+        missing = sorted(node for node, address in pending.items() if not address)
+        if missing:
+            raise RuntimeError(
+                "RouterOS WebFig readiness cannot be checked without management "
+                f"addresses for nodes: {', '.join(missing)}"
+            )
+
+        deadline = time.monotonic() + _ROUTEROS_READY_TIMEOUT_SECONDS
+        while pending:
+            for node, address in list(pending.items()):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if _webfig_ready(
+                    address,
+                    min(_ROUTEROS_READY_REQUEST_TIMEOUT_SECONDS, remaining),
+                ):
+                    pending.pop(node)
+            if not pending:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(_ROUTEROS_READY_POLL_INTERVAL_SECONDS, remaining))
+
+        raise RuntimeError(
+            "RouterOS WebFig readiness timed out after "
+            f"{_ROUTEROS_READY_TIMEOUT_SECONDS}s for nodes: {', '.join(sorted(pending))}"
+        )
 
     def _ssh_exec_unlocked(
         self,

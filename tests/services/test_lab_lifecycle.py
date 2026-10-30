@@ -239,6 +239,7 @@ def test_provision_sets_consoles_and_active(admin_session, tenant_a):
     assert out.consoles["client"]["kind"] == "linux"
     assert out.started_at is not None
     engine.deploy.assert_called_once()
+    engine.wait_ready.assert_called_once_with(engine.deploy.return_value)
     admin_session.rollback()
 
 
@@ -341,6 +342,34 @@ def test_provision_deploy_failure_leaves_instance_active_with_error_recorded(
     admin_session.rollback()
 
 
+def test_provision_readiness_failure_never_projects_runtime_present(
+    admin_session, tenant_a
+):
+    """A deployed container is not learner-ready until its service probe passes."""
+    _c, act, lt, p = _seed(admin_session, tenant_a.id)
+    inst = LabInstance(tenant_id=tenant_a.id, activity_id=act.id, person_id=p.id,
+                       instance_name="dal-not-ready", seed={"o": 5},
+                       status="provisioning", consoles={})
+    admin_session.add(inst)
+    admin_session.flush()
+    engine = MagicMock()
+    engine.deploy.return_value = LabHandle(
+        instance_name="dal-not-ready", nodes={"router": "clab-x-router"},
+        mgmt={"router": "172.20.20.3"}, kinds={"router": "vr-ros"})
+    engine.wait_ready.side_effect = RuntimeError(
+        "RouterOS WebFig readiness timed out after 180s for nodes: router"
+    )
+
+    out = lab_lifecycle.provision(admin_session, inst, engine, lt)
+    admin_session.flush()
+
+    assert out.status == "active"
+    assert out.runtime_presence == "unknown"
+    assert out.consoles == {}
+    assert "WebFig readiness timed out" in out.error
+    admin_session.rollback()
+
+
 def test_provision_deploy_failure_still_counts_against_capacity(
     admin_session, tenant_a, monkeypatch
 ):
@@ -410,6 +439,7 @@ def test_reset_success_sets_active_clears_error_and_updates_last_active(admin_se
     assert out.error is None
     assert out.last_active_at is not None
     engine.reset.assert_called_once()
+    engine.wait_ready.assert_called_once_with(engine.reset.return_value)
     admin_session.rollback()
 
 
@@ -1056,6 +1086,7 @@ def test_provision_if_absent_deploys_when_precondition_holds(admin_session, tena
     assert out.consoles["client"]["mgmt"] == "172.20.20.3"
     assert out.started_at is not None
     engine.deploy_if_absent.assert_called_once()
+    engine.wait_ready.assert_called_once_with(engine.deploy_if_absent.return_value)
     admin_session.rollback()
 
 
@@ -1101,6 +1132,7 @@ def test_provision_if_absent_resyncs_stale_consoles_when_precondition_mismatched
     assert stopped == [inst.id]  # the stale consoles were actually torn down
     engine.deploy.assert_not_called()
     engine.inspect_running.assert_called_once_with("dal-cond-deploy-noop")
+    engine.wait_ready.assert_called_once_with(engine.inspect_running.return_value)
     admin_session.rollback()
 
 

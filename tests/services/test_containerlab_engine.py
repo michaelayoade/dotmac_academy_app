@@ -49,6 +49,7 @@ def test_exec_runs_docker_exec():
 def test_external_command_timeouts_are_strictly_below_their_leases():
     assert (
         containerlab._DEPLOY_TIMEOUT_SECONDS
+        + containerlab._ROUTEROS_READY_TIMEOUT_SECONDS
         < lab_operations.LEASE_SECONDS_BY_KIND["deploy"]
     )
     assert (
@@ -81,6 +82,79 @@ def test_deploy_writes_topology_and_calls_containerlab(tmp_path, monkeypatch):
         assert h.kinds["r1"] == "vr-ros"
 
 
+def test_wait_ready_skips_http_for_non_routeros_nodes():
+    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+    handle = LabHandle(
+        instance_name="i",
+        nodes={"client": "clab-i-client"},
+        mgmt={"client": "172.20.20.3"},
+        kinds={"client": "linux"},
+    )
+
+    with patch("app.services.labengine.containerlab.http.client.HTTPConnection") as connection:
+        eng.wait_ready(handle)
+
+    connection.assert_not_called()
+
+
+def test_wait_ready_polls_routeros_until_webfig_answers():
+    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+    handle = LabHandle(
+        instance_name="i",
+        nodes={"router": "clab-i-router"},
+        mgmt={"router": "172.20.20.3"},
+        kinds={"router": "vr-ros"},
+    )
+    starting = MagicMock()
+    starting.request.side_effect = OSError("connection refused")
+    ready = MagicMock()
+    ready.getresponse.return_value.status = 200
+
+    with (
+        patch(
+            "app.services.labengine.containerlab.http.client.HTTPConnection",
+            side_effect=[starting, ready],
+        ) as connection,
+        patch("app.services.labengine.containerlab.time.sleep") as sleep,
+    ):
+        eng.wait_ready(handle)
+
+    assert connection.call_count == 2
+    sleep.assert_called_once_with(containerlab._ROUTEROS_READY_POLL_INTERVAL_SECONDS)
+
+
+def test_wait_ready_times_out_without_projecting_routeros_ready(monkeypatch):
+    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+    handle = LabHandle(
+        instance_name="i",
+        nodes={"router": "clab-i-router"},
+        mgmt={"router": "172.20.20.3"},
+        kinds={"router": "vr-ros"},
+    )
+    now = [0.0]
+    monkeypatch.setattr(containerlab, "_ROUTEROS_READY_TIMEOUT_SECONDS", 5)
+    monkeypatch.setattr(containerlab, "_ROUTEROS_READY_POLL_INTERVAL_SECONDS", 2)
+    monkeypatch.setattr(containerlab, "_webfig_ready", lambda address, timeout: False)
+    monkeypatch.setattr(containerlab.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(containerlab.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+
+    with pytest.raises(RuntimeError, match="timed out after 5s for nodes: router"):
+        eng.wait_ready(handle)
+
+
+def test_wait_ready_refuses_routeros_without_a_management_address():
+    eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
+    handle = LabHandle(
+        instance_name="i",
+        nodes={"router": "clab-i-router"},
+        mgmt={"router": ""},
+        kinds={"router": "vr-ros"},
+    )
+
+    with pytest.raises(RuntimeError, match="without management addresses for nodes: router"):
+        eng.wait_ready(handle)
+
+
 def test_ssh_exec_uses_mgmt_ip():
     eng = ContainerlabEngine(workdir="/tmp/labs", lab_host_role="lab")
     handle = LabHandle(
@@ -97,7 +171,7 @@ def test_ssh_exec_uses_mgmt_ip():
 
 
 @pytest.mark.parametrize(
-    "method", ["inventory", "deploy", "ssh_exec", "destroy", "reset", "exec", "status",
+    "method", ["inventory", "deploy", "wait_ready", "ssh_exec", "destroy", "reset", "exec", "status",
                "inspect_running"]
 )
 def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
@@ -108,6 +182,7 @@ def test_operations_refuse_on_web_host_without_side_effects(tmp_path, method):
             {
                 "inventory": eng.inventory,
                 "deploy": lambda: eng.deploy("name: x", "i"),
+                "wait_ready": lambda: eng.wait_ready(handle),
                 "ssh_exec": lambda: eng.ssh_exec(handle, "r1", "true"),
                 "destroy": lambda: eng.destroy("i"),
                 "reset": lambda: eng.reset("name: x", "i"),
