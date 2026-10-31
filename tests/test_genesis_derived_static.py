@@ -143,7 +143,9 @@ def test_committed_diff_and_makefile_match_the_lock():
     assert len(diff) == GUARD["diff_bytes"] == 286
     makefile = (DERIVED / "academy-backend.mk").read_bytes()
     assert (
-        makefile == b".PHONY: academy-backend\nacademy-backend:\n\tMAKELEVEL=0 $(MAKE) -j4 -C build/src/backend all\n"
+        makefile == b".PHONY: academy-backend\nacademy-backend:\n"
+        b"\tMAKELEVEL=0 $(MAKE) -C build/src/backend generated-headers\n"
+        b"\tMAKELEVEL=0 $(MAKE) -j4 -C build/src/backend all\n"
     )
     assert sha(makefile) == LOCK["backend_makefile"]["sha256"]
 
