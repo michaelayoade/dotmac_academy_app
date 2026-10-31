@@ -1,0 +1,11 @@
+--- a/src/backend/utils/init/miscinit.c
++++ b/src/backend/utils/init/miscinit.c
+@@ -1698,7 +1698,7 @@
+ 	long		file_pid;
+ 	char		buffer[BLCKSZ];
+ 
+-	fd = open(DIRECTORY_LOCK_FILE, O_RDWR | PG_BINARY, 0);
++	fd = open(DIRECTORY_LOCK_FILE, O_RDONLY | PG_BINARY, 0);
+ 	if (fd < 0)
+ 	{
+ 		/*

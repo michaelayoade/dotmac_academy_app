@@ -1,0 +1,121 @@
+name: Genesis PostgreSQL derived payload build
+on:
+  push:
+    paths:
+      - '.github/workflows/genesis-postgres-derived-build.yml'
+      - 'ci/postgres_genesis_derived/derived-build-lock.json'
+      - 'ci/postgres_genesis_derived/recheck-o-rdonly.diff'
+      - 'ci/postgres_genesis_derived/academy-backend.mk'
+      - 'ci/postgres_genesis_derived/build_derived.py'
+      - 'ci/postgres_genesis_derived/in_builder_build.py'
+      - 'ci/postgres_genesis_derived/assemble_oci.py'
+      - 'ci/postgres_genesis_derived/compare_ab.py'
+      - 'ci/postgres_genesis_derived/static_registry.py'
+      - 'ci/postgres_genesis_derived/canaries.py'
+      - 'ci/postgres_genesis_derived/canaries-requirements.txt'
+      - 'tests/test_genesis_derived_static.py'
+permissions:
+  contents: read
+# Approved egress (Michael, 2026-10-31), this workflow only: build job code to auth.docker.io, registry-1.docker.io,
+# production.cloudflare.docker.com and production.cloudfront.docker.com for hash-checked base blobs; the canaries job's
+# dockerd pull of the official base image by digest; PyPI for the hash-pinned canary wheels; a bridge-network registry
+# container published only on 127.0.0.1:80.
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # actions: read is only for the cross-run download of the reviewed C56 artifact.
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [a, b]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require an empty download destination
+        run: test ! -e "$RUNNER_TEMP/c56"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: academy-genesis-build-inputs-41021359997-1
+          run-id: 41021359997
+          repository: michaelayoade/dotmac_academy_app
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/c56
+      - name: Build the derived payload and OCI archive
+        run: python3 -I ci/postgres_genesis_derived/build_derived.py build --replica "${{ matrix.replica }}" --c56 "$RUNNER_TEMP/c56"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: academy-genesis-derived-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replica }}
+          path: ci/postgres_genesis_derived/derived-artifacts/
+          retention-days: 90
+          if-no-files-found: error
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: academy-genesis-derived-${{ github.run_id }}-${{ github.run_attempt }}-a
+          path: ${{ runner.temp }}/replica-a
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: academy-genesis-derived-${{ github.run_id }}-${{ github.run_attempt }}-b
+          path: ${{ runner.temp }}/replica-b
+      - name: Compare the two isolated executions
+        run: python3 -I ci/postgres_genesis_derived/compare_ab.py --a "$RUNNER_TEMP/replica-a" --b "$RUNNER_TEMP/replica-b" --out "$RUNNER_TEMP/compare"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: academy-genesis-derived-compare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/compare/
+          retention-days: 90
+          if-no-files-found: error
+  canaries:
+    needs: compare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require an empty download destination
+        run: test ! -e "$RUNNER_TEMP/c56"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: academy-genesis-build-inputs-41021359997-1
+          run-id: 41021359997
+          repository: michaelayoade/dotmac_academy_app
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/c56
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: academy-genesis-derived-${{ github.run_id }}-${{ github.run_attempt }}-a
+          path: ${{ runner.temp }}/replica-a
+      - name: Install hash-pinned canary dependencies
+        run: |
+          # ubuntu-24.04 system Python 3.12; no setup-python download.
+          test "$(/usr/bin/python3 -I -c 'import sys; print(sys.version_info[:2])')" = "(3, 12)"
+          /usr/bin/python3 -I -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --require-hashes --no-deps --only-binary=:all: -r ci/postgres_genesis_derived/canaries-requirements.txt
+      - name: Run the canaries against the reviewed archive
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I ci/postgres_genesis_derived/canaries.py --c56 "$RUNNER_TEMP/c56" --derived "$RUNNER_TEMP/replica-a" --out "$RUNNER_TEMP/canary"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: academy-genesis-derived-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/canary/
+          retention-days: 90
+          if-no-files-found: error
