@@ -202,36 +202,43 @@ def makefile_value(text, name):
     return values[0]
 
 
-def configure_gate_diagnostics(text, expected):
-    # Diagnostics only: public build flags/paths from the generated Makefile.global; the gates below are unchanged.
+def header_configure_args(header):
+    # PG16 keeps the saved configure arguments only in pg_config.h; decode the one C string strictly.
+    values = re.findall(r'(?m)^#define CONFIGURE_ARGS "((?:[^"\\\n]|\\.)*)"$', header)
+    need(len(values) == 1)
+    need(re.fullmatch(r'(?:[^\\]|\\[\\"])*', values[0]) is not None)
+    return re.sub(r"\\(.)", r"\1", values[0])
+
+
+def configure_gate_diagnostics(header, makefile, expected):
+    # Diagnostics only: public build flags/paths from the generated build tree; the gates below are unchanged.
     report: dict[str, Any] = {}
-    for name in ("configure_args", "CFLAGS"):
-        lines = re.findall(r"(?m)^" + re.escape(name) + r"[ \t]*=[ \t]*(.*)$", text)
-        report[name + "_line_count"] = len(lines)
-        if len(lines) != 1:
-            continue
+    try:
+        tokens = shlex.split(header_configure_args(header))
+    except (Refused, ValueError):
+        report["configure_args"] = "unavailable"
+    else:
+        report["argv_length"] = len(tokens)
+        report["expected_length"] = len(expected)
+        mismatches = [i for i in range(max(len(tokens), len(expected))) if tokens[i : i + 1] != expected[i : i + 1]]
+        report["mismatch_count"] = len(mismatches)
+        report["mismatches"] = [
+            {
+                "index": i,
+                "observed": tokens[i] if i < len(tokens) else None,
+                "expected": expected[i] if i < len(expected) else None,
+            }
+            for i in mismatches[:8]
+        ]
+    lines = re.findall(r"(?m)^CFLAGS[ \t]*=[ \t]*(.*)$", makefile)
+    report["CFLAGS_line_count"] = len(lines)
+    if len(lines) == 1:
         try:
-            tokens = shlex.split(lines[0])
-        except ValueError:
-            report[name + "_split"] = "failed"
-            continue
-        if name == "configure_args":
-            report["argv_length"] = len(tokens)
-            report["expected_length"] = len(expected)
-            mismatches = [i for i in range(max(len(tokens), len(expected))) if tokens[i : i + 1] != expected[i : i + 1]]
-            report["mismatch_count"] = len(mismatches)
-            report["mismatches"] = [
-                {
-                    "index": i,
-                    "observed": tokens[i] if i < len(tokens) else None,
-                    "expected": expected[i] if i < len(expected) else None,
-                }
-                for i in mismatches[:8]
-            ]
-        else:
             report["prefix_map_tokens"] = [
-                token for token in tokens if token.startswith("-f") and "prefix-map" in token
+                token for token in shlex.split(lines[0]) if token.startswith("-f") and "prefix-map" in token
             ]
+        except ValueError:
+            report["CFLAGS_split"] = "failed"
     return report
 
 
@@ -335,8 +342,10 @@ def build():
 
     phase("configure_gates")
     text = read(ROOT / "build/src/Makefile.global", 4194304).decode("utf-8", errors="strict")
-    save("configure-gates.json", configure_gate_diagnostics(text, receipt["source_inventory"]["configure_argv"]))
-    need(shlex.split(makefile_value(text, "configure_args")) == receipt["source_inventory"]["configure_argv"])
+    header = read(ROOT / "build/src/include/pg_config.h", 4194304).decode("utf-8", errors="strict")
+    expected = receipt["source_inventory"]["configure_argv"]
+    save("configure-gates.json", configure_gate_diagnostics(header, text, expected))
+    need(shlex.split(header_configure_args(header)) == expected)
     tokens = shlex.split(makefile_value(text, "CFLAGS"))
     maps = [token for token in tokens if token.startswith("-f") and "prefix-map" in token]
     need(maps == [PREFIX_MAP])

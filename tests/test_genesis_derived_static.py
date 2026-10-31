@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import shlex
 import tarfile
 import urllib.request
 from pathlib import Path
@@ -453,3 +454,15 @@ def test_refused_hostname_is_recorded_without_url_or_query():
         COORD.hub_url("https://cdn.example.net/blob?sig=secret")
     assert COORD.REFUSED_HOSTS == ["cdn.example.net"]
     COORD.REFUSED_HOSTS.clear()
+
+
+def test_configure_args_come_from_pg_config_header_strictly():
+    expected = json.loads(LOCK["c56"]["receipt_utf8"])["source_inventory"]["configure_argv"]
+    quoted = " " + " ".join("'" + value + "'" for value in expected)
+    literal = quoted.replace("\\", "\\\\").replace('"', '\\"')
+    header = '/* generated */\n#define CONFIGURE_ARGS "' + literal + '"\n#define OTHER 1\n'
+    assert shlex.split(BUILD.header_configure_args(header)) == expected
+    assert BUILD.configure_gate_diagnostics(header, "CFLAGS = -g\n", expected)["mismatch_count"] == 0
+    for bad in ("", header + header, '#define CONFIGURE_ARGS "a\\nb"\n', '#define CONFIGURE_ARGS "a\\x41"\n'):
+        with pytest.raises(BUILD.Refused):
+            BUILD.header_configure_args(bad)
