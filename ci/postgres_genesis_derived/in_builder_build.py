@@ -202,6 +202,39 @@ def makefile_value(text, name):
     return values[0]
 
 
+def configure_gate_diagnostics(text, expected):
+    # Diagnostics only: public build flags/paths from the generated Makefile.global; the gates below are unchanged.
+    report: dict[str, Any] = {}
+    for name in ("configure_args", "CFLAGS"):
+        lines = re.findall(r"(?m)^" + re.escape(name) + r"[ \t]*=[ \t]*(.*)$", text)
+        report[name + "_line_count"] = len(lines)
+        if len(lines) != 1:
+            continue
+        try:
+            tokens = shlex.split(lines[0])
+        except ValueError:
+            report[name + "_split"] = "failed"
+            continue
+        if name == "configure_args":
+            report["argv_length"] = len(tokens)
+            report["expected_length"] = len(expected)
+            mismatches = [i for i in range(max(len(tokens), len(expected))) if tokens[i : i + 1] != expected[i : i + 1]]
+            report["mismatch_count"] = len(mismatches)
+            report["mismatches"] = [
+                {
+                    "index": i,
+                    "observed": tokens[i] if i < len(tokens) else None,
+                    "expected": expected[i] if i < len(expected) else None,
+                }
+                for i in mismatches[:8]
+            ]
+        else:
+            report["prefix_map_tokens"] = [
+                token for token in tokens if token.startswith("-f") and "prefix-map" in token
+            ]
+    return report
+
+
 def finish_permissions():
     # The host account must be able to remove everything this uid created in the owned bind mounts.
     for base in (BUILD, OUTPUT):
@@ -302,6 +335,7 @@ def build():
 
     phase("configure_gates")
     text = read(ROOT / "build/src/Makefile.global", 4194304).decode("utf-8", errors="strict")
+    save("configure-gates.json", configure_gate_diagnostics(text, receipt["source_inventory"]["configure_argv"]))
     need(shlex.split(makefile_value(text, "configure_args")) == receipt["source_inventory"]["configure_argv"])
     tokens = shlex.split(makefile_value(text, "CFLAGS"))
     maps = [token for token in tokens if token.startswith("-f") and "prefix-map" in token]
