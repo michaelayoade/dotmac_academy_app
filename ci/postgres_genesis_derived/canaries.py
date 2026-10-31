@@ -45,6 +45,7 @@ WITNESS_MASK = (
 )
 MUTATION_MASK = IN_CLOSE_WRITE | IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
 PID = "postmaster.pid"
+PM_STATUS_READY = b"ready   "  # pidfile.h:53, status line padded to 8 bytes
 HBA = "local all postgres scram-sha-256\nlocal all all reject\nhost all all all reject\n"
 INITDB = "--auth-local=scram-sha-256 --auth-host=reject --locale=en_US.utf8 --encoding=UTF8"
 
@@ -53,9 +54,21 @@ class Refused(Exception):
     """No tool or server text escapes."""
 
 
-def need(condition):
+def need(condition, label="unlabelled"):
     if not condition:
-        raise Refused
+        raise Refused(label)
+
+
+def start_label(init, ready2, line8):
+    return f"raw_start_timeout init={int(init)} ready2={int(ready2)} line8={int(line8)}"
+
+
+def bool_items(detail):
+    return {key: value for key, value in detail.items() if type(value) is bool}
+
+
+def same_booleans(left, right):
+    return bool_items(left) == bool_items(right)
 
 
 def sibling(name):
@@ -213,16 +226,21 @@ class Raw:
         )
         need(re.fullmatch(r"[a-f0-9]{64}", self.container) is not None)
         docker_ok("start", self.container)
+        init = ready2 = line8 = 0
         for _ in range(600):
             logs = self.logs()
-            if b"PostgreSQL init process complete" in logs and logs.count(b"database system is ready to accept") >= 2:
+            init = int(b"PostgreSQL init process complete" in logs)
+            ready2 = logs.count(b"database system is ready to accept")
+            line8 = 0
+            if init and ready2 >= 2:
                 lines = (
                     (self.home / "data" / PID).read_bytes().split(b"\n") if (self.home / "data" / PID).exists() else []
                 )
-                if len(lines) >= 8 and lines[7] == b"ready":
+                line8 = int(len(lines) >= 8 and lines[7] == PM_STATUS_READY)
+                if line8:
                     return self
             time.sleep(0.1)
-        raise Refused
+        raise Refused(start_label(init, ready2, line8))
 
     def logs(self):
         return docker_ok("logs", self.name, merge=True, maximum=16777216)
@@ -238,12 +256,13 @@ class Raw:
 
 
 def wait_exit(raw, bound):
-    deadline = time.monotonic() + bound
-    while time.monotonic() < deadline:
+    """Elapsed whole seconds until the container stopped; at least `bound` when it never did."""
+    started = time.monotonic()
+    while time.monotonic() - started < bound:
         if not raw.running():
-            return True
+            return int(time.monotonic() - started)
         time.sleep(1)
-    return False
+    return max(bound, int(time.monotonic() - started))
 
 
 def home_of(holder):
@@ -266,14 +285,19 @@ def raw_pid_case(image, arguments, kind):
             os.close(descriptor)
         else:
             os.unlink(path)
-        exited = wait_exit(raw, 75)
+        exit_seconds = wait_exit(raw, 75)
         logs = raw.logs()
     shutdown = b"performing immediate shutdown because data directory lock file is invalid" in logs
     if kind == "wrong":
         text = f'lock file "postmaster.pid" contains wrong PID: {pid + 1} instead of {pid}'.encode()
     else:
         text = b'could not open file "postmaster.pid": No such file or directory'
-    return {"exited_within_75s": exited, "expected_log_line": text in logs, "immediate_shutdown_line": shutdown}
+    return {
+        "exited_within_75s": exit_seconds < 75,
+        "exit_seconds": exit_seconds,
+        "expected_log_line": text in logs,
+        "immediate_shutdown_line": shutdown,
+    }
 
 
 def raw_pg_config(image, arguments):
@@ -484,7 +508,11 @@ def run_cases(arguments, common, assemble, lock, outputs, base_binary, root, wor
             passed = all(value is True for value in detail.values() if type(value) is bool)
             results[label] = {"passed": passed, **detail}
         except Exception as error:
-            results[label] = {"passed": False, "error": type(error).__name__}
+            results[label] = {
+                "passed": False,
+                "error": type(error).__name__,
+                "at": str(error) if isinstance(error, Refused) else None,
+            }
 
     def in_image(image, label, *command):
         name = "academy-c58-" + label + "-" + secrets.token_hex(6)
@@ -545,7 +573,7 @@ def run_cases(arguments, common, assemble, lock, outputs, base_binary, root, wor
         return {
             "owner_path_ok": ok,
             "pid_line_2": lines[1] == b"/var/lib/postgresql/data",
-            "pid_line_8_ready": lines[7] == b"ready",
+            "pid_line_8_ready": lines[7] == PM_STATUS_READY,
             "container_removed": gone,
             "home_removed": not home.exists(),
         }
@@ -592,11 +620,19 @@ def run_cases(arguments, common, assemble, lock, outputs, base_binary, root, wor
     case("K2c_negative_control_base", k2c)
 
     def pid_pair(kind):
-        pair = [raw_pid_case(i, server_arguments, kind) for i in (reference, base_ref)]
+        sides: dict[str, dict[str, Any]] = {}
+        for label, image in (("derived", reference), ("base", base_ref)):
+            try:
+                sides[label] = raw_pid_case(image, server_arguments, kind)
+            except Refused as error:
+                sides[label] = {"error_at": str(error)}
+        ran = all("error_at" not in side for side in sides.values())
         return {
-            "derived_all": all(pair[0].values()),
-            "base_all": all(pair[1].values()),
-            "same_booleans": pair[0] == pair[1],
+            "derived": sides["derived"],
+            "base": sides["base"],
+            "derived_all": "error_at" not in sides["derived"] and all(bool_items(sides["derived"]).values()),
+            "base_all": "error_at" not in sides["base"] and all(bool_items(sides["base"]).values()),
+            "same_booleans": ran and same_booleans(sides["derived"], sides["base"]),
         }
 
     case("K3_wrong_pid", lambda: pid_pair("wrong"))
@@ -642,9 +678,20 @@ def run_cases(arguments, common, assemble, lock, outputs, base_binary, root, wor
     case("K8_mmap_write_then_repair", lambda: tamper("mmap", IN_CLOSE_WRITE))
 
     def k9():
-        left = raw_pg_config(reference, server_arguments)
-        right = raw_pg_config(base_ref, server_arguments)
+        sides: dict[str, Any] = {}
+        for label, image in (("derived", reference), ("base", base_ref)):
+            try:
+                sides[label] = raw_pg_config(image, server_arguments)
+            except Refused as error:
+                sides[label] = str(error)
+        if any(type(side) is str for side in sides.values()):
+            failed = {label: {"error_at": side} for label, side in sides.items() if type(side) is str}
+            return {"both_ran": False, **failed}
+        left, right = sides["derived"], sides["base"]
+        differing = {row[0] for row in left[0] + right[0] if row not in left[0] or row not in right[0]}
         return {
+            "both_ran": True,
+            "differing_row_names": sorted(differing),
             "pg_config_rows_equal": left[0] == right[0] and len(left[0]) > 10,
             "collation_version_2_41_both": left[2] == "2.41" and right[2] == "2.41",
             "row_count": len(left[0]),

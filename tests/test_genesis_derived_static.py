@@ -30,6 +30,7 @@ def load(name):
 BUILD = load("in_builder_build")
 COORD = load("build_derived")
 ASSEMBLE = load("assemble_oci")
+CAN = load("canaries")
 LOCK = json.loads((DERIVED / "derived-build-lock.json").read_text())
 GUARD = LOCK["patch_guard"]
 OLD = GUARD["old"].encode()
@@ -468,3 +469,34 @@ def test_configure_args_come_from_pg_config_header_strictly():
     for bad in ("", header + header, '#define CONFIGURE_ARGS "a\\nb"\n', '#define CONFIGURE_ARGS "a\\x41"\n'):
         with pytest.raises(BUILD.Refused):
             BUILD.header_configure_args(bad)
+
+
+def test_pidfile_ready_status_is_the_padded_eight_byte_constant():
+    assert CAN.PM_STATUS_READY == b"ready   " and len(CAN.PM_STATUS_READY) == 8
+    source = (DERIVED / "canaries.py").read_text()
+    assert '== b"ready"' not in source and source.count("PM_STATUS_READY") >= 3
+
+
+def test_labelled_refusals_carry_fixed_labels_only():
+    with pytest.raises(CAN.Refused) as default:
+        CAN.need(False)
+    assert str(default.value) == "unlabelled"
+    with pytest.raises(CAN.Refused) as labelled:
+        CAN.need(False, "some_label")
+    assert str(labelled.value) == "some_label"
+    assert CAN.start_label(1, 2, 0) == "raw_start_timeout init=1 ready2=2 line8=0"
+
+
+def test_same_booleans_ignores_integer_fields():
+    left = {"exited_within_75s": True, "exit_seconds": 61, "expected_log_line": True}
+    right = {"exited_within_75s": True, "exit_seconds": 64, "expected_log_line": True}
+    assert CAN.same_booleans(left, right)
+    assert not CAN.same_booleans(left, {**right, "expected_log_line": False})
+
+
+def test_wait_exit_returns_elapsed_whole_seconds():
+    class Stopped:
+        def running(self):
+            return False
+
+    assert CAN.wait_exit(Stopped(), 75) == 0
