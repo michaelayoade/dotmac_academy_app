@@ -36,7 +36,7 @@ def fresh_connection():
     for name in ("DATABASE_URL", "TEST_DATABASE_URL", "MIGRATION_DATABASE_URL"):
         other = make_url(os.environ[name])
         assert (parsed.host, parsed.port, parsed.database) != (other.host, other.port, other.database)
-    engine = sa.create_engine(parsed, hide_parameters=True, poolclass=NullPool)
+    engine = sa.create_engine(parsed, hide_parameters=True, echo=False, poolclass=NullPool)
     try:
         with engine.connect() as connection:
             root = connection.begin()
@@ -201,7 +201,9 @@ def hostile_catalog_connection(monkeypatch):
     assert control.database == "academy_kernel_entry" and control.username == "postgres"
     assert target.drivername == control.drivername == "postgresql+psycopg"
     assert (target.host, target.port) == (control.host, control.port)
-    engine = sa.create_engine(control.set(database="academy_fresh_entry"), hide_parameters=True, poolclass=NullPool)
+    engine = sa.create_engine(
+        control.set(database="academy_fresh_entry"), hide_parameters=True, echo=False, poolclass=NullPool
+    )
     try:
         with engine.connect() as connection:
             root = connection.begin()
