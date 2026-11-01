@@ -83,14 +83,19 @@ Opener = Callable[..., Any]
 
 
 class Refused(Exception):
-    def __init__(self, step: int) -> None:
+    def __init__(self, step: int, detail: str = "") -> None:
         super().__init__(step)
         self.step = step
+        self.detail = detail  # public facts only (digests, counts); never command output or credentials
 
 
-def need(condition: object, step: int) -> None:
+def need(condition: object, step: int, detail: str = "") -> None:
     if not condition:
-        raise Refused(step)
+        raise Refused(step, detail)
+
+
+def public_digest(value: object) -> str:
+    return value if isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) else "unparseable"
 
 
 def run_command(argv: list[str], *, stdin: bytes | None = None, env: Mapping[str, str]) -> tuple[int, bytes]:
@@ -130,7 +135,7 @@ def sha256_file(path: Path) -> str:
 
 def inspect_image(run: Runner, env: Mapping[str, str], reference: str, step: int) -> dict[str, Any]:
     code, output = run([DOCKER, "image", "inspect", reference], env=env)
-    need(code == 0, step)
+    need(code == 0, step, f"inspect_exit={code}")
     try:
         parsed = json.loads(output)
     except ValueError:
@@ -273,8 +278,18 @@ def materialize(
     # P5: base image present and exact
     base_image = inspect_image(run, child_env, base["reference"], 5)
     base_layers = base_image.get("RootFS", {}).get("Layers")
-    need(base_image.get("Id") == base["config"], 5)
-    need(isinstance(base_layers, list) and len(base_layers) == base["layer_count"], 5)
+    descriptor = base_image.get("Descriptor")
+    descriptor_digest = public_digest(descriptor.get("digest")) if isinstance(descriptor, dict) else "absent"
+    need(
+        base_image.get("Id") == base["config"],
+        5,
+        f"base_id={public_digest(base_image.get('Id'))} descriptor={descriptor_digest}",
+    )
+    need(
+        isinstance(base_layers, list) and len(base_layers) == base["layer_count"],
+        5,
+        f"base_layers={len(base_layers) if isinstance(base_layers, list) else 'unparseable'}",
+    )
 
     # P6-P8: login, pull by digest, always log out and delete the private config
     config = Path(runner_temp) / "genesis-docker-config"
@@ -330,7 +345,8 @@ def main() -> int:
     try:
         materialize(os.environ, root)
     except Refused as refusal:
-        print(f"Genesis image materialization refused [P{refusal.step}]", file=sys.stderr)
+        suffix = f" {refusal.detail}" if refusal.detail else ""
+        print(f"Genesis image materialization refused [P{refusal.step}]{suffix}", file=sys.stderr)
         return 1
     except Exception:
         print("Genesis image materialization refused [P?]", file=sys.stderr)
