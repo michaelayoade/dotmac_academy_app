@@ -98,6 +98,27 @@ def public_digest(value: object) -> str:
     return value if isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) else "unparseable"
 
 
+def need_image_identity(image: dict[str, Any], config_digest: str, reference: str, step: int) -> None:
+    """Pin the local image to the declared content under either Docker image store.
+
+    Classic store (no ``Descriptor``): ``Id`` is the config digest. containerd store (Docker 29 on hosted
+    runners): ``Id`` and ``Descriptor.digest`` are the content-addressed manifest or index digest pinned in
+    ``reference``; containerd verified the content against that digest on pull. Callers still check RootFS.
+    """
+    pinned = reference.rpartition("@")[2]
+    observed = image.get("Id")
+    descriptor = image.get("Descriptor")
+    if descriptor is None:
+        need(observed == config_digest, step, f"id={public_digest(observed)} store=classic")
+        return
+    descriptor_digest = descriptor.get("digest") if isinstance(descriptor, dict) else None
+    need(
+        observed == pinned and descriptor_digest == pinned,
+        step,
+        f"id={public_digest(observed)} descriptor={public_digest(descriptor_digest)} store=containerd",
+    )
+
+
 def run_command(argv: list[str], *, stdin: bytes | None = None, env: Mapping[str, str]) -> tuple[int, bytes]:
     """Run one fixed docker command; output is returned to the caller and never printed."""
     try:
@@ -278,12 +299,11 @@ def materialize(
     # P5: base image present and exact
     base_image = inspect_image(run, child_env, base["reference"], 5)
     base_layers = base_image.get("RootFS", {}).get("Layers")
-    descriptor = base_image.get("Descriptor")
-    descriptor_digest = public_digest(descriptor.get("digest")) if isinstance(descriptor, dict) else "absent"
+    need_image_identity(base_image, base["config"], base["reference"], 5)
     need(
-        base_image.get("Id") == base["config"],
+        base_image.get("Os") == "linux" and base_image.get("Architecture") == "amd64",
         5,
-        f"base_id={public_digest(base_image.get('Id'))} descriptor={descriptor_digest}",
+        "base_platform_not_linux_amd64",
     )
     need(
         isinstance(base_layers, list) and len(base_layers) == base["layer_count"],
@@ -324,7 +344,7 @@ def materialize(
     # P9: verify the pulled image
     image = inspect_image(run, child_env, reference, 9)
     layers = image.get("RootFS", {}).get("Layers")
-    need(image.get("Id") == declared["config_digest"], 9)
+    need_image_identity(image, declared["config_digest"], reference, 9)
     need(reference in (image.get("RepoDigests") or []), 9)
     need(layers == [*base_layers, declared["layer_diff_id"]], 9)
     need(image.get("Os") == "linux" and image.get("Architecture") == "amd64", 9)

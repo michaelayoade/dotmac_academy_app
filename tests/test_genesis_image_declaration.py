@@ -289,6 +289,11 @@ class FakeDocker:
         self.base_id = BASE_CONFIG
         self.base_layers = [f"sha256:{i:064x}" for i in range(14)]
         self.image_id = CONFIG
+        self.base_descriptor: Any = None  # None: classic store (no Descriptor key)
+        self.base_descriptor_null = False  # True: emit an explicit "Descriptor": null
+        self.base_os = "linux"
+        self.base_arch = "amd64"
+        self.image_descriptor: Any = None
         self.repo_digests = [REF]
         self.image_layers: list[str] | None = None
         self.os = "linux"
@@ -308,20 +313,29 @@ class FakeDocker:
                 return 0, b""
         if verb[:2] == ["image", "inspect"]:
             if verb[2] == BASE_REF:
-                return 0, json.dumps([{"Id": self.base_id, "RootFS": {"Layers": self.base_layers}}]).encode()
+                base: dict[str, Any] = {
+                    "Id": self.base_id,
+                    "RootFS": {"Layers": self.base_layers},
+                    "Os": self.base_os,
+                    "Architecture": self.base_arch,
+                }
+                if self.base_descriptor_null:
+                    base["Descriptor"] = None
+                if self.base_descriptor is not None:
+                    base["Descriptor"] = self.base_descriptor
+                return 0, json.dumps([base]).encode()
             assert verb[2] == REF
             layers = self.image_layers if self.image_layers is not None else [*self.base_layers, DIFF_ID]
-            return 0, json.dumps(
-                [
-                    {
-                        "Id": self.image_id,
-                        "RepoDigests": self.repo_digests,
-                        "RootFS": {"Layers": layers},
-                        "Os": self.os,
-                        "Architecture": self.arch,
-                    }
-                ]
-            ).encode()
+            image: dict[str, Any] = {
+                "Id": self.image_id,
+                "RepoDigests": self.repo_digests,
+                "RootFS": {"Layers": layers},
+                "Os": self.os,
+                "Architecture": self.arch,
+            }
+            if self.image_descriptor is not None:
+                image["Descriptor"] = self.image_descriptor
+            return 0, json.dumps([image]).encode()
         raise AssertionError(argv)
 
 
@@ -433,6 +447,20 @@ def test_happy_path_exports_one_line_and_confines_the_token_to_login_stdin(world
     assert next(c["argv"][3] for c in calls if "--config" in c["argv"]) == "login"  # scope checked before this
 
 
+def test_containerd_image_store_pins_manifest_digests_and_exports(world, capsys):
+    _containerd(world)
+    assert _go(world) == REF
+    assert world["github_env"].read_text() == "ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE=" + REF + "\n"
+    assert capsys.readouterr().out == "ACADEMY_GENESIS_IMAGE MATERIALIZED " + REF + " identity=verified\n"
+
+
+def test_refusal_detail_names_only_public_digests(world, capsys):
+    _containerd(world, base_id=BASE_CONFIG)
+    with pytest.raises(loader.Refused) as refused:
+        _go(world)
+    assert refused.value.detail == f"id={BASE_CONFIG} descriptor={BASE_REF.rpartition('@')[2]} store=containerd"
+
+
 def test_identity_403_continues_as_unverifiable_when_scope_is_read_only(world, capsys):
     world["identity"].status = 403
     world["identity"].claims = {"UserID": 7, "Scope": "read:package,read:user"}
@@ -467,6 +495,20 @@ def _declaration(edit):
         path.write_text(json.dumps(declared))
 
     return mutate
+
+
+def _containerd(world, *, base_id=None, base_digest=None, image_id=None, image_digest=None):
+    """Docker 29 containerd image store: Id and Descriptor.digest are the pinned manifest/index digest."""
+    docker = world["docker"]
+    base_pin = BASE_REF.rpartition("@")[2]
+    image_pin = REF.rpartition("@")[2]
+    docker.base_id = base_id or base_pin
+    docker.base_descriptor = {"mediaType": "application/vnd.oci.image.index.v1+json", "digest": base_digest or base_pin}
+    docker.image_id = image_id or image_pin
+    docker.image_descriptor = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": image_digest or image_pin,
+    }
 
 
 def _attr(name, value):
@@ -542,10 +584,26 @@ CASES = [
         4,
     ),
     ("base_id_mismatch", _attr("base_id", "sha256:" + "9" * 64), 5),
+    ("containerd_base_id_not_pinned", lambda w: _containerd(w, base_id="sha256:" + "9" * 64), 5),
+    ("containerd_base_descriptor_not_pinned", lambda w: _containerd(w, base_digest="sha256:" + "9" * 64), 5),
+    ("containerd_base_config_id_not_accepted", lambda w: _containerd(w, base_id=BASE_CONFIG), 5),
+    ("containerd_descriptor_not_object", lambda w: setattr(w["docker"], "base_descriptor", "sha256:x"), 5),
+    (
+        "null_descriptor_falls_back_to_classic_config_pin",
+        lambda w: (
+            setattr(w["docker"], "base_descriptor_null", True),
+            setattr(w["docker"], "base_id", BASE_REF.rpartition("@")[2]),
+        ),
+        5,
+    ),
+    ("base_wrong_arch", _attr("base_arch", "arm64"), 5),
+    ("base_wrong_os", _attr("base_os", "windows"), 5),
     ("base_layer_count", _attr("base_layers", ["sha256:" + "1" * 64] * 13), 5),
     ("login_failure", _attr("login_code", 1), 6),
     ("pull_failure", _attr("pull_code", 1), 7),
     ("image_id_mismatch", _attr("image_id", "sha256:" + "8" * 64), 9),
+    ("containerd_image_id_not_pinned", lambda w: _containerd(w, image_id=CONFIG), 9),
+    ("containerd_image_descriptor_not_pinned", lambda w: _containerd(w, image_digest="sha256:" + "8" * 64), 9),
     ("missing_repo_digest", _attr("repo_digests", []), 9),
     ("rootfs_mismatch", _attr("image_layers", ["sha256:" + "7" * 64]), 9),
     ("wrong_os", _attr("os", "windows"), 9),
