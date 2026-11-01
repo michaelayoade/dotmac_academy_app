@@ -1212,7 +1212,8 @@ def _validate_new_raw(before, after, stage, fks, trigger_ids):
             _require(len(candidates) == 1)
             index = candidates[0]
             meta = _catalog_view("pg_index", index, after["pg_index"][index])
-            _require(meta["indrelid"] == toast and meta["indisunique"] and not meta["indisprimary"])
+            # PG16 toasting.c creates every TOAST index with INDEX_CREATE_IS_PRIMARY.
+            _require(meta["indrelid"] == toast and meta["indisunique"] and meta["indisprimary"])
             _require(meta["indisvalid"] and meta["indisready"] and meta["indislive"])
             _require(
                 meta["indnkeyatts"] == meta["indnatts"] == 2 and meta["indexprs"] is None and meta["indpred"] is None
