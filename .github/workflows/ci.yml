@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -77,7 +80,11 @@ jobs:
       #   ACADEMY_RETAINED_PG_COLLATION_VERSION  glibc version of that image
       # An unset variable renders an empty declaration and the declare step
       # refuses (fail closed).
-      ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
+      # The ordinary service stays vars.ACADEMY_RETAINED_PG_IMAGE (the official
+      # base). The Genesis owner image comes from
+      # ci/genesis_image/genesis-image-declaration.json via the materialize step,
+      # which appends ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE to GITHUB_ENV only
+      # after pulling and verifying it; it is deliberately not set here.
       ACADEMY_RETAINED_EXPECTED_SERVER_VERSION_NUM: ${{ vars.ACADEMY_RETAINED_PG_SERVER_VERSION_NUM }}
       ACADEMY_RETAINED_EXPECTED_COLLATION_VERSION: '"${{ vars.ACADEMY_RETAINED_PG_COLLATION_VERSION }}"'
       ACADEMY_RETAINED_EXPECTED_ACTUAL_COLLATION_VERSION: '"${{ vars.ACADEMY_RETAINED_PG_COLLATION_VERSION }}"'
@@ -119,6 +126,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # Pulls the declared Genesis-only image by digest with the read-only
+      # registry token, verifies it, logs out and deletes the private Docker
+      # config before any test runs. Interim use of the existing
+      # FORGEJO_READ_TOKEN projection (step-level only).
+      - name: Materialize the declared Genesis-only PostgreSQL image
+        env:
+          FORGEJO_READ_TOKEN: ${{ secrets.FORGEJO_READ_TOKEN }}
+          ACADEMY_ORDINARY_SERVICE_IMAGE: ${{ vars.ACADEMY_RETAINED_PG_IMAGE }}
+        run: /usr/bin/python3 -I ci/genesis_image/materialize_genesis_image.py
 
       - uses: actions/setup-python@v5
         with:

@@ -1,0 +1,98 @@
+{
+  "genesis_image_reference": "registry.dotmac.io/dotmac/academy-genesis-pg16@sha256:25612bfc5ff99fc919021b43a3a9f3fac0b3a6bccc675b47940735bdd4780325",
+  "platform": "linux/amd64",
+  "manifest_digest": "sha256:25612bfc5ff99fc919021b43a3a9f3fac0b3a6bccc675b47940735bdd4780325",
+  "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+  "manifest_bytes": 2595,
+  "config_digest": "sha256:a64e9541d797c3d151dd6a148e4bab9729c7ae66e6e3d9abff559a11c9f6a031",
+  "layer_count": 15,
+  "layer_blob_digest": "sha256:fd70beb9c4c9d0c1865c59c715802a6c1a11501fdd46364cd0d7708e810190f1",
+  "layer_blob_bytes": 4122683,
+  "layer_diff_id": "sha256:20561fc8eb54ba00ac5862c9cc57a31aefb0ae923cd450de0bceec9a869bf0e9",
+  "payload": {
+    "path": "/usr/lib/postgresql/16/bin/postgres",
+    "sha256": "f7666d9e4cf06aca25c2567a61528879e2446a2494288d6005512c2866bf6033",
+    "bytes": 9700096
+  },
+  "unstripped_sha256": "9d7dd8d5d61a8ed0d91919966488746646c9d57efed6b37c57f8149ef58c7e06",
+  "base": {
+    "reference": "postgres@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b",
+    "config": "sha256:74d436cb49d3398cf7b5d7b33635d43623d9e4da4b93c22db453f7d5d81181b1",
+    "layer_count": 14,
+    "base_binary_sha256": "ea528a9f858bce5eef557522820c945a3d3b9fd260a15d6d0313d6350574229d"
+  },
+  "server_version_num": 160015,
+  "collation_version": "2.41",
+  "archive": {
+    "name": "academy-genesis-postgres16-oci.tar",
+    "sha256": "447beb9c807aab57b13e9ab195abf76683c12cbd31427d798e58744b4466b60c",
+    "bytes": 164454400
+  },
+  "source": {
+    "kind": "oci_distribution_registry",
+    "registry": "registry.dotmac.io",
+    "repository": "dotmac/academy-genesis-pg16",
+    "tag": "c58-25612bfc5ff9",
+    "pull_identity": "ci-reader",
+    "pull_secret_name": "FORGEJO_READ_TOKEN",
+    "push_identity": "ci-publisher (one-time, workstation, by Michael)",
+    "push_receipt_sha256": "d89f6058ec7eae5c2005b1625c2a2b973c3975fd2ca99865eb6bf646993b7ab4",
+    "archive_note": "archive sha/size kept as evidence of the reviewed layout; CI never downloads it"
+  },
+  "owner_source": {
+    "path": "app/maintenance/retained_hosted_genesis.py",
+    "git_blob": "4ae285992ecbcd90c3d6438e501baab19f35cfc2",
+    "sha256": "f6a385c14a27a791ad6891c7ea8e87eef9c53871ac51d6160289dc05cb525810"
+  },
+  "retained_schema_sha256": "6b4f800bb76f761996cc0cc5b6325f375fa5b10e9c2e997aaaa59a01dc93bc84",
+  "evidence": {
+    "c58": {
+      "run_id": 41217897635,
+      "run_attempt": 1,
+      "commit": "89cc2d2ac5cf0a7fa6be1959e43c9d5e6ec3b511",
+      "artifacts": {
+        "a": {
+          "id": 13049160463,
+          "digest": "sha256:a61a949b406650898f74c4e7ae25882341f71467b4608cd618b66a7f0cb22a46"
+        },
+        "b": {
+          "id": 13049285069,
+          "digest": "sha256:efc86611f2993ce9f748f03b20da795699f5bade8437ef9ddef7f6b6857b1e25"
+        },
+        "compare": {
+          "id": 13048883551,
+          "digest": "sha256:d2408a2872b8be423a0974c806c59d88695e7d1e17ee478c4b1231edd0e2f7f6"
+        },
+        "canary": {
+          "id": 13049241947,
+          "digest": "sha256:02c1f76e70104e95624222afe9c34eade685d3257f16abfc3f6aa803dd00c092"
+        }
+      },
+      "receipt_sha256": {
+        "build_a": "61935614b08f6ce1c0627f548a7d31bee01e6642df2dbbdc3d84a9dd7b99d9d6",
+        "build_b": "1cb2b6630351d18660c8d26656ce8fafb5fd0d293f42d58c1c032ff53772b9b8",
+        "compare": "7f61d96d48ad87c908ea73ba00f3f3382805ad422a43ec7090aadc5ff7cdf21b",
+        "canary": "8ad4bdcebaefd7ce76d50984654e17aca56046f68b1970c0d44a5f848170ae7b"
+      }
+    },
+    "c56": {
+      "run_id": 41021359997,
+      "receipt_sha256": "3860f12423e20778d3b3fbdc1c32803661acc2e3386795881d3c7888eda76e3b"
+    },
+    "s1_review_sha256": "8952fb1aed96cbc8709db15d7dd6ac8b4a1b2bd832f88da82d7008c9dbc0799f",
+    "s6_review_sha256": "1fd8720ecf6038859776c423bbeada4ba02d9f833287b5e9f721117f716ab738",
+    "patch": {
+      "diff_sha256": "9c9a6e7cd9e85777b8186cf2ba99adde166e89dd92090f3db0add830a7f5b4c9",
+      "patched_miscinit_sha256": "354d87983b76c7e7cb6c67d877a18e4058c8700ef358cf66694610e0921dfa87"
+    }
+  },
+  "documented_corrections": [
+    "4743669: configure argv gate reads the single CONFIGURE_ARGS define in build/src/include/pg_config.h (PG16 Makefile.global has no configure_args); supersedes C58 packet configure_argv_rule",
+    "deb5af5: academy-backend.mk runs PG generated-headers serially before the unchanged -j4 all (sha 8ecb292e..., 151 B); no output effect (S6-P3-3)"
+  ],
+  "claim": "Two isolated executions of the frozen recipe produced identical outputs; custom Genesis-only build; not a reproduction of the original PGDG binary.",
+  "derived_runtime_image_digest": null,
+  "admission_digest": null,
+  "FRESH_CANONICAL_SHA256": null,
+  "name_note": "The S6 pin named localhost/academy-genesis; the identity is the manifest digest, and the registry name is transport only. The reviewer must accept this explicitly."
+}

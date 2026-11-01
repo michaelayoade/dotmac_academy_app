@@ -71,12 +71,17 @@ esac
     return run
 
 
-def test_service_and_bindings_use_the_same_immutable_image_declaration(ci_job):
+def test_service_stays_official_and_genesis_image_is_declared_separately(ci_job):
+    # Deliberately inverts the earlier contract: the service and the Genesis owner
+    # image no longer share one declaration. The owner image comes from
+    # ci/genesis_image/genesis-image-declaration.json via the materialize step.
     assert ci_job["services"]["db"]["image"] == IMAGE_EXPRESSION
-    assert ci_job["env"]["ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE"] == IMAGE_EXPRESSION
+    assert "ACADEMY_RETAINED_EXPECTED_SERVICE_IMAGE" not in ci_job["env"]
     for service in ci_job["services"].values():
         image = service["image"]
         assert image == IMAGE_EXPRESSION or re.fullmatch(IMAGE_PATTERN, image)
+        assert "academy-genesis" not in image
+    assert any(step.get("name") == "Materialize the declared Genesis-only PostgreSQL image" for step in ci_job["steps"])
 
 
 @pytest.mark.parametrize(
