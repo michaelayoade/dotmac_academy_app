@@ -260,21 +260,22 @@ def test_kernel_runtime_readiness_record_is_truthful() -> None:
         "product-owned-runtime-bound-before-any-kernel-db-import",
     ],
 )
-def test_flipping_a_false_requirement_to_true_is_caught(requirement_id: str) -> None:
+def test_flipping_a_true_requirement_to_false_is_caught(requirement_id: str) -> None:
     """Plant: lying about one requirement's satisfied value fails the build.
 
-    Every requirement in the committed record is honestly `false` today —
-    that is the whole point of this record. Flip exactly one to `true`
-    (a claim the tree does not support) and confirm `_validate_record`
-    names that exact requirement, not just "something is wrong".
+    Every requirement in the committed record is honestly `true` today (the
+    module-scope `dotmac_kernel.db` imports are gone and the product-owned
+    runtime is bound). Flip exactly one to `false` (a claim the tree does not
+    support) and confirm `_validate_record` names that exact requirement, not
+    just "something is wrong".
     """
     record = copy.deepcopy(_load_record())
     (requirement,) = [r for r in record["requirements"] if r["id"] == requirement_id]
-    assert requirement["satisfied"] is False, (
-        f"fixture assumption broken: {requirement_id} is no longer recorded as false — "
-        "update this plant once the underlying import is actually fixed"
+    assert requirement["satisfied"] is True, (
+        f"fixture assumption broken: {requirement_id} is no longer recorded as true — "
+        "update this plant if the underlying fact regresses"
     )
-    requirement["satisfied"] = True
+    requirement["satisfied"] = False
 
     with pytest.raises(AssertionError, match=requirement_id):
         _validate_record(record)

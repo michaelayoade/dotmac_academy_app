@@ -8,9 +8,10 @@ from pathlib import Path
 from dotmac_ui import static_dir
 from fastapi.testclient import TestClient
 
-from app.assembly import PRODUCT_ID, academy_feature, assembly
+from app.assembly import OWNER_DECLARATIONS, PRODUCT_ID, academy_feature, assembly
 from app.config import ACADEMY_CONTENT_SECURITY_POLICY
 from app.main import app
+from app.owner_composition import compose_owner_declarations
 from app.ui import UI_STYLESHEET_URL
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +30,9 @@ def test_assembly_declares_academy_domain_without_claiming_migration_lineage() -
     assert assembly.name == PRODUCT_ID
     assert assembly.tenancy == "single"
     assert assembly.platform_surface_enabled is False
-    assert assembly.modules == (academy_feature,)
+    # Academy's feature leads the installed owner declarations (Learning and audit vocabularies follow).
+    assert assembly.modules == OWNER_DECLARATIONS == compose_owner_declarations(academy_feature)
+    assert assembly.modules[0] is academy_feature
     assert academy_feature.name == "academy"
     assert assembly.startup_checks
     assert assembly.startup_hooks

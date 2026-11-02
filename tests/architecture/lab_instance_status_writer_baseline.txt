@@ -34,5 +34,4 @@
 1 app/services/onboarding.py
 1 app/services/reminder_resend.py
 1 app/services/reminders.py
-1 app/web/instructor.py
-TOTAL 40
+TOTAL 39

@@ -6,10 +6,5 @@
 # Retiring an entry means importing the kernel version instead. Do not
 # regenerate this file to make a failure go away — a new entry means a new
 # fork of something that already exists.
-app/models/auth.py:AuthSession
-app/models/auth.py:UserCredential
 app/models/base.py:Base
 app/models/base.py:TimestampMixin
-app/models/rbac.py:Role
-app/models/tenant.py:Tenant
-app/models/tenant.py:TenantDomain
