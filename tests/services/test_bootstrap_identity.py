@@ -13,13 +13,20 @@ from dotmac_kernel.security import verify_password
 from dotmac_kernel.session_runtime import RuntimeBindingError
 from sqlalchemy import select, text
 
+from app.config import settings
 from app.database_runtime import bind_academy_database_runtime
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.bootstrap import bootstrap_tenant
 
+# The CI/test deployment's actual offline role pair, declared per fixture only (never in the job
+# environment, so negative tests keep the empty deny-all default). It is hard-coded, never derived
+# from the observed session_user, and is asserted against the real observed pair below.
+OFFLINE_ROLE_PAIR = ("platform_api", "platform_api")
+
 
 @pytest.fixture
-def offline_runtime():
+def offline_runtime(monkeypatch):
+    monkeypatch.setattr(settings, "bootstrap_allowed_database_role_pairs", (OFFLINE_ROLE_PAIR,))
     runtime = bind_academy_database_runtime()
     with runtime.platform_session() as db:
         assert db.get_bind().dialect.name == "postgresql"
