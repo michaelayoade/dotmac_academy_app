@@ -64,7 +64,7 @@ def test_unread_badge_count_service(admin_session, tenant_a):
     _set_tenant(admin_session, tenant_a.id)
     pid = uuid4()
     p2 = make_person_party(admin_session, tenant_id=tenant_a.id, email=f"{pid}@badge.test", first_name="B", last_name="G")
-    p2.id = pid
+    pid = p2.id
     admin_session.add(p2)
     admin_session.flush()
 

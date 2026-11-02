@@ -41,7 +41,7 @@ def app_user_session(app_user_engine):
 def _make_person(db, tenant):
     pid = uuid4()
     p = make_person_party(db, tenant_id=tenant.id, email=f"{pid}@iso.ann", first_name="I", last_name="S")
-    p.id = pid
+    pid = p.id
     db.add(p)
     db.flush()
     return p

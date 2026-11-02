@@ -24,7 +24,7 @@ def test_notify_creates_row(db_session, tenant_a):
     person_id = uuid4()
 
     p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="A", last_name="B")
-    p.id = person_id
+    person_id = p.id
     db_session.add(p)
     db_session.flush()
 
@@ -54,7 +54,7 @@ def test_unread_count(db_session, tenant_a):
     person_id = uuid4()
 
     p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="C", last_name="D")
-    p.id = person_id
+    person_id = p.id
     db_session.add(p)
     db_session.flush()
 
@@ -73,7 +73,7 @@ def test_mark_all_read_zeroes_count(db_session, tenant_a):
     person_id = uuid4()
 
     p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="E", last_name="F")
-    p.id = person_id
+    person_id = p.id
     db_session.add(p)
     db_session.flush()
 
@@ -98,7 +98,7 @@ def test_recent_ordering(db_session, tenant_a):
     person_id = uuid4()
 
     p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{person_id}@test.com", first_name="G", last_name="H")
-    p.id = person_id
+    person_id = p.id
     db_session.add(p)
     db_session.flush()
 
@@ -121,10 +121,10 @@ def test_recent_ordering(db_session, tenant_a):
 def test_notify_many(db_session, tenant_a):
     _set_tenant(db_session, tenant_a.id)
 
-    ids = [uuid4(), uuid4()]
-    for pid in ids:
-        p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{pid}@test.com", first_name="X", last_name="Y")
-        p.id = pid
+    ids = []
+    for _ in range(2):
+        p = make_person_party(db_session, tenant_id=tenant_a.id, email=f"{uuid4()}@test.com", first_name="X", last_name="Y")
+        ids.append(p.id)
         db_session.add(p)
     db_session.flush()
 
