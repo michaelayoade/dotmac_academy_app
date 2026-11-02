@@ -18,17 +18,20 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from alembic import command
-from tests.fixtures.kernel_identity_entry.rehearsal import (
-    FIXTURE,
-    LEGACY_HEAD,
-    config_for,
-    verify_legacy_source,
-)
-from tests.test_kernel_identity_entry import _seed_populated_legacy
 
 
 @pytest.fixture(scope="session")
 def legacy_engine(tmp_path_factory):
+    # Imported here, not at plugin load, so the heavy rehearsal/test-module imports
+    # happen only for sessions that actually use the shared entry database.
+    from tests.fixtures.kernel_identity_entry.rehearsal import (
+        FIXTURE,
+        LEGACY_HEAD,
+        config_for,
+        verify_legacy_source,
+    )
+    from tests.test_kernel_identity_entry import _seed_populated_legacy
+
     # No silent skip: CI must provision and run this prerequisite explicitly.
     assert os.environ.get("CI") == "true", "canonical-entry DB rehearsals are hosted CI only"
     url = os.environ.get("KERNEL_ENTRY_DATABASE_URL")

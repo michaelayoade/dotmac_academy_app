@@ -33,7 +33,13 @@ def test_legacy_source_is_the_complete_immutable_accepted_096_closure():
 
 
 def test_rehearsal_has_no_stamp_or_production_activation_import():
-    paths = [FIXTURE / "rehearsal.py", FIXTURE / "env.py", ROOT / "tests/test_kernel_identity_entry.py"]
+    paths = [
+        FIXTURE / "rehearsal.py",
+        FIXTURE / "env.py",
+        ROOT / "tests/test_kernel_identity_entry.py",
+        # The shared legacy_engine fixture moved here; keep it under the same no-commit/no-stamp guard.
+        ROOT / "tests/kernel_entry_fixtures.py",
+    ]
     for path in paths:
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):

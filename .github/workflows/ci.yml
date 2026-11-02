@@ -11,6 +11,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # The suite cannot finish inside one 25-minute job, so the Tests step runs one
+    # deterministic shard of the test files per matrix job (scripts/ci_test_shards.py;
+    # tests/test_ci_test_shards.py proves every test file runs in exactly one shard).
+    # Each shard is a complete job: it keeps every gate below (image guard, Genesis
+    # materialization, H/F convergence, composed bootstrap + verify-only, lint, mypy,
+    # CSS, audit, -x pytest and the skip-evidence gate over its own JUnit report).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     services:
       db:
@@ -280,7 +290,22 @@ jobs:
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
+        shell: bash
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ strategy.job-total }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          # Write the list first so a failing selector fails this step; an empty list
+          # must never fall through to an unfiltered `pytest` over the whole tree.
+          poetry run python -m scripts.ci_test_shards --shard "$SHARD_INDEX" --count "$SHARD_COUNT" > artifacts/shard-files.txt
+          mapfile -t shard_files < artifacts/shard-files.txt
+          if [ "${#shard_files[@]}" -eq 0 ]; then
+            echo 'empty test shard' >&2
+            exit 1
+          fi
+          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
@@ -290,9 +315,28 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: academy-hosted-tests-${{ github.run_id }}
+          name: academy-hosted-tests-${{ github.run_id }}-shard-${{ matrix.shard }}
           path: |
             artifacts/pytest.xml
             artifacts/convergence.xml
+            artifacts/shard-files.txt
           if-no-files-found: error
           retention-days: 30
+
+  # Keeps a single required check named `test`: it passes only when EVERY shard of
+  # the matrix job above succeeded (a failed, cancelled or skipped shard fails it).
+  test-complete:
+    name: test
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every test shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.test.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "test shards: $SHARDS_RESULT" >&2
+            exit 1
+          fi
