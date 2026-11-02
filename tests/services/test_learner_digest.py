@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from dotmac_kernel.models import Party, PartyPerson
 from dotmac_learning import LearnerWindowActivity
 from sqlalchemy import select
 
@@ -17,6 +18,7 @@ from app.models.assessment import Activity, Question, QuestionBank
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.email_outbox import EmailOutbox
+from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
 from app.services import learner_digest
 from app.services.assessment import submit_activity
@@ -28,6 +30,19 @@ def _learner(db, tenant, email, *, first="Ada", prefs=None):
     db.add(p)
     db.flush()
     return p
+
+def _row(db, person):
+    """The product's learner row shape, as selected in learner_digest.send_weekly_digests."""
+    return db.execute(
+        select(Party.id, Party.email, PartyPerson.first_name, AcademyAccountProfile.prefs)
+        .join(PartyPerson, PartyPerson.party_id == Party.id)
+        .join(
+            AcademyAccountProfile,
+            (AcademyAccountProfile.party_id == Party.id) & (AcademyAccountProfile.tenant_id == Party.tenant_id),
+        )
+        .where(Party.id == person.id)
+    ).one()
+
 
 def _live_course(db, tenant, person, *, slug, title="Network Foundation", activities=2):
     """A course the learner can actually study, with N passable activities."""
@@ -106,7 +121,7 @@ def test_digest_reports_the_week_and_what_is_next(admin_session, tenant_a):
     digest = learner_digest.build_digest(
         admin_session,
         tenant_id=tenant_a.id,
-        person=person,
+        person=_row(admin_session, person),
         since=now - timedelta(days=7),
         now=now,
     )
@@ -130,7 +145,7 @@ def test_a_quiet_week_is_said_plainly_not_congratulated(admin_session, tenant_a)
     digest = learner_digest.build_digest(
         admin_session,
         tenant_id=tenant_a.id,
-        person=person,
+        person=_row(admin_session, person),
         since=now - timedelta(days=7),
         now=now,
     )
@@ -148,7 +163,7 @@ def test_no_live_course_means_no_digest(admin_session, tenant_a):
     digest = learner_digest.build_digest(
         admin_session,
         tenant_id=tenant_a.id,
-        person=person,
+        person=_row(admin_session, person),
         since=now - timedelta(days=7),
         now=now,
     )
@@ -224,7 +239,7 @@ def test_rendered_bodies_link_to_the_resume_point_and_escape_titles(admin_sessio
     digest = learner_digest.build_digest(
         admin_session,
         tenant_id=tenant_a.id,
-        person=person,
+        person=_row(admin_session, person),
         since=now - timedelta(days=7),
         now=now,
     )

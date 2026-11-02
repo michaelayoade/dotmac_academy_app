@@ -126,7 +126,7 @@ def _publish_draft(admin_session, *, tenant_id, course_id):
     draft = bank_authoring.draft_of(admin_session, tenant_id=tenant_id, bank_id=bank.id)
     assert draft is not None
     context = learning.BankAuditContext(
-        tenant_id=tenant_id, actor_type="system", source_application="academy-test"
+        tenant_id=tenant_id, actor_type="system", source_application="dotmac_academy_app"
     )
     result = learning.publish_bank_version(
         admin_session,
