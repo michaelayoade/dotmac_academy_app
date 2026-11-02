@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import MetaData, Table, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # Expose the genuine shared fixture chain in every requesting test module.
@@ -108,6 +108,46 @@ def admin_session(admin_engine) -> Generator[Session, None, None]:
         db.rollback()  # keep test DB clean — explicit commits required where needed
     finally:
         db.close()
+
+
+def _platform_settings_rows(conn):
+    result = conn.execute(text("SELECT * FROM public.platform_settings"))
+    columns = list(result.keys())
+    rows = sorted((tuple(row) for row in result), key=lambda row: tuple(map(repr, row)))
+    return columns, rows
+
+
+@pytest.fixture(autouse=True)
+def _platform_settings_isolation(request):
+    """Undo any committed ``platform_settings`` change a database test leaves.
+
+    ``platform_settings`` is global (not tenant scoped) and tenant teardown does
+    not clear it, so a test that commits a policy value leaks it into every later
+    test in the process. Snapshot the raw rows (all columns) on a separate
+    migration-authority connection before the test and, only if they differ
+    afterwards, restore them exactly in one transaction. The separate connection
+    leaves the test's own session untouched, and as this fixture is set up first
+    it is torn down last, after ``admin_session`` has rolled back and closed.
+    """
+    if "admin_session" not in request.fixturenames:
+        yield
+        return
+    engine = request.getfixturevalue("admin_engine")
+    with engine.connect() as conn:
+        columns, before = _platform_settings_rows(conn)
+        conn.rollback()
+    try:
+        yield
+    finally:
+        with engine.connect() as conn:
+            _, after = _platform_settings_rows(conn)
+            conn.rollback()
+        if after != before:
+            with engine.begin() as conn:
+                table = Table("platform_settings", MetaData(), schema="public", autoload_with=conn)
+                conn.execute(table.delete())
+                if before:
+                    conn.execute(table.insert(), [dict(zip(columns, row, strict=True)) for row in before])
 
 
 @pytest.fixture(scope="session")
