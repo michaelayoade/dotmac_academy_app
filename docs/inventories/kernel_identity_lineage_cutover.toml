@@ -204,6 +204,7 @@ kernel_table = "tenants"
 kind = "same_name_collision"
 disposition = "adopt_rows_in_place"
 target_owner = "kernel"
+status = "discharged"
 
 [[model_edge]]
 academy_entry = "app/models/tenant.py:TenantDomain"
@@ -214,6 +215,7 @@ kernel_table = "tenant_domains"
 kind = "same_name_collision"
 disposition = "adopt_rows_in_place"
 target_owner = "kernel"
+status = "discharged"
 
 [[model_edge]]
 academy_entry = "app/models/rbac.py:Role"
@@ -224,6 +226,7 @@ kernel_table = "roles"
 kind = "same_name_collision"
 disposition = "adopt_rows_in_place"
 target_owner = "kernel"
+status = "discharged"
 
 [[model_edge]]
 academy_entry = "app/models/auth.py:UserCredential"
@@ -234,6 +237,7 @@ kernel_table = "user_credentials"
 kind = "same_name_collision"
 disposition = "expand_in_place_to_party_id"
 target_owner = "kernel"
+status = "discharged"
 
 [[model_edge]]
 academy_entry = "app/models/auth.py:AuthSession"
@@ -244,6 +248,7 @@ kernel_table = "auth_sessions"
 kind = "same_name_collision"
 disposition = "expand_in_place_to_party_id"
 target_owner = "kernel"
+status = "discharged"
 
 [[model_edge]]
 academy_entry = "app/models/person.py:Person"

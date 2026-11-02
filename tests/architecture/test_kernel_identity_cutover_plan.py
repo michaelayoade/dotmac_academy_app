@@ -150,16 +150,67 @@ def _person_columns() -> dict[tuple[str, str], str]:
     return found
 
 
-def test_every_remaining_kernel_collision_has_one_disposition() -> None:
-    inventory = _inventory()
+def _check_collision_dispositions(inventory: dict[str, object]) -> None:
+    """Open collisions equal the baseline; discharged ones must be real re-exports."""
+    import importlib
+
+    import dotmac_kernel.models as kernel_models
+
+    from tests.architecture.test_kernel_duplication import find_duplications
+
     model_edges = inventory["model_edge"]
-    planned = {
-        edge["academy_entry"]
-        for edge in model_edges
-        if edge["kind"] == "same_name_collision"
-    }
-    assert planned == _baseline()
     assert all(edge["target_owner"] == "kernel" for edge in model_edges)
+    collisions = [edge for edge in model_edges if edge["kind"] == "same_name_collision"]
+    open_entries = {edge["academy_entry"] for edge in collisions if edge.get("status") != "discharged"}
+    assert open_entries == _baseline()
+    duplicates = set(find_duplications())
+    for edge in collisions:
+        if edge.get("status") != "discharged":
+            continue
+        entry = edge["academy_entry"]
+        path, _, symbol = entry.partition(":")
+        module = importlib.import_module(path.removesuffix(".py").replace("/", "."))
+        kernel_class = getattr(kernel_models, edge["kernel_symbol"], None)
+        assert kernel_class is not None, f"{entry}: no kernel class {edge['kernel_symbol']}"
+        assert getattr(module, symbol) is kernel_class, f"{entry} is not the kernel class"
+        assert entry not in duplicates, f"{entry} is discharged but still a duplicate definition"
+
+
+def test_every_remaining_kernel_collision_has_one_disposition() -> None:
+    _check_collision_dispositions(_inventory())
+
+
+def test_discharged_collisions_are_exactly_the_kernel_reexports() -> None:
+    discharged = {
+        edge["academy_entry"]
+        for edge in _inventory()["model_edge"]
+        if edge["kind"] == "same_name_collision" and edge.get("status") == "discharged"
+    }
+    assert discharged == {
+        "app/models/tenant.py:Tenant",
+        "app/models/tenant.py:TenantDomain",
+        "app/models/rbac.py:Role",
+        "app/models/auth.py:UserCredential",
+        "app/models/auth.py:AuthSession",
+    }
+
+
+def test_collision_ratchet_rejects_an_open_entry_and_a_false_discharge() -> None:
+    # An entry that is not discharged and not in the baseline still fails.
+    planted = _inventory()
+    for edge in planted["model_edge"]:
+        if edge["academy_entry"] == "app/models/rbac.py:Role":
+            del edge["status"]
+    with pytest.raises(AssertionError):
+        _check_collision_dispositions(planted)
+
+    # Discharging a genuine local definition (not a kernel re-export) still fails.
+    planted = _inventory()
+    for edge in planted["model_edge"]:
+        if edge["academy_entry"] == "app/models/base.py:TimestampMixin":
+            edge["status"] = "discharged"
+    with pytest.raises(AssertionError):
+        _check_collision_dispositions(planted)
 
 
 def test_semantic_identity_edges_cannot_hide_behind_the_name_collision_ratchet() -> None:
