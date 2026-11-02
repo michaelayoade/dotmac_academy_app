@@ -1151,8 +1151,10 @@ def _canonical_dependencies(connection, expected):
     target = _dependency_identity("d.refclassid", "d.refobjid", "d.refobjsubid")
     sql = (
         cte + " SELECT " + source + "," + target + ",d.deptype FROM pg_catalog.pg_depend d "  # noqa: S608
-        "WHERE EXISTS (SELECT 1 FROM objects o WHERE (o.classid=d.classid AND o.oid=d.objid) "
-        "OR (o.classid=d.refclassid AND o.oid=d.refobjid)) ORDER BY 1,2,3"
+        # Out-of-scope (legacy) policies calling a canonical function stay out of scope.
+        "WHERE EXISTS (SELECT 1 FROM objects o WHERE o.classid=d.classid AND o.oid=d.objid) "
+        "OR (d.classid<>'pg_catalog.pg_policy'::regclass AND EXISTS (SELECT 1 FROM objects o "
+        "WHERE o.classid=d.refclassid AND o.oid=d.refobjid)) ORDER BY 1,2,3"
     )
     rows = tokens._tuples(
         connection,
