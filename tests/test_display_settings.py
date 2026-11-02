@@ -32,7 +32,10 @@ def test_product_assembly_registers_display_specs_in_a_clean_process():
         cwd=_ROOT,
         timeout=120,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    # Never echo child stderr; at most the final line's exception class name.
+    last = (result.stderr.strip().splitlines() or [""])[-1]
+    failure = last.split(":", 1)[0].strip()[:80]
+    assert result.returncode == 0, f"probe failed: {failure}"
     assert "display-specs-ok" in result.stdout
 
 
