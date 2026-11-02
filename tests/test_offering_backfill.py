@@ -8,22 +8,28 @@ and (b) is idempotent via the ON CONFLICT guard.
 
 from __future__ import annotations
 
-from sqlalchemy import select, text
+from sqlalchemy import func, literal, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.offering import CourseOffering
 
-# Mirror of alembic/versions/0008_course_offerings.py upgrade() backfill.
-_BACKFILL = text("""
-    INSERT INTO course_offerings
-        (id, tenant_id, cohort_id, course_id, status, created_at, updated_at)
-    SELECT gen_random_uuid(), c.tenant_id, c.id, co.id, 'active', now(), now()
-    FROM cohorts c
-    JOIN courses co
-      ON co.tenant_id = c.tenant_id AND co.discipline = c.discipline
-    ON CONFLICT (tenant_id, cohort_id, course_id) DO NOTHING;
-""")
+# Mirror of alembic/versions/0008_course_offerings.py upgrade() backfill, built from
+# the mapped tables so the schema qualification follows the models.
+_OFFERINGS = CourseOffering.__table__
+_BACKFILL = pg_insert(_OFFERINGS).from_select(
+    ["id", "tenant_id", "cohort_id", "course_id", "status", "created_at", "updated_at"],
+    select(
+        func.gen_random_uuid(),
+        Cohort.tenant_id,
+        Cohort.id,
+        Course.id,
+        literal("active"),
+        func.now(),
+        func.now(),
+    ).join_from(Cohort, Course, (Course.tenant_id == Cohort.tenant_id) & (Course.discipline == Cohort.discipline)),
+).on_conflict_do_nothing(index_elements=["tenant_id", "cohort_id", "course_id"])
 
 
 def test_backfill_links_same_discipline_and_is_idempotent(admin_session, tenant_a):

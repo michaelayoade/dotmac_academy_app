@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from app.models.course import Course
 
@@ -20,7 +20,7 @@ def test_course_invisible_across_tenants(admin_session, app_user_session, tenant
     # Simulate an app_user session scoped to tenant_b.
     # SET command does not accept bound parameters in PostgreSQL — safe to interpolate UUID.
     app_user_session.execute(text(f"SET app.current_tenant = '{tenant_b.id}'"))
-    rows = app_user_session.execute(text("SELECT count(*) FROM courses")).scalar()
+    rows = app_user_session.execute(select(func.count()).select_from(Course)).scalar()
     app_user_session.execute(text("RESET app.current_tenant"))
     assert rows == 0
     admin_session.query(Course).filter(Course.id == c.id).delete()

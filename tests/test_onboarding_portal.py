@@ -6,8 +6,9 @@ Requires a migrated disposable Postgres (skipped otherwise by the fixtures).
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
+from app.models.cohort import Enrollment
 from tests.conftest import client_for
 
 
@@ -166,7 +167,7 @@ def test_completing_checklist_auto_enrolls_and_invites(
     assert row.person_id is not None
     # Enrolment artefacts: enrollment row, student role, and a password invite.
     enr = admin_session.execute(
-        text("SELECT count(*) FROM enrollments WHERE person_id=:p"), {"p": str(row.person_id)}
+        select(func.count()).select_from(Enrollment).where(Enrollment.person_id == row.person_id)
     ).scalar()
     assert enr == 1
     role = admin_session.execute(

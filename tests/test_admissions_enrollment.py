@@ -5,8 +5,10 @@ Requires a migrated disposable Postgres (skipped otherwise by the fixtures).
 
 from __future__ import annotations
 
-from sqlalchemy import text
+from dotmac_kernel.models import Party
+from sqlalchemy import func, select
 
+from app.models.cohort import Enrollment
 from tests.conftest import client_for, make_person_party
 
 
@@ -92,11 +94,10 @@ def test_enroll_creates_person_and_enrollment(app_client, tenant_a, admin_sessio
 
     # A Person + Enrollment now exist for this email/cohort.
     admin_session.rollback()
-    pid = admin_session.execute(text("SELECT id FROM people WHERE email='learn@a.ex'")).scalar()
+    pid = admin_session.execute(select(Party.id).where(Party.email == "learn@a.ex")).scalar()
     assert pid is not None
     n = admin_session.execute(
-        text("SELECT count(*) FROM enrollments WHERE person_id=:p AND cohort_id=:c"),
-        {"p": pid, "c": str(cohort.id)},
+        select(func.count()).select_from(Enrollment).where(Enrollment.person_id == pid, Enrollment.cohort_id == cohort.id)
     ).scalar()
     assert n == 1
 
@@ -115,8 +116,7 @@ def test_enroll_is_idempotent(app_client, tenant_a, admin_session, api_actor):
 
     admin_session.rollback()
     n = admin_session.execute(
-        text("SELECT count(*) FROM enrollments WHERE cohort_id=:c"),
-        {"c": str(cohort.id)},
+        select(func.count()).select_from(Enrollment).where(Enrollment.cohort_id == cohort.id)
     ).scalar()
     assert n == 1  # no duplicate enrolment
 
@@ -163,5 +163,7 @@ def test_enroll_reuses_existing_person(app_client, tenant_a, admin_session, api_
     assert r.json()["person_id"] == str(existing.id)
 
     admin_session.rollback()
-    n = admin_session.execute(text("SELECT count(*) FROM people WHERE email='staff@a.ex'")).scalar()
+    n = admin_session.execute(
+        select(func.count()).select_from(Party).where(Party.email == "staff@a.ex")
+    ).scalar()
     assert n == 1  # not duplicated
