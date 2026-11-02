@@ -16,7 +16,10 @@ from app.services.reports import cohort_matrix, student_transcript
 
 
 def _person(db, tid, email, first_name, last_name):
-    p = Party(tenant_id=tid, party_type=PartyType.person, email=email, is_active=True)
+    p = Party(
+        tenant_id=tid, party_type=PartyType.person, display_name=f"{first_name} {last_name}".strip(),
+        email=email, is_active=True,
+    )
     db.add(p)
     db.flush()
     db.add(PartyPerson(party_id=p.id, first_name=first_name, last_name=last_name))
