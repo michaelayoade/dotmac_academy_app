@@ -163,7 +163,7 @@ def login_url_for_request(request: Request) -> str:
     return f"/login?{urlencode({'next': target})}"
 
 
-def _current_person(
+def _resolve_current_person(
     db: Session,
     tenant_id: UUID,
     token: str | None,
@@ -192,6 +192,12 @@ def _current_person(
     return person, None
 
 
+def _current_person(db: Session, tenant_id: UUID, token: str | None) -> Person | None:
+    """Resolve a session for internal HTTP and WebSocket callers."""
+    person, _ = _resolve_current_person(db, tenant_id, token)
+    return person
+
+
 def require_web_user(
     request: Request,
     db: Session = Depends(get_db),
@@ -204,7 +210,7 @@ def require_web_user(
     sees the redirect directly.
     """
     tenant = require_tenant(request)
-    person, rejection_reason = _current_person(db, tenant.id, request.cookies.get(COOKIE))
+    person, rejection_reason = _resolve_current_person(db, tenant.id, request.cookies.get(COOKIE))
     if person is None:
         logger.info("web session rejected reason=%s", rejection_reason)
         raise HTTPException(
@@ -224,8 +230,7 @@ def optional_web_user(
     (e.g. the public landing at ``/``) instead of redirecting to /login.
     """
     tenant = require_tenant(request)
-    person, _ = _current_person(db, tenant.id, request.cookies.get(COOKIE))
-    return person
+    return _current_person(db, tenant.id, request.cookies.get(COOKIE))
 
 
 def require_web_role(role_slug: str):
