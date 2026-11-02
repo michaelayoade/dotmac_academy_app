@@ -95,7 +95,7 @@ def bootstrap(environment: Mapping[str, str], *, expected_database: str, verify_
     # Load the product owner only after rejecting untrusted targets/declarations.
     from app.maintenance.fresh_product import run_fresh_composed_entry, verify_fresh_composed_db
 
-    engine = create_engine(url, poolclass=NullPool, hide_parameters=True)
+    engine = create_engine(url, poolclass=NullPool, hide_parameters=True, echo=False)
     try:
         with engine.connect() as connection:
             root = connection.begin()
