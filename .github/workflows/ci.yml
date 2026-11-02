@@ -280,7 +280,8 @@ jobs:
 
       - name: Tests
         if: '!cancelled()'
-        run: poetry run pytest -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml
+        # TEMPORARY failure census: only files that failed in runs 41389339489/41391748126.
+        run: poetry run pytest -rfE --tb=line -q -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml $(cat ci/census-failing-files.txt)
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
