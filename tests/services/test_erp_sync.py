@@ -42,6 +42,7 @@ def _seed(admin_session, tenant, *, status="completed", pct=1.0):
         discipline="fiber",
         source_ref="fiber-splicing@1",
         version=1,
+        status="published", listed=False,
     )
     person = Party(
         tenant_id=tenant.id,

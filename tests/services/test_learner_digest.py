@@ -39,6 +39,7 @@ def _live_course(db, tenant, person, *, slug, title="Network Foundation", activi
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     cohort = Cohort(tenant_id=tenant.id, name=f"C-{slug}", discipline="networking", status="active")
     db.add_all([course, cohort])
@@ -191,7 +192,8 @@ def test_opt_out_is_honoured(admin_session, tenant_a):
 def test_instructors_do_not_receive_the_learner_digest(admin_session, tenant_a):
     person = _learner(admin_session, tenant_a, "teacher@a.edu")
     course = Course(
-        tenant_id=tenant_a.id, slug="ld-teach", title="T", discipline="networking", source_ref="x", version=1
+        tenant_id=tenant_a.id, slug="ld-teach", title="T", discipline="networking", source_ref="x", version=1,
+        status="published", listed=False,
     )
     cohort = Cohort(tenant_id=tenant_a.id, name="C-teach", discipline="networking", status="active")
     admin_session.add_all([course, cohort])

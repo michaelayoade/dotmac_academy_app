@@ -646,6 +646,7 @@ def test_populated_installed_pg_cascade_and_fkless_retention_requires_real_order
         title="Cascade course",
         discipline="fiber",
         source_ref="hosted-canary",
+        status="published", listed=False,
     )
     a.admin.add_all([cohort, course, bound_session])
     a.admin.flush()

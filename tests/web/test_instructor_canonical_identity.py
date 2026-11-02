@@ -198,6 +198,7 @@ def test_results_tuple_keeps_inactive_suspended_human_email_and_score(current_ac
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     a.admin.add(course)
     a.admin.flush()

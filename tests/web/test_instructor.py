@@ -157,6 +157,7 @@ def test_admin_course_preview_renders_imported_html_content(app_client, admin_se
         source_ref="imported",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add(course)
     admin_session.flush()
@@ -239,6 +240,7 @@ def test_admin_nomination_activates_immediately_when_course_already_completed(ap
         source_ref="test",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([cohort, course])
     admin_session.flush()
@@ -586,7 +588,7 @@ def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
     learner = _canonical_person(
         admin_session, tenant_id=tenant_a.id, email="learner@a.edu", first_name="Le", last_name="Ar"
     )
-    course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking", source_ref="x", version=1)
+    course = Course(tenant_id=tenant_a.id, slug="mg", title="MG", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add_all([learner, course])
     admin_session.flush()
     act = Activity(
@@ -618,7 +620,7 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
 
     h = _login_instructor(app_client, admin_session, tenant_a)
     learner = _canonical_person(admin_session, tenant_id=tenant_a.id, email="il@a.edu", first_name="Il", last_name="A")
-    course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking", source_ref="x", version=1)
+    course = Course(tenant_id=tenant_a.id, slug="ia", title="IA", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add_all([learner, course])
     admin_session.flush()
     act = Activity(
@@ -702,6 +704,7 @@ def test_publish_course_toggles_status(app_client, admin_session, tenant_a):
         source_ref="x",
         version=1,
         status="draft",
+        listed=False,
     )
     admin_session.add(course)
     admin_session.commit()
@@ -778,6 +781,7 @@ def test_add_courses_to_track_error_renders_inline_message(app_client, admin_ses
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([coh, course])
     admin_session.flush()
@@ -836,6 +840,7 @@ def test_draft_courses_excluded_from_track_checkbox_lists(app_client, admin_sess
         source_ref="x",
         version=1,
         status="draft",
+        listed=False,
     )
     published = Course(
         tenant_id=tenant_a.id,
@@ -845,6 +850,7 @@ def test_draft_courses_excluded_from_track_checkbox_lists(app_client, admin_sess
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([coh, draft, published])
     admin_session.commit()
@@ -983,6 +989,7 @@ def test_reorder_track_courses_route_updates_order(app_client, admin_session, te
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     course_b = Course(
         tenant_id=tenant_a.id,
@@ -992,6 +999,7 @@ def test_reorder_track_courses_route_updates_order(app_client, admin_session, te
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([coh, course_a, course_b])
     admin_session.flush()
@@ -1037,6 +1045,7 @@ def test_reorder_track_courses_route_rejects_mismatched_membership(app_client, a
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([coh, course])
     admin_session.flush()
@@ -1070,6 +1079,7 @@ def test_clear_roster_track_forbidden_for_non_admin_instructor(app_client, admin
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     stu = _canonical_person(
         admin_session, tenant_id=tenant_a.id, email="clear-stu@a.edu", first_name="C", last_name="S"
@@ -1119,6 +1129,7 @@ def test_admin_can_clear_a_learners_stuck_track(app_client, admin_session, tenan
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     stu = _canonical_person(
         admin_session, tenant_id=tenant_a.id, email="clear-admin-stu@a.edu", first_name="C", last_name="A"
@@ -1191,6 +1202,7 @@ def test_cohorts_page_shows_zero_activity_course_warning(app_client, admin_sessi
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([coh, course])
     admin_session.flush()

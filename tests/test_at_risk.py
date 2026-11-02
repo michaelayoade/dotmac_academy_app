@@ -26,7 +26,8 @@ def _setup(admin_session, tenant, *, starts, ends, pct, status="in_progress"):
     suffix = uuid.uuid4().hex[:6]
     cohort = Cohort(tenant_id=tenant.id, name=f"C-{suffix}", discipline="fiber", status="active")
     course = Course(
-        tenant_id=tenant.id, title=f"Fiber {suffix}", slug=f"fiber-{suffix}", discipline="fiber", source_ref="x"
+        tenant_id=tenant.id, title=f"Fiber {suffix}", slug=f"fiber-{suffix}", discipline="fiber", source_ref="x",
+        status="published", listed=False,
     )
     person = make_person_party(admin_session, tenant_id=tenant.id, email=f"s{suffix}@a.ex", first_name="S", last_name="T")
     admin_session.add_all([cohort, course, person])

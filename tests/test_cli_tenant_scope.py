@@ -34,6 +34,7 @@ def _seed_bank(admin_session, tenant):
         discipline="power-site-infrastructure",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(course)
     admin_session.flush()

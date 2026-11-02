@@ -20,6 +20,7 @@ def _track_choice(admin_session, tenant):
         discipline="fiber",
         source_ref="test",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(course)
     admin_session.flush()

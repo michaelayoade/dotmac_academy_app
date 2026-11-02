@@ -22,6 +22,7 @@ def _seed_course(db, tid, slug, title="Test Course"):
     c = Course(
         tenant_id=tid, slug=slug, title=title, discipline="networking",
         source_ref="x", version=1, status="published",
+        listed=False,
     )
     db.add(c)
     db.flush()

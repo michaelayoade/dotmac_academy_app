@@ -21,6 +21,7 @@ def _activity_and_person(db, tenant_id):
         discipline="networking",
         source_ref="test",
         version=1,
+        status="published", listed=False,
     )
     person = make_person_party(db, tenant_id=tenant_id, email="race@example.com", first_name="Race", last_name="Guard")
     db.add_all([course, person])

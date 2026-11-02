@@ -244,6 +244,7 @@ def test_admin_invite_assigns_selected_track(app_client, admin_session, tenant_a
         source_ref="test",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add_all([cohort, course])
     admin_session.flush()

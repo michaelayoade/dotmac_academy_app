@@ -30,6 +30,7 @@ def _seed_course(admin_session, tenant, slug, title="Course"):
     c = Course(
         tenant_id=tenant.id, slug=slug, title=title, discipline="networking",
         source_ref="x", version=1, status="published",
+        listed=False,
     )
     admin_session.add(c)
     admin_session.flush()

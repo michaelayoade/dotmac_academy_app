@@ -15,6 +15,7 @@ def test_question_bank_invisible_across_tenants(admin_session, app_user_session,
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(c)
     admin_session.flush()

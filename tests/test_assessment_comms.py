@@ -198,6 +198,7 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
         discipline="fiber",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     person = make_person_party(admin_session, tenant_id=tenant_a.id, email="grad@a.ex", first_name="Gra", last_name="Duate")
     admin_session.add_all([course, person])

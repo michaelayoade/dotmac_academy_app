@@ -46,6 +46,7 @@ def _course(admin_session, tenant, slug, title, chapter_title="Ch1"):
         source_ref="x",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add(c)
     admin_session.flush()

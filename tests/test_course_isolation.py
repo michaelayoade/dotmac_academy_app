@@ -13,6 +13,7 @@ def test_course_invisible_across_tenants(admin_session, app_user_session, tenant
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(c)
     admin_session.commit()

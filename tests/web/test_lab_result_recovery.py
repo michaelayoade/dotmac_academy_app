@@ -73,6 +73,7 @@ def _seed_lab(admin_session, tenant, *, with_course=True):
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(course)
     admin_session.flush()

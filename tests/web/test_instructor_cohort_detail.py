@@ -31,6 +31,7 @@ def _seed_detail(admin_session, tenant):
         source_ref="test",
         version=2,
         status="published",
+        listed=False,
     )
     admin_session.add_all([cohort, course])
     admin_session.flush()

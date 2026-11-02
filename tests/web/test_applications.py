@@ -274,6 +274,7 @@ def _entrance_config(admin_session, tenant):
         source_ref="test",
         version=1,
         status="published",
+        listed=False,
     )
     admin_session.add(course)
     admin_session.flush()

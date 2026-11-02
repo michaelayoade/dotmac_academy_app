@@ -38,6 +38,7 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(c)
     admin_session.flush()
@@ -129,6 +130,7 @@ def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(c_b)
     admin_session.flush()
@@ -168,7 +170,7 @@ def test_dashboard_lists_multiple_courses(app_client, admin_session, tenant_a):
     p, h = _login(app_client, admin_session, tenant_a)
     courses = []
     for slug, title in (("foundation", "Network Foundation"), ("fiber-engineering", "Fiber Engineering")):
-        c = Course(tenant_id=tenant_a.id, slug=slug, title=title, discipline="networking", source_ref="x", version=1)
+        c = Course(tenant_id=tenant_a.id, slug=slug, title=title, discipline="networking", source_ref="x", version=1, status="published", listed=False)
         admin_session.add(c)
         admin_session.flush()
         admin_session.add(
@@ -214,6 +216,7 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
         discipline="networking",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(c)
     admin_session.flush()
@@ -273,7 +276,7 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
 
 def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
     """A course the learner may study, with one chapter and one activity."""
-    c = Course(tenant_id=tenant.id, slug=slug, title="SP", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tenant.id, slug=slug, title="SP", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(
@@ -374,7 +377,7 @@ def test_subtopic_progress_requires_course_access(app_client, admin_session, ten
     """Without the entitlement gate a learner could write progress — and feed the
     activity gate — for a course they cannot open."""
     p, h = _login(app_client, admin_session, tenant_a)
-    c = Course(tenant_id=tenant_a.id, slug="notmine", title="NM", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tenant_a.id, slug="notmine", title="NM", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(

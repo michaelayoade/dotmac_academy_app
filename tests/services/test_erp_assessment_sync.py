@@ -34,6 +34,7 @@ def _applicant(db, tenant):
         title="ERP result test",
         discipline="testing",
         source_ref=f"erp-result-{suffix}",
+        status="published", listed=False,
     )
     db.add(course)
     db.flush()

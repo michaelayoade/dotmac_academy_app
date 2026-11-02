@@ -20,18 +20,22 @@ def _seed_courses(admin_session, tid):
     listed = Course(
         tenant_id=tid, slug="fiber-basics", title="Fiber Basics",
         discipline="networking", source_ref="t@1", listed=True,
+        status="published",
     )
     unlisted_internal = Course(
         tenant_id=tid, slug="instructor-guide", title="Instructor Guide",
         discipline="teaching", source_ref="t@1", listed=False,
+        status="published",
     )
     listed_mgmt = Course(
         tenant_id=tid, slug="mgmt-team-leadership", title="Leading a Team",
         discipline="management", source_ref="t@1", listed=True,
+        status="published",
     )
     unlisted_mgmt = Course(
         tenant_id=tid, slug="mgmt-vendor-procurement", title="Vendor Course Hidden",
         discipline="management", source_ref="t@1", listed=False,
+        status="published",
     )
     draft_listed = Course(
         tenant_id=tid, slug="draft-course", title="Draft Course",

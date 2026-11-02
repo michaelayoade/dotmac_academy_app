@@ -35,6 +35,7 @@ def _course(db, tenant, slug, title):
         source_ref="test",
         version=1,
         status="published",
+        listed=False,
     )
     db.add(course)
     db.flush()

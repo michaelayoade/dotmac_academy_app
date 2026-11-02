@@ -42,6 +42,7 @@ def _bank(admin_session, tenant):
         discipline="recruitment",
         source_ref="erp-contract-test",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(course)
     admin_session.flush()

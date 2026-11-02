@@ -170,6 +170,7 @@ def test_cohort_assessment_scope_excludes_ambiguous_shared_course_learners(admin
         source_ref="test",
         version=1,
         status="published",
+        listed=False,
     )
     facilitator = _scoped_user(admin_session, tenant_a, email="shared-course-facilitator@a.edu")
     assigned_only = _scoped_user(admin_session, tenant_a, email="assigned-only@a.edu")

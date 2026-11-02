@@ -26,6 +26,7 @@ def _cohort_with_exam(admin_session, tenant):
         discipline="fiber",
         source_ref="x",
         version=1,
+        status="published", listed=False,
     )
     admin_session.add(course)
     admin_session.commit()

@@ -655,6 +655,7 @@ def test_actual_admission_state_and_public_reader_interpretation(onboarding_case
         source_ref="admission-state-test",
         version=1,
         status="published",
+        listed=False,
     )
     c.a.admin.add(course)
     c.a.admin.flush()
