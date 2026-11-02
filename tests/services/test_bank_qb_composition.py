@@ -205,7 +205,7 @@ def test_audit_contexts_from_session_and_cli():
     long_account = SimpleNamespace(id=uuid4(), email="x" * 200)
     assert bank_authoring.web_bank_audit_context(tenant_id=tenant_id, account=long_account).actor_label is None
     cli_context = bank_authoring.cli_bank_audit_context(tenant_id=tenant_id)
-    assert (cli_context.actor_type, cli_context.source_application) == ("system", "academy-cli")
+    assert (cli_context.actor_type, cli_context.source_application) == ("system", "academy_cli")
     assert cli_context.actor_party_id is None
 
 

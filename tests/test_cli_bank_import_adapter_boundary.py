@@ -118,7 +118,7 @@ def test_cli_imports_sorted_files_as_drafts_and_reports_proposals(tmp_path, call
         assert command.missing_question_weight == 3
         assert command.replace_imported_draft is False
         assert audit_context.actor_type == "system"
-        assert audit_context.source_application == "academy-cli"
+        assert audit_context.source_application == "academy_cli"
         doc = command.doc
         assert type(doc) is learning.BankDocument
         assert doc.questions[0].category == "2026-10-17"

@@ -119,7 +119,7 @@ def test_loader_converts_and_forwards_import_command(monkeypatch):
         lint_violations=(), policy_proposals=(("pool", None),),
     )
     context = learning.BankAuditContext(
-        tenant_id=tenant_id, actor_type="system", source_application="academy-cli"
+        tenant_id=tenant_id, actor_type="system", source_application="academy_cli"
     )
     seen = {}
 
@@ -150,7 +150,7 @@ def test_loader_preserves_owner_exception_without_rollback(monkeypatch):
           "options": [], "correct": [], "weight": 1}],
     )
     context = learning.BankAuditContext(
-        tenant_id=uuid4(), actor_type="system", source_application="academy-cli"
+        tenant_id=uuid4(), actor_type="system", source_application="academy_cli"
     )
 
     def owner(db, command, *, audit_context):

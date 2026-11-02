@@ -37,7 +37,7 @@ class BankPermissionDenied(PermissionError):
     """The session's roles do not allow this bank operation."""
 
 SOURCE_APPLICATION = "dotmac_academy_app"
-CLI_SOURCE_APPLICATION = "academy-cli"
+CLI_SOURCE_APPLICATION = "academy_cli"
 
 ROLE_KEYS = (
     "bank_author_roles",

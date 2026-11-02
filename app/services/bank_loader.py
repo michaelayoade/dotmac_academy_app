@@ -161,8 +161,8 @@ def load_bank(
     context = audit_context or learning.BankAuditContext(
         tenant_id=tenant_id,
         actor_type="system",
-        source_application="academy-cli",
-        actor_label="academy-cli",
+        source_application="academy_cli",
+        actor_label="academy_cli",
     )
     report = import_bank_as_draft(
         db, tenant_id=tenant_id, course_id=course_id, doc=doc, audit_context=context
