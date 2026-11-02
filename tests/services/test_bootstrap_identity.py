@@ -504,7 +504,9 @@ def test_logging_mutation_after_shared_constructor_denies_before_material_readba
 
     monkeypatch.setattr(bootstrap_identity, '_create_absent_rows', mutate)
     try:
-        with pytest.raises(CredentialAssignmentError, match='logging configuration refused'):
+        # The kernel re-raises the product refusal as its own wrapped message; the
+        # product guard must still be the exception's context.
+        with pytest.raises(CredentialAssignmentError, match='credential assignment failed; rollback required') as caught:
             with offline_runtime.platform_session() as db:
                 try:
                     bootstrap_tenant(db, slug=slug, name='Logging drift', admin_email=slug+'@example.test',
@@ -517,6 +519,9 @@ def test_logging_mutation_after_shared_constructor_denies_before_material_readba
         engine.hide_parameters, engine.echo = prior[:2]
         logger.setLevel(prior[2])
     assert mutated == [True]
+    cause = caught.value.__context__
+    assert isinstance(cause, CredentialAssignmentError)
+    assert 'logging configuration refused' in str(cause)
     with offline_runtime.platform_session() as db:
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
