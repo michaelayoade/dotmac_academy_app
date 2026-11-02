@@ -170,11 +170,17 @@ def test_grants_are_exactly_the_ownership_boundary(admin_session):
     # column, including worker-owned ones like `state`.
     assert by_grantee.get("app_user") == {"SELECT"}
     assert by_grantee.get("platform_api") == {"SELECT"}
-    # Explicit for CI parity: CI migrates as the `postgres` superuser (see
-    # .github/workflows/ci.yml), which owns lab_operations there, so app_admin
-    # gets nothing on this table in CI without this grant, even though it is
-    # the table owner (and needs nothing extra) in production.
-    assert by_grantee.get("app_admin") == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+    # The composed bootstrap migrates as app_admin (scripts/ci_bootstrap_composed_db.py),
+    # so app_admin is the table OWNER, as in production. information_schema shows
+    # an owner's implicit privileges, so the ownership itself is what is asserted,
+    # not a privilege set.
+    owner = admin_session.scalar(
+        text("SELECT r.rolname FROM pg_class c "
+             "JOIN pg_namespace n ON n.oid = c.relnamespace "
+             "JOIN pg_roles r ON r.oid = c.relowner "
+             "WHERE n.nspname = 'public' AND c.relname = 'lab_operations'")
+    )
+    assert owner == "app_admin"
     assert by_grantee.get("academy_lab_worker") == {"SELECT", "INSERT", "UPDATE"}
 
     insert_columns = set(
