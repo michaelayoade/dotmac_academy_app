@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     services:
       db:
@@ -294,6 +294,8 @@ jobs:
         env:
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_COUNT: ${{ strategy.job-total }}
+          ACADEMY_F1_DIAGNOSTIC: '1'
+          PYTHONPATH: .
         run: |
           set -euo pipefail
           mkdir -p artifacts
@@ -305,7 +307,7 @@ jobs:
             echo 'empty test shard' >&2
             exit 1
           fi
-          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
+          poetry run pytest -p tests.f1_diagnostic -rfE --tb=line -v -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
