@@ -1,8 +1,11 @@
 """Authored hosted-only gates, UNEXECUTED. Genuine full fixture and packages.
 
 No source directory slicing, fake installed package, Person shim, stamping or
-local DB. The private TEMP oracle holds synthetic hosted rows only; all value
-comparisons return booleans, never token values or their fingerprints.
+local DB. The oracle is an in-database md5 digest of the ordered whole-row text
+of the synthetic hosted rows; it is held only in the test connection's info and
+every comparison returns a boolean, never token values. No relation is created
+in pg_temp, because the kernel preflight requires the search path to be exactly
+[pg_catalog, public].
 """
 
 from __future__ import annotations
@@ -39,6 +42,20 @@ REVISION = "a003_account_token_identity"
 KINDS = ("password_reset", "invite", "email_verify", "ical_feed")
 
 
+_DIGEST_SQL = sa.text(
+    r"SELECT md5(coalesce(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM public.account_tokens t"
+)
+
+
+def _capture_oracle(connection):
+    # Same-root server-side digest of the ordered multiset of whole-row text:
+    # the same equality as a row-by-row EXCEPT ALL, but only an md5 digest leaves
+    # PostgreSQL and nothing is created in pg_temp.
+    digest = connection.scalar(_DIGEST_SQL)
+    assert isinstance(digest, str) and len(digest) == 32
+    connection.info["token_value_digest"] = digest
+
+
 def _synthetic_tokens(connection):
     for person, tenant in connection.execute(sa.text("SELECT id,tenant_id FROM public.people ORDER BY id")):
         for kind in KINDS:
@@ -60,10 +77,7 @@ def _synthetic_tokens(connection):
                         "state": state,
                     },
                 )
-    # Same-root server-only oracle, no credential/token values leave PostgreSQL.
-    connection.execute(
-        sa.text("CREATE TEMP TABLE token_value_oracle ON COMMIT DROP AS SELECT * FROM public.account_tokens")
-    )
+    _capture_oracle(connection)
 
 
 @contextmanager
@@ -99,15 +113,7 @@ def _import_and_bind(connection, expected, operation, entry):
 
 
 def _values_preserved(connection):
-    assert (
-        connection.scalar(
-            sa.text(
-                "SELECT NOT EXISTS ((SELECT * FROM public.account_tokens EXCEPT ALL SELECT * FROM token_value_oracle) "
-                "UNION ALL (SELECT * FROM token_value_oracle EXCEPT ALL SELECT * FROM public.account_tokens))"
-            )
-        )
-        is True
-    )
+    assert connection.scalar(_DIGEST_SQL) == connection.info["token_value_digest"]
 
 
 def test_populated_all_kinds_states_full_source_heads_preserve_values_and_oids(
@@ -555,6 +561,8 @@ def test_private_owner_refuses_each_value_drift_and_caught_refusal_rolls_back_ro
             _damage_value(connection, field)
         if phase == "immediate_receipt":
             _heads(connection, tmp_path / "finish")
+            # The savepoint undoes exactly the damage below; no copy of the rows is kept.
+            damage = connection.begin_nested()
             _damage_value(connection, field)
         with pytest.raises(IdentityHistoryImportRefused):
             if phase == "immediate_receipt":
@@ -570,13 +578,7 @@ def test_private_owner_refuses_each_value_drift_and_caught_refusal_rolls_back_ro
         if phase == "immediate_receipt":
             # Even restoration after an observed violation cannot turn a
             # caught refusal back into an issued conservation receipt.
-            connection.execute(
-                sa.text(
-                    "UPDATE public.account_tokens t SET (kind,token_hash,expires_at,used_at,created_at,updated_at)="
-                    "(SELECT kind,token_hash,expires_at,used_at,created_at,updated_at "
-                    "FROM token_value_oracle o WHERE o.id=t.id)"
-                )
-            )
+            damage.rollback()
             _values_preserved(connection)
             with pytest.raises(IdentityHistoryImportRefused):
                 account_token_identity_receipt(connection, entry)
@@ -621,8 +623,7 @@ def test_owner_conserves_raw_kind_null_use_and_infinite_microsecond_timestamps(
                 "updated_at='2000-01-01 00:00:00.123456+00'::timestamptz"
             )
         )
-        connection.execute(sa.text("TRUNCATE token_value_oracle"))
-        connection.execute(sa.text("INSERT INTO token_value_oracle SELECT * FROM public.account_tokens"))
+        _capture_oracle(connection)
 
     monkeypatch.setitem(globals(), "_synthetic_tokens", unusual_rows)
     with _historical(legacy_engine, tmp_path, monkeypatch) as (connection, expected, operation, entry):
