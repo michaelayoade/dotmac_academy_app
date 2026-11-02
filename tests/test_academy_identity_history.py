@@ -12,6 +12,9 @@ from unittest.mock import Mock
 
 import pytest
 import sqlalchemy as sa
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from dotmac_kernel import audit_actions, credential_lifecycle, security
 from dotmac_kernel.migrations.gate import run_gate
 from dotmac_kernel.migrations.identity_history import (
@@ -26,9 +29,6 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.elements import quoted_name
 
 from alembic import command
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
-from alembic.script import ScriptDirectory
 from app.maintenance.identity_history import import_academy_identity_history
 from app.migration_bindings import ASSEMBLY_PREREQUISITE_BINDINGS
 from app.migration_graph import ordinary_migration_config
@@ -44,12 +44,9 @@ from tests.fixtures.kernel_identity_entry.rehearsal import (
 )
 from tests.test_kernel_identity_entry import (
     entry_transaction,
-    legacy_engine,
     public_footprint,
 )
 
-# Importing the genuine existing fixture is deliberate; not a duplicate DB owner.
-assert legacy_engine
 ASSEMBLY = Path(__file__).resolve().parents[1] / "alembic/identity_assembly_versions"
 
 

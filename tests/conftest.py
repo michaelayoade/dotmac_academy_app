@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # Expose the genuine shared fixture chain in every requesting test module.
-pytest_plugins = ("tests.canonical_identity_fixtures",)
+pytest_plugins = ("tests.canonical_identity_fixtures", "tests.kernel_entry_fixtures")
 
 
 def pytest_sessionstart(session):

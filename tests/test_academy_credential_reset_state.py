@@ -6,19 +6,16 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from dotmac_kernel.migrations.identity_history import IdentityHistoryImportRefused
-from sqlalchemy.exc import DBAPIError
-
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from dotmac_kernel.migrations.identity_history import IdentityHistoryImportRefused
+from sqlalchemy.exc import DBAPIError
+
 from app.maintenance.identity_history import _POLICY, _projection_preflight, import_academy_identity_history
 from app.migration_graph import ordinary_migration_config
 from app.models.identity_extensions import AcademyCredentialPolicy
 from tests.test_academy_identity_history import _prepared
-from tests.test_kernel_identity_entry import legacy_engine
-
-assert legacy_engine
 
 
 def _projection():

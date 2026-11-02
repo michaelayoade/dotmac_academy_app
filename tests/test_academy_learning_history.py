@@ -27,9 +27,8 @@ from app.maintenance.account_token_identity import (
 from app.maintenance.identity_history import import_academy_identity_history
 from tests import test_academy_identity_history as identity_tests
 from tests.fixtures.kernel_identity_entry.rehearsal import verify_legacy_source
-from tests.test_kernel_identity_entry import entry_transaction, legacy_engine, public_footprint
+from tests.test_kernel_identity_entry import entry_transaction, public_footprint
 
-assert legacy_engine
 _NOW = datetime(2020, 2, 29, 12, 34, 56, 123456, tzinfo=timezone(timedelta(hours=5, minutes=30)))
 _IDENTITY = (
     "tenants",

@@ -6,9 +6,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.maintenance import identity_history as identity
-from tests.test_academy_identity_history import _prepared, legacy_engine
-
-assert legacy_engine
+from tests.test_academy_identity_history import _prepared
 
 
 def _observed_decoder(monkeypatch):

@@ -32,9 +32,8 @@ from app.maintenance.account_token_identity import (
 from app.maintenance.identity_history import import_academy_identity_history
 from tests import test_academy_identity_history as history
 from tests.fixtures.kernel_identity_entry.rehearsal import composed_config_for, replay_kernel, verify_legacy_source
-from tests.test_kernel_identity_entry import entry_transaction, legacy_engine, public_footprint
+from tests.test_kernel_identity_entry import entry_transaction, public_footprint
 
-assert legacy_engine  # Genuine unchanged, separately provisioned full 62 fixture.
 ASSEMBLY = history.ASSEMBLY
 REVISION = "a003_account_token_identity"
 KINDS = ("password_reset", "invite", "email_verify", "ical_feed")
