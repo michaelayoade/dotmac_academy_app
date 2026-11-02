@@ -66,7 +66,11 @@ def test_forgot_creates_real_proof_and_durable_outbox_with_identical_unknown_res
     assert known.body == unknown.body
     assert "on its way" in known.body.decode()
     assert "Returning to login" in known.body.decode()
-    assert "window.location.href='/login'" in known.body.decode()
+    # The inline redirect script became data attributes (CSP forbids inline script).
+    body = known.body.decode()
+    assert "data-redirect-after='3000'" in body
+    assert "data-redirect-href='/login'" in body
+    assert "window.location" not in body
     tokens = _tokens(db, tid, pid)
     assert len(tokens) == 1
     queued = db.scalars(
