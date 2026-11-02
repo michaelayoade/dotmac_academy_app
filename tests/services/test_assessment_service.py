@@ -19,7 +19,7 @@ def _seed(db, tid):
     db.add(Question(tenant_id=tid, bank_id=bank.id, ext_id="q1", stem="?", type="single",
                     options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1))
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=3, type="mcq_test",
-                   bank_id=bank.id, title="Ch3", pass_threshold=0.6)
+                   bank_id=bank.id, title="Ch3", pass_threshold=0.6, grading="auto", weight=1.0)
     db.add(act); db.flush()
     return c, act
 
@@ -126,7 +126,7 @@ def test_lab_activity_cannot_be_graded_as_a_quiz(admin_session, tenant_a):
     admin_session.add(p)
     c, _ = _seed(admin_session, tenant_a.id)
     lab = Activity(tenant_id=tenant_a.id, course_id=c.id, chapter_number=14, type="lab",
-                   bank_id=None, title="Subnetting lab", pass_threshold=0.7)
+                   bank_id=None, title="Subnetting lab", pass_threshold=0.7, grading="auto", weight=1.0)
     admin_session.add(lab)
     admin_session.flush()
 

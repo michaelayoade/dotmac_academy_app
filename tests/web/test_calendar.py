@@ -46,7 +46,7 @@ def _seed_activity(admin_session, tenant, course_id, title="Act"):
     ))
     act = Activity(
         tenant_id=tenant.id, course_id=course_id, chapter_number=1,
-        type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6,
+        type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6, grading="auto", weight=1.0,
     )
     admin_session.add(act)
     admin_session.flush()

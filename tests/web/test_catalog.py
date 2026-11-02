@@ -61,7 +61,7 @@ def _seed_course(admin_session, tenant, slug, title="Course"):
     )
     admin_session.add(
         Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1,
-                 type="mcq_test", bank_id=bank.id, title=f"{title} Act", pass_threshold=0.6)
+                 type="mcq_test", bank_id=bank.id, title=f"{title} Act", pass_threshold=0.6, grading="auto", weight=1.0)
     )
     admin_session.flush()
     return c

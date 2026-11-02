@@ -283,7 +283,7 @@ def test_list_cohort_tracks_flags_zero_activity_courses_live(admin_session, tena
             chapter_number=1,
             type="mcq_test",
             title="Quiz",
-            pass_threshold=0.6,
+            pass_threshold=0.6, grading="auto", weight=1.0,
         )
     )
     admin_session.commit()

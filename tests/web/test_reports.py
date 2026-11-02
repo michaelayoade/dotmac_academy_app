@@ -29,9 +29,9 @@ def _seed_cohort(admin_session, tid):
     admin_session.add(c)
     admin_session.flush()
     a1 = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                  title="Ch1 Test", pass_threshold=0.6)
+                  title="Ch1 Test", pass_threshold=0.6, grading="auto", weight=1.0)
     a2 = Activity(tenant_id=tid, course_id=c.id, chapter_number=2, type="lab",
-                  title="Ch2 Lab", pass_threshold=0.6)
+                  title="Ch2 Lab", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add_all([a1, a2])
     admin_session.flush()
     coh = Cohort(tenant_id=tid, name="Abuja 2026", discipline="networking", status="active")

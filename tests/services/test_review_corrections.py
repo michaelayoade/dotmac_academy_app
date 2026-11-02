@@ -70,7 +70,7 @@ def test_below_passing_counts_a_genuine_zero(admin_session, tenant_a):
     acts = []
     for i in range(2):
         a = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=i + 1,
-                     type="mcq_test", title=f"Q{i}", pass_threshold=0.6)
+                     type="mcq_test", title=f"Q{i}", pass_threshold=0.6, grading="auto", weight=1.0)
         admin_session.add(a)
         acts.append(a)
     admin_session.flush()
@@ -114,7 +114,7 @@ def test_graded_reminder_skips_auto_scores(admin_session, tenant_a):
     course = _course(admin_session, tenant_a, "autog-course")
     _enrol(admin_session, tenant_a, person, course)
     act = Activity(tenant_id=tenant_a.id, course_id=course.id, chapter_number=1,
-                   type="mcq_test", title="Quiz", pass_threshold=0.6)
+                   type="mcq_test", title="Quiz", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
     sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=person.id, answers={})

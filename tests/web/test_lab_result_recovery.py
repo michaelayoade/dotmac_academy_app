@@ -81,7 +81,7 @@ def _seed_lab(admin_session, tenant, *, with_course=True):
         chapter_number=14,
         type="lab",
         title="VLAN Lab",
-        pass_threshold=0.5,
+        pass_threshold=0.5, grading="auto", weight=1.0,
     )
     admin_session.add(act)
     admin_session.flush()
@@ -237,7 +237,7 @@ def test_recovery_rejects_unrelated_results(app_client, admin_session, journey, 
         other = _make_person(admin_session, tenant_a, "other@a.edu")
         kwargs["person_id"] = other.id
     elif wrong == "activity":
-        other = Activity(tenant_id=instance.tenant_id, course_id=activity.course_id, title="Other", type="lab")
+        other = Activity(tenant_id=instance.tenant_id, course_id=activity.course_id, title="Other", type="lab", grading="auto", weight=1.0)
         admin_session.add(other)
         admin_session.commit()
         kwargs["activity_id"] = other.id

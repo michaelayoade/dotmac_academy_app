@@ -20,7 +20,7 @@ def _enroll(db, tid, coh, person):
 
 def _activity_score(db, tid, course, person, created_at):
     act = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
-                   title="A", pass_threshold=0.6)
+                   title="A", pass_threshold=0.6, grading="auto", weight=1.0)
     db.add(act)
     db.flush()
     sub = Submission(tenant_id=tid, activity_id=act.id, person_id=person.id, answers={}, attempt_no=1)

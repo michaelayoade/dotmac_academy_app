@@ -28,7 +28,7 @@ def test_lab_instance_invisible_across_tenants(admin_session, app_user_session, 
     admin_session.flush()
 
     a = Activity(
-        tenant_id=tenant_a.id, course_id=c.id, chapter_number=14, type="lab", title="VLAN lab", pass_threshold=0.6
+        tenant_id=tenant_a.id, course_id=c.id, chapter_number=14, type="lab", title="VLAN lab", pass_threshold=0.6, grading="auto", weight=1.0
     )
     admin_session.add(a)
     admin_session.flush()

@@ -49,7 +49,7 @@ def _seed_courses(admin_session, tid, person_id, n, prefix="qc"):
                          title=f"Ch{c}", body_html="<p>x</p>")
             admin_session.add(ch)
             act = Activity(tenant_id=tid, course_id=course.id, chapter_number=c,
-                           type="mcq_test", title=f"T{c}", pass_threshold=0.7, max_attempts=3)
+                           type="mcq_test", title=f"T{c}", pass_threshold=0.7, max_attempts=3, grading="auto", weight=1.0)
             admin_session.add(act)
             admin_session.flush()
             admin_session.add(ChapterRead(tenant_id=tid, person_id=person_id, chapter_id=ch.id))

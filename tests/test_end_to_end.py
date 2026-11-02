@@ -71,7 +71,7 @@ def test_full_flow(app_client, admin_session):
             type="mcq_test",
             bank_id=bank.id,
             title="Ch3 test",
-            pass_threshold=0.6,
+            pass_threshold=0.6, grading="auto", weight=1.0,
         )
     )
 

@@ -203,7 +203,7 @@ def test_results_tuple_keeps_inactive_suspended_human_email_and_score(current_ac
     a.admin.add(course)
     a.admin.flush()
     activity = Activity(
-        tenant_id=a.tid, course_id=course.id, chapter_number=1, type="mcq_test", title="Result", pass_threshold=0.6
+        tenant_id=a.tid, course_id=course.id, chapter_number=1, type="mcq_test", title="Result", pass_threshold=0.6, grading="auto", weight=1.0
     )
     a.admin.add(activity)
     a.admin.flush()

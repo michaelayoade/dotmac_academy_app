@@ -76,7 +76,7 @@ def _seed_detail(admin_session, tenant):
                 chapter_number=1,
                 type="mcq_test",
                 title="Safety Check",
-                pass_threshold=0.7,
+                pass_threshold=0.7, grading="auto", weight=1.0,
             ),
             Enrollment(
                 tenant_id=tenant.id,

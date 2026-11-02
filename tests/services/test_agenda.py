@@ -34,7 +34,7 @@ def _seed_activity(db, tid, course_id, title="Act"):
     ))
     act = Activity(
         tenant_id=tid, course_id=course_id, chapter_number=1,
-        type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6,
+        type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6, grading="auto", weight=1.0,
     )
     db.add(act)
     db.flush()

@@ -23,7 +23,7 @@ def test_item_analysis_p_values(admin_session, tenant_a):
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                   title="Quiz", pass_threshold=0.6)
+                   title="Quiz", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
     pa = make_person_party(admin_session, tenant_id=tid, email="pa@a.edu", first_name="P", last_name="A")
@@ -51,7 +51,7 @@ def test_item_analysis_uses_best_attempt(admin_session, tenant_a):
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                   title="Quiz", pass_threshold=0.6)
+                   title="Quiz", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
     p = make_person_party(admin_session, tenant_id=tid, email="p@a.edu", first_name="P", last_name="X")

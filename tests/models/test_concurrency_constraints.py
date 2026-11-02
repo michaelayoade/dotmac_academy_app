@@ -32,7 +32,7 @@ def _activity_and_person(db, tenant_id):
         chapter_number=1,
         type="mcq_test",
         title="Guarded assessment",
-        pass_threshold=0.6,
+        pass_threshold=0.6, grading="auto", weight=1.0,
     )
     db.add(activity)
     db.commit()

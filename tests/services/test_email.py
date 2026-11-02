@@ -25,7 +25,7 @@ def _seed(db, tid):
     db.add(c)
     db.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                   title="Ch1 Test", pass_threshold=0.6)
+                   title="Ch1 Test", pass_threshold=0.6, grading="auto", weight=1.0)
     db.add(act)
     db.flush()
     p = make_person_party(db, tenant_id=tid, email="learner@stu.edu", first_name="Lea", last_name="Rner")

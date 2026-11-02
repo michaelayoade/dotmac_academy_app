@@ -47,7 +47,7 @@ def _seed_course(admin_session, tenant, slug, *, discipline="networking", status
                                type="single", options=["A", "B"], correct=["A"],
                                rubric_category="recall", explanation="Because A", weight=1))
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="mcq_test",
-                   bank_id=bank.id, title=f"{slug} Ch1", pass_threshold=0.6)
+                   bank_id=bank.id, title=f"{slug} Ch1", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
     return c, act

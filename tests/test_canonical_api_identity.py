@@ -651,7 +651,7 @@ def test_populated_installed_pg_cascade_and_fkless_retention_requires_real_order
     a.admin.add_all([cohort, course, bound_session])
     a.admin.flush()
     chapter = Chapter(tenant_id=a.tid, course_id=course.id, number=1, title="Retained chapter")
-    activity = Activity(tenant_id=a.tid, course_id=course.id, type="mcq_test", title="Retained activity")
+    activity = Activity(tenant_id=a.tid, course_id=course.id, type="mcq_test", title="Retained activity", grading="auto", weight=1.0)
     a.admin.add_all([chapter, activity])
     a.admin.flush()
     cascades = [

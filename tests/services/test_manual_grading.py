@@ -19,7 +19,7 @@ def _manual_activity(db, tid):
     db.add(Question(tenant_id=tid, bank_id=bank.id, ext_id="q1", stem="Explain", type="single",
                     options=["A", "B"], correct=["A"], rubric_category="analysis", explanation="", weight=1))
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test", bank_id=bank.id,
-                   title="Essay", pass_threshold=0.6, grading="manual")
+                   title="Essay", pass_threshold=0.6, grading="manual", weight=1.0)
     db.add(act)
     db.flush()
     return p, c, act

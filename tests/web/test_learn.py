@@ -84,7 +84,7 @@ def test_take_test_flow(app_client, admin_session, tenant_a):
         type="mcq_test",
         bank_id=bank.id,
         title="Ch3",
-        pass_threshold=0.6,
+        pass_threshold=0.6, grading="auto", weight=1.0,
     )
     admin_session.add(act)
     admin_session.flush()
@@ -150,7 +150,7 @@ def test_cross_tenant_isolation(app_client, admin_session, tenant_a, tenant_b):
         type="mcq_test",
         bank_id=bank_b.id,
         title="B-Act",
-        pass_threshold=0.6,
+        pass_threshold=0.6, grading="auto", weight=1.0,
     )
     admin_session.add(act_b)
     admin_session.commit()
@@ -238,7 +238,7 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
         chapter_number=14,
         type="lab",
         title="Router lab",
-        pass_threshold=0.7,
+        pass_threshold=0.7, grading="auto", weight=1.0,
     )
     test = Activity(
         tenant_id=tenant_a.id,
@@ -246,7 +246,7 @@ def test_chapter_lists_multiple_activities(app_client, admin_session, tenant_a):
         chapter_number=14,
         type="mcq_test",
         title="Chapter 14 test",
-        pass_threshold=0.0,
+        pass_threshold=0.0, grading="auto", weight=1.0,
     )
     admin_session.add_all([lab, test])
     coh = Cohort(tenant_id=tenant_a.id, name="C", discipline="networking", status="active")
@@ -316,7 +316,7 @@ def _seed_entitled_chapter(admin_session, tenant, person, *, slug, body_html):
             type="mcq_test",
             bank_id=bank.id,
             title="Ch1 test",
-            pass_threshold=0.6,
+            pass_threshold=0.6, grading="auto", weight=1.0,
         )
     )
     coh = Cohort(tenant_id=tenant.id, name=f"C-{slug}", discipline="networking", status="active")

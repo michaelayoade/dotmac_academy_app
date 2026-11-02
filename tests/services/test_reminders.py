@@ -43,7 +43,7 @@ def _seed(admin_session, tenant, *, email="rem@a.edu", due_offsets_hours=(), ses
     now = datetime.now(UTC)
     for n, hours in enumerate(due_offsets_hours):
         act = Activity(tenant_id=tenant.id, course_id=course.id, chapter_number=n + 1,
-                       type="mcq_test", title=f"Rem act {n}", pass_threshold=0.6)
+                       type="mcq_test", title=f"Rem act {n}", pass_threshold=0.6, grading="auto", weight=1.0)
         admin_session.add(act)
         admin_session.flush()
         admin_session.add(OfferingActivity(tenant_id=tenant.id, offering_id=off.id,

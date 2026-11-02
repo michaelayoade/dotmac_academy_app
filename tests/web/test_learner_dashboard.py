@@ -41,7 +41,7 @@ def _course(admin_session, tid, slug, title, *, chapters=2, threshold=0.7):
                                   title=f"{title} Ch{n}", body_html="<p>x</p>"))
         a = Activity(tenant_id=tid, course_id=course.id, chapter_number=n,
                      type="mcq_test", title=f"{title} Test {n}",
-                     pass_threshold=threshold, max_attempts=3)
+                     pass_threshold=threshold, max_attempts=3, grading="auto", weight=1.0)
         admin_session.add(a)
         acts.append(a)
     admin_session.flush()

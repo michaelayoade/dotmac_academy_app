@@ -50,7 +50,7 @@ def _seed(a, foreign_tid):
         db.add(CourseCompletion(tenant_id=tid, person_id=p.id, course_id=courses[0].id,
                                 status="in_progress", pct=pct))
     activities = [Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                           title=c.title, pass_threshold=0.73) for c in courses]
+                           title=c.title, pass_threshold=0.73, grading="auto", weight=1.0) for c in courses]
     db.add_all(activities)
     db.flush()
     _score(db, tid, activities[0].id, weak.id,

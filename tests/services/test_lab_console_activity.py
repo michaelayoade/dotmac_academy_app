@@ -29,7 +29,7 @@ def _instance(admin_session, tenant, *, name, last_active=None):
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",
-                   title="L", pass_threshold=0.6)
+                   title="L", pass_threshold=0.6, grading="auto", weight=1.0)
     p = Party(tenant_id=tenant.id, party_type=PartyType.person, display_name="T U",
               email=f"{name}@example.com", is_active=True)
     admin_session.add_all([act, p])

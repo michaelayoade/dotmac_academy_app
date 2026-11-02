@@ -27,9 +27,9 @@ def _seed(db, tid):
     db.flush()
 
     a1 = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                  title="Ch1 Test", pass_threshold=0.6)
+                  title="Ch1 Test", pass_threshold=0.6, grading="auto", weight=1.0)
     a2 = Activity(tenant_id=tid, course_id=c.id, chapter_number=2, type="lab",
-                  title="Ch2 Lab", pass_threshold=0.6)
+                  title="Ch2 Lab", pass_threshold=0.6, grading="auto", weight=1.0)
     db.add_all([a1, a2])
     db.flush()
 
@@ -106,7 +106,7 @@ def test_cohort_matrix_scoped_to_offerings_not_discipline(admin_session, tenant_
     admin_session.add(other)
     admin_session.flush()
     other_act = Activity(tenant_id=tenant_a.id, course_id=other.id, chapter_number=1,
-                         type="mcq_test", title="Other Ch1", pass_threshold=0.6)
+                         type="mcq_test", title="Other Ch1", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(other_act)
     admin_session.flush()
 

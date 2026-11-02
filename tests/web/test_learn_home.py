@@ -31,9 +31,9 @@ def test_learn_home_shows_course_completion_and_results(app_client, admin_sessio
     admin_session.add(course)
     admin_session.flush()
     a1 = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
-                  title="Ch1 Test", pass_threshold=0.6)
+                  title="Ch1 Test", pass_threshold=0.6, grading="auto", weight=1.0)
     a2 = Activity(tenant_id=tid, course_id=course.id, chapter_number=2, type="mcq_test",
-                  title="Ch2 Test", pass_threshold=0.6)
+                  title="Ch2 Test", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add_all([a1, a2])
     admin_session.flush()
 

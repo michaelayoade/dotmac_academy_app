@@ -18,9 +18,9 @@ def _seed_course_with_activities(db, tid, *, weight_a=1.0, weight_b=3.0):
     db.add(course)
     db.flush()
     a1 = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
-                  title="Quiz A", pass_threshold=0.6, weight=weight_a)
+                  title="Quiz A", pass_threshold=0.6, weight=weight_a, grading="auto")
     a2 = Activity(tenant_id=tid, course_id=course.id, chapter_number=2, type="mcq_test",
-                  title="Quiz B", pass_threshold=0.6, weight=weight_b)
+                  title="Quiz B", pass_threshold=0.6, weight=weight_b, grading="auto")
     db.add_all([a1, a2])
     db.flush()
     return course, a1, a2

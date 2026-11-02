@@ -79,7 +79,7 @@ def test_instructor_override_creates_override_score(app_client, admin_session, t
     admin_session.flush()
     activity = Activity(
         tenant_id=tenant_a.id, course_id=course.id, type="lab", title="VLAN Lab",
-        pass_threshold=0.7,
+        pass_threshold=0.7, grading="auto", weight=1.0,
     )
     admin_session.add(activity)
     admin_session.flush()

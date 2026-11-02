@@ -33,7 +33,7 @@ def _setup(admin_session, tenant, email="pace@a.edu"):
                                type="single", options=["A", "B"], correct=["A"],
                                rubric_category="recall", explanation="", weight=1))
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="mcq_test",
-                   bank_id=bank.id, title="Pace Ch1", pass_threshold=0.6)
+                   bank_id=bank.id, title="Pace Ch1", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     coh = Cohort(tenant_id=tenant.id, name="C", discipline="networking", status="active")
     admin_session.add(coh)

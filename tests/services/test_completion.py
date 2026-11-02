@@ -29,9 +29,9 @@ def _course_with_two_activities(db, tid):
     db.add(c)
     db.flush()
     a1 = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                  title="A1", pass_threshold=0.6)
+                  title="A1", pass_threshold=0.6, grading="auto", weight=1.0)
     a2 = Activity(tenant_id=tid, course_id=c.id, chapter_number=2, type="mcq_test",
-                  title="A2", pass_threshold=0.6)
+                  title="A2", pass_threshold=0.6, grading="auto", weight=1.0)
     db.add_all([a1, a2])
     db.flush()
     return c, a1, a2
@@ -95,7 +95,7 @@ def test_submit_activity_updates_completion(admin_session, tenant_a):
                                type="single", options=["A", "B"], correct=["A"],
                                rubric_category="recall", explanation="", weight=1))
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
-                   bank_id=bank.id, title="Solo Ch1", pass_threshold=0.6)
+                   bank_id=bank.id, title="Solo Ch1", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
 

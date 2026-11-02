@@ -42,7 +42,7 @@ def _course_setup(admin_session, tenant, person, *, due_offsets_hours):
     acts = []
     for n, hours in enumerate(due_offsets_hours):
         act = Activity(tenant_id=tenant.id, course_id=course.id, chapter_number=n + 1,
-                       type="mcq_test", title=f"Deadline act {n}", pass_threshold=0.6)
+                       type="mcq_test", title=f"Deadline act {n}", pass_threshold=0.6, grading="auto", weight=1.0)
         admin_session.add(act)
         admin_session.flush()
         admin_session.add(OfferingActivity(tenant_id=tenant.id, offering_id=off.id, activity_id=act.id,

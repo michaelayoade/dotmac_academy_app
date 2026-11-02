@@ -38,7 +38,7 @@ def _entitled_activity(admin_session, tenant, person_id):
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",
-                   title="Lab", pass_threshold=0.5)
+                   title="Lab", pass_threshold=0.5, grading="auto", weight=1.0)
     coh = Cohort(tenant_id=tenant.id, name="C", discipline="networking", status="active")
     admin_session.add_all([act, coh])
     admin_session.flush()

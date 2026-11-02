@@ -164,7 +164,7 @@ def test_email_auto_on_pass_toggle_off_skips_send(admin_session, tenant_a, monke
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant_a.id, course_id=c.id, chapter_number=1, type="mcq_test",
-                   title="Ch1", pass_threshold=0.6)
+                   title="Ch1", pass_threshold=0.6, grading="auto", weight=1.0)
     admin_session.add(act)
     admin_session.flush()
     p = Party(tenant_id=tenant_a.id, email="learner@stu.edu", party_type=PartyType.person,

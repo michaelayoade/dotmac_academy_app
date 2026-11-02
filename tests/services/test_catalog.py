@@ -45,7 +45,7 @@ def _seed_activity(db, tid, course_id, chapter_number, title="Act"):
     db.add(Question(tenant_id=tid, bank_id=bank.id, ext_id="q1", stem="Q?", type="single",
                     options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1))
     act = Activity(tenant_id=tid, course_id=course_id, chapter_number=chapter_number,
-                   type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6)
+                   type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6, grading="auto", weight=1.0)
     db.add(act)
     db.flush()
     return act
@@ -277,7 +277,7 @@ def _seed_course_activity(db, tid, course_id, title, *, type_="mcq_test"):
         db.add(Question(tenant_id=tid, bank_id=bank.id, ext_id="f1", stem="Q?", type="single",
                         options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1))
     act = Activity(tenant_id=tid, course_id=course_id, chapter_number=None, type=type_,
-                   bank_id=bank.id if bank is not None else None, title=title, pass_threshold=0.6)
+                   bank_id=bank.id if bank is not None else None, title=title, pass_threshold=0.6, grading="auto", weight=1.0)
     db.add(act)
     db.flush()
     return act

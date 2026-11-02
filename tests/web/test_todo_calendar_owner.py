@@ -68,7 +68,7 @@ def test_real_timeline_buckets_sessions_uid_policy_and_other_account(calendar_ac
     activities = []
     for number, days in enumerate((-2, 2, 10), 1):
         activity = Activity(tenant_id=a.tid, course_id=course.id, chapter_number=number,
-                            type="mcq_test", title=f"Due {number}", pass_threshold=0.6)
+                            type="mcq_test", title=f"Due {number}", pass_threshold=0.6, grading="auto", weight=1.0)
         a.admin.add(activity)
         a.admin.flush()
         a.admin.add(OfferingActivity(tenant_id=a.tid, offering_id=offering.id, activity_id=activity.id,

@@ -599,7 +599,7 @@ def test_grading_queue_lists_pending(app_client, admin_session, tenant_a):
         type="mcq_test",
         title="Essay Q",
         pass_threshold=0.6,
-        grading="manual",
+        grading="manual", weight=1.0,
     )
     admin_session.add(act)
     admin_session.flush()
@@ -630,7 +630,7 @@ def test_item_analytics_page(app_client, admin_session, tenant_a):
         chapter_number=1,
         type="mcq_test",
         title="Analytics Quiz",
-        pass_threshold=0.6,
+        pass_threshold=0.6, grading="auto", weight=1.0,
     )
     admin_session.add(act)
     admin_session.flush()
@@ -1218,7 +1218,7 @@ def test_cohorts_page_shows_zero_activity_course_warning(app_client, admin_sessi
 
     # Adding an activity clears the warning on the next render (computed live).
     act = Activity(
-        tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test", title="Q", pass_threshold=0.6
+        tenant_id=tenant_a.id, course_id=course.id, chapter_number=1, type="mcq_test", title="Q", pass_threshold=0.6, grading="auto", weight=1.0
     )
     admin_session.add(act)
     admin_session.commit()

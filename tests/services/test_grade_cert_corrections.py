@@ -34,7 +34,7 @@ def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
     acts = []
     for i in range(n):
         a = Activity(tenant_id=tenant.id, course_id=course.id, chapter_number=i + 1,
-                     type="mcq_test", title=f"A{i}", pass_threshold=0.6, weight=weight)
+                     type="mcq_test", title=f"A{i}", pass_threshold=0.6, weight=weight, grading="auto")
         admin_session.add(a)
         acts.append(a)
     admin_session.flush()

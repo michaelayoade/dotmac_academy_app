@@ -82,7 +82,7 @@ def _live_course(db, tenant, person, *, slug, title="Network Foundation", activi
             type="mcq_test",
             bank_id=bank.id,
             title=f"Chapter {n + 1} test",
-            pass_threshold=0.6,
+            pass_threshold=0.6, grading="auto", weight=1.0,
         )
         db.add(act)
         db.flush()
