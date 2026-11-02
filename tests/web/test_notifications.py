@@ -34,7 +34,7 @@ def test_notifications_requires_auth(app_client, tenant_a):
     # tenant_a ensures "alpha" subdomain resolves in the DB
     r = app_client.get("/notifications", headers=H, follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == "/login?next=%2Fnotifications"
 
 
 def test_notifications_list_200(app_client, admin_session, tenant_a):

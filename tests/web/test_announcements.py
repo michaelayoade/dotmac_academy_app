@@ -48,7 +48,7 @@ def _csrf(app_client):
 def test_announcements_requires_auth(app_client, tenant_a):
     r = app_client.get("/announcements", headers=H, follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == "/login?next=%2Fannouncements"
 
 
 def test_announcements_learner_200(app_client, admin_session, tenant_a):

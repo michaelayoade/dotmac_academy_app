@@ -151,7 +151,9 @@ def test_unauthenticated_redirects(app_client, admin_session, tenant_a):
         f"/labs/instances/{li.id}/console/r1", headers=h, follow_redirects=False
     )
     assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == (
+        f"/login?next=%2Flabs%2Finstances%2F{li.id}%2Fconsole%2Fr1"
+    )
 
 
 # --- non-live instances must never reach a console (security hotfix) --------
