@@ -373,7 +373,7 @@ def fresh_engine():
     ):
         if os.environ.get(name):
             assert target.database != make_url(os.environ[name]).database
-    engine = sa.create_engine(url, hide_parameters=True)
+    engine = sa.create_engine(url, hide_parameters=True, echo=False)
     with engine.connect() as connection:
         assert (
             connection.scalar(

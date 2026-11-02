@@ -42,7 +42,7 @@ def legacy_engine(tmp_path_factory):
         other = os.environ.get(name)
         if other:
             assert target.database != make_url(other).database, "entry DB must be separate from app tests"
-    engine = create_engine(url, hide_parameters=True)
+    engine = create_engine(url, hide_parameters=True, echo=False)
     verify_legacy_source()
     with engine.connect() as connection:
         assert connection.execute(text("""

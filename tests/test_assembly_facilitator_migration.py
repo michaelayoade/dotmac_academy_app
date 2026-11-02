@@ -74,7 +74,7 @@ def fresh_target():
     for name, value in os.environ.items():
         if name.endswith("DATABASE_URL") and name != "ACADEMY_FRESH_ENTRY_DATABASE_URL" and value:
             assert url.database != make_url(value).database
-    engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
+    engine = create_engine(url, hide_parameters=True, echo=False, poolclass=NullPool)
     try:
         with engine.connect() as connection:
             root = connection.begin()
@@ -115,7 +115,7 @@ def runtime_engine():
     for name, value in os.environ.items():
         if name.endswith("DATABASE_URL") and name != "ACADEMY_FACILITATOR_RUNTIME_DATABASE_URL" and value:
             assert url.database != make_url(value).database, "runtime proof database must be isolated"
-    engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
+    engine = create_engine(url, hide_parameters=True, echo=False, poolclass=NullPool)
     try:
         with engine.begin() as connection:
             root = connection.get_transaction()
@@ -555,7 +555,7 @@ def test_a010_preflight_refuses_real_runtime_owner():
     assert raw, "CI must provision the genuine app_user login"
     url = make_url(raw)
     assert url.drivername == "postgresql+psycopg" and url.username == "app_user"
-    engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
+    engine = create_engine(url, hide_parameters=True, echo=False, poolclass=NullPool)
     try:
         with engine.connect() as connection:
             assert connection.execute(text("SELECT session_user, current_user")).one() == ("app_user", "app_user")
