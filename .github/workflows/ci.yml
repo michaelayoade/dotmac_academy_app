@@ -305,7 +305,7 @@ jobs:
             echo 'empty test shard' >&2
             exit 1
           fi
-          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
+          poetry run pytest -rfE --tb=line -q -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
