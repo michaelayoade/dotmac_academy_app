@@ -9,12 +9,11 @@ module is the only thing that checks it against Academy's actual tree.
 Starter's gate reads the record from a Git blob and parses it; it authors
 nothing and re-derives nothing here.
 
-This is deliberately NOT an import-the-app test. `app/api/deps.py`,
-`app/cli.py`, `app/web/context.py`, and `app/web/labs.py` all import
-`dotmac_kernel.db` at module scope, and importing that module eagerly
-constructs the reference assembly's SQLAlchemy engines from `DATABASE_URL`
-(see that module's docstring). Whether that import is safe to trigger during
-collection is exactly the fact under test, so the checks below work by
+This is deliberately NOT an import-the-app test. Importing `dotmac_kernel.db`
+eagerly constructs the reference assembly's SQLAlchemy engines from
+`DATABASE_URL` (see that module's docstring), and whether Academy's modules
+avoid that import and bind their own runtime is exactly the fact under test,
+so the checks below work by
 reading source text and running `ast` over it — never by importing `app.*`
 or `dotmac_kernel.db` — so the record itself, not incidental CI database
 availability, decides whether this test can even run.
@@ -95,19 +94,38 @@ def _module_scope_import_present(path: Path, module_name: str) -> tuple[bool, in
     return False, None
 
 
-def _bind_database_runtime_called_anywhere_under_app() -> bool:
-    """True if any file under app/ calls `bind_database_runtime` at all.
+def _calls(tree: ast.AST, name: str) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == name)
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+        )
+    ]
 
-    A textual grep is deliberately sufficient here: the requirement is a
-    negative claim (this call does not exist anywhere on Academy's import
-    path today), and a name occurring anywhere in `app/` is the most
-    generous possible reading in Academy's favour — if even that is absent,
-    a narrower "called before the eager imports" check would also fail.
+
+def _product_runtime_bound_and_required() -> bool:
+    """A real `bind_database_runtime(...)` call exists under app/, AND the
+    product assembly declares `require_database_runtime=True`.
+
+    Both are AST facts: a name surviving only in a comment or string cannot
+    satisfy this, and dropping the assembly's requirement flag flips it false.
     """
-    for py_file in (ROOT / "app").rglob("*.py"):
-        if "bind_database_runtime" in py_file.read_text(encoding="utf-8"):
-            return True
-    return False
+    bound = any(
+        _calls(ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file)), "bind_database_runtime")
+        for py_file in (ROOT / "app").rglob("*.py")
+    )
+    assembly = ast.parse((ROOT / "app" / "assembly.py").read_text(encoding="utf-8"))
+    required = any(
+        keyword.arg == "require_database_runtime"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for call in _calls(assembly, "ProductAssemblySpec")
+        for keyword in call.keywords
+    )
+    return bound and required
 
 
 # One ground-truth check per requirement id. Each returns the fact as it
@@ -125,9 +143,7 @@ REQUIREMENT_GROUND_TRUTH = {
     "no-module-scope-kernel-db-import-in-web-labs": lambda: not _module_scope_import_present(
         ROOT / "app" / "web" / "labs.py", "dotmac_kernel.db"
     )[0],
-    "product-owned-runtime-bound-before-any-kernel-db-import": (
-        lambda: _bind_database_runtime_called_anywhere_under_app()
-    ),
+    "product-owned-runtime-bound-before-any-kernel-db-import": _product_runtime_bound_and_required,
 }
 
 # Requirement id -> (file, module) whose module-scope import line, if any,
@@ -243,9 +259,9 @@ def yaml_top_level_service_names(compose_text: str) -> set[str]:
 def test_kernel_runtime_readiness_record_is_truthful() -> None:
     """Near-miss control: the actual, unmodified record passes every check.
 
-    This is the proof that a truthful record — including its honest `false`
-    claims — is accepted rather than the validator rejecting everything by
-    construction.
+    This is the proof that a truthful record, with every `satisfied` value
+    checked against the tree, is accepted rather than the validator rejecting
+    everything by construction.
     """
     _validate_record(_load_record())
 
