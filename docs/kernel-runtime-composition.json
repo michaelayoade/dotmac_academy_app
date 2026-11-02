@@ -32,21 +32,21 @@
     {
       "id": "product-assembly-source",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
+      "source_blob_sha256": "4593ca378feb5d94884789386178074b6c4f1ae9b4d561a4069066f0b2a365cf",
       "selector": "whole-file.v1",
-      "extract_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa"
+      "extract_sha256": "4593ca378feb5d94884789386178074b6c4f1ae9b4d561a4069066f0b2a365cf"
     },
     {
       "id": "product-identity",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
+      "source_blob_sha256": "4593ca378feb5d94884789386178074b6c4f1ae9b4d561a4069066f0b2a365cf",
       "selector": "python-string-assignment.v1/PRODUCT_ID",
       "extract_sha256": "c17754e120b42081f6019a0aa47346ce37b01133c11cb1f30dc3adcfc2466b7b"
     },
     {
       "id": "module-registration",
       "source_path": "app/assembly.py",
-      "source_blob_sha256": "9868de71e6f2a430345a98b899267df776c9ccae1fa449ef3ff3a7688627b4fa",
+      "source_blob_sha256": "4593ca378feb5d94884789386178074b6c4f1ae9b4d561a4069066f0b2a365cf",
       "selector": "python-assignment-keyword.v1/assembly/ProductAssemblySpec/modules",
       "extract_sha256": "f73a71a2684dc2245419ac70137ff558e8ea557515cb5f89dd97654ef18eab6b"
     },
