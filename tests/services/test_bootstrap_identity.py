@@ -4,6 +4,7 @@ Requires canonical migrations and real configured offline role pair. No fake
 privileged actor, replacement runtime, schema or owner proof is installed here.
 """
 
+import os
 from uuid import uuid4
 
 import pytest
@@ -11,8 +12,10 @@ from dotmac_kernel.credential_lifecycle import CredentialAssignmentError
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, Role, Tenant, UserCredential
 from dotmac_kernel.security import verify_password
 from dotmac_kernel.session_runtime import RuntimeBindingError
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 from app.database_runtime import bind_academy_database_runtime
@@ -334,12 +337,13 @@ def test_configured_custom_roles_status_activation_name_password_commit(offline_
 def test_offline_role_cannot_mutate_product_catalogue(offline_runtime, statement, when):
     """The offline role does not own the product catalogue: DDL on it is refused.
 
-    This replaces injecting drift as the offline role (which needs ownership the
-    composed deployment deliberately withholds) with proof that the role cannot
-    perform the mutation at all. Detection of injected drift stays covered by the
-    hosted owner suites.
+    This proves the offline role cannot perform the mutation at all. Detection
+    of injected drift by the bootstrap catalogue preflight is covered separately
+    by ``test_owner_injected_catalogue_drift_is_refused_by_bootstrap`` below,
+    which injects the drift as the catalogue owner.
     """
     slug = 'catalogue-' + uuid4().hex
+    reached = False
     with pytest.raises(DBAPIError) as caught:
         with offline_runtime.platform_session() as db:
             if when == 'before':
@@ -347,20 +351,79 @@ def test_offline_role_cannot_mutate_product_catalogue(offline_runtime, statement
             bootstrap_tenant(db,slug=slug,name='Catalogue drift',admin_email=slug+'@example.test',
                              admin_password='hosted-bootstrap-secret-923!')
             if when == 'after':
+                reached = True
                 db.connection().execute(text(statement))
+    if when == 'after':
+        assert reached, 'bootstrap itself failed before the refused statement'
     _assert_privilege_refused(caught)
     with offline_runtime.platform_session() as db:
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
 
+@pytest.fixture
+def owner_bootstrap_session(monkeypatch):
+    """Catalogue-owner session whose every change is rolled back with the outer transaction.
+
+    Uses the migration authority (the owner of the product catalogue in the
+    composed CI) on an engine that satisfies the bootstrap logging floor. The
+    session joins the outer transaction through a savepoint, so nothing is
+    committed even if bootstrap commits.
+    """
+    url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
+    if not url:
+        pytest.fail("TEST_DATABASE_URL not set — these tests require a real Postgres")
+    engine = create_engine(url, hide_parameters=True, echo=False, poolclass=NullPool)
+    connection = engine.connect()
+    outer = connection.begin()
+    try:
+        pair = tuple(connection.execute(text("SELECT session_user, current_user")).one())
+        monkeypatch.setattr(settings, "bootstrap_allowed_database_role_pairs", (pair,))
+        session = Session(bind=connection, join_transaction_mode="create_savepoint")
+        try:
+            yield session
+        finally:
+            session.close()
+    finally:
+        outer.rollback()
+        connection.close()
+        engine.dispose()
+
+
+def test_owner_bootstrap_control_succeeds_without_drift(owner_bootstrap_session):
+    """Control: the owner harness itself bootstraps, so the drift refusals below are the drift's."""
+    slug = 'owner-control-' + uuid4().hex
+    result = bootstrap_tenant(owner_bootstrap_session, slug=slug, name='Owner control',
+                              admin_email=slug+'@example.test', admin_password='hosted-bootstrap-secret-923!')
+    assert result.owner_party_id is not None
+
+
+@pytest.mark.parametrize('statement', [
+    "ALTER TABLE public.academy_account_profiles NO FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE public.academy_credential_policies DROP CONSTRAINT uq_academy_policy_tenant_email",
+    "ALTER TABLE public.academy_credential_policies DROP CONSTRAINT fk_academy_policy_tenant_credential",
+    "ALTER TABLE public.academy_account_profiles DROP CONSTRAINT fk_academy_account_person",
+    "ALTER POLICY academy_account_profiles_tenant_isolation ON public.academy_account_profiles USING (true)",
+])
+def test_owner_injected_catalogue_drift_is_refused_by_bootstrap(owner_bootstrap_session, statement):
+    """Drift injected by the catalogue owner (rolled back) is refused by the bootstrap preflight."""
+    owner_bootstrap_session.connection().execute(text(statement))
+    slug = 'owner-drift-' + uuid4().hex
+    with pytest.raises(CredentialAssignmentError, match='bootstrap product'):
+        bootstrap_tenant(owner_bootstrap_session, slug=slug, name='Owner drift',
+                         admin_email=slug+'@example.test', admin_password='hosted-bootstrap-secret-923!')
+
+
 def test_offline_role_cannot_update_audit_events(offline_runtime):
     slug = 'audit-immutable-' + uuid4().hex
+    reached = False
     with pytest.raises(DBAPIError) as caught:
         with offline_runtime.platform_session() as db:
             result = bootstrap_tenant(db, slug=slug, name='Audit immutable', admin_email=slug+'@example.test',
                                       admin_password='hosted-bootstrap-secret-923!')
+            reached = True
             db.connection().execute(text("UPDATE public.audit_events SET actor_id='drifted' WHERE tenant_id=:tid"),
                                     {'tid': result.id})
+    assert reached, 'bootstrap itself failed before the refused UPDATE'
     _assert_privilege_refused(caught)
     with offline_runtime.platform_session() as db:
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
