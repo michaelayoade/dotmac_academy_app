@@ -94,8 +94,7 @@ def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connec
     assert historical_digest == evidence.catalog_sha256
     assert historical_versions == evidence.revisions
     assert not differences
-    if fresh.FRESH_CANONICAL_SHA256 is not None:
-        assert evidence.catalog_sha256 == fresh.FRESH_CANONICAL_SHA256
+    assert evidence.catalog_sha256 == fresh.FRESH_CANONICAL_SHA256
     # The discovery evidence never clears the commit fence, even when a pin is
     # present. Commit attempts poison this root; no commit occurs here.
     assert fresh._issued(fresh_connection).commit_guard is not None

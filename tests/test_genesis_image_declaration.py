@@ -148,10 +148,12 @@ MUST_NOT_CHANGE = {
     "tests/ci_skip_allowlist.txt": "3ba7d383c7fea64ef1df0c8484a59eeae1c81bc640517686e80876241a44abda",
     "scripts/declare_retained_hosted_bindings.py": "47b9f74bc5495da19318d715e6e854b230bbae7c187aa3c8eace9176f2037a22",
     "tests/fixtures/hosted_genesis.py": "d323563e7aa93e3f7271a2bbb86083746cacec440bf78041793396058387787c",
-    "app/maintenance/fresh_product.py": "6e8bc6c8921cb11c24633cdb7846f3364a39f0282ffad1fc6ff2e8c2ca3f8226",
+    "app/maintenance/fresh_product.py": "249e2222ccf39f92255155b1316e50812cb847e877c5ab975c84cd633b546d62",
     "app/maintenance/retained_hosted_genesis.py": "f6a385c14a27a791ad6891c7ea8e87eef9c53871ac51d6160289dc05cb525810",
     "app/maintenance/retained_schema.py": "6b4f800bb76f761996cc0cc5b6325f375fa5b10e9c2e997aaaa59a01dc93bc84",
 }
+# C60: the reviewed hosted H == F digest (CI 41383205433 on c49ffae).
+FRESH_CANONICAL_PIN = "f434069763f341055bbd670a6042339c8550c3df6959d74c3757014ef6af002b"
 MATERIALIZE_NAME = "Materialize the declared Genesis-only PostgreSQL image"
 
 
@@ -211,7 +213,7 @@ def test_admission_runtime_and_fresh_values_stay_null():
         for node in tree.body
         if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "FRESH_CANONICAL_SHA256"
     ]
-    assert len(values) == 1 and isinstance(values[0], ast.Constant) and values[0].value is None
+    assert len(values) == 1 and isinstance(values[0], ast.Constant) and values[0].value == FRESH_CANONICAL_PIN
 
     def nulls(node: Any) -> list[Any]:
         found: list[Any] = []

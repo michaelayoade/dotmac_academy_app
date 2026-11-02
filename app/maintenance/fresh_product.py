@@ -24,7 +24,7 @@ from app.maintenance import retained_transition as retained
 from app.migration_graph import ordinary_migration_config
 
 # Not TOFU: populated only by a separately reviewed hosted H == F proof.
-FRESH_CANONICAL_SHA256: str | None = None
+FRESH_CANONICAL_SHA256: str | None = "f434069763f341055bbd670a6042339c8550c3df6959d74c3757014ef6af002b"
 _A002 = "a002_credential_reset_state"
 _A003 = "a003_account_token_identity"
 _STAGES = ("a004_retained_learning_refs", "a005_erp_completion_checkpoint", "a006_lab_claim_lease")
