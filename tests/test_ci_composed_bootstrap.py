@@ -1,5 +1,6 @@
 """The CI commit wrapper cannot broaden its disposable database target."""
 
+import re
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -139,4 +140,7 @@ def test_cli_refusal_does_not_print_driver_or_connection_material(monkeypatch, c
     assert bootstrap.main(["--expect-database", "academy"]) == 1
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err == "CI composed database bootstrap refused; discard and replay required\n"
+    first, site, rest = output.err.split("\n")
+    assert first == "CI composed database bootstrap refused; discard and replay required"
+    assert re.fullmatch(r"refused at tests/test_ci_composed_bootstrap\.py:[0-9]+ RuntimeError", site)
+    assert rest == "" and "sensitive" not in output.err and "postgresql" not in output.err

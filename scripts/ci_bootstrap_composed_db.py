@@ -128,6 +128,19 @@ def bootstrap(environment: Mapping[str, str], *, expected_database: str, verify_
         engine.dispose()
 
 
+def _refusal_site(error: BaseException) -> str:
+    """Deepest in-repository frame and exception class only; never message bodies."""
+    root = Path(__file__).resolve().parents[1]
+    site = "outside-repository"
+    trace = error.__traceback__
+    while trace is not None:
+        path = Path(trace.tb_frame.f_code.co_filename).resolve()
+        if path.is_relative_to(root) and ".venv" not in path.parts:
+            site = f"{path.relative_to(root).as_posix()}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    return f"refused at {site} {type(error).__name__}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expect-database", required=True)
@@ -135,9 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = bootstrap(os.environ, expected_database=args.expect_database, verify_only=args.verify_only)
-    except Exception:
+    except Exception as error:
         # SQL/driver exception bodies may contain connection or row material.
         print("CI composed database bootstrap refused; discard and replay required", file=sys.stderr)
+        print(_refusal_site(error), file=sys.stderr)
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0
