@@ -61,11 +61,6 @@ def fresh_connection():
         engine.dispose()
 
 
-def _policy_dependency_edges(connection):
-    packet = fresh._ordered_catalog_packet(fresh._catalog_packet(connection))
-    return {tuple(row) for row in packet["dependencies"] if str(row[0]).startswith("policy:")}
-
-
 def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connection, tmp_path, monkeypatch):
     # Historical admission stays genuine, including its population and all three
     # independently sealed historical product transitions.
@@ -76,7 +71,6 @@ def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connec
         product._run_erp_progress_transition(connection, handle)
         historical_digest = fresh.catalog_fingerprint(connection)
         historical_objects = fresh.catalog_object_digests(connection)
-        historical_policy_edges = _policy_dependency_edges(connection)
         historical_versions = fresh._versions(connection)
         assert historical_versions == fresh._terminal_versions(fresh._graph())
         fresh._retained_security(connection)
@@ -90,7 +84,6 @@ def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connec
     assert type(evidence) is fresh.FreshProductDiscovery
     assert fresh_connection.get_transaction() is root and root.is_active
     fresh_objects = fresh.catalog_object_digests(fresh_connection)
-    fresh_policy_edges = _policy_dependency_edges(fresh_connection)
     differences = sorted(
         name
         for name in set(historical_objects) | set(fresh_objects)
@@ -98,11 +91,6 @@ def test_historical_and_fresh_catalogs_converge(hosted_declaration, fresh_connec
     )
     print(f"Academy unqualified convergence H={historical_digest} F={evidence.catalog_sha256}")
     print("Academy differing catalog names: " + ",".join(differences))
-    # Catalog identities only: policy dependency edges present on one side.
-    for edge in sorted(historical_policy_edges - fresh_policy_edges):
-        print("Academy policy edge historical-only: " + repr(edge))
-    for edge in sorted(fresh_policy_edges - historical_policy_edges):
-        print("Academy policy edge fresh-only: " + repr(edge))
     assert historical_digest == evidence.catalog_sha256
     assert historical_versions == evidence.revisions
     assert not differences
