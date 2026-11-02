@@ -169,7 +169,7 @@ def test_actual_authenticated_routes_use_nondefault_limit_and_hx_redirect(curren
             response = app_client.post(path, headers={**headers, "x-csrf-token": csrf}, follow_redirects=False)
         else:
             response = app_client.get(path, headers=headers, follow_redirects=False)
-        assert response.status_code == 303 and response.headers["Location"] == "/login"
+        assert response.status_code == 302 and response.headers["Location"] == "/login"
     a.admin.expire_all()
     assert a.admin.get(Notification, unread_id).read_at is None
 

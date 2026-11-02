@@ -128,7 +128,7 @@ def test_revoked_session_denies_every_settings_route(current_account, app_client
     a.admin.commit()
     assert stale_session.revoked_at is None
     responses = _all_routes(app_client, headers)
-    assert [r.status_code for r in responses] == [303, 303, 303]
+    assert [r.status_code for r in responses] == [302, 302, 302]
     assert all(r.headers["Location"] == "/login" for r in responses)
 
 

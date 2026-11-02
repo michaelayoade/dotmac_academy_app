@@ -155,7 +155,8 @@ def test_unauthenticated_redirects(app_client, admin_session, tenant_a):
     r = app_client.get(
         f"/labs/instances/{li.id}/console/r1", headers=h, follow_redirects=False
     )
-    assert r.status_code == 303
+    # The kernel facet auth redirects (302) before Academy's own 303 guard.
+    assert r.status_code == 302
     assert r.headers["location"] == "/login"
 
 

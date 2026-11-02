@@ -50,7 +50,8 @@ def test_password_change_success(profile_client):
         select(AuthSession).where(AuthSession.tenant_id == a.tid).where(AuthSession.party_id == a.pid)
     ).all()
     assert sessions and all(session.revoked_at is not None for session in sessions)
-    assert app_client.get("/account", headers=h, follow_redirects=False).status_code == 303
+    revoked = app_client.get("/account", headers=h, follow_redirects=False)
+    assert revoked.status_code == 302 and revoked.headers["Location"] == "/login"
     assert _can_login(app_client, h, csrf, a.email, "brandnew2") is True
     assert _can_login(app_client, h, csrf, a.email, "chosen-password9") is False
 
