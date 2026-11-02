@@ -790,7 +790,9 @@ def test_add_courses_to_track_error_renders_inline_message(app_client, admin_ses
         admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="T1", course_ids=[course.id]
     )
     admin_session.commit()
-    admin_session.refresh(track)
+    from app.models.track import Track
+
+    track = admin_session.get(Track, track.id)
 
     csrf = app_client.cookies.get("csrf_token", "")
     r = app_client.post(
@@ -1012,7 +1014,9 @@ def test_reorder_track_courses_route_updates_order(app_client, admin_session, te
         course_ids=[course_a.id, course_b.id],
     )
     admin_session.commit()
-    admin_session.refresh(track)
+    from app.models.track import Track
+
+    track = admin_session.get(Track, track.id)
 
     csrf = app_client.cookies.get("csrf_token", "")
     r = app_client.post(
@@ -1054,7 +1058,9 @@ def test_reorder_track_courses_route_rejects_mismatched_membership(app_client, a
         admin_session, tenant_id=tenant_a.id, cohort_id=coh.id, name="Reject Route Track", course_ids=[course.id]
     )
     admin_session.commit()
-    admin_session.refresh(track)
+    from app.models.track import Track
+
+    track = admin_session.get(Track, track.id)
 
     csrf = app_client.cookies.get("csrf_token", "")
     r = app_client.post(

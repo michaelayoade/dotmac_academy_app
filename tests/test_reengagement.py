@@ -46,7 +46,7 @@ def _give_session(admin_session, tenant, person):
     admin_session.add(
         AuthSession(
             tenant_id=tenant.id,
-            person_id=person.id,
+            party_id=person.id,
             token_hash="a" * 64,
             expires_at=datetime.now(UTC) + timedelta(days=1),
         )

@@ -16,7 +16,7 @@ _TERMS = learning.FeedbackRevealTerms(
 
 
 def _act(mode, max_attempts=None):
-    return SimpleNamespace(assessment_mode=mode, max_attempts=max_attempts)
+    return SimpleNamespace(assessment_mode=mode, max_attempts=max_attempts, min_attempt_interval_seconds=0)
 
 
 def test_practice_always_reveals():

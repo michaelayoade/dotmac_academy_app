@@ -177,9 +177,9 @@ def test_sql_null_json_null_and_native_jsonb_order(retained_history_engine):
         initial = _applicant_digest(connection)
         connection.execute(sa.text("UPDATE public.applicants SET assessment_profile='null'::jsonb"))
         assert _applicant_digest(connection) != initial
-        connection.execute(sa.text('UPDATE public.applicants SET assessment_profile=\'{"a":1,"b":[2,3]}\'::jsonb'))
+        connection.execute(sa.text('UPDATE public.applicants SET assessment_profile=\'{"a"\\:1,"b":[2,3]}\'::jsonb'))
         ordered = _applicant_digest(connection)
-        connection.execute(sa.text('UPDATE public.applicants SET assessment_profile=\'{"b":[2,3],"a":1}\'::jsonb'))
+        connection.execute(sa.text('UPDATE public.applicants SET assessment_profile=\'{"b":[2,3],"a"\\:1}\'::jsonb'))
         assert _applicant_digest(connection) == ordered
 
 

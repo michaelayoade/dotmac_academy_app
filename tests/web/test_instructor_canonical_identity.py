@@ -87,7 +87,7 @@ def test_rosters_keep_all_statuses_raw_names_and_candidate_profile_only_admissio
     assert (a.pid in {p.id for p in ours["facilitators"]}) is (role == "instructor" and enrollment_status == "active")
     available = next(row for row in context["cohort_rows"] if row["cohort"].id == spare_id)["available_facilitators"]
     assert sum(p.id == a.pid for p in available) == int(profile_status == "active")
-    detail = instructor.cohort_detail(cid, request, db=a.admin, limit=1, offset=0)
+    detail = instructor.cohort_detail(cid, request, person=a.login_snapshot, db=a.admin, limit=1, offset=0)
     assert detail["student_total"] == int(role == "student")
     if role == "student":
         assert detail["students"][0]["person"] == person
@@ -113,7 +113,7 @@ def test_human_roster_requires_product_profile_without_deleting_subtype(current_
     assert a.admin.get(AcademyAccountProfile, a.pid) is None
     context = instructor.cohorts_list(request, person=a.login_snapshot, db=a.admin)
     assert all(a.pid not in {item["person"].id for item in row["roster"]} for row in context["cohort_rows"])
-    detail = instructor.cohort_detail(cid, request, db=a.admin, limit=12, offset=0)
+    detail = instructor.cohort_detail(cid, request, person=a.login_snapshot, db=a.admin, limit=12, offset=0)
     assert detail["student_total"] == 0
 
 
@@ -179,7 +179,7 @@ def test_two_valid_tenant_rosters_and_candidates_keep_own_identity_membership(cu
         assert other_pid not in {item["person"].id for row in context["cohort_rows"] for item in row["roster"]}
         assert own_pid in {p.id for p in own_row["available_facilitators"]}
         assert other_pid not in {p.id for row in context["cohort_rows"] for p in row["available_facilitators"]}
-        detail = instructor.cohort_detail(own_cid, request, db=a.admin, limit=12, offset=0)
+        detail = instructor.cohort_detail(own_cid, request, person=a.login_snapshot, db=a.admin, limit=12, offset=0)
         assert own_pid in {row["person"].id for row in detail["students"]}
         assert other_pid not in {row["person"].id for row in detail["students"]}
 
