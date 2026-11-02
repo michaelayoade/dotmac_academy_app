@@ -164,13 +164,19 @@ def test_session_rejection_log_has_reason_but_never_cookie(
 ):
     raw_cookie = "sensitive-session-value"
     app_client.cookies.set("session", raw_cookie)
+    target = logging.getLogger("app.services.web_auth")
+    was_disabled = target.disabled
+    target.disabled = False
 
-    with caplog.at_level(logging.INFO, logger="app.services.web_auth"):
-        response = app_client.get(
-            "/account",
-            headers={"Host": "alpha.localhost"},
-            follow_redirects=False,
-        )
+    try:
+        with caplog.at_level(logging.INFO, logger="app.services.web_auth"):
+            response = app_client.get(
+                "/account",
+                headers={"Host": "alpha.localhost"},
+                follow_redirects=False,
+            )
+    finally:
+        target.disabled = was_disabled
 
     assert response.status_code == 303
     assert "reason=session_not_found" in caplog.text
