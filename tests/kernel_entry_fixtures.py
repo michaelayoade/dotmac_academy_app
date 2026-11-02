@@ -13,11 +13,11 @@ from __future__ import annotations
 import os
 
 import pytest
-from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from alembic import command
+from alembic.script import ScriptDirectory
 
 
 @pytest.fixture(scope="session")

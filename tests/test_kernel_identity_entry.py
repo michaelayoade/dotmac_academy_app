@@ -15,13 +15,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
-from alembic.script import ScriptDirectory
 from dotmac_kernel.migrations import versions_dir
 from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError
 
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from tests.fixtures.kernel_identity_entry.rehearsal import (
     COLLISIONS,
     COMPATIBILITY_SCHEMA,
