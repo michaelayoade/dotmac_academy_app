@@ -40,6 +40,20 @@ def test_webfig_root_rewrite_survives_every_chunk_boundary() -> None:
         assert actual == expected
 
 
+def test_webfig_root_rewriter_confines_every_routeros_absolute_path() -> None:
+    prefix = "/labs/instances/12345678-1234-1234-1234-123456789abc/console/r1"
+    body = b'open("/jsproxy"); window.location = "/webfig"; load("/webfig/");'
+    expected = (
+        b'open("' + prefix.encode() + b'/jsproxy"); window.location = "'
+        + prefix.encode() + b'/webfig"; load("' + prefix.encode() + b'/webfig/");'
+    )
+
+    for split in range(len(body) + 1):
+        rewriter = WebFigRootRewriter(prefix)
+        actual = rewriter.feed(body[:split]) + rewriter.feed(body[split:]) + rewriter.finish()
+        assert actual == expected
+
+
 def test_only_text_and_javascript_responses_are_rewritten() -> None:
     assert should_rewrite_webfig_body("text/html; charset=utf-8")
     assert should_rewrite_webfig_body("text/javascript")

@@ -39,7 +39,8 @@ COOKIE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 COOKIE_VALUE_RE = re.compile(r"^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]{0,2048}$")
 MAX_DEVICE_COOKIES = 8
 
-_WEBFIG_ROOT = b"/webfig/"
+_WEBFIG_ROOT_PATHS = (b"/jsproxy", b"/webfig")
+_MAX_WEBFIG_ROOT_PATH = max(len(path) for path in _WEBFIG_ROOT_PATHS)
 _WEBFIG_SCRIPT_TYPES = frozenset({"application/javascript", "application/x-javascript"})
 
 
@@ -57,12 +58,18 @@ def should_rewrite_webfig_body(content_type: str | None) -> bool:
 
 
 class WebFigRootRewriter:
-    """Rewrite root-relative WebFig paths without buffering the response body."""
+    """Rewrite root-relative WebFig paths without buffering the response body.
+
+    RouterOS uses both ``/webfig`` (with and without a trailing slash) and
+    ``/jsproxy`` in browser-side navigation and requests.  Both must retain the
+    authenticated instance/node prefix; otherwise they escape to Academy's
+    site root.
+    """
 
     def __init__(self, prefix: str) -> None:
         if not prefix.startswith("/") or prefix.endswith("/"):
             raise ValueError("console prefix must be an absolute path without a trailing slash")
-        self._replacement = prefix.encode("utf-8") + _WEBFIG_ROOT
+        self._prefix = prefix.encode("utf-8")
         self._pending = b""
 
     def feed(self, chunk: bytes) -> bytes:
@@ -70,14 +77,21 @@ class WebFigRootRewriter:
         data = self._pending + chunk
         output = bytearray()
         while True:
-            match = data.find(_WEBFIG_ROOT)
-            if match >= 0:
+            matches = (
+                (match, root_path)
+                for root_path in _WEBFIG_ROOT_PATHS
+                if (match := data.find(root_path)) >= 0
+            )
+            found = min(matches, default=None, key=lambda item: item[0])
+            if found is not None:
+                match, root_path = found
                 output.extend(data[:match])
-                output.extend(self._replacement)
-                data = data[match + len(_WEBFIG_ROOT) :]
+                output.extend(self._prefix)
+                output.extend(root_path)
+                data = data[match + len(root_path) :]
                 continue
 
-            keep = len(_WEBFIG_ROOT) - 1
+            keep = _MAX_WEBFIG_ROOT_PATH - 1
             if len(data) > keep:
                 output.extend(data[:-keep])
                 data = data[-keep:]
