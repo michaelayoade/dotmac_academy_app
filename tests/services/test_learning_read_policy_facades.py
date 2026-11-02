@@ -60,6 +60,14 @@ def test_timeline_preserves_product_containers_and_passes_terms_zone_clock(monke
         todo, "todo_terms", lambda actual_db: terms if actual_db is db else pytest.fail("Session changed")
     )
     monkeypatch.setattr(todo, "academy_zone", lambda: UTC)
+    feedback_terms = learning.FeedbackRevealTerms(
+        reveal_by_mode={"practice": "immediate", "graded": "on_pass_or_exhausted", "exam": "never"}
+    )
+    monkeypatch.setattr(
+        todo,
+        "feedback_reveal_terms",
+        lambda actual_db: feedback_terms if actual_db is db else pytest.fail("Session changed"),
+    )
 
     def timeline(actual_db, **values):
         assert actual_db is db
@@ -69,6 +77,7 @@ def test_timeline_preserves_product_containers_and_passes_terms_zone_clock(monke
             "now": NOW,
             "local_zone": UTC,
             "terms": terms,
+            "feedback_terms": feedback_terms,
             "join_lead_minutes": 4,
         }
         return owner
@@ -278,9 +287,18 @@ def test_create_session_resolves_omitted_type_and_preserves_explicit_type(monkey
         return result
 
     monkeypatch.setattr(learning, "create_session", create)
+    # The delivery-mode promotion flag is composed creation-default policy read on the same session.
+    monkeypatch.setattr(
+        scheduling,
+        "creation_defaults",
+        lambda actual_db: (
+            SimpleNamespace(session_promotes_delivery_mode=True) if actual_db is db else pytest.fail("Session changed")
+        ),
+    )
     values = {"tenant_id": tenant, "cohort_id": cohort, "title": "Class", "starts_at": NOW}
     assert scheduling.create_session(db, **values) is result
     assert received[-1].session_type == "lab"
+    assert received[-1].promote_delivery_mode is True
     assert scheduling.create_session(db, **values, session_type="lecture") is result
     assert received[-1].session_type == "lecture"
     assert len(calls) == 1
@@ -307,6 +325,13 @@ def test_todo_and_create_refuse_missing_configured_policy_before_owner(monkeypat
     _strict(monkeypatch, todo, db, {})
     _strict(monkeypatch, scheduling, db, {})
     monkeypatch.setattr(todo, "todo_terms", lambda actual_db: learning.TodoTerms(3, 2, 11, 2, 5))
+    monkeypatch.setattr(
+        todo,
+        "feedback_reveal_terms",
+        lambda actual_db: learning.FeedbackRevealTerms(
+            reveal_by_mode={"practice": "immediate", "graded": "on_pass_or_exhausted", "exam": "never"}
+        ),
+    )
 
     def forbidden(*args, **kwargs):
         pytest.fail("missing policy must refuse before owner reads or writes")

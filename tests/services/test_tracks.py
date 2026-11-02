@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import dotmac_learning as learning
@@ -721,6 +722,26 @@ def test_track_read_error_boundary(monkeypatch, reader, source_type, target_type
     else:
         assert caught.value.__cause__ is error
 
+_PACING_DELEGATED = {"ensure_track_offerings", "assign_enrollment_track"}
+
+
+def _stub_pacing_policy(monkeypatch, db):
+    """The facade reads the pacing default from the composed creation defaults on the caller session.
+
+    Stub only that policy reader (product default True) so the plain ``object()`` session still proves
+    every other call is a pure delegation, and return the extra owner kwarg the facade must pass.
+    """
+    seen = []
+
+    def creation_defaults(session):
+        assert session is db
+        seen.append(session)
+        return SimpleNamespace(pacing_default_open=True)
+
+    monkeypatch.setattr(track_svc, "creation_defaults", creation_defaults)
+    return seen
+
+
 @pytest.mark.parametrize(
     "operation",
     ["cohort_track_or_404", "ensure_track_offerings", "assign_enrollment_track", "clear_enrollment_track"],
@@ -768,8 +789,10 @@ def test_track_lifecycle_public_boundary(monkeypatch, operation):
         return fact
 
     monkeypatch.setattr(learning, operation, owner)
+    _stub_pacing_policy(monkeypatch, db)
+    expected = dict(kwargs, pacing_default_open=True) if operation in _PACING_DELEGATED else kwargs
     result = getattr(track_svc, operation)(db, **kwargs)
-    assert calls == [(db, kwargs)]
+    assert calls == [(db, expected)]
     assert calls[0][0] is db
     assert result is fact
     if operation in {"assign_enrollment_track", "clear_enrollment_track"}:
@@ -827,9 +850,11 @@ def test_track_lifecycle_error_boundary(monkeypatch, operation, source_type, tar
         raise error
 
     monkeypatch.setattr(learning, operation, owner)
+    _stub_pacing_policy(monkeypatch, db)
+    expected = dict(kwargs, pacing_default_open=True) if operation in _PACING_DELEGATED else kwargs
     with pytest.raises(target_type, match=f"^{detail}$") as caught:
         getattr(track_svc, operation)(db, **kwargs)
-    assert calls == [(db, kwargs)]
+    assert calls == [(db, expected)]
     assert calls[0][0] is db
     if source_type is learning.ParticipationNotFound:
         assert type(caught.value) is NotFoundError

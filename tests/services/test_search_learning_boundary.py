@@ -15,6 +15,24 @@ class _NoDatabaseUse:
         pytest.fail(f"Search presentation facade touched caller database method {name}")
 
 
+_SEARCH_LIMIT = 17  # Deliberately not the product default, to prove the policy value is what is passed.
+
+
+@pytest.fixture(autouse=True)
+def _search_policy(monkeypatch):
+    """The facade reads its limit from the strict settings store on the caller session.
+
+    That read is the one deliberate database touch (C4(14)); stub only the policy
+    reader so ``_NoDatabaseUse`` still guards every other use of the session.
+    """
+
+    def effective(db, *, require_store):
+        assert require_store is True, "the search limit must come from the strict store"
+        return {"learning_search_limit": _SEARCH_LIMIT}
+
+    monkeypatch.setattr(facade, "effective", effective)
+
+
 def _course(tenant, index=1):
     now = datetime(2026, 10, 18, tzinfo=UTC)
     return CourseFact(
@@ -72,6 +90,7 @@ def test_same_session_raw_query_once_and_exact_trusted_authority(monkeypatch, is
         "person_id": person,
         "q": raw_query,
         "authority": SearchAuthority(tenant, person, is_staff),
+        "limit": _SEARCH_LIMIT,
     }
     assert type(values["authority"]) is SearchAuthority
     assert result == {

@@ -115,6 +115,8 @@ def _existing(path, *, changed):
         activity_id=uuid4(),
         version=4,
         source_hash="old" if changed else lab_content._source_hash(spec, html),
+        # The product also reconciles the stored device-access block on an unchanged hash.
+        access=spec.access,
     )
 
 

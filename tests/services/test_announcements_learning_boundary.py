@@ -190,6 +190,15 @@ def test_readers_preserve_list_container_fact_identity_order_and_limits(
         return facts
 
     monkeypatch.setattr(learning, public, owner)
+    # An omitted limit is the strict settings-store policy value (product defaults 20 / 50); stub only
+    # that reader so the session double still rejects any other database use.
+    policy = {"learning_person_announcements_limit": 20, "learning_tenant_announcements_limit": 50}
+
+    def effective(db, *, require_store):
+        assert db is session and require_store is True
+        return policy
+
+    monkeypatch.setattr(announcements, "effective", effective)
     if limit is not None:
         kwargs["limit"] = limit
     result = getattr(announcements, reader)(session, **kwargs)

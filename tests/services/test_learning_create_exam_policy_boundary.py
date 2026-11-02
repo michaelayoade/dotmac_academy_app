@@ -22,11 +22,28 @@ def test_authoring_uses_configured_listed_and_preserves_explicit_choice(monkeypa
         commands.append(command)
         return SimpleNamespace(id=uuid4())
 
+    # The remaining course-creation defaults are composed policy read on the same session
+    # (product defaults); stub that reader and prove its values reach the owner command.
+    def creation_defaults(db):
+        assert db is session
+        return SimpleNamespace(
+            completion_fraction=1.0,
+            certificate_auto_issue=True,
+            certificate_validity_days=None,
+            prerequisite_default_composition="all",
+        )
+
     monkeypatch.setattr(settings_store, "effective", effective)
+    monkeypatch.setattr(authoring, "creation_defaults", creation_defaults)
     monkeypatch.setattr(learning, "create_draft_course", create)
     authoring.create_course(session, tenant_id=tenant, slug="x", title="X", discipline="x")
     authoring.create_course(session, tenant_id=tenant, slug="y", title="Y", discipline="x", listed=False)
     assert [command.listed for command in commands] == [True, False]
+    assert all(
+        (c.completion_fraction, c.certificate_auto_issue, c.certificate_validity_days, c.prerequisite_composition)
+        == (1.0, True, None, "all")
+        for c in commands
+    )
 
 
 def test_bank_adapter_passes_configured_weight_without_mutating_raw_doc(monkeypatch):
