@@ -57,6 +57,7 @@ def invitation_account(request):
     db.add(party)
     db.flush()
     db.add(PartyPerson(party_id=party.id, first_name="Invitation", last_name="Subject"))
+    db.flush()
     profile = AcademyAccountProfile(
         tenant_id=tenant.id, party_id=party.id, status="suspended", prefs={}, created_at=NOW, updated_at=NOW
     )

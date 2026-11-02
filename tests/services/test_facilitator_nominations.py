@@ -42,6 +42,7 @@ def _person(db, tenant_id, email):
     db.add(person)
     db.flush()
     db.add(PartyPerson(party_id=person.id, first_name="Fac", last_name="Candidate"))
+    db.flush()
     now = datetime.now(UTC)
     db.add(
         AcademyAccountProfile(

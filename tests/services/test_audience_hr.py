@@ -35,6 +35,7 @@ def _enrol(db, tenant, cohort, email, *, role="student", first="A", last="B"):
     db.add(p)
     db.flush()
     db.add(PartyPerson(party_id=p.id, first_name=first, last_name=last))
+    db.flush()
     db.add(AcademyAccountProfile(
         tenant_id=tenant.id, party_id=p.id, status="active", prefs={}, created_at=now, updated_at=now,
     ))

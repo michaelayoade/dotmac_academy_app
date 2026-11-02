@@ -73,6 +73,7 @@ def admission_case(roster_actors):
     a.admin.add_all([cohort, track])
     a.admin.flush()
     a.admin.add(CohortTrack(tenant_id=a.tid, cohort_id=cohort.id, track_id=track.id, status="active"))
+    a.admin.flush()
     applicant = Applicant(
         tenant_id=a.tid,
         email=f"admission-{uuid4().hex}@a.edu",

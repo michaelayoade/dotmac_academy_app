@@ -369,6 +369,7 @@ def test_alias_conflict_rolls_back_clear_and_session(sign_in_account):
     db.add(other)
     db.flush()
     db.add(PartyPerson(party_id=other.id, first_name="Other", last_name="Subject"))
+    db.flush()
     credential = UserCredential(tenant_id=tid, party_id=other.id, password_hash=hash_password("other-password"))
     db.add(credential)
     db.flush()

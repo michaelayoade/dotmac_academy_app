@@ -300,6 +300,7 @@ def make_canonical_account(
     db.add(party)
     db.flush()
     db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.flush()
     db.add(
         AcademyAccountProfile(
             tenant_id=tenant_id, party_id=party.id, status="active",
@@ -362,6 +363,7 @@ def make_person_party(
     db.add(party)
     db.flush()
     db.add(PartyPerson(party_id=party.id, first_name=first_name, last_name=last_name))
+    db.flush()
     db.add(
         AcademyAccountProfile(
             tenant_id=tenant_id,

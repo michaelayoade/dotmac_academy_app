@@ -35,6 +35,7 @@ def onboarding_case(current_account):
     a.admin.add_all([cohort, track])
     a.admin.flush()
     a.admin.add(CohortTrack(tenant_id=a.tid, cohort_id=cohort.id, track_id=track.id, status="active"))
+    a.admin.flush()
     row = Applicant(
         tenant_id=a.tid,
         email=f"onboarding-{uuid4().hex}@a.edu",

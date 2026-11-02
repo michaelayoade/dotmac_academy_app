@@ -40,6 +40,7 @@ def reset_account(admin_session, tenant_a):
     db.add(party)
     db.flush()
     db.add(PartyPerson(party_id=party.id, first_name="Reset", last_name="Subject"))
+    db.flush()
     credentials = []
     for version in (2, 7):
         credential = UserCredential(tenant_id=tenant_a.id, party_id=party.id, password_hash="old-hash")
@@ -397,6 +398,7 @@ def test_alias_conflict_before_hash_rolls_back_proof(reset_account, monkeypatch)
     db.add(other)
     db.flush()
     db.add(PartyPerson(party_id=other.id, first_name="Other", last_name="Subject"))
+    db.flush()
     credential = UserCredential(tenant_id=tid, party_id=other.id, password_hash="unrelated-hash")
     db.add(credential)
     db.flush()
