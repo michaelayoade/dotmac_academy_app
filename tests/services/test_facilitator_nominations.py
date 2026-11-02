@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from dotmac_kernel.audit_actions import AuditActionRegistry
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType
 from sqlalchemy import select, text
 
@@ -16,6 +18,7 @@ from app.models.notification import Notification
 from app.models.offering import CourseOffering
 from app.models.rbac import AuditEvent
 from app.models.track import CohortTrack, Track
+from app.owner_composition import compose_migration_owner_declarations
 from app.services.facilitator_nominations import (
     FacilitatorScope,
     FacilitatorStatus,
@@ -26,6 +29,14 @@ from app.services.facilitator_nominations import (
     revoke,
     sweep_pending,
 )
+
+
+@pytest.fixture(autouse=True)
+def _audit_registry_installed(monkeypatch):
+    # The registry is process-global and installed only by the app entry points
+    # (create_app / bind_academy_database_runtime); install the composed one.
+    registry = AuditActionRegistry.from_manifests(compose_migration_owner_declarations())
+    monkeypatch.setattr("dotmac_kernel.audit_actions._active_registry", registry)
 
 
 def _person(db, tenant_id, email):

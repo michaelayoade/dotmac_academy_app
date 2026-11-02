@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 from dotmac_kernel.audit import AuditEvent
+from dotmac_kernel.audit_actions import AuditActionRegistry
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyType, UserCredential
 from dotmac_kernel.security import verify_password
 from sqlalchemy import select, text, update
@@ -22,12 +23,21 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.account_token import AccountToken
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
+from app.owner_composition import compose_migration_owner_declarations
 from app.services import canonical_lifecycle as lifecycle
 from app.services import credential_lifecycle as reset_adapter
 from app.services.credential_authentication import sign_in
 from app.services.credential_policy import PasswordResetTokenPolicy
 from app.services.exceptions import BadRequestError
 from app.services.security import hash_password, hash_token
+
+
+@pytest.fixture(autouse=True)
+def _audit_registry_installed(monkeypatch):
+    # The registry is process-global and installed only by the app entry points
+    # (create_app / bind_academy_database_runtime); install the composed one.
+    registry = AuditActionRegistry.from_manifests(compose_migration_owner_declarations())
+    monkeypatch.setattr("dotmac_kernel.audit_actions._active_registry", registry)
 
 
 @pytest.fixture
