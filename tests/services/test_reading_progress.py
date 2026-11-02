@@ -12,7 +12,7 @@ from tests.conftest import make_person_party
 
 def _seed(db, tid, *, slug="rp-course"):
     course = Course(tenant_id=tid, slug=slug, title="RP", discipline="networking",
-                    source_ref="x", version=1, status="published")
+                    source_ref="x", version=1, status="published", listed=False)
     person = make_person_party(db, tenant_id=tid, email=f"{slug}@a.edu", first_name="R", last_name="P")
     db.add_all([course, person])
     db.flush()

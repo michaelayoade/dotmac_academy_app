@@ -71,7 +71,7 @@ def test_instructor_override_creates_override_score(app_client, admin_session, t
     student = Party(tenant_id=tenant_a.id, party_type=PartyType.person, display_name="L N",
                     email="learner@a.edu", is_active=True)
     course = Course(tenant_id=tenant_a.id, slug="lab", title="Lab", discipline="networking",
-                    source_ref="x", version=1)
+                    source_ref="x", version=1, status="published", listed=False)
     admin_session.add_all([student, course])
     admin_session.flush()
     admin_session.add(PartyPerson(party_id=student.id, first_name="L", last_name="N"))

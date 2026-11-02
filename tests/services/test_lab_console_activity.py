@@ -25,7 +25,7 @@ def _fresh_throttle():
 
 def _instance(admin_session, tenant, *, name, last_active=None):
     c = Course(tenant_id=tenant.id, slug=f"c-{name}", title="F", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",

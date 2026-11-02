@@ -32,7 +32,7 @@ def _seed(admin_session, tenant, *, email="rem@a.edu", due_offsets_hours=(), ses
     cohort = Cohort(tenant_id=tenant.id, name=f"Rem Cohort {email}", discipline="fiber", status="active")
     admin_session.add(cohort)
     course = Course(tenant_id=tenant.id, slug=f"rem-{email.split('@')[0]}", title="Reminder Course",
-                    discipline="fiber", source_ref="t@1")
+                    discipline="fiber", source_ref="t@1", status="published", listed=False)
     admin_session.add(course)
     admin_session.flush()
     admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=cohort.id, person_id=person.id,

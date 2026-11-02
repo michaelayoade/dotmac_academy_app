@@ -12,7 +12,7 @@ from tests.conftest import make_person_party
 
 
 def _seed(db, tid):
-    c = Course(tenant_id=tid, slug="foundation", title="F", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tid, slug="foundation", title="F", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     db.add(c); db.flush()
     bank = QuestionBank(tenant_id=tid, course_id=c.id, chapter_number=3, kind="chapter", version=1)
     db.add(bank); db.flush()

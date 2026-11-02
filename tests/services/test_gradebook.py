@@ -14,7 +14,7 @@ from tests.conftest import make_person_party
 
 def _seed_course_with_activities(db, tid, *, weight_a=1.0, weight_b=3.0):
     course = Course(tenant_id=tid, slug="g-net", title="Gradebook Net", discipline="networking",
-                    source_ref="x", version=1)
+                    source_ref="x", version=1, status="published", listed=False)
     db.add(course)
     db.flush()
     a1 = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
@@ -84,7 +84,7 @@ def test_no_activities_returns_zero(admin_session, tenant_a):
     """Empty course → pct 0, empty per_activity."""
     tid = tenant_a.id
     course = Course(tenant_id=tid, slug="g-empty", title="Empty", discipline="net",
-                    source_ref="x", version=1)
+                    source_ref="x", version=1, status="published", listed=False)
     admin_session.add(course)
     student = make_person_party(admin_session, tenant_id=tid, email="stu4@g.edu", first_name="S", last_name="W")
     admin_session.add(student)

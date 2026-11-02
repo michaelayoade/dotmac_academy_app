@@ -32,7 +32,7 @@ def _login(app_client, admin_session, tenant, email="dash@a.edu"):
 
 def _course(admin_session, tid, slug, title, *, chapters=2, threshold=0.7):
     course = Course(tenant_id=tid, slug=slug, title=title,
-                    discipline="networking", source_ref="x", version=1)
+                    discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(course)
     admin_session.flush()
     acts = []

@@ -22,7 +22,7 @@ def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
     person = make_person_party(admin_session, tenant_id=tenant.id, email=f"{slug}@a.edu", first_name="G", last_name="C")
     admin_session.add(person)
     course = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
-                    discipline="fiber", source_ref="t@1", status="published")
+                    discipline="fiber", source_ref="t@1", status="published", listed=False)
     admin_session.add(course)
     cohort = Cohort(tenant_id=tenant.id, name=f"C {slug}", discipline="fiber", status="active")
     admin_session.add(cohort)

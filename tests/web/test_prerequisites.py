@@ -20,7 +20,7 @@ H = {"Host": "alpha.localhost"}
 
 def _course(admin_session, tid, slug):
     c = Course(tenant_id=tid, slug=slug, title=slug.title(), discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",

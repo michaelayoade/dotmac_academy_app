@@ -22,7 +22,7 @@ from tests.conftest import make_person_party
 
 def _course(admin_session, tenant, slug):
     c = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
-               discipline="fiber", source_ref="t@1", status="published")
+               discipline="fiber", source_ref="t@1", status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     return c

@@ -25,7 +25,7 @@ from tests.conftest import make_person_party
 
 def _course_with_two_activities(db, tid):
     c = Course(tenant_id=tid, slug="net", title="Net", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     db.add(c)
     db.flush()
     a1 = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
@@ -85,7 +85,7 @@ def test_submit_activity_updates_completion(admin_session, tenant_a):
     admin_session.add(p)
     admin_session.flush()
     c = Course(tenant_id=tid, slug="solo", title="Solo", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     bank = QuestionBank(tenant_id=tid, course_id=c.id, chapter_number=1, kind="chapter", version=1)

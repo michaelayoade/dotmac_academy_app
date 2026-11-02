@@ -26,7 +26,7 @@ def _seed_login(admin_session, tenant, email, role_slug):
 
 def _seed_cohort(admin_session, tid):
     c = Course(tenant_id=tid, slug="net", title="Networking", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     a1 = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",

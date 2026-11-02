@@ -71,7 +71,7 @@ def test_configured_instructor_nonadmin_bulk_self_cannot_gain_cohort_authoring_a
     a, actors = roster_actors.account, roster_actors
     cid = _cohort(a)
     course = Course(tenant_id=a.tid, slug=f"roster-{uuid4().hex}", title="Owner guard", discipline="networking",
-                    source_ref="manual", version=1, status="published")
+                    source_ref="manual", version=1, status="published", listed=False)
     a.admin.add(course)
     a.admin.flush()
     a.admin.add(CourseOffering(tenant_id=a.tid, cohort_id=cid, course_id=course.id, status="active"))

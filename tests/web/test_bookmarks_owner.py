@@ -31,7 +31,7 @@ def _request(tenant, token=None):
 
 def seed(a, *, enrolled=True):
     c = Course(tenant_id=a.tid, slug=uuid4().hex, title="Bookmark owner", discipline="test",
-               source_ref="test", status="published")
+               source_ref="test", status="published", listed=False)
     a.admin.add(c)
     a.admin.flush()
     ch = Chapter(tenant_id=a.tid, course_id=c.id, number=1, title="One")

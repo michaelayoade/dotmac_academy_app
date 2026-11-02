@@ -31,9 +31,9 @@ def test_backfill_links_same_discipline_and_is_idempotent(admin_session, tenant_
     # Cohort + a matching-discipline course (linked) and a non-matching one (not linked).
     coh = Cohort(tenant_id=tid, name="Net Cohort", discipline="networking", status="active")
     match = Course(tenant_id=tid, slug="net", title="Net", discipline="networking",
-                   source_ref="x", version=1)
+                   source_ref="x", version=1, status="published", listed=False)
     other = Course(tenant_id=tid, slug="fiber", title="Fiber", discipline="fiber",
-                   source_ref="x", version=1)
+                   source_ref="x", version=1, status="published", listed=False)
     admin_session.add_all([coh, match, other])
     admin_session.flush()
 

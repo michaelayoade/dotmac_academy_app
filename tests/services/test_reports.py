@@ -22,7 +22,7 @@ def _seed(db, tid):
     Student B: passes both (1.0, 0.8)                  -> completion 2/2 = 1.0
     """
     c = Course(tenant_id=tid, slug="net", title="Networking", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     db.add(c)
     db.flush()
 
@@ -102,7 +102,7 @@ def test_cohort_matrix_scoped_to_offerings_not_discipline(admin_session, tenant_
     c, coh, a1, a2, stu_a, stu_b = _seed(admin_session, tenant_a.id)
     # A second networking course the cohort is NOT offered.
     other = Course(tenant_id=tenant_a.id, slug="other", title="Other Networking",
-                   discipline="networking", source_ref="x", version=1)
+                   discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(other)
     admin_session.flush()
     other_act = Activity(tenant_id=tenant_a.id, course_id=other.id, chapter_number=1,

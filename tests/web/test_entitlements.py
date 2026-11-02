@@ -34,7 +34,7 @@ def _login(app_client, admin_session, tenant, email="stu@a.edu"):
 def _seed_course(admin_session, tenant, slug, *, discipline="networking", status="published"):
     """Course + chapter 1 + bank + one question + an mcq activity. Returns (course, activity)."""
     c = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
-               discipline=discipline, source_ref="x", version=1, status=status)
+               discipline=discipline, source_ref="x", version=1, status=status, listed=False)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(Chapter(tenant_id=tenant.id, course_id=c.id, number=1, title="One",

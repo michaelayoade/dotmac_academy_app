@@ -31,7 +31,7 @@ def _course_setup(admin_session, tenant, person, *, due_offsets_hours):
     cohort = Cohort(tenant_id=tenant.id, name="Todo Cohort", discipline="fiber", status="active")
     admin_session.add(cohort)
     course = Course(tenant_id=tenant.id, slug="todo-course", title="Todo Course",
-                    discipline="fiber", source_ref="t@1")
+                    discipline="fiber", source_ref="t@1", status="published", listed=False)
     admin_session.add(course)
     admin_session.flush()
     admin_session.add(Enrollment(tenant_id=tenant.id, cohort_id=cohort.id, person_id=person.id,

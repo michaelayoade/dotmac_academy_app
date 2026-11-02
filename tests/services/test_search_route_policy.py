@@ -60,7 +60,7 @@ def _grant(a, slug, tenant_id=None, party_id=None):
 
 def _course(a, *, accessible=False, status="published"):
     c = Course(tenant_id=a.tid, slug=uuid4().hex, title="SearchPolicyNeedle", discipline="networking",
-               source_ref="search-policy", version=1, status=status)
+               source_ref="search-policy", version=1, status=status, listed=False)
     a.admin.add(c)
     a.admin.flush()
     a.admin.add(Chapter(tenant_id=a.tid, course_id=c.id, number=1, title="SearchPolicyNeedle chapter",

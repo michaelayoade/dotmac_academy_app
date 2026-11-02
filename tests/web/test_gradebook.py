@@ -25,7 +25,7 @@ def _seed_login(db, tenant, email, role_slug):
 def _seed_cohort(db, tid):
     """Cohort with two activities (weights 1 and 3) and two students; one score on a1."""
     course = Course(tenant_id=tid, slug="gb-net", title="GB Networking", discipline="networking",
-                    source_ref="x", version=1)
+                    source_ref="x", version=1, status="published", listed=False)
     db.add(course)
     db.flush()
     a1 = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",

@@ -32,7 +32,7 @@ def _seed(a, foreign_tid):
     db, tid = a.admin, a.tid
     now = datetime.now(UTC)
     courses = [Course(tenant_id=tid, slug=uuid4().hex, title=title, discipline="test",
-                      source_ref="test", version=1) for title in ("Offered A", "Offered B", "Unrelated")]
+                      source_ref="test", version=1, status="published", listed=False) for title in ("Offered A", "Offered B", "Unrelated")]
     cohort = Cohort(tenant_id=tid, name="Read owner cohort", discipline="test")
     foreign = Cohort(tenant_id=foreign_tid, name="Foreign hidden cohort", discipline="test")
     db.add_all([*courses, cohort, foreign])

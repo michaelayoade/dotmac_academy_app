@@ -21,7 +21,7 @@ from tests.conftest import make_person_party
 
 def _seed(db, tid):
     c = Course(tenant_id=tid, slug="net", title="Networking", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     db.add(c)
     db.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",

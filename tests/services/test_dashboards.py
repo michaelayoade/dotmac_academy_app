@@ -35,7 +35,7 @@ def _activity_score(db, tid, course, person, created_at):
 def test_cohort_overview_flags_at_risk(admin_session, tenant_a):
     tid = tenant_a.id
     course = Course(tenant_id=tid, slug="net", title="Net", discipline="networking",
-                    source_ref="x", version=1)
+                    source_ref="x", version=1, status="published", listed=False)
     coh = Cohort(tenant_id=tid, name="C", discipline="networking", status="active")
     admin_session.add_all([course, coh])
     admin_session.flush()

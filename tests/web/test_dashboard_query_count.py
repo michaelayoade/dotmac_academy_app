@@ -34,7 +34,7 @@ def _login(app_client, admin_session, tenant, email):
 def _seed_courses(admin_session, tid, person_id, n, prefix="qc"):
     for i in range(n):
         course = Course(tenant_id=tid, slug=f"{prefix}-{i}", title=f"QC {prefix} {i}",
-                        discipline="networking", source_ref="x", version=1)
+                        discipline="networking", source_ref="x", version=1, status="published", listed=False)
         admin_session.add(course)
         admin_session.flush()
         coh = Cohort(tenant_id=tid, name=f"QC coh {prefix} {i}", discipline="networking", status="active")

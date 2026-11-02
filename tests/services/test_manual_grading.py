@@ -10,7 +10,7 @@ from tests.conftest import make_person_party
 
 def _manual_activity(db, tid):
     p = make_person_party(db, tenant_id=tid, email="m@a.edu", first_name="M", last_name="X")
-    c = Course(tenant_id=tid, slug="m", title="M", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tid, slug="m", title="M", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     db.add_all([p, c])
     db.flush()
     bank = QuestionBank(tenant_id=tid, course_id=c.id, chapter_number=1, kind="chapter", version=1)

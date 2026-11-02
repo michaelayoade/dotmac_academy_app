@@ -103,7 +103,7 @@ def _cohort(db, tenant_id, name="Invitation Cohort"):
 def _curriculum(db, tenant_id, cohort):
     track = Track(tenant_id=tenant_id, name="Track", slug=uuid4().hex, status="active")
     courses = [
-        Course(tenant_id=tenant_id, title=title, slug=uuid4().hex, discipline="networking", source_ref="test")
+        Course(tenant_id=tenant_id, title=title, slug=uuid4().hex, discipline="networking", source_ref="test", status="published", listed=False)
         for title in ("A", "B")
     ]
     db.add_all([track, *courses])

@@ -17,7 +17,7 @@ from tests.conftest import make_person_party
 def _person_course(db, tid):
     p = make_person_party(db, tenant_id=tid, email="cert@a.edu", first_name="Cert", last_name="Holder")
     c = Course(tenant_id=tid, slug="net", title="Networking", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     db.add_all([p, c])
     db.flush()
     return p, c

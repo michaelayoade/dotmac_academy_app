@@ -33,7 +33,7 @@ from app.web.labs import _console_target
 def _entitled_activity(admin_session, tenant, person_id):
     """Create a lab activity the person is entitled to (course+cohort+offering)."""
     c = Course(tenant_id=tenant.id, slug="lab-course", title="Lab", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant.id, course_id=c.id, chapter_number=1, type="lab",

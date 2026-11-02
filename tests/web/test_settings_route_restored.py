@@ -160,7 +160,7 @@ def test_email_auto_on_pass_toggle_off_skips_send(admin_session, tenant_a, monke
     set_many(admin_session, {"email_auto_on_pass": "false"})
 
     c = Course(tenant_id=tenant_a.id, slug="net", title="Net", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tenant_a.id, course_id=c.id, chapter_number=1, type="mcq_test",

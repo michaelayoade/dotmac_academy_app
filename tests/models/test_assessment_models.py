@@ -4,7 +4,7 @@ from app.models.course import Course
 
 def test_assessment_chain(admin_session, tenant_a):
     c = Course(tenant_id=tenant_a.id, slug="foundation", title="F",
-               discipline="networking", source_ref="x", version=1)
+               discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c); admin_session.flush()
     bank = QuestionBank(tenant_id=tenant_a.id, course_id=c.id, chapter_number=3, kind="chapter", version=1)
     admin_session.add(bank); admin_session.flush()

@@ -22,7 +22,7 @@ def _login(app_client, admin_session, tenant, email):
 
 def _course(admin_session, tid, slug="net"):
     c = Course(tenant_id=tid, slug=slug, title="Networking 101", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     return c

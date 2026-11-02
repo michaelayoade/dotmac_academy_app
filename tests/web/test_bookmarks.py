@@ -36,7 +36,7 @@ def _login(app_client, admin_session, tenant, email):
 
 def _seed_course(admin_session, tenant, person, slug="bm-course", enrol=True):
     c = Course(tenant_id=tenant.id, slug=slug, title=f"Course {slug}",
-               discipline="networking", source_ref="x", version=1, status="published")
+               discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     ch = Chapter(tenant_id=tenant.id, course_id=c.id, number=1,

@@ -21,7 +21,7 @@ def _setup(admin_session, tenant, email="pace@a.edu"):
     admin_session.flush()
     admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
     c = Course(tenant_id=tenant.id, slug="pace", title="Pace", discipline="networking",
-               source_ref="x", version=1)
+               source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     admin_session.add(Chapter(tenant_id=tenant.id, course_id=c.id, number=1, title="One",

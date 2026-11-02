@@ -27,7 +27,7 @@ def test_learn_home_shows_course_completion_and_results(app_client, admin_sessio
     tid = tenant_a.id
 
     course = Course(tenant_id=tid, slug="net", title="Networking 101",
-                    discipline="networking", source_ref="x", version=1)
+                    discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(course)
     admin_session.flush()
     a1 = Activity(tenant_id=tid, course_id=course.id, chapter_number=1, type="mcq_test",
@@ -66,7 +66,7 @@ def test_learn_home_empty_state_when_not_enrolled(app_client, admin_session, ten
     p, h = _login(app_client, admin_session, tenant_a, email="lonely@a.edu")
     # A course exists in the tenant, but the person is not enrolled in any cohort.
     course = Course(tenant_id=tenant_a.id, slug="net", title="Networking 101",
-                    discipline="networking", source_ref="x", version=1)
+                    discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(course)
     admin_session.commit()
 

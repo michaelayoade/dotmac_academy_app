@@ -120,7 +120,7 @@ def test_parse_lab_missing_include_does_not_crash(tmp_path):
 
 
 def _course(db, tenant_id):
-    c = Course(tenant_id=tenant_id, slug="foundation", title="F", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tenant_id, slug="foundation", title="F", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     db.add(c)
     db.flush()
     return c

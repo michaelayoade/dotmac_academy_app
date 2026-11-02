@@ -20,7 +20,7 @@ def _score(db, tid, activity_id, person_id, per_item, fraction, *, attempt_no=1)
 
 def test_item_analysis_p_values(admin_session, tenant_a):
     tid = tenant_a.id
-    c = Course(tenant_id=tid, slug="a", title="A", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tid, slug="a", title="A", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
@@ -49,7 +49,7 @@ def test_item_analysis_p_values(admin_session, tenant_a):
 def test_item_analysis_uses_best_attempt(admin_session, tenant_a):
     """A worse later attempt must not lower the item stats."""
     tid = tenant_a.id
-    c = Course(tenant_id=tid, slug="b", title="B", discipline="networking", source_ref="x", version=1)
+    c = Course(tenant_id=tid, slug="b", title="B", discipline="networking", source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)
     admin_session.flush()
     act = Activity(tenant_id=tid, course_id=c.id, chapter_number=1, type="mcq_test",
