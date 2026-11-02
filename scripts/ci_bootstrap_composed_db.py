@@ -135,7 +135,8 @@ def _refusal_site(error: BaseException) -> str:
     trace = error.__traceback__
     while trace is not None:
         path = Path(trace.tb_frame.f_code.co_filename).resolve()
-        if path.is_relative_to(root) and ".venv" not in path.parts:
+        # The shared _require helpers would hide which check refused.
+        if path.is_relative_to(root) and ".venv" not in path.parts and trace.tb_frame.f_code.co_name != "_require":
             site = f"{path.relative_to(root).as_posix()}:{trace.tb_lineno}"
         trace = trace.tb_next
     return f"refused at {site} {type(error).__name__}"
