@@ -76,7 +76,7 @@ def _verify_target(connection, marker: str, *, empty: bool) -> None:
     actual = connection.execute(text(
         "SELECT session_user,current_user,current_database(),"
         "pg_catalog.pg_get_userbyid(d.datdba),"
-        "pg_catalog.obj_description(d.oid,'pg_database') "
+        "pg_catalog.shobj_description(d.oid,'pg_database') "
         "FROM pg_catalog.pg_database d WHERE d.datname=current_database()"
     )).one()
     _require(tuple(actual) == ("app_admin", "app_admin", "academy", "app_admin", marker))
