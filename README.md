@@ -41,6 +41,8 @@ Architecture:
 - Browser responses carry CSP, clickjacking, MIME, referrer, permissions,
   cross-origin, and production HSTS headers.
 - Repeated login failures produce a durable account lockout.
+- Browser sessions are database-backed, remain valid across web-process restarts,
+  and return reauthenticated users only to a validated same-site path.
 
 ## Local development
 

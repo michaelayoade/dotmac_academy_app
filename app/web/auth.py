@@ -3,7 +3,7 @@
 Routes
 ------
 GET  /login   — render login form
-POST /login   — validate credentials, set HttpOnly session cookie, 303 → /
+POST /login   — validate credentials, set HttpOnly session cookie, resume safe target
 POST /logout  — revoke session, clear cookie, 303 → /login
 
 (The real /account page lives in app/web/account.py — Task 7.)
@@ -11,11 +11,12 @@ POST /logout  — revoke session, clear cookie, 303 → /login
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
+from app.config import settings
 from app.services import web_auth
 from app.services.facilitator_access import facilitator_access
 from app.web.responses import hx_redirect
@@ -25,8 +26,12 @@ router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
 @router.get("/login")
-def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
+def login_form(request: Request, next_path: str = Query("", alias="next")):
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"request": request, "error": None, "next": web_auth.safe_return_target(next_path)},
+    )
 
 
 @router.post("/login")
@@ -34,6 +39,7 @@ def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
+    next_path: str = Form("", alias="next"),
     db: Session = Depends(get_db),
 ):
     tenant = require_tenant(request)
@@ -45,12 +51,17 @@ def login(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"request": request, "error": "Invalid credentials"},
+            {
+                "request": request,
+                "error": "Invalid credentials",
+                "next": web_auth.safe_return_target(next_path),
+            },
             status_code=401,
         )
     token = web_auth.start_session(db, tenant.id, person.id)
     access = facilitator_access(db, tenant_id=tenant.id, person_id=person.id)
-    redirect_to = "/instructor" if access.can_teach and not access.is_admin else "/"
+    default_target = "/instructor" if access.can_teach and not access.is_admin else "/"
+    redirect_to = web_auth.safe_return_target(next_path) or default_target
     # No db.commit() here — get_db commits at request end (and a mid-route commit
     # would clear the transaction-scoped app.current_tenant GUC).
     resp = hx_redirect(request, redirect_to, hx_status=204)
@@ -60,6 +71,7 @@ def login(
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
+        max_age=settings.jwt_ttl_seconds,
     )
     return resp
 
