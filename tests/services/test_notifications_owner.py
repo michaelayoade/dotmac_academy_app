@@ -23,6 +23,7 @@ from app.services import notifications, settings_store
 from app.services.identity import AcademyCurrentAccount
 from app.services.web_auth import require_web_user
 from app.web import notifications as routes
+from tests.conftest import grant_role
 from tests.services.test_canonical_current_user import _request, current_account
 
 assert current_account
@@ -138,6 +139,8 @@ def test_actual_authenticated_routes_use_nondefault_limit_and_hx_redirect(curren
     for i, title in enumerate(titles):
         note = _notify(a.admin, a.tid, a.pid, title)
         note.created_at = now + timedelta(seconds=i)
+    # The web facet admits only the default roles; the signed-in account is a student.
+    grant_role(a.admin, tenant_id=a.tid, party_id=a.pid)
     a.admin.commit()
     request = _request(a.tenant, a.token)
     account = require_web_user(request, a.db)

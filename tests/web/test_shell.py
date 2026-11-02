@@ -26,11 +26,11 @@ def _login(app_client, admin_session, tenant, *, email, role=None):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
-    if role is not None:
-        roles = ensure_roles(admin_session, tenant.id)
-        admin_session.add(
-            PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id)
-        )
+    # The web facet admits only the default roles; a user with no named role is a student.
+    roles = ensure_roles(admin_session, tenant.id)
+    admin_session.add(
+        PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role or "student"].id)
+    )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     web_login(app_client, h, email, "password1")

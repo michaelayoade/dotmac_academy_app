@@ -8,7 +8,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -17,6 +17,7 @@ def _setup(admin_session, tenant, *, pool=2, total=5):
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="pool@a.edu", password_hash=hash_password("password1")))
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     c = Course(tenant_id=tenant.id, slug="pool", title="Pool", discipline="networking",
                source_ref="x", version=1, status="published", listed=False)
     admin_session.add(c)

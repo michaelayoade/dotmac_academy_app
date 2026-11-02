@@ -14,7 +14,7 @@ from app.models.prerequisite import CoursePrerequisite
 from app.services.entitlements import course_access_states
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -35,6 +35,7 @@ def _setup(admin_session, tenant):
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="pre@a.edu", password_hash=hash_password("password1")))
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     a, _ = _course(admin_session, tenant.id, "alpha")
     a.title = "Fiber Fundamentals"
     b, act_b = _course(admin_session, tenant.id, "beta")

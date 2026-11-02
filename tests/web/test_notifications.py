@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.services import notifications as notif_svc
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -16,6 +16,7 @@ def _make_user(admin_session, tenant, email="notif_web@a.edu"):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("pw1"))
     )
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     return p
 

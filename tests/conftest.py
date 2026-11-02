@@ -423,6 +423,37 @@ def make_person_party(
     return party
 
 
+def grant_role(db: Session, *, tenant_id, party_id, role: str = "student"):
+    """Grant a standard role to an existing Party (idempotent).
+
+    The web facet admits only the default roles (student/instructor/admin), so a
+    login helper that creates a Party and credential without a grant gets 403 on
+    every guarded page. Do not call this where a test asserts that a role-less
+    user is denied. Caller owns commit/rollback.
+    """
+    from dotmac_kernel.models import PartyRoleGrant
+    from sqlalchemy import select
+
+    from app.services.bootstrap import ensure_roles
+
+    roles = ensure_roles(db, tenant_id)
+    if role not in roles:
+        raise ValueError(f"Invalid role {role!r}; expected one of {sorted(roles)}")
+    existing = db.scalar(
+        select(PartyRoleGrant).where(
+            PartyRoleGrant.tenant_id == tenant_id,
+            PartyRoleGrant.party_id == party_id,
+            PartyRoleGrant.role_id == roles[role].id,
+        )
+    )
+    if existing is not None:
+        return existing
+    grant = PartyRoleGrant(tenant_id=tenant_id, party_id=party_id, role_id=roles[role].id)
+    db.add(grant)
+    db.flush()
+    return grant
+
+
 def make_person_credential(
     db: Session,
     *,

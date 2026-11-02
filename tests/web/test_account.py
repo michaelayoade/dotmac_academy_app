@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.models.auth import AuthSession
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, password="password1"):
@@ -17,6 +17,7 @@ def _login(app_client, admin_session, tenant, password="password1"):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email="s@a.edu", password_hash=hash_password(password))
     )
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     # Log in via the CSRF double-submit flow (web_login).

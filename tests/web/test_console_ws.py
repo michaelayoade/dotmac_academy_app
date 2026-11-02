@@ -28,7 +28,7 @@ from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
 from app.web.labs import _console_target
-from tests.conftest import web_login
+from tests.conftest import grant_role, web_login
 
 
 def _entitled_activity(admin_session, tenant, person_id):
@@ -77,6 +77,7 @@ def _make_person(admin_session, tenant, email: str) -> Party:
         failed_login_attempts=0, locked_until=None, lifecycle_version=0,
         reset_required=False, created_at=now, updated_at=now,
     ))
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     return p
 

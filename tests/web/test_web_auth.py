@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 
 def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
@@ -18,6 +18,7 @@ def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="s@alpha.edu", password_hash=hash_password("password1"))
     )
+    grant_role(admin_session, tenant_id=tenant_a.id, party_id=p.id)
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -52,6 +53,7 @@ def test_login_canonicalizes_email_and_ignores_credential_email_drift(
     admin_session.flush()
     credential = make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=person.id, email="stale-login@alpha.edu", password_hash=hash_password("password1"))
     admin_session.add(credential)
+    grant_role(admin_session, tenant_id=tenant_a.id, party_id=person.id)
     admin_session.commit()
 
     response = web_login(app_client, {"Host": "alpha.localhost"}, "  MIXED.case@alpha.edu  ", "password1")
@@ -73,6 +75,7 @@ def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a)
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="x@alpha.edu", password_hash=hash_password("pw1234"))
     )
+    grant_role(admin_session, tenant_id=tenant_a.id, party_id=p.id)
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
@@ -119,6 +122,7 @@ def test_cross_tenant_cookie_rejected(app_client, admin_session, tenant_a, tenan
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant_a.id, party_id=p.id, email="q@alpha.edu", password_hash=hash_password("pw5678"))
     )
+    grant_role(admin_session, tenant_id=tenant_a.id, party_id=p.id)
     admin_session.commit()
 
     h_a = {"Host": "alpha.localhost"}

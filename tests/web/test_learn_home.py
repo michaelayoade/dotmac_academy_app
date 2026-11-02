@@ -7,7 +7,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, email="stu@a.edu"):
@@ -17,6 +17,7 @@ def _login(app_client, admin_session, tenant, email="stu@a.edu"):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
     web_login(app_client, h, email, "password1")

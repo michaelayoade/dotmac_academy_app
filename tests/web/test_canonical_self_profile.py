@@ -16,6 +16,7 @@ from app.models.identity_extensions import AcademyAccountProfile
 from app.services import account_profile as writer
 from app.services.web_auth import _current_person
 from app.web import account
+from tests.conftest import grant_role
 from tests.services.test_canonical_current_user import _request, current_account
 
 assert current_account
@@ -26,6 +27,9 @@ _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 @pytest.fixture
 def profile_client(current_account, app_client, monkeypatch, tmp_path):
     a = current_account
+    # The web facet admits only the default roles; the signed-in account is a student.
+    grant_role(a.admin, tenant_id=a.tid, party_id=a.pid)
+    a.admin.commit()
     monkeypatch.setattr(account, "AVATAR_ROOT", tmp_path)
     app_client.cookies.clear()
     app_client.cookies.set("session", a.token)

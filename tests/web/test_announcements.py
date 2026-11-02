@@ -23,8 +23,8 @@ def _make_user(admin_session, tenant, email="ann_stu@a.edu", role=None):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("pw1"))
     )
-    if role:
-        admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role].id))
+    # The web facet admits only the default roles; a user with no named role is a student.
+    admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role or "student"].id))
     admin_session.commit()
     return p
 

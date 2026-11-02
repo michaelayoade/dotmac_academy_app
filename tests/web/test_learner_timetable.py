@@ -11,7 +11,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.services.agenda import upcoming_for_person
 from app.services.scheduling import join_is_open
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -22,6 +22,7 @@ def _learner(admin_session, tenant, email="tt-stu@a.edu"):
     admin_session.add(
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     return p
 

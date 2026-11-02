@@ -17,7 +17,7 @@ from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.models.reading import ChapterRead
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -26,6 +26,7 @@ def _login(app_client, admin_session, tenant, email="dash@a.edu"):
     admin_session.add(p)
     admin_session.flush()
     admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
+    grant_role(admin_session, tenant_id=tenant.id, party_id=p.id)
     admin_session.commit()
     web_login(app_client, H, email, "password1")
     return p
