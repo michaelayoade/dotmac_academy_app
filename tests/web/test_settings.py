@@ -13,7 +13,7 @@ from app.services.bootstrap import ensure_roles
 from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
 from app.services.settings_store import set_many
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +41,7 @@ def _seed_login(app_client, admin_session, tenant, email, role_slug):
     admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles[role_slug].id))
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 def test_student_forbidden(app_client, admin_session, tenant_a):

@@ -11,7 +11,7 @@ from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.services.security import hash_password
 from app.services.todo import timeline_for_person
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -24,7 +24,7 @@ def _learner(admin_session, tenant, email="todo-stu@a.edu"):
     return p
 
 def _login(app_client, email="todo-stu@a.edu"):
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
 
 def _course_setup(admin_session, tenant, person, *, due_offsets_hours):
     """Cohort + course + active offering + one dated activity per offset."""

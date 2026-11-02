@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -17,7 +17,7 @@ def _login(app_client, admin_session, tenant, email):
     admin_session.flush()
     admin_session.add(make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1")))
     admin_session.commit()
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
     return p
 
 def _course(admin_session, tid, slug="net"):

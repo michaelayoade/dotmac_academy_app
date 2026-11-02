@@ -10,6 +10,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
+from tests.conftest import web_login
 
 
 def _make_account(admin_session, tenant, email: str, first_name: str, last_name: str, role: str) -> Party:
@@ -48,7 +49,7 @@ def _login_instructor(app_client, admin_session, tenant):
     _make_account(admin_session, tenant, "li@a.edu", "Lab", "Instr", "instructor")
 
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": "li@a.edu", "password": "password1"})
+    web_login(app_client, h, "li@a.edu", "password1")
     return h
 
 
@@ -57,7 +58,7 @@ def test_student_forbidden_on_monitor(app_client, admin_session, tenant_a):
     _make_account(admin_session, tenant_a, "ls@a.edu", "S", "T", "student")
 
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": "ls@a.edu", "password": "password1"})
+    web_login(app_client, h, "ls@a.edu", "password1")
     assert app_client.get("/instructor/labs", headers=h).status_code == 403
 
 

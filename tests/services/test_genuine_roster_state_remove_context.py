@@ -28,6 +28,7 @@ from app.models.identity_extensions import AcademyAccountProfile
 from app.services import audit_context as boundary
 from app.services import roster
 from app.services.exceptions import NotFoundError
+from tests.conftest import web_login
 from tests.services.roster_request_fixtures import roster_actors
 from tests.services.test_canonical_self_profile_locking import _wait_for_lock
 
@@ -359,10 +360,7 @@ def test_real_http_web_login_and_state_route_preserve_redirects(roster_actors, a
     cid, eid = _case(actors, target_role="instructor" if admin else "student")
     actor = actors.admin if admin else actors.instructor
     host = {"Host": f"{a.tenant.slug}.localhost"}
-    response = app_client.post(
-        "/login", headers=host, data={"email": actor.email, "password": "chosen-password9"}, follow_redirects=False
-    )
-    assert response.status_code == 303
+    web_login(app_client, host, actor.email, "chosen-password9")
     app_client.get("/instructor/cohorts", headers=host)
     response = app_client.post(
         f"/instructor/cohorts/{cid}/roster/{a.pid}/state",

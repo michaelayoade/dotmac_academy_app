@@ -6,7 +6,7 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from tests.conftest import make_canonical_account
+from tests.conftest import make_canonical_account, web_login
 
 
 def _seed_login(admin_session, tenant, email, role_slug):
@@ -61,7 +61,7 @@ def _seed_cohort(admin_session, tid):
 
 def _login(app_client, email):
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 

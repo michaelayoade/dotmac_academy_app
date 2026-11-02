@@ -14,7 +14,7 @@ from app.models.prerequisite import CoursePrerequisite
 from app.services.entitlements import course_access_states
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -51,7 +51,7 @@ def _setup(admin_session, tenant):
     return p, a, b, act_b
 
 def _login(app_client):
-    app_client.post("/login", headers=H, data={"email": "pre@a.edu", "password": "password1"})
+    web_login(app_client, H, "pre@a.edu", "password1")
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()

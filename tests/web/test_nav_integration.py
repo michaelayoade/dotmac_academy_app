@@ -14,7 +14,7 @@ from dotmac_kernel.models import PartyRoleGrant
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
 from app.web.nav import areas_for_roles
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _seed_login(app_client, admin_session, tenant, email, role_slug):
@@ -30,7 +30,7 @@ def _seed_login(app_client, admin_session, tenant, email, role_slug):
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 def test_admin_every_sidebar_link_resolves(app_client, admin_session, tenant_a):

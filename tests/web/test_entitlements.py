@@ -16,7 +16,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -28,7 +28,7 @@ def _login(app_client, admin_session, tenant, email="stu@a.edu"):
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
     return p
 
 def _seed_course(admin_session, tenant, slug, *, discipline="networking", status="published"):
@@ -187,10 +187,10 @@ def test_enrollment_access_extension_reopens_expired_offering_for_that_learner(a
     admin_session.commit()
     try:
         app_client.cookies.clear()
-        app_client.post("/login", headers=H, data={"email": "extended@a.edu", "password": "password1"})
+        web_login(app_client, H, "extended@a.edu", "password1")
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 200
         app_client.cookies.clear()
-        app_client.post("/login", headers=H, data={"email": "not-extended@a.edu", "password": "password1"})
+        web_login(app_client, H, "not-extended@a.edu", "password1")
         assert app_client.get(f"/activities/{act.id}", headers=H).status_code == 403
     finally:
         _cleanup(admin_session, tenant_a)

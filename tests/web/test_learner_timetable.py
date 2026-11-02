@@ -11,7 +11,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.services.agenda import upcoming_for_person
 from app.services.scheduling import join_is_open
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -26,7 +26,7 @@ def _learner(admin_session, tenant, email="tt-stu@a.edu"):
     return p
 
 def _login(app_client, email="tt-stu@a.edu"):
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
 
 def _cohort_with_session(admin_session, tenant, person=None, *, name="TZ Cohort", starts_in_hours=2.0, join_url=None):
     c = Cohort(tenant_id=tenant.id, name=name, discipline="fiber", status="active", delivery_mode="blended")

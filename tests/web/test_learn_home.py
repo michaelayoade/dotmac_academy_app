@@ -7,7 +7,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, email="stu@a.edu"):
@@ -19,7 +19,7 @@ def _login(app_client, admin_session, tenant, email="stu@a.edu"):
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return p, h
 
 def test_learn_home_shows_course_completion_and_results(app_client, admin_session, tenant_a):

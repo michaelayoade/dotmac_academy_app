@@ -11,7 +11,7 @@ from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -23,7 +23,7 @@ def _login(app_client, admin_session, tenant, email="cal_stu@a.edu"):
         make_person_credential(admin_session, tenant_id=tenant.id, party_id=p.id, email=email, password_hash=hash_password("password1"))
     )
     admin_session.commit()
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
     return p
 
 def _seed_course(admin_session, tenant, slug, title="Course"):

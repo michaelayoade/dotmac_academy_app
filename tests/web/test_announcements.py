@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.models.cohort import Cohort
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -29,7 +29,7 @@ def _make_user(admin_session, tenant, email="ann_stu@a.edu", role=None):
     return p
 
 def _login(app_client, email="ann_stu@a.edu"):
-    app_client.post("/login", headers=H, data={"email": email, "password": "pw1"})
+    web_login(app_client, H, email, "pw1")
 
 def _csrf(app_client):
     return app_client.cookies.get("csrf_token", "")

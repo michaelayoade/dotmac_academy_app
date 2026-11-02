@@ -7,7 +7,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -41,7 +41,7 @@ def _setup(admin_session, tenant, *, max_attempts):
     return p, c, act
 
 def _login(app_client):
-    app_client.post("/login", headers=H, data={"email": "att@a.edu", "password": "password1"})
+    web_login(app_client, H, "att@a.edu", "password1")
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()

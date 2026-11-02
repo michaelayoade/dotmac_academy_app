@@ -8,7 +8,7 @@ from app.models.auth import UserCredential
 from app.models.rbac import Role
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
@@ -27,7 +27,7 @@ def _seed_user(admin_session, tenant, email, role_slug):
 def _login(app_client, email, password="password1"):
     """Log in and return (headers, csrf_token)."""
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": password})
+    web_login(app_client, h, email, password)
     csrf = app_client.cookies.get("csrf_token", "")
     return h, csrf
 
@@ -152,13 +152,7 @@ def test_created_student_can_login_and_reach_learner_page(app_client, admin_sess
 
     with TestClient(app) as student_client:
         sh = {"Host": "alpha.localhost"}
-        login = student_client.post(
-            "/login",
-            headers=sh,
-            data={"email": "loginable@a.edu", "password": "s3cret-pass"},
-            follow_redirects=False,
-        )
-        assert login.status_code == 303
+        web_login(student_client, sh, "loginable@a.edu", "s3cret-pass")
         dash = student_client.get("/", headers=sh)
         assert dash.status_code == 200
 

@@ -8,7 +8,7 @@ from dotmac_kernel.models import PartyRoleGrant
 from app.models.cohort import Cohort
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _admin_login(app_client, db, tenant, email="adm@a.edu"):
@@ -20,7 +20,7 @@ def _admin_login(app_client, db, tenant, email="adm@a.edu"):
     db.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles["admin"].id))
     db.commit()
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h, app_client.cookies.get("csrf_token", "")
 
 def test_announcement_bad_cohort_id_returns_400(app_client, admin_session, tenant_a):

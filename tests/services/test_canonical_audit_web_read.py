@@ -16,6 +16,7 @@ from app.models.identity_extensions import AcademyAccountProfile, AcademyCredent
 from app.services.api_identity_reads import count_audit_events, existing_people, list_audit_events
 from app.services.audit import list_events
 from app.services.security import hash_password
+from tests.conftest import web_login
 
 
 def seed_person(db, *, tenant_id, email, first_name, last_name, profile=True, active=True, status="active"):
@@ -69,9 +70,7 @@ def seed_historical_event(db, *, tenant_id, actor_person_id=None, action, entity
 
 def _login(client, email="admin@a.edu"):
     headers = {"Host": "alpha.localhost"}
-    response = client.post("/login", headers=headers, data={"email": email, "password": "password1"},
-                           follow_redirects=False)
-    assert response.status_code == 303
+    web_login(client, headers, email, "password1")
     assert client.cookies.get("session")
     return headers
 

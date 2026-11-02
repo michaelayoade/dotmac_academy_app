@@ -11,7 +11,7 @@ from app.models.offering import CourseOffering
 from app.services.facilitator_access import facilitator_access
 from app.services.roles import role_slugs
 from app.web.instructor import _assessment_person_ids_for_course
-from tests.conftest import make_canonical_account
+from tests.conftest import make_canonical_account, web_login
 from tests.web.test_reports import _seed_cohort
 
 
@@ -34,11 +34,7 @@ def _scoped_user(db, tenant, *, email: str) -> Party:
 
 def _login(client, email: str) -> dict[str, str]:
     headers = {"Host": "alpha.localhost"}
-    client.post(
-        "/login",
-        headers=headers,
-        data={"email": email, "password": "password1"},
-    )
+    web_login(client, headers, email, "password1")
     return headers
 
 

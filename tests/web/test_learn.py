@@ -11,7 +11,7 @@ from app.models.cohort import Cohort, Enrollment
 from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant):
@@ -23,8 +23,8 @@ def _login(app_client, admin_session, tenant):
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    # First request has no cookies → CSRF middleware skips the check (empty cookie jar).
-    app_client.post("/login", headers=h, data={"email": "s@a.edu", "password": "password1"})
+    # Log in via the CSRF double-submit flow (web_login).
+    web_login(app_client, h, "s@a.edu", "password1")
     return p, h
 
 def test_take_test_flow(app_client, admin_session, tenant_a):
@@ -353,7 +353,7 @@ def test_subtopic_progress_survives_a_new_browser_session(app_client, admin_sess
 
     # A brand-new client — no cookies, no localStorage, a different device.
     app_client.cookies.clear()
-    app_client.post("/login", headers=h, data={"email": "s@a.edu", "password": "password1"})
+    web_login(app_client, h, "s@a.edu", "password1")
     r2 = app_client.get("/courses/subtopics/chapters/1", headers=h)
     assert r2.status_code == 200
     assert 'data-subtopics-complete="true"' in r2.text

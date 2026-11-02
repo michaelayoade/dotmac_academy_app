@@ -11,7 +11,7 @@ from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _seed_login(admin_session, tenant, email, role_slug):
@@ -51,7 +51,7 @@ def _seed_cohort(admin_session, tid):
 
 def _login(app_client, email):
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 def test_student_forbidden_on_email_route(app_client, admin_session, tenant_a):

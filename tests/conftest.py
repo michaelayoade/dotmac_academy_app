@@ -257,6 +257,27 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     return client
 
 
+def web_login(client: TestClient, host, email: str, password: str):
+    """Log in through the real web form with the kernel's double-submit CSRF.
+
+    ``host`` is the Host header value or a headers mapping carrying ``Host``.
+    GET /login issues the ``csrf_token`` cookie; the POST echoes it in the
+    ``x-csrf-token`` header (CSRF stays enabled). Asserts the 303 success redirect.
+    """
+    headers = {"Host": host} if isinstance(host, str) else dict(host)
+    page = client.get("/login", headers=headers, follow_redirects=False)
+    csrf = page.cookies.get("csrf_token") or client.cookies.get("csrf_token", "")
+    assert csrf, "csrf_token cookie not set by GET /login"
+    response = client.post(
+        "/login",
+        headers={**headers, "x-csrf-token": csrf},
+        data={"email": email, "password": password},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, f"login for {email!r} returned {response.status_code}"
+    return response
+
+
 def make_canonical_account(
     db: Session,
     *,

@@ -25,6 +25,7 @@ from app.models.cohort import Cohort
 from app.services import audit_context as boundary
 from app.services import scheduling
 from app.services.exceptions import BadRequestError
+from tests.conftest import web_login
 from tests.services.roster_request_fixtures import roster_actors
 from tests.services.test_canonical_self_profile_locking import _wait_for_lock
 
@@ -367,13 +368,7 @@ def test_real_login_edit_route_keeps_parsing_and_redirects(roster_actors, app_cl
     actors, a = roster_actors, roster_actors.account
     sid, cid = _case(actors)
     host = {"Host": f"{a.tenant.slug}.localhost"}
-    login = app_client.post(
-        "/login",
-        headers=host,
-        data={"email": actors.instructor.email, "password": "chosen-password9"},
-        follow_redirects=False,
-    )
-    assert login.status_code == 303
+    web_login(app_client, host, actors.instructor.email, "chosen-password9")
     app_client.get("/instructor/cohorts", headers=host)
     headers = {**host, "x-csrf-token": app_client.cookies.get("csrf_token", "")}
     if htmx:

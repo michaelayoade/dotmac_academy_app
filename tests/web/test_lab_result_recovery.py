@@ -13,6 +13,7 @@ from app.models.identity_extensions import AcademyAccountProfile, AcademyCredent
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
+from tests.conftest import web_login
 
 
 def _make_person(admin_session, tenant, email: str) -> Party:
@@ -46,10 +47,7 @@ def _make_person(admin_session, tenant, email: str) -> Party:
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
-    response = app_client.post(
-        "/login", headers=h, data={"email": email, "password": "password1"}, follow_redirects=False
-    )
-    assert response.status_code == 303
+    web_login(app_client, h, email, "password1")
     return h
 
 def _entitle(admin_session, tenant, person, course):
@@ -289,11 +287,7 @@ def test_recovered_status_and_operation_remain_owner_gated(
         expected = 403
     else:
         headers = {"Host": "beta.localhost"}
-        response = app_client.post(
-            "/login", headers=headers, data={"email": intruder.email, "password": "password1"},
-            follow_redirects=False,
-        )
-        assert response.status_code == 303
+        web_login(app_client, headers, intruder.email, "password1")
         expected = 404
     for url in (f"/labs/instances/{instance.id}/status", f"/labs/operations/{operation.id}"):
         response = app_client.get(url, headers=headers)

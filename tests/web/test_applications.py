@@ -18,7 +18,7 @@ from app.services import admissions
 from app.services.bootstrap import ensure_roles
 from app.services.entrance_exam import set_academy_defaults
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
@@ -35,7 +35,7 @@ def _seed_user(admin_session, tenant, email, role_slug):
 
 def _login(app_client, email):
     headers = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=headers, data={"email": email, "password": "password1"})
+    web_login(app_client, headers, email, "password1")
     return headers
 
 def _intake(admin_session, tenant):

@@ -28,6 +28,7 @@ from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
 from app.web.labs import _console_target
+from tests.conftest import web_login
 
 
 def _entitled_activity(admin_session, tenant, person_id):
@@ -81,7 +82,7 @@ def _make_person(admin_session, tenant, email: str) -> Party:
 
 
 def _login(app_client, email: str) -> None:
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
 
 
 def _seed_instance(

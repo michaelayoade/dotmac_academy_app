@@ -11,7 +11,7 @@ from app.models.cohort import Cohort
 from app.services import settings_store
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -25,7 +25,7 @@ def _login_instructor(app_client, admin_session, tenant):
     )
     admin_session.add(PartyRoleGrant(tenant_id=tenant.id, party_id=p.id, role_id=roles["instructor"].id))
     admin_session.commit()
-    app_client.post("/login", headers=H, data={"email": "tt@a.edu", "password": "password1"})
+    web_login(app_client, H, "tt@a.edu", "password1")
     return H
 
 def _cohort(admin_session, tenant):

@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.services import notifications as notif_svc
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -32,7 +32,7 @@ def test_notifications_requires_auth(app_client, tenant_a):
 def test_notifications_list_200(app_client, admin_session, tenant_a):
     """Authenticated user gets 200 on /notifications."""
     _make_user(admin_session, tenant_a, "notif_list@a.edu")
-    app_client.post("/login", headers=H, data={"email": "notif_list@a.edu", "password": "pw1"})
+    web_login(app_client, H, "notif_list@a.edu", "pw1")
 
     r = app_client.get("/notifications", headers=H)
     assert r.status_code == 200
@@ -51,7 +51,7 @@ def test_notifications_shows_items(app_client, admin_session, tenant_a):
     )
     admin_session.commit()
 
-    app_client.post("/login", headers=H, data={"email": "notif_items@a.edu", "password": "pw1"})
+    web_login(app_client, H, "notif_items@a.edu", "pw1")
     r = app_client.get("/notifications", headers=H)
     assert r.status_code == 200
     assert "You passed the quiz" in r.text

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from tests.conftest import web_login
 from tests.services.test_canonical_audit_web_read import seed_historical_event as write_audit_event
 from tests.services.test_canonical_audit_web_read import seed_login as _seed_login
 
 
 def _login(app_client, email):
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 

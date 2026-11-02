@@ -17,6 +17,7 @@ from app.models.identity_extensions import AcademyAccountProfile, AcademyCredent
 from app.models.offering import CourseOffering
 from app.services.security import hash_password
 from app.services.tracks import create_cohort_track
+from tests.conftest import web_login
 from tests.services.roster_request_fixtures import roster_actors
 
 assert roster_actors
@@ -97,10 +98,10 @@ def _login_instructor(app_client, admin_session, tenant):
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
-    # First POST to /login has an empty cookie jar → CSRF middleware skips check.
+    # Log in via the CSRF double-submit flow (web_login).
     # The 303 redirect to "/" is followed (default follow_redirects=True), which triggers
     # a GET "/" that makes the CSRF middleware set the csrf_token cookie in the jar.
-    app_client.post("/login", headers=h, data={"email": "i@a.edu", "password": "password1"})
+    web_login(app_client, h, "i@a.edu", "password1")
     return h
 
 
@@ -740,7 +741,7 @@ def test_student_forbidden(app_client, admin_session, tenant_a):
     admin_session.commit()
 
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": "s3@a.edu", "password": "password1"})
+    web_login(app_client, h, "s3@a.edu", "password1")
     assert app_client.get("/instructor/results", headers=h).status_code == 403
 
 

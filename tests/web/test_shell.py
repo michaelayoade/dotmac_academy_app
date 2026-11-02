@@ -12,7 +12,7 @@ from dotmac_kernel.models import PartyRoleGrant
 
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, *, email, role=None):
@@ -33,7 +33,7 @@ def _login(app_client, admin_session, tenant, *, email, role=None):
         )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return p, h
 
 def _collapse(text: str) -> str:

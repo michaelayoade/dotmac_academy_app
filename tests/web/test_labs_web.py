@@ -21,6 +21,7 @@ from dotmac_learning.participation_models import Cohort, CourseOffering, Enrollm
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.services.security import hash_password
+from tests.conftest import web_login
 
 
 def _make_party(admin_session, tenant, email: str, *, first_name="S", last_name="L") -> Party:
@@ -59,7 +60,7 @@ def _make_person(admin_session, tenant, email: str) -> Party:
 
 def _login(app_client, email: str) -> dict[str, str]:
     h = {"Host": "alpha.localhost"}
-    app_client.post("/login", headers=h, data={"email": email, "password": "password1"})
+    web_login(app_client, h, email, "password1")
     return h
 
 

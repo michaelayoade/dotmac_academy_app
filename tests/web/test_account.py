@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.models.auth import AuthSession
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, password="password1"):
@@ -19,8 +19,8 @@ def _login(app_client, admin_session, tenant, password="password1"):
     )
     admin_session.commit()
     h = {"Host": "alpha.localhost"}
-    # First request has no cookies → CSRF middleware skips (empty cookie jar).
-    app_client.post("/login", headers=h, data={"email": "s@a.edu", "password": password})
+    # Log in via the CSRF double-submit flow (web_login).
+    web_login(app_client, h, "s@a.edu", password)
     csrf = app_client.cookies.get("csrf_token", "")
     return p, h, csrf
 

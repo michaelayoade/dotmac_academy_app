@@ -10,7 +10,7 @@ from app.models.course import Chapter, Course
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -47,7 +47,7 @@ def _setup(admin_session, tenant, email="pace@a.edu"):
     return app_client_login
 
 def _login(app_client, email="pace@a.edu"):
-    app_client.post("/login", headers=H, data={"email": email, "password": "password1"})
+    web_login(app_client, H, email, "password1")
 
 def _cleanup(admin_session, tenant):
     admin_session.query(Course).filter(Course.tenant_id == tenant.id).delete()

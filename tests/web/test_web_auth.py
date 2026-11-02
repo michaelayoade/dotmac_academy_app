@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import make_person_credential, make_person_party, web_login
 
 
 def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
@@ -54,12 +54,7 @@ def test_login_canonicalizes_email_and_ignores_credential_email_drift(
     admin_session.add(credential)
     admin_session.commit()
 
-    response = app_client.post(
-        "/login",
-        headers={"Host": "alpha.localhost"},
-        data={"email": "  MIXED.case@alpha.edu  ", "password": "password1"},
-        follow_redirects=False,
-    )
+    response = web_login(app_client, {"Host": "alpha.localhost"}, "  MIXED.case@alpha.edu  ", "password1")
 
     assert response.status_code == 303
     admin_session.refresh(person)
