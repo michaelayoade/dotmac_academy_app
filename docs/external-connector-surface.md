@@ -106,6 +106,14 @@ only the response read timeout is disabled. The request remains behind the same
 tenant, owner and entitlement gates, and this does not broaden the destination
 or accepted method surface.
 
+Re-reviewed on 2026-11-02 after production access logs showed the deployed
+RouterOS build issuing root-level `GET /webfig` and `POST /jsproxy`, followed by
+`GET /` when those escaped requests failed with 404 and 403. The streaming body
+rewriter now confines both RouterOS root paths, including `/webfig` with or
+without a trailing slash, beneath the already-authorized instance/node prefix.
+This corrects path projection only; the accepted destinations, methods, tenant,
+owner and entitlement gates remain unchanged.
+
 ## Review rule
 
 A count rising fails. A count falling also fails until the profile and this
