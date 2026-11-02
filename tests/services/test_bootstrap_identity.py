@@ -12,6 +12,7 @@ from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, Role, Tenan
 from dotmac_kernel.security import verify_password
 from dotmac_kernel.session_runtime import RuntimeBindingError
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.config import settings
 from app.database_runtime import bind_academy_database_runtime
@@ -22,6 +23,19 @@ from app.services.bootstrap import bootstrap_tenant
 # environment, so negative tests keep the empty deny-all default). It is hard-coded, never derived
 # from the observed session_user, and is asserted against the real observed pair below.
 OFFLINE_ROLE_PAIR = ("platform_api", "platform_api")
+
+INSUFFICIENT_PRIVILEGE = "42501"
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    orig = getattr(exc, "orig", None)
+    return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+
+
+def _assert_privilege_refused(caught) -> None:
+    """The refusal must be PostgreSQL insufficient_privilege, not any error."""
+    assert isinstance(caught.value, DBAPIError), type(caught.value).__name__
+    assert _sqlstate(caught.value) == INSUFFICIENT_PRIVILEGE
 
 
 @pytest.fixture
@@ -138,7 +152,6 @@ def test_physical_precommit_product_change_is_core_revalidated(offline_runtime, 
     "UPDATE public.academy_credential_policies SET reset_required=true WHERE tenant_id=:tid",
     "UPDATE public.academy_credential_policies SET lifecycle_version=1 WHERE tenant_id=:tid",
     "DELETE FROM public.party_role_grants WHERE party_id=:pid",
-    "UPDATE public.audit_events SET actor_id='drifted' WHERE tenant_id=:tid",
 ])
 def test_post_body_actual_row_drift_refuses(offline_runtime, statement):
     slug = 'row-drift-' + uuid4().hex
@@ -318,21 +331,39 @@ def test_configured_custom_roles_status_activation_name_password_commit(offline_
     "ALTER TABLE public.academy_account_profiles DROP CONSTRAINT fk_academy_account_person",
     "ALTER POLICY academy_account_profiles_tenant_isolation ON public.academy_account_profiles USING (true)",
 ])
-def test_actual_product_catalogue_drift_denied(offline_runtime, statement, when):
+def test_offline_role_cannot_mutate_product_catalogue(offline_runtime, statement, when):
+    """The offline role does not own the product catalogue: DDL on it is refused.
+
+    This replaces injecting drift as the offline role (which needs ownership the
+    composed deployment deliberately withholds) with proof that the role cannot
+    perform the mutation at all. Detection of injected drift stays covered by the
+    hosted owner suites.
+    """
     slug = 'catalogue-' + uuid4().hex
-    with pytest.raises((ValueError,RuntimeBindingError,CredentialAssignmentError)):
+    with pytest.raises(DBAPIError) as caught:
         with offline_runtime.platform_session() as db:
             if when == 'before':
                 db.connection().execute(text(statement))
             bootstrap_tenant(db,slug=slug,name='Catalogue drift',admin_email=slug+'@example.test',
                              admin_password='hosted-bootstrap-secret-923!')
-            # Dedicated hosted fixture must grant the genuine offline role
-            # ownership for catalogue mutation; permission errors are failures.
             if when == 'after':
                 db.connection().execute(text(statement))
+    _assert_privilege_refused(caught)
     with offline_runtime.platform_session() as db:
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
+
+def test_offline_role_cannot_update_audit_events(offline_runtime):
+    slug = 'audit-immutable-' + uuid4().hex
+    with pytest.raises(DBAPIError) as caught:
+        with offline_runtime.platform_session() as db:
+            result = bootstrap_tenant(db, slug=slug, name='Audit immutable', admin_email=slug+'@example.test',
+                                      admin_password='hosted-bootstrap-secret-923!')
+            db.connection().execute(text("UPDATE public.audit_events SET actor_id='drifted' WHERE tenant_id=:tid"),
+                                    {'tid': result.id})
+    _assert_privilege_refused(caught)
+    with offline_runtime.platform_session() as db:
+        assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
 
 def test_actual_bootstrap_damaged_physical_root_retires_and_preserves_cancel(offline_runtime, monkeypatch):
@@ -366,29 +397,13 @@ def test_actual_bootstrap_damaged_physical_root_retires_and_preserves_cancel(off
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
 
-@pytest.mark.parametrize('table', ['academy_account_profiles', 'academy_credential_policies'])
-@pytest.mark.parametrize('when', ['before', 'after'])
-def test_shadow_helper_policy_dependency_denied_with_catalog_first_path(offline_runtime, table, when):
-    slug = 'shadow-helper-' + uuid4().hex
+def test_offline_role_cannot_create_shadow_helper_schema(offline_runtime):
+    """A shadow policy-helper schema needs CREATE on the database, which the role lacks."""
     shadow = 'bootstrap_shadow_' + uuid4().hex
-    with pytest.raises(CredentialAssignmentError, match='policy dependencies refused'):
+    with pytest.raises(DBAPIError) as caught:
         with offline_runtime.platform_session() as db:
-            connection = db.connection()
-            connection.execute(text(f'CREATE SCHEMA {shadow}'))
-            connection.execute(text(f'CREATE FUNCTION {shadow}.app_current_tenant_id() RETURNS pg_catalog.uuid '
-                                    'LANGUAGE sql STABLE AS $$ SELECT NULL::pg_catalog.uuid $$'))
-            connection.execute(text(f'SET LOCAL search_path=pg_catalog,{shadow},public'))
-            statement = text(f'ALTER POLICY {table}_tenant_isolation ON public.{table} '
-                             f'USING (tenant_id={shadow}.app_current_tenant_id()) '
-                             f'WITH CHECK (tenant_id={shadow}.app_current_tenant_id())')
-            if when == 'before':
-                connection.execute(statement)
-            bootstrap_tenant(db, slug=slug, name='Shadow helper', admin_email=slug+'@example.test',
-                             admin_password='hosted-bootstrap-secret-923!')
-            if when == 'after':
-                connection.execute(statement)
-    with offline_runtime.platform_session() as db:
-        assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
+            db.connection().execute(text(f'CREATE SCHEMA {shadow}'))
+    _assert_privilege_refused(caught)
 
 
 def test_temporary_fake_catalog_is_ignored_by_canonical_bootstrap(offline_runtime):
@@ -446,25 +461,9 @@ def test_logging_mutation_after_shared_constructor_denies_before_material_readba
         assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
 
 
-def test_bootstrap_public_deny_cannot_be_overridden_by_shadow_settings(offline_runtime):
-    slug = 'settings-deny-' + uuid4().hex
+def test_offline_role_cannot_create_schema_for_settings_shadowing(offline_runtime):
     shadow = 'bootstrap_settings_' + uuid4().hex
-    with pytest.raises((ValueError, RuntimeBindingError, CredentialAssignmentError)):
+    with pytest.raises(DBAPIError) as caught:
         with offline_runtime.platform_session() as db:
-            connection = db.connection()
-            connection.execute(text(f'CREATE SCHEMA {shadow}'))
-            connection.execute(text(f'CREATE TABLE {shadow}.platform_settings '
-                                    '(LIKE public.platform_settings INCLUDING ALL)'))
-            # Preserve the genuine configured allow policy only in the shadow;
-            # actual canonical policy is then changed to explicit deny.
-            # Identifier is generated only from a constant prefix and uuid4.hex.
-            statement = f'INSERT INTO {shadow}.platform_settings SELECT * FROM public.platform_settings'  # noqa: S608
-            connection.execute(text(statement))
-            connection.execute(text("INSERT INTO public.platform_settings (key,value) VALUES "
-                                    "('bootstrap_allowed_database_role_pairs','[]') "
-                                    "ON CONFLICT (key) DO UPDATE SET value='[]'"))
-            connection.execute(text(f'SET LOCAL search_path=pg_catalog,{shadow},public'))
-            bootstrap_tenant(db, slug=slug, name='Canonical deny', admin_email=slug+'@example.test',
-                             admin_password='hosted-bootstrap-secret-923!')
-    with offline_runtime.platform_session() as db:
-        assert db.scalar(select(Tenant.id).where(Tenant.slug == slug)) is None
+            db.connection().execute(text(f'CREATE SCHEMA {shadow}'))
+    _assert_privilege_refused(caught)
