@@ -14,13 +14,13 @@ from dotmac_kernel.security import verify_password
 from dotmac_kernel.session_runtime import RuntimeBindingError
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
 from app.database_runtime import bind_academy_database_runtime
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.services.bootstrap import bootstrap_tenant
+from app.services.bootstrap_identity import _catalog
 
 # The CI/test deployment's actual offline role pair, declared per fixture only (never in the job
 # environment, so negative tests keep the empty deny-all default). It is hard-coded, never derived
@@ -28,6 +28,12 @@ from app.services.bootstrap import bootstrap_tenant
 OFFLINE_ROLE_PAIR = ("platform_api", "platform_api")
 
 INSUFFICIENT_PRIVILEGE = "42501"
+
+# Every refusal message raised inside app.services.bootstrap_identity._catalog.
+_CATALOGUE_REFUSAL = (
+    r"bootstrap product (catalogue|columns|constraint enforcement|foreign key actions|"
+    r"identity constraints|tenant policy|tenant helper|tenant columns|policy dependencies) refused"
+)
 
 
 def _sqlstate(exc: BaseException) -> str | None:
@@ -339,7 +345,7 @@ def test_offline_role_cannot_mutate_product_catalogue(offline_runtime, statement
 
     This proves the offline role cannot perform the mutation at all. Detection
     of injected drift by the bootstrap catalogue preflight is covered separately
-    by ``test_owner_injected_catalogue_drift_is_refused_by_bootstrap`` below,
+    by ``test_owner_injected_catalogue_drift_is_refused_by_the_preflight`` below,
     which injects the drift as the catalogue owner.
     """
     slug = 'catalogue-' + uuid4().hex
@@ -361,13 +367,14 @@ def test_offline_role_cannot_mutate_product_catalogue(offline_runtime, statement
 
 
 @pytest.fixture
-def owner_bootstrap_session(monkeypatch):
-    """Catalogue-owner session whose every change is rolled back with the outer transaction.
+def owner_catalogue_connection():
+    """Catalogue-owner connection whose every change is rolled back.
 
     Uses the migration authority (the owner of the product catalogue in the
-    composed CI) on an engine that satisfies the bootstrap logging floor. The
-    session joins the outer transaction through a savepoint, so nothing is
-    committed even if bootstrap commits.
+    composed CI) on an engine that satisfies the bootstrap logging floor, inside
+    an outer transaction with a savepoint. ``bootstrap_tenant`` itself is not
+    run here: it refuses any session not issued by ``platform_session``, so the
+    catalogue preflight ``_catalog`` is exercised directly.
     """
     url = os.getenv("TEST_MIGRATION_DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
     if not url:
@@ -376,25 +383,17 @@ def owner_bootstrap_session(monkeypatch):
     connection = engine.connect()
     outer = connection.begin()
     try:
-        pair = tuple(connection.execute(text("SELECT session_user, current_user")).one())
-        monkeypatch.setattr(settings, "bootstrap_allowed_database_role_pairs", (pair,))
-        session = Session(bind=connection, join_transaction_mode="create_savepoint")
-        try:
-            yield session
-        finally:
-            session.close()
+        connection.begin_nested()
+        yield connection
     finally:
         outer.rollback()
         connection.close()
         engine.dispose()
 
 
-def test_owner_bootstrap_control_succeeds_without_drift(owner_bootstrap_session):
-    """Control: the owner harness itself bootstraps, so the drift refusals below are the drift's."""
-    slug = 'owner-control-' + uuid4().hex
-    result = bootstrap_tenant(owner_bootstrap_session, slug=slug, name='Owner control',
-                              admin_email=slug+'@example.test', admin_password='hosted-bootstrap-secret-923!')
-    assert result.owner_party_id is not None
+def test_owner_catalogue_preflight_accepts_the_undrifted_catalogue(owner_catalogue_connection):
+    """Control: the harness sees the real catalogue, so the refusals below are the drift's."""
+    _catalog(owner_catalogue_connection)
 
 
 @pytest.mark.parametrize('statement', [
@@ -404,13 +403,11 @@ def test_owner_bootstrap_control_succeeds_without_drift(owner_bootstrap_session)
     "ALTER TABLE public.academy_account_profiles DROP CONSTRAINT fk_academy_account_person",
     "ALTER POLICY academy_account_profiles_tenant_isolation ON public.academy_account_profiles USING (true)",
 ])
-def test_owner_injected_catalogue_drift_is_refused_by_bootstrap(owner_bootstrap_session, statement):
-    """Drift injected by the catalogue owner (rolled back) is refused by the bootstrap preflight."""
-    owner_bootstrap_session.connection().execute(text(statement))
-    slug = 'owner-drift-' + uuid4().hex
-    with pytest.raises(CredentialAssignmentError, match='bootstrap product'):
-        bootstrap_tenant(owner_bootstrap_session, slug=slug, name='Owner drift',
-                         admin_email=slug+'@example.test', admin_password='hosted-bootstrap-secret-923!')
+def test_owner_injected_catalogue_drift_is_refused_by_the_preflight(owner_catalogue_connection, statement):
+    """Drift injected by the catalogue owner (rolled back) is refused by ``_catalog``."""
+    owner_catalogue_connection.execute(text(statement))
+    with pytest.raises(CredentialAssignmentError, match=_CATALOGUE_REFUSAL):
+        _catalog(owner_catalogue_connection)
 
 
 def test_offline_role_cannot_update_audit_events(offline_runtime):
