@@ -195,7 +195,7 @@ def test_discharged_collisions_are_exactly_the_kernel_reexports() -> None:
     }
 
 
-def test_collision_ratchet_rejects_an_open_entry_and_a_false_discharge() -> None:
+def test_collision_ratchet_rejects_an_open_entry_and_a_false_discharge(monkeypatch: pytest.MonkeyPatch) -> None:
     # An entry that is not discharged and not in the baseline still fails.
     planted = _inventory()
     for edge in planted["model_edge"]:
@@ -205,11 +205,14 @@ def test_collision_ratchet_rejects_an_open_entry_and_a_false_discharge() -> None
         _check_collision_dispositions(planted)
 
     # Discharging a genuine local definition (not a kernel re-export) still fails.
+    # Keep the open-entry equality satisfied so the re-export identity check is what fails.
     planted = _inventory()
     for edge in planted["model_edge"]:
         if edge["academy_entry"] == "app/models/base.py:TimestampMixin":
             edge["status"] = "discharged"
-    with pytest.raises(AssertionError):
+    baseline = _baseline() - {"app/models/base.py:TimestampMixin"}
+    monkeypatch.setitem(globals(), "_baseline", lambda: baseline)
+    with pytest.raises(AssertionError, match="is not the kernel class"):
         _check_collision_dispositions(planted)
 
 
