@@ -29,6 +29,7 @@ from dotmac_kernel.web_surfaces import (
 )
 from dotmac_ui import static_dir
 
+from app import display_settings as _display_settings  # noqa: F401  (registers display SettingSpecs)
 from app.academy_declarations import ACADEMY_FEATURE_DECLARATION
 from app.api.admissions import router as admissions_router
 from app.api.auth import router as auth_router
