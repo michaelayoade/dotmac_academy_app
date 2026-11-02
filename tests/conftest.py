@@ -257,12 +257,33 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     return client
 
 
-def web_login(client: TestClient, host, email: str, password: str):
+def csrf_for(client: TestClient, headers, path: str) -> str:
+    """GET a safe browser page and return the session-bound ``csrf_token``.
+
+    The kernel CSRF token is bound to the current ``session`` cookie. After a
+    login the session cookie changes, so the pre-login token is invalid; the
+    kernel issues a fresh token on a safe request to a route that carries
+    ``require_csrf``. CSRF stays enabled; this only reads the freshly issued
+    token.
+    """
+    response = client.get(path, headers=dict(headers), follow_redirects=False)
+    assert response.status_code < 400, f"GET {path} returned {response.status_code}"
+    token = client.cookies.get("csrf_token", "")
+    assert token, f"csrf_token cookie not set after GET {path}"
+    return token
+
+
+def web_login(client: TestClient, host, email: str, password: str, *, refresh_path: str = "/account"):
     """Log in through the real web form with the kernel's double-submit CSRF.
 
     ``host`` is the Host header value or a headers mapping carrying ``Host``.
     GET /login issues the ``csrf_token`` cookie; the POST echoes it in the
     ``x-csrf-token`` header (CSRF stays enabled). Asserts the 303 success redirect.
+
+    The token is session-bound, so login invalidates it. After the 303 this does
+    one GET of ``refresh_path`` (an authenticated browser page) and asserts the
+    ``csrf_token`` cookie was re-issued, so later unsafe requests that read
+    ``client.cookies["csrf_token"]`` carry a valid token.
     """
     headers = {"Host": host} if isinstance(host, str) else dict(host)
     page = client.get("/login", headers=headers, follow_redirects=False)
@@ -275,6 +296,8 @@ def web_login(client: TestClient, host, email: str, password: str):
         follow_redirects=False,
     )
     assert response.status_code == 303, f"login for {email!r} returned {response.status_code}"
+    fresh = csrf_for(client, headers, refresh_path)
+    assert fresh != csrf, "csrf_token was not re-issued for the logged-in session"
     return response
 
 
