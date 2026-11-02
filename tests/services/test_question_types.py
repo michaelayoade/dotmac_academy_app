@@ -32,45 +32,45 @@ def _doc(extra_question: dict) -> BankDoc:
 
 def test_numeric_exact_match():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 42, "options": {}, "weight": 1}]
-    r = grade_submission({"n1": ["42"]}, qs, 0.5)
+    r = grade_submission({"n1": ["42"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
     assert r.score == 1.0
 
 
 def test_numeric_within_tolerance():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 10.0, "options": {"tolerance": 0.5}, "weight": 1}]
-    r = grade_submission({"n1": ["10.3"]}, qs, 0.5)
+    r = grade_submission({"n1": ["10.3"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_numeric_outside_tolerance():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 10.0, "options": {"tolerance": 0.5}, "weight": 1}]
-    r = grade_submission({"n1": ["11.0"]}, qs, 0.5)
+    r = grade_submission({"n1": ["11.0"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_numeric_zero_tolerance_is_default():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 5, "options": {}, "weight": 1}]
-    r = grade_submission({"n1": ["5.1"]}, qs, 0.5)
+    r = grade_submission({"n1": ["5.1"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_numeric_blank_is_wrong():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 42, "options": {}, "weight": 1}]
-    r = grade_submission({"n1": []}, qs, 0.5)
+    r = grade_submission({"n1": []}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_numeric_nonnumeric_is_wrong():
     qs = [{"ext_id": "n1", "type": "numeric", "correct": 42, "options": {}, "weight": 1}]
-    r = grade_submission({"n1": ["hello"]}, qs, 0.5)
+    r = grade_submission({"n1": ["hello"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_numeric_correct_as_list():
     """correct stored as [42] (list form) should also work."""
     qs = [{"ext_id": "n1", "type": "numeric", "correct": [42], "options": {}, "weight": 1}]
-    r = grade_submission({"n1": ["42"]}, qs, 0.5)
+    r = grade_submission({"n1": ["42"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
@@ -80,59 +80,59 @@ def test_numeric_correct_as_list():
 
 def test_short_text_exact_match():
     qs = [{"ext_id": "s1", "type": "short_text", "correct": ["Paris"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": ["Paris"]}, qs, 0.5)
+    r = grade_submission({"s1": ["Paris"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_short_text_case_insensitive():
     qs = [{"ext_id": "s1", "type": "short_text", "correct": ["Paris"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": ["paris"]}, qs, 0.5)
+    r = grade_submission({"s1": ["paris"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_short_text_trim():
     qs = [{"ext_id": "s1", "type": "short_text", "correct": ["Paris"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": ["  Paris  "]}, qs, 0.5)
+    r = grade_submission({"s1": ["  Paris  "]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_short_text_nonmatch():
     qs = [{"ext_id": "s1", "type": "short_text", "correct": ["Paris"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": ["London"]}, qs, 0.5)
+    r = grade_submission({"s1": ["London"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_short_text_multiple_accepted():
     qs = [{"ext_id": "s1", "type": "short_text",
            "correct": ["TCP", "Transmission Control Protocol"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": ["transmission control protocol"]}, qs, 0.5)
+    r = grade_submission({"s1": ["transmission control protocol"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_short_text_blank_is_wrong():
     qs = [{"ext_id": "s1", "type": "short_text", "correct": ["Paris"], "options": {}, "weight": 1}]
-    r = grade_submission({"s1": []}, qs, 0.5)
+    r = grade_submission({"s1": []}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_short_text_regex_match():
     qs = [{"ext_id": "s1", "type": "short_text",
            "correct": [r"\d{3}-\d{4}"], "options": {"regex": True}, "weight": 1}]
-    r = grade_submission({"s1": ["555-1234"]}, qs, 0.5)
+    r = grade_submission({"s1": ["555-1234"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is True
 
 
 def test_short_text_regex_no_match():
     qs = [{"ext_id": "s1", "type": "short_text",
            "correct": [r"\d{3}-\d{4}"], "options": {"regex": True}, "weight": 1}]
-    r = grade_submission({"s1": ["abc"]}, qs, 0.5)
+    r = grade_submission({"s1": ["abc"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
 def test_short_text_bad_regex_counts_as_wrong():
     qs = [{"ext_id": "s1", "type": "short_text",
            "correct": ["[invalid"], "options": {"regex": True}, "weight": 1}]
-    r = grade_submission({"s1": ["anything"]}, qs, 0.5)
+    r = grade_submission({"s1": ["anything"]}, qs, 0.5, missing_question_weight=1)
     assert r.per_item[0]["correct"] is False
 
 
@@ -146,7 +146,7 @@ def test_mixed_bank_all_correct():
         {"ext_id": "q2", "type": "numeric", "correct": 10, "options": {}, "weight": 1},
         {"ext_id": "q3", "type": "short_text", "correct": ["TCP"], "options": {}, "weight": 1},
     ]
-    r = grade_submission({"q1": ["A"], "q2": ["10"], "q3": ["tcp"]}, qs, 0.9)
+    r = grade_submission({"q1": ["A"], "q2": ["10"], "q3": ["tcp"]}, qs, 0.9, missing_question_weight=1)
     assert r.score == 3.0
     assert r.fraction == 1.0
     assert r.passed is True
@@ -159,7 +159,7 @@ def test_mixed_bank_partial():
         {"ext_id": "q3", "type": "short_text", "correct": ["TCP"], "options": {}, "weight": 1},
     ]
     # q1 correct, q2 wrong (off by 1, no tolerance), q3 wrong
-    r = grade_submission({"q1": ["A"], "q2": ["11"], "q3": ["UDP"]}, qs, 0.9)
+    r = grade_submission({"q1": ["A"], "q2": ["11"], "q3": ["UDP"]}, qs, 0.9, missing_question_weight=1)
     assert r.score == 1.0
     assert r.max_score == 3.0
     assert abs(r.fraction - 1 / 3) < 1e-9

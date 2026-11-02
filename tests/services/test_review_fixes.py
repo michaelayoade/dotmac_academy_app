@@ -22,8 +22,8 @@ def test_numeric_malformed_tolerance_does_not_raise():
         "weight": 1,
     }
     # Falls back to tolerance 0: exact answer passes, off-by-one fails — no exception.
-    assert grade_submission({"q1": ["10"]}, [q], 0.5).per_item[0]["correct"] is True
-    assert grade_submission({"q1": ["11"]}, [q], 0.5).per_item[0]["correct"] is False
+    assert grade_submission({"q1": ["10"]}, [q], 0.5, missing_question_weight=1).per_item[0]["correct"] is True
+    assert grade_submission({"q1": ["11"]}, [q], 0.5, missing_question_weight=1).per_item[0]["correct"] is False
 
 def test_announcement_survives_notify_failure(admin_session, tenant_a, monkeypatch):
     tid = tenant_a.id

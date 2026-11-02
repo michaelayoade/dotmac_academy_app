@@ -4709,7 +4709,9 @@ def _small_policy(policy):
     return replace(
         policy,
         lab_command_timeout_seconds_by_action={"inspect": 1, "deploy": 1, "destroy": 1, "check": 1},
-        lab_operation_lease_seconds_by_kind={"deploy": 5, "destroy": 5, "check": 5},
+        # Strictly above the policy relation bounds (app/config.py validate_lab_execution_relations):
+        # deploy 4, destroy 2*inspect + destroy + 2*grace = 5, check 3. Destroy needs > 5.
+        lab_operation_lease_seconds_by_kind={"deploy": 5, "destroy": 6, "check": 5},
         lab_operation_unknown_lease_seconds=5,
         lab_process_termination_grace_seconds=1,
     )

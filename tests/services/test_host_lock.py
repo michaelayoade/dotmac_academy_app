@@ -23,9 +23,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config import LabExecutionPolicy, settings
 from app.services import host_lock as host_lock_module
 from app.services.host_lock import HostLockUnavailable, worker_singleton_lock
 from app.services.labengine.containerlab import ContainerlabEngine
+
+
+def _policy() -> LabExecutionPolicy:
+    """The product's env-derived execution policy (what the worker builds per pass)."""
+    return LabExecutionPolicy.from_settings(settings)
 
 
 def _fake_popen(returncode: int = 0, stdout: str = "", stderr: str = ""):
@@ -126,11 +132,12 @@ def test_lock_is_released_when_the_holding_process_is_killed(tmp_path):
 
 def test_worker_and_reconciler_engines_contend_on_the_same_lock_file(tmp_path):
     """Different labels must not mean different locks — they share one file."""
+    policy = _policy()
     worker_engine = ContainerlabEngine(
-        str(tmp_path), lab_host_role="lab", lock_label="academy-lab-worker"
+        str(tmp_path), lab_host_role="lab", execution_policy=policy, lock_label="academy-lab-worker"
     )
     reconciler_engine = ContainerlabEngine(
-        str(tmp_path), lab_host_role="lab", lock_label="academy-lab-reconcile"
+        str(tmp_path), lab_host_role="lab", execution_policy=policy, lock_label="academy-lab-reconcile"
     )
     path = host_lock_module.lock_path(directory=str(tmp_path))
     holder_fd = _hold_manually(path)
@@ -155,7 +162,7 @@ def test_worker_and_reconciler_engines_contend_on_the_same_lock_file(tmp_path):
 
 
 def test_contended_deploy_raises_without_starting_a_subprocess(tmp_path):
-    eng = ContainerlabEngine(str(tmp_path), lab_host_role="lab")
+    eng = ContainerlabEngine(str(tmp_path), lab_host_role="lab", execution_policy=_policy())
     path = host_lock_module.lock_path(directory=str(tmp_path))
     holder_fd = _hold_manually(path)
     try:
@@ -318,14 +325,16 @@ def test_reconcile_runtime_propagates_contention_before_touching_the_database():
     """
     from app.services import lab_jobs
 
+    policy = _policy()
     engine = MagicMock()
+    engine.execution_policy = policy
     engine.inventory.side_effect = HostLockUnavailable(
         "containerlab host lock is already held — held by '999 academy-lab-worker'"
     )
     db = MagicMock()
 
     with pytest.raises(HostLockUnavailable):
-        lab_jobs.reconcile_runtime(db, engine)
+        lab_jobs.reconcile_runtime(db, engine, policy=policy)
 
     db.scalars.assert_not_called()
 
@@ -353,9 +362,9 @@ def test_lab_reconcile_skips_cleanly_on_host_lock_contention(monkeypatch, capsys
         yield fake_db
 
     monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
-    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db, *, policy: 0)
 
-    def _raise_contention(db, engine):
+    def _raise_contention(db, engine, *, policy):
         raise HostLockUnavailable(
             "containerlab host lock is already held — held by '123 academy-lab-worker'"
         )

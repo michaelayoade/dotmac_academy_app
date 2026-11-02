@@ -49,7 +49,7 @@ def _prepare_worker_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/containerlab")
     monkeypatch.setattr("app.config.validate_settings", lambda s: [])
     monkeypatch.setattr(containerlab_module, "ContainerlabEngine", _FakeEngine)
-    monkeypatch.setattr(lab_jobs, "recover_missing_consoles", lambda db, engine: 0)
+    monkeypatch.setattr(lab_jobs, "recover_missing_consoles", lambda db, engine, *, policy: 0)
 
 
 def test_lab_worker_holds_the_singleton_lock_once_across_iterations(monkeypatch, tmp_path):
@@ -65,10 +65,10 @@ def test_lab_worker_holds_the_singleton_lock_once_across_iterations(monkeypatch,
         yield fake_db
 
     monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
-    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db, *, policy: 0)
     reclaim_calls = {"n": 0}
 
-    def fake_reclaim(db, *, host, epoch):
+    def fake_reclaim(db, *, host, epoch, policy):
         reclaim_calls["n"] += 1
         return 0
 
@@ -162,7 +162,7 @@ def test_lab_worker_exits_cleanly_and_releases_the_lock_on_shutdown_request(
         yield fake_db
 
     monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
-    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db, *, policy: 0)
     monkeypatch.setattr(lab_operations, "reclaim_previous_epoch", lambda db, **kwargs: 0)
 
     def fake_drain(db, engine, **kwargs):
@@ -198,9 +198,9 @@ def test_lab_worker_sigterm_during_reclaim_rolls_back_cleanly_and_skips_drain(
         yield fake_db
 
     monkeypatch.setattr(lab_jobs, "lab_worker_session", fake_session)
-    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db: 0)
+    monkeypatch.setattr(lab_operations, "reconcile_stuck", lambda db, *, policy: 0)
 
-    def fake_reclaim(db, *, host, epoch):
+    def fake_reclaim(db, *, host, epoch, policy):
         raise cli._WorkerShutdownRequested()
 
     monkeypatch.setattr(lab_operations, "reclaim_previous_epoch", fake_reclaim)
@@ -239,15 +239,15 @@ def test_lab_worker_calls_reclaim_then_reconcile_recover_then_drain_in_order(
 
     calls: list[str] = []
 
-    def fake_reclaim(db, *, host, epoch):
+    def fake_reclaim(db, *, host, epoch, policy):
         calls.append("reclaim")
         return 0
 
-    def fake_reconcile(db):
+    def fake_reconcile(db, *, policy):
         calls.append("reconcile_stuck")
         return 0
 
-    def fake_recover(db, engine):
+    def fake_recover(db, engine, *, policy):
         calls.append("recover_missing_consoles")
         return 0
 
