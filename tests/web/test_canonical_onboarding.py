@@ -55,6 +55,8 @@ def test_genuine_get_csrf_completion_redirect_and_actual_queued_invitation(app_c
     # Follow the emailed link by path so the issued CSRF cookie lands on the
     # same host the POST uses (the link's absolute host is not the test base).
     link = urlparse(setup)
+    # Pin the emailed host: it must be the tenant host this client addresses.
+    assert (link.scheme, link.netloc) == (urlparse(str(fresh.base_url)).scheme, fresh.headers["Host"])
     assert fresh.get(f"{link.path}?{link.query}").status_code == 200
     response = fresh.post(
         "/accept-invite",
