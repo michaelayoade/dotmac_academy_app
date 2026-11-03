@@ -324,6 +324,31 @@ jobs:
           fi
           poetry run pytest -rfE --tb=line -v -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
+      # TEMPORARY diagnostic: long tracebacks for the unverified failures only. Runs
+      # after the main Tests step, which it does not change. Remove once triaged.
+      - name: Tests (temporary, long tracebacks for unverified tests)
+        if: '!cancelled() && matrix.shard == 1'
+        shell: bash
+        run: |
+          set -uo pipefail
+          poetry run pytest -rfE --tb=long -p no:cacheprovider -v -o faulthandler_timeout=120 \
+            tests/services/test_reminder_resend_v3_caller_transactions.py::test_unproven_physical_nested_rollback_cannot_retire_receipts \
+            tests/services/test_reminder_resend_v3_caller_transactions.py::test_caller_nesting_created_after_return_preserves_earlier_claims \
+            tests/services/test_reminder_resend_v4_sql_authority.py::test_genuine_native_root_flush_abort_preserves_selected_exception \
+            tests/services/test_genuine_assessment_submit_context.py::test_late_forged_audit_row_is_detected_by_the_consequence_inventory \
+            tests/services/test_genuine_assessment_submit_context.py::test_actual_session_root_replacement_is_typed_and_has_no_result \
+            tests/services/test_genuine_scheduling_context.py::test_owned_failure_frames_clear_request_context_and_command_aliases \
+            tests/test_canonical_api_identity.py::test_public_audit_exact_seven_fields_and_raw_historical_details \
+            tests/test_academy_hosted_genesis.py::test_prepared_and_replication_work_not_available_to_coordinator \
+            tests/test_academy_hosted_genesis.py::test_real_root_and_physical_xid_continuity_refused \
+            tests/test_academy_hosted_genesis.py::test_stale_context_cannot_outlive_destroyed_resource \
+            tests/test_academy_lab_claim_lease_adoption.py::test_check_semantics_and_web_worker_column_boundaries \
+            tests/test_academy_retained_adoption.py::test_partial_history_refuses_capture_without_fresh_fallback \
+            tests/test_assembly_facilitator_migration.py::test_a010_grandfather_requires_actual_instructor_grant_and_preserves_enrollment \
+            tests/services/test_onboarding.py::test_admission_error_priority_precedes_person_and_learning
+          # Diagnostic only: failures here are expected and must not fail the job.
+          exit 0
+
       # scripts/ci_test_shards.py leaves these two files out of every shard. They run
       # once (on shard 1), in their own process, with every database URL pointed at
       # the dedicated database; the shared `academy` database never sees their tenants.
