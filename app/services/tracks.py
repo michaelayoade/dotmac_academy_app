@@ -128,8 +128,19 @@ def cohort_track_or_404(db: Session, *, tenant_id: UUID, cohort_id: UUID, track_
         raise NotFoundError(str(exc)) from exc
 
 
+def _require_caller_root(db: Session) -> None:
+    """Refuse before the settings read can autobegin a root the caller never opened.
+
+    Learning repeats this check authoritatively; it must simply run first.
+    """
+    root = db.get_transaction()
+    if root is None or not root.is_active:
+        raise learning.TransactionChanged("An already active caller root transaction is required.")
+
+
 def ensure_track_offerings(db: Session, *, tenant_id: UUID, cohort_id: UUID, track_id: UUID) -> None:
     """Delegate offering creation/reactivation on the existing caller transaction."""
+    _require_caller_root(db)
     try:
         return learning.ensure_track_offerings(
             db,
@@ -151,6 +162,7 @@ def assign_enrollment_track(
     track_id: UUID,
 ) -> learning.EnrollmentFact:
     """Preserve Learning's track/offering/enrollment validation and flush order."""
+    _require_caller_root(db)
     try:
         return learning.assign_enrollment_track(
             db,
