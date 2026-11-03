@@ -364,7 +364,15 @@ evidence = "verified: app/services/teaching_access.py read; census failure 125 (
 [[rewritten]]
 old_path = "tests/services/test_lab_operations_worker.py"
 class = "rewrite"
-replacement = ["tests/services/test_lab_operations_worker.py::test_unknown_recovery_uses_explicit_policy_fallback_and_retains_terminal_stamp"]
+replacement = ["tests/services/test_lab_operations_worker.py::test_unknown_kind_policy_fallback_and_granted_lease_stamp"]
 dropped_tests = []
 spec = "M16(a): the legacy-unknown kind cannot exist under ck_lab_operations_kind, so the unknown-kind lease and attempt fallback is proved on the execution policy and on _claimed_duration with an in-memory operation, with no database row. The retained-stamp property is kept; the DB-level reconcile of such a row is not representable and is not claimed."
 evidence = "verified: app/services/lab_operations.py claim_next, reconcile_stuck and _claimed_duration read; app/config.py lease_seconds and max_attempts read."
+
+[[rewritten]]
+old_path = "tests/services/test_erp_sync.py"
+class = "rewrite"
+replacement = ["tests/services/test_erp_sync.py::test_supplied_enrollment_cannot_bypass_filters", "tests/services/test_erp_sync.py::test_staff_enrollment_without_employee_ref_is_refused_by_the_database"]
+dropped_tests = []
+spec = "The employee_ref=None case of test_supplied_enrollment_cannot_bypass_filters can no longer be planted: ck_enrollments_staff_has_employee_ref refuses the row. It moves to its own test asserting the database refusal and the constraint name; the other filter cases are unchanged."
+evidence = "verified: the CI census failure for that case is the constraint refusing the flush."

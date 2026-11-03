@@ -4956,13 +4956,14 @@ def test_policy_stamp_or_engine_identity_mismatch_refuses_before_external_work(a
     db.rollback()
 
 
-def test_unknown_recovery_uses_explicit_policy_fallback_and_retains_terminal_stamp(policy):
+def test_unknown_kind_policy_fallback_and_granted_lease_stamp(policy):
     # ck_lab_operations_kind admits only deploy/destroy/check, so an unknown-kind
     # row cannot exist in the canonical database. The fallback is therefore
     # proved on the policy and on the in-memory stamp reader, with no DB row.
+    # claim_next and reconcile_stuck behaviour is NOT exercised by this test.
     custom = replace(_small_policy(policy), lab_operation_unknown_lease_seconds=7, lab_operation_unknown_max_attempts=2)
-    # claim_next stamps policy.lease_seconds(op.kind); reconcile_stuck compares
-    # attempts with policy.max_attempts(op.kind).
+    # Source reference only (not exercised here): lab_operations.py reads
+    # policy.lease_seconds(op.kind) and policy.max_attempts(op.kind).
     assert custom.lease_seconds("legacy-unknown") == 7
     assert custom.max_attempts("legacy-unknown") == 2
     for kind in ("deploy", "destroy", "check"):
