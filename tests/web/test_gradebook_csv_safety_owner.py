@@ -15,6 +15,7 @@ from app.web import gradebook as routes
 from tests.services.test_canonical_current_user import current_account
 from tests.web.test_bookmarks_owner import _request
 from tests.web.test_catalog_gradebook_owner import _allow, _restore_policy, _seed
+from tests.web.test_reports_access_policy import _nominate_cohort
 
 assert current_account and _restore_policy
 
@@ -31,6 +32,8 @@ def test_actual_gradebook_csv_neutralizes_source_text_preserving_schema_numbers_
     a = current_account
     _allow(a)
     course, cohort, people = _seed(a)
+    # Cohort data needs a cohort scope (#188): hold an active nomination for it.
+    _nominate_cohort(a, cohort.id)
     title = 'Quiz, "quoted"'
     first_name = 'First, "quoted"'
     last_name = 'Last, "quoted"'
