@@ -328,3 +328,19 @@ replacement = ["tests/test_tenancy_binding.py::test_single_tenancy_binds_at_star
 dropped_tests = []
 spec = "Fresh-subprocess create_app against real seeded tenants: one binds; two fails naming every slug; multi binds nothing. Security control, full strength kept; only the refused in-process resolver monkeypatch is replaced."
 evidence = "inferred: the sealed a107 runtime is said (triage) to refuse the old monkeypatch of dotmac_kernel.db.resolver_session; the kernel side was not re-read."
+
+[[rewritten]]
+old_path = "tests/web/test_reports_access_policy.py"
+class = "rewrite"
+replacement = ["tests/web/test_reports_access_policy.py::test_custom_role_live_policy_empty_deny_and_grant_withdrawal", "tests/web/test_reports_access_policy.py::test_admin_reaches_reports_as_global_staff_and_foreign_tenant_roles_do_not_authorize", "tests/web/test_reports_access_policy.py::test_live_disabled_account_denies_every_reports_route"]
+dropped_tests = []
+spec = "M11(a), #188 cohort scope: empty-deny and grant withdrawal are proved at require_reports_access with no cohort scope; route 200s hold an active cohort nomination. The 'admin has no implicit override' assertion is replaced by admin reaching reports as global staff; the foreign-tenant-role refusal is kept."
+evidence = "verified: app/services/reports_access.py:23-27 and app/web/reports.py:62-64 read; every refusal the rules require is kept."
+
+[[rewritten]]
+old_path = "tests/web/test_catalog_gradebook_owner.py"
+class = "rewrite"
+replacement = ["tests/web/test_catalog_gradebook_owner.py::test_genuine_weighted_gradebook_typed_roster_html_csv_and_caller_transaction", "tests/web/test_catalog_gradebook_owner.py::test_custom_policy_live_empty_deny_revocation_and_purpose_separation", "tests/web/test_catalog_gradebook_owner.py::test_live_cookie_authority_on_gradebook_and_catalog"]
+dropped_tests = []
+spec = "M11(a), #188 cohort scope: route 200s hold an active cohort nomination; empty-deny and grant withdrawal are also proved at require_gradebook_access with the nomination withdrawn."
+evidence = "verified: app/services/gradebook_access.py and app/web/gradebook.py read; the revoked-session redirect expectation (302 with ?next=) is inferred from the other revoked-session tests."

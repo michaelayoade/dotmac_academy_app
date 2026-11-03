@@ -139,10 +139,15 @@ def test_custom_role_live_policy_empty_deny_and_grant_withdrawal(current_account
     a.admin.delete(a.admin.get(PartyRoleGrant, grant_id))
     a.admin.commit()
     assert stale_grant.id == grant_id
+    # Grant withdrawal is proved at the service function, where the purpose role
+    # was the only authority: no nomination, no other grant names the policy.
+    with pytest.raises(HTTPException) as withdrawn:
+        require_reports_access(request, account, a.db)
+    assert withdrawn.value.status_code == 403
     assert [r.status_code for r in _all_routes(app_client, headers)] == [403] * 11
 
 
-def test_admin_has_no_implicit_override_and_foreign_tenant_roles_do_not_authorize(current_account, tenant_b):
+def test_admin_reaches_reports_as_global_staff_and_foreign_tenant_roles_do_not_authorize(current_account, tenant_b):
     a = current_account
     grant_role(a.admin, tenant_id=a.tid, party_id=a.pid)
     settings_store.set_many(a.admin, {KEY: '["custom-settings-owner"]'})
