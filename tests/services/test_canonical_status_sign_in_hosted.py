@@ -97,9 +97,17 @@ def status_sign_in_case(sign_in_account, admin_session, tenant_b, app_client):
     )
 
 
+def _poll_blocked(probe, statement, params):
+    # Backend activity is cached for the rest of a transaction: drop the cached
+    # snapshot so each poll sees the follower's current wait state.
+    probe.execute(text("SELECT pg_stat_clear_snapshot()"))
+    return probe.scalar(statement, params)
+
+
 def _wait_for_actual_leader_lock(probe, follower_pid, leader_pid):
     deadline = monotonic() + 10
-    while not probe.scalar(
+    while not _poll_blocked(
+        probe,
         text(
             "SELECT a.wait_event_type = 'Lock' "
             "AND :leader_pid = ANY(pg_blocking_pids(a.pid)) "
