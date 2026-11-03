@@ -12,6 +12,8 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 
 from app.config import Settings
+from app.models.cohort import Cohort
+from app.models.facilitator import FacilitatorNomination
 from app.models.platform_settings import PlatformSetting
 from app.services import settings_store
 from app.services.identity import AcademyCurrentAccount
@@ -60,6 +62,32 @@ def _grant(a, slug, tenant_id=None):
     return grant.id
 
 
+def _nominate_cohort(a, cohort_id=None):
+    """Hold an active whole-cohort nomination (the #188 cohort scope).
+
+    The reports index and every cohort route need either global staff access or
+    a cohort scope, so route-level success for a purpose-role holder is proved
+    with a nomination. Returns ``(nomination_id, cohort_id)``.
+    """
+    if cohort_id is None:
+        cohort = Cohort(tenant_id=a.tid, name=f"Reports {uuid4().hex}", discipline="networking", status="active")
+        a.admin.add(cohort)
+        a.admin.flush()
+        cohort_id = cohort.id
+    nomination = FacilitatorNomination(
+        tenant_id=a.tid, person_id=a.pid, scope_type="cohort", cohort_id=cohort_id,
+        status="active", activated_at=datetime.now(UTC),
+    )
+    a.admin.add(nomination)
+    a.admin.commit()
+    return nomination.id, cohort_id
+
+
+def _withdraw_nomination(a, nomination_id):
+    a.admin.delete(a.admin.get(FacilitatorNomination, nomination_id))
+    a.admin.commit()
+
+
 def _client(a, app_client):
     app_client.cookies.clear()
     app_client.cookies.set("session", a.token)
@@ -87,9 +115,15 @@ def test_custom_role_live_policy_empty_deny_and_grant_withdrawal(current_account
     a.admin.commit()
     request = _request(a.tenant, a.token)
     account = require_web_user(request, a.db)
+    # The purpose policy alone admits the account at the service function; the
+    # index route additionally needs a cohort scope (#188), held by a nomination.
     assert isinstance(require_reports_access(request, account, a.db), AcademyCurrentAccount)
+    nomination_id, _ = _nominate_cohort(a)
     headers = _client(a, app_client)
     assert app_client.get("/instructor/reports", headers=headers).status_code == 200
+    # Withdraw the scope: the empty-deny and grant-withdrawal below are then
+    # proved with the policy as the only authority, never through the fallback.
+    _withdraw_nomination(a, nomination_id)
     stale_policy = a.db.get(PlatformSetting, KEY)
     a.admin.execute(update(PlatformSetting).where(PlatformSetting.key == KEY).values(value="[]"))
     a.admin.commit()
@@ -110,15 +144,21 @@ def test_custom_role_live_policy_empty_deny_and_grant_withdrawal(current_account
 
 def test_admin_has_no_implicit_override_and_foreign_tenant_roles_do_not_authorize(current_account, tenant_b):
     a = current_account
-    _grant(a, "admin")
+    grant_role(a.admin, tenant_id=a.tid, party_id=a.pid)
     settings_store.set_many(a.admin, {KEY: '["custom-settings-owner"]'})
     a.admin.add(Role(tenant_id=tenant_b.id, slug="custom-settings-owner", name="foreign role"))
     a.admin.commit()
     request = _request(a.tenant, a.token)
     account = require_web_user(request, a.db)
+    # A role that exists only in another tenant never authorizes, and a plain
+    # student holds neither the purpose role nor any cohort scope.
     with pytest.raises(HTTPException) as caught:
         require_reports_access(request, account, a.db)
     assert caught.value.status_code == 403
+    # #188: the admin role is global staff access, so it reaches reports through
+    # facilitator_access without being named in the purpose policy.
+    _grant(a, "admin")
+    assert require_reports_access(request, account, a.db).id == a.pid
     with pytest.raises(HTTPException) as caught:
         require_web_user(_request(tenant_b, a.token), a.db)
     assert caught.value.status_code == 303
@@ -176,6 +216,7 @@ def test_live_disabled_account_denies_every_reports_route(current_account, app_c
     _grant(a, "reports-reviewer")
     settings_store.set_many(a.admin, {KEY: '["reports-reviewer"]'})
     a.admin.commit()
+    _nominate_cohort(a)
     headers = _client(a, app_client)
     assert app_client.get("/instructor/reports", headers=headers).status_code == 200
     if state == "inactive":

@@ -25,9 +25,11 @@ from app.services.identity import AcademyCurrentAccount
 from app.services.web_auth import require_web_user
 from app.web import catalog
 from app.web import gradebook as routes
+from tests.conftest import login_location
 from tests.services.test_canonical_current_user import current_account
 from tests.services.test_notifications_owner import _party
 from tests.web.test_bookmarks_owner import _request
+from tests.web.test_reports_access_policy import _nominate_cohort, _withdraw_nomination
 from tests.web.test_settings_access_policy import _grant
 
 assert current_account
@@ -89,6 +91,8 @@ def test_genuine_weighted_gradebook_typed_roster_html_csv_and_caller_transaction
     a = current_account
     _allow(a)
     course, cohort, people = _seed(a)
+    # Cohort data needs a cohort scope (#188): hold an active nomination for it.
+    _nominate_cohort(a, cohort.id)
     request = _request(a.tenant, a.token)
     account = require_gradebook_access(request, require_web_user(request, a.db), a.db)
     assert isinstance(account, AcademyCurrentAccount)
@@ -126,13 +130,24 @@ def test_custom_policy_live_empty_deny_revocation_and_purpose_separation(current
     a.admin.commit()
     app_client.cookies.set("session", a.token)
     headers = {"Host": "alpha.localhost"}
-    assert app_client.get("/instructor/gradebook", headers=headers).status_code == 200
     request = _request(a.tenant, a.token)
+    # The purpose policy alone admits the account at the service function; the
+    # index route also needs a cohort scope (#188), held by a nomination.
+    assert require_gradebook_access(request, require_web_user(request, a.db), a.db).id == a.pid
+    _, cohort, _ = _seed(a)
+    nomination_id, _ = _nominate_cohort(a, cohort.id)
+    assert app_client.get("/instructor/gradebook", headers=headers).status_code == 200
+    # Withdraw the scope so empty-deny and grant withdrawal are proved with the
+    # policy as the only authority, never through the nomination fallback.
+    _withdraw_nomination(a, nomination_id)
     assert not catalog._is_staff(a.db, a.tid, a.pid)
     stale = a.db.get(PlatformSetting, "gradebook_access_roles")
     settings_store.set_many(a.admin, {"gradebook_access_roles": "[]"})
     a.admin.commit()
     assert stale.value == json.dumps([slug])
+    with pytest.raises(HTTPException) as denied:
+        require_gradebook_access(request, require_web_user(request, a.db), a.db)
+    assert denied.value.status_code == 403
     for path in ["/instructor/gradebook", f"/instructor/gradebook/{uuid4()}", f"/instructor/gradebook/{uuid4()}.csv"]:
         assert app_client.get(path, headers=headers).status_code == 403
     settings_store.set_many(a.admin, {"gradebook_access_roles": json.dumps([slug]), "catalog_staff_roles": json.dumps([slug])})
@@ -143,6 +158,9 @@ def test_custom_policy_live_empty_deny_revocation_and_purpose_separation(current
     a.admin.commit()
     assert old_grant.id == grant
     assert not catalog._is_staff(a.db, a.tid, a.pid)
+    with pytest.raises(HTTPException) as withdrawn:
+        require_gradebook_access(request, require_web_user(request, a.db), a.db)
+    assert withdrawn.value.status_code == 403
     assert app_client.get("/instructor/gradebook", headers=headers).status_code == 403
     assert require_web_user(request, a.db).id == a.pid
 
@@ -165,6 +183,8 @@ def test_malformed_purpose_policy_refuses_config_storage_and_reads(current_accou
 def test_live_cookie_authority_on_gradebook_and_catalog(current_account, app_client, mutation):
     a = current_account
     _allow(a)
+    _, cohort, _ = _seed(a)
+    _nominate_cohort(a, cohort.id)
     app_client.cookies.set("session", a.token)
     headers = {"Host": "alpha.localhost"}
     assert app_client.get("/instructor/gradebook", headers=headers).status_code == 200
@@ -177,7 +197,11 @@ def test_live_cookie_authority_on_gradebook_and_catalog(current_account, app_cli
     a.admin.commit()
     for path in ["/instructor/gradebook", f"/courses/{uuid4()}", "/announcements", "/calendar"]:
         response = app_client.get(path, headers=headers, follow_redirects=False)
-        assert response.status_code == 303 and response.headers["location"] == "/login"
+        if mutation == "revoked":
+            # The kernel facet auth redirects a revoked session (302) with ?next=.
+            assert response.status_code == 302 and response.headers["location"] == login_location(path)
+        else:
+            assert response.status_code == 303 and response.headers["location"] == "/login"
 
 
 def test_management_form_real_outbox_escaped_payload_and_caller_rollback(current_account):
