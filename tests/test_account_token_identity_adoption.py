@@ -561,8 +561,14 @@ def test_private_owner_refuses_each_value_drift_and_caught_refusal_rolls_back_ro
             _damage_value(connection, field)
         if phase == "immediate_receipt":
             _heads(connection, tmp_path / "finish")
-            # The savepoint undoes exactly the damage below; no copy of the rows is kept.
-            damage = connection.begin_nested()
+            # Stash the original rows server-side in a transaction-local setting (no
+            # relation, no savepoint: the owner preflight refuses a nested transaction).
+            connection.execute(
+                sa.text(
+                    "SELECT pg_catalog.set_config('academy_test.restore', "
+                    "(SELECT pg_catalog.json_agg(t)::text FROM public.account_tokens t), true)"
+                )
+            )
             _damage_value(connection, field)
         with pytest.raises(IdentityHistoryImportRefused):
             if phase == "immediate_receipt":
@@ -576,9 +582,19 @@ def test_private_owner_refuses_each_value_drift_and_caught_refusal_rolls_back_ro
         assert after_values.columns == before_values.columns
         assert after_values.indexes == before_values.indexes
         if phase == "immediate_receipt":
+            # The refusal must come from the value-drift check, not from preflight.
+            assert token_owner._issued(connection).refused is True
             # Even restoration after an observed violation cannot turn a
             # caught refusal back into an issued conservation receipt.
-            damage.rollback()
+            connection.execute(
+                sa.text(
+                    "UPDATE public.account_tokens t SET (kind,token_hash,expires_at,used_at,created_at,updated_at)="
+                    "(o.kind,o.token_hash,o.expires_at,o.used_at,o.created_at,o.updated_at) "
+                    "FROM pg_catalog.json_populate_recordset("
+                    "NULL::public.account_tokens, pg_catalog.current_setting('academy_test.restore')::json) o "
+                    "WHERE o.id=t.id"
+                )
+            )
             _values_preserved(connection)
             with pytest.raises(IdentityHistoryImportRefused):
                 account_token_identity_receipt(connection, entry)
