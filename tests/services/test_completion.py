@@ -128,11 +128,12 @@ def test_concurrent_first_recomputes_create_one_completion_and_certificate(
     def recompute(_):
         with factory() as db:
             start.wait(timeout=5)
-            completion = recompute_completion(
-                db, tenant_id=tid, person_id=person_id, course_id=course_id
-            )
-            identity = completion.id, completion.completed_at
-            db.commit()
+            # The owner requires an already-active caller root.
+            with db.begin():
+                completion = recompute_completion(
+                    db, tenant_id=tid, person_id=person_id, course_id=course_id
+                )
+                identity = completion.id, completion.completed_at
             return identity
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -202,6 +203,7 @@ def test_attempt_close_and_submit_admission_locks_remain_mutually_exclusive(
             assert refused.value.orig.sqlstate == "55P03"
             contender.rollback()
             holder.commit()
+            contender.begin()  # the owner requires an active caller root
             score = submit_activity(
                 contender, tenant_id=tid, person_id=person_id,
                 activity=activity, answers={"q1": ["A"]},

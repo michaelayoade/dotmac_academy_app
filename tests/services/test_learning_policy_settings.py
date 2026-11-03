@@ -65,7 +65,9 @@ def test_stored_null_policy_is_not_an_absent_override(admin_session):
 
 
 def test_database_overrides_all_composed_terms_without_committing(admin_session, monkeypatch):
+    admin_session.connection()  # begin the root explicitly (no autobegin yet)
     root = admin_session.get_transaction()
+    assert root is not None
     monkeypatch.setattr(settings, "learning_todo_graded_limit", 99)
     settings_store.set_many(
         admin_session,
@@ -230,7 +232,9 @@ def test_a1_explicit_policy_values_never_fall_back(key, value):
 
 
 def test_a1_database_overrides_compose_new_terms_without_committing(admin_session):
+    admin_session.connection()  # begin the root explicitly (no autobegin yet)
     root = admin_session.get_transaction()
+    assert root is not None
     settings_store.set_many(
         admin_session,
         {

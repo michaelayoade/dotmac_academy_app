@@ -197,11 +197,16 @@ def test_exact_single_use_context_and_actual_receipt_required(legacy_engine, tmp
 def test_wrong_root_is_not_import_proof(legacy_engine, tmp_path, monkeypatch):
     with _historical(legacy_engine, tmp_path, monkeypatch) as (connection, expected, operation, entry):
         receipt = import_academy_identity_history(connection, expected, operation)
-        connection.get_transaction().rollback()
-        connection.begin()
-        connection.execute(sa.text("SET LOCAL ROLE app_admin"))
-        with pytest.raises(IdentityHistoryImportRefused):
-            authorize_historical_account_token_adoption(connection, entry, receipt)
+        root = connection.get_transaction()
+        # The fixture owns the root through a context manager, so it cannot be
+        # rolled back and replaced here. Present a different current
+        # transaction object on the same connection instead; the import proof
+        # was issued for ``root`` only.
+        with connection.begin_nested() as other:
+            assert connection.get_transaction() is other and other is not root
+            connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+            with pytest.raises(IdentityHistoryImportRefused):
+                authorize_historical_account_token_adoption(connection, entry, receipt)
 
 
 @pytest.mark.parametrize(

@@ -60,7 +60,9 @@ def test_stored_null_reading_policy_never_falls_back(monkeypatch, key):
 
 
 def test_database_reading_policy_overrides_settings_without_committing(admin_session, monkeypatch):
+    admin_session.connection()  # begin the root explicitly (no autobegin yet)
     root = admin_session.get_transaction()
+    assert root is not None
     monkeypatch.setattr(settings, "learning_reading_words_per_minute", 75)
     monkeypatch.setattr(settings, "learning_reading_minimum_minutes", 9)
     settings_store.set_many(
