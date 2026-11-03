@@ -6,9 +6,9 @@ from app.models.assessment import Activity, Score, Submission
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
 from app.models.offering import CourseOffering
-from tests.services.test_reports_owner import _person
+from tests.owner_helpers import person as _person
+from tests.owner_helpers import seed_login_with_account as _seed_login
 from tests.web.test_reports_access_policy import _restore_settings
-from tests.web.test_settings_route_restored import _seed_login
 
 assert _restore_settings
 

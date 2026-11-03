@@ -10,7 +10,7 @@ from app.models.completion import CourseCompletion
 from app.models.course import Course
 from app.models.offering import CourseOffering
 from app.services.dashboards import cohort_overview
-from tests.services.test_reports_owner import _person
+from tests.owner_helpers import person as _person
 
 NOW = datetime(2026, 6, 27, tzinfo=UTC)
 

@@ -20,8 +20,8 @@ from app.services.analytics import item_analysis
 from app.services.dashboards import cohort_overview
 from app.services.exceptions import NotFoundError
 from app.services.lookups import cohort_or_404
+from tests.owner_helpers import person as _person
 from tests.services.test_analytics_owner import _score
-from tests.services.test_reports_owner import _person
 from tests.web.test_bookmarks_owner import _request
 from tests.web.test_reports_access_policy import _restore_settings
 

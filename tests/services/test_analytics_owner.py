@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.models.assessment import Activity, Score, Submission
 from app.models.course import Course
 from app.services.analytics import item_analysis
-from tests.services.test_reports_owner import _person
+from tests.owner_helpers import person as _person
 
 
 def _score(db, tid, activity_id, person_id, per_item, fraction, *, attempt_no=1):

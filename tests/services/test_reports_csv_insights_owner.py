@@ -11,7 +11,7 @@ from dotmac_kernel.models import PartyPerson
 from app.models.learning_event import LearningEvent
 from app.models.success_queue import SuccessQueueEntry
 from app.services import csv_reports, insights, settings_store
-from tests.services.test_reports_owner import _seed
+from tests.owner_helpers import seed_report_cohort as _seed
 from tests.web.test_settings_access_policy import _restore_settings
 
 assert _restore_settings
