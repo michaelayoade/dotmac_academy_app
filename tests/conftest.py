@@ -95,7 +95,7 @@ def _no_real_console_spawn(monkeypatch):
 
 
 @pytest.fixture
-def admin_session(admin_engine) -> Generator[Session, None, None]:
+def admin_session(admin_engine, platform_settings_guard) -> Generator[Session, None, None]:
     """Migration-authority session used by fixtures to set up cross-tenant data.
 
     Bound to ``admin_engine`` — see that fixture's docstring: this is the
@@ -117,22 +117,24 @@ def _platform_settings_rows(conn):
     return columns, rows
 
 
-@pytest.fixture(autouse=True)
-def _platform_settings_isolation(request):
+@pytest.fixture
+def platform_settings_guard(admin_engine):
     """Undo any committed ``platform_settings`` change a database test leaves.
 
     ``platform_settings`` is global (not tenant scoped) and tenant teardown does
     not clear it, so a test that commits a policy value leaks it into every later
     test in the process. Snapshot the raw rows (all columns) on a separate
     migration-authority connection before the test and, only if they differ
-    afterwards, restore them exactly in one transaction. The separate connection
-    leaves the test's own session untouched, and as this fixture is set up first
-    it is torn down last, after ``admin_session`` has rolled back and closed.
+    afterwards, restore them exactly in one transaction, then re-read and assert
+    the restore is exact. The separate connection leaves the test's own session
+    untouched.
+
+    ``admin_session`` and ``app_user_session`` depend on this fixture, so every
+    path to them (static or ``request.getfixturevalue``) snapshots first. pytest
+    tears fixtures down in reverse setup order, so the restore runs after the
+    session's rollback and close.
     """
-    if "admin_session" not in request.fixturenames:
-        yield
-        return
-    engine = request.getfixturevalue("admin_engine")
+    engine = admin_engine
     with engine.connect() as conn:
         columns, before = _platform_settings_rows(conn)
         conn.rollback()
@@ -148,6 +150,10 @@ def _platform_settings_isolation(request):
                 conn.execute(table.delete())
                 if before:
                     conn.execute(table.insert(), [dict(zip(columns, row, strict=True)) for row in before])
+            with engine.connect() as conn:
+                _, restored = _platform_settings_rows(conn)
+                conn.rollback()
+            assert restored == before, "platform_settings restore was not exact"
 
 
 @pytest.fixture(scope="session")
@@ -230,7 +236,7 @@ def lab_worker_session(lab_worker_engine) -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def app_user_session() -> Generator[Session, None, None]:
+def app_user_session(platform_settings_guard) -> Generator[Session, None, None]:
     """Connection as app_user for RLS visibility assertions."""
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
