@@ -48,8 +48,9 @@ def bind_academy_database_runtime() -> DatabaseRuntime:
             candidate = IdentityProvisioningAssemblyV1(
                 runtime=runtime, source_application="dotmac_academy_app", product=AcademyBootstrapProductPort(),
             )
-            # Same genuine installed owners as migration/web composition; Kernel
-            # contributes its own credential lifecycle vocabulary normally.
+            # Same genuine installed owners as migration/web composition. Kernel
+            # reserves only identity.history_imported and credential.password.assigned;
+            # the Academy feature declares the other credential lifecycle actions.
             install_audit_actions(AuditActionRegistry.from_manifests(compose_migration_owner_declarations()))
             install_identity_provisioning(candidate)
             _identity_assembly = candidate
