@@ -142,3 +142,18 @@ def test_aggregate_check_requires_every_shard(workflow):
     (step,) = aggregate["steps"]
     assert step["env"] == {"SHARDS_RESULT": "${{ needs.test.result }}"}
     assert '"$SHARDS_RESULT" != "success"' in step["run"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from helpers import test_shared\n",
+        "test_alias = something\n",
+        "if True:\n    def test_conditional():\n        pass\n",
+        "class TestGroup:\n    def test_method(self):\n        pass\n",
+    ],
+)
+def test_split_refuses_files_with_unaddressable_test_names(tmp_path, source):
+    (tmp_path / "test_x.py").write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError):
+        sharding.test_functions("test_x.py", tmp_path)

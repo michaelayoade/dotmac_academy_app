@@ -75,11 +75,28 @@ def test_functions(path: str, root: Path = ROOT) -> list[str]:
     tree = ast.parse((root / path).read_text(encoding="utf-8"))
     if any(isinstance(node, ast.ClassDef) and node.name.startswith("Test") for node in tree.body):
         raise ValueError(f"{path} defines a test class and cannot be split by function")
-    return [
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test")
-    ]
+    functions = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test"):
+                functions.append(node.name)
+            continue
+        if isinstance(node, ast.ClassDef):
+            continue
+        # Any other binding of a test* name (import, assignment, conditional or
+        # try-guarded definition) would be collected by pytest but is not addressable here.
+        for inner in ast.walk(node):
+            names: list[str] = []
+            if isinstance(inner, (ast.Import, ast.ImportFrom)):
+                names = [(alias.asname or alias.name).split(".")[0] for alias in inner.names]
+            elif isinstance(inner, ast.Name) and isinstance(inner.ctx, (ast.Store, ast.Del)):
+                names = [inner.id]
+            elif isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [inner.name]
+            for name in names:
+                if name.startswith("test"):
+                    raise ValueError(f"{path} binds {name!r} other than by a plain module-level def; cannot split")
+    return functions
 
 
 def units(root: Path = ROOT) -> dict[str, int]:
