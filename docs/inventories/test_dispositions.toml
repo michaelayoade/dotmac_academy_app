@@ -1,0 +1,138 @@
+# Test disposition inventory (Academy D1 test triage at bc4bae5; approved by Michael 2026-11-03).
+#
+# Enforced by tests/test_test_dispositions.py (pure, no database). A retired path must be
+# absent from tests/. A "duplicate" retirement records the Starter test that covers the
+# behaviour and the locked wheel version it was checked against; when poetry.lock moves
+# off that version the enforcing test fails until the covering tests are re-verified and
+# the version below is updated deliberately.
+
+[meta]
+starter_repo = "michaelayoade/dotmac_starter_mt"
+academy_base_commit = "bc4bae5"
+approved_by = "Michael"
+approval_date = "2026-11-03"
+triage = "test-triage-bc4bae5 (private evidence; not committed)"
+
+# Production data-move suites and bug-guard files. Retiring any of these is refused.
+[protected]
+data_move = [
+    "tests/test_academy_credential_reset_state.py",
+    "tests/test_academy_erp_checkpoint_adoption.py",
+    "tests/test_academy_hosted_genesis.py",
+    "tests/test_academy_identity_history.py",
+    "tests/test_academy_identity_history_verification.py",
+    "tests/test_academy_identity_verification_product_binding.py",
+    "tests/test_academy_lab_claim_lease_adoption.py",
+    "tests/test_academy_learning_history.py",
+    "tests/test_academy_product_adoption.py",
+    "tests/test_academy_retained_adoption.py",
+    "tests/test_academy_retained_environment.py",
+    "tests/test_academy_retained_history.py",
+    "tests/test_academy_retained_schema.py",
+    "tests/test_account_token_identity_adoption.py",
+    "tests/test_assembly_facilitator_migration.py",
+    "tests/test_assembly_successors.py",
+    "tests/test_ci_composed_bootstrap.py",
+    "tests/test_erp_progress_transition.py",
+    "tests/test_erp_progress_transition_hosted.py",
+    "tests/test_fresh_product_entry.py",
+    "tests/test_fresh_product_entry_hosted.py",
+    "tests/test_kernel_identity_entry.py",
+    "tests/test_migration_graph.py",
+    "tests/test_migration_roundtrip.py",
+    "tests/test_offering_backfill.py",
+    "tests/test_ordinary_migration_graph.py",
+]
+bug_guards = [
+    "tests/architecture/test_academy_web_facet.py",
+    "tests/architecture/test_kernel_runtime_composition.py",
+    "tests/services/test_canonical_current_user.py",
+    "tests/services/test_canonical_lifecycle.py",
+    "tests/services/test_canonical_password_change.py",
+    "tests/services/test_canonical_password_change_locking.py",
+    "tests/services/test_canonical_sign_in.py",
+    "tests/services/test_credential_lifecycle.py",
+    "tests/services/test_search_route_policy.py",
+    "tests/services/test_web_account_status_owner_hosted.py",
+    "tests/test_audit_action_declarations.py",
+    "tests/test_display_settings.py",
+    "tests/web/test_canonical_public_reset.py",
+    "tests/web/test_catalog_gradebook_owner.py",
+    "tests/web/test_gradebook_csv_safety_owner.py",
+    "tests/web/test_instructor_canonical_identity.py",
+    "tests/web/test_reports_access_policy.py",
+    "tests/web/test_settings_access_policy.py",
+    "tests/web/test_teaching_home_owner.py",
+]
+
+[[retired]]
+path = "tests/services/test_catalog.py"
+class = "duplicate"
+reason = "Catalog/completion/structure behaviour is owned by dotmac-learning; Academy adapter stays covered by tests/services/test_catalog_adapter_boundary.py."
+evidence = "verified: Starter tests read at the learning tag; 14 tests, 340 lines; R3 first failure was the uq_question_banks_natural_key leak."
+lines = 340
+retired_blob_sha = "dee0faf8ca67b2d67b61a096c98f19699519c22c"
+kept_adapter_test = "tests/services/test_catalog_adapter_boundary.py"
+
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_catalog_reads.py"
+  test = "test_structure_first_activity_only_continue_part_order_and_course_level_sort"
+  blob_sha_at_tag = "bb7fe6f1ac55f8564b596ae29bdae3e98daec6a0"
+
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_catalog_reads.py"
+  test = "test_completion_uses_current_best_not_persisted_completion_or_any_pass"
+  blob_sha_at_tag = "bb7fe6f1ac55f8564b596ae29bdae3e98daec6a0"
+
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_catalog_reads.py"
+  test = "test_entitlement_visibility_publication_and_staff_inventory_are_distinct"
+  blob_sha_at_tag = "bb7fe6f1ac55f8564b596ae29bdae3e98daec6a0"
+
+[[retired]]
+path = "tests/services/test_reports_owner.py"
+class = "duplicate"
+reason = "Cohort matrix and transcript behaviour is owned by dotmac-learning; Academy tests/services/test_reports.py holds the same 5 tests. Helpers moved to tests/owner_helpers.py."
+evidence = "verified: Starter gradebook-report tests read at the learning tag; same 5 test names present in tests/services/test_reports.py."
+lines = 148
+retired_blob_sha = "6808a1a1a4b4fa6a5d82dd5265228b4e20852796"
+kept_twin = "tests/services/test_reports.py"
+
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_gradebook_reports.py"
+  test = "test_transcript_does_not_share_assessment_override_tie_policy"
+  blob_sha_at_tag = "28cf61ae03fb501cb6c4aebb3260f9556d0674c4"
+
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_gradebook_reports.py"
+  test = "test_only_active_offerings_and_active_students_without_person_status_filter"
+  blob_sha_at_tag = "28cf61ae03fb501cb6c4aebb3260f9556d0674c4"
+
+[[retired]]
+path = "tests/web/test_settings_route_restored.py"
+class = "obsolete"
+reason = "Academy-internal copy of tests/web/test_settings.py: same docstring, same 9 test names and assertions; it only swapped the real login for a directly set session cookie."
+evidence = "verified by diff against tests/web/test_settings.py."
+lines = 188
+retired_blob_sha = "3b0695c4ec50d9d18cc6ad0795258e9df4def05d"
+kept_twin = "tests/web/test_settings.py"
