@@ -18,7 +18,7 @@ from app.services import admissions
 from app.services.bootstrap import ensure_roles
 from app.services.entrance_exam import set_academy_defaults
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import csrf_for, make_person_credential, make_person_party, web_login
 
 
 def _seed_user(admin_session, tenant, email, role_slug):
@@ -209,9 +209,9 @@ def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
     assert "Accept and invite to onboarding" not in detail.text
     assert f'hx-post="/admin/applications/{applicant_id}/intake"' in detail.text
     assert f'hx-post="/admin/applications/{applicant_id}/action"' in detail.text
-    assert "x-csrf-token" in detail.text
+    assert "/static/csrf.js" in detail.text  # the external CSRF shim is loaded
 
-    csrf = app_client.cookies.get("csrf_token", "")
+    csrf = csrf_for(app_client, headers, f"/admin/applications/{applicant_id}")
     assigned = app_client.post(
         f"/admin/applications/{applicant_id}/intake",
         headers={**headers, "x-csrf-token": csrf},

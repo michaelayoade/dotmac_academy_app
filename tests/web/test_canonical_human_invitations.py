@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.models.account_token import AccountToken
 from app.models.email_outbox import EmailOutbox
 from app.web import accounts, instructor
+from tests.conftest import csrf_for
 from tests.services.test_canonical_invitation_issuance import _cohort, _set_actor_role, issuer
 
 assert issuer
@@ -17,8 +18,10 @@ assert issuer
 def issuer_client(issuer, app_client):
     app_client.cookies.clear()
     app_client.cookies.set("session", issuer.token)
-    app_client.cookies.set("csrf_token", "issuer-csrf")
-    headers = {"Host": "alpha.localhost", "x-csrf-token": "issuer-csrf"}
+    host = {"Host": "alpha.localhost"}
+    # A safe GET issues the signed token bound to this session cookie.
+    token = csrf_for(app_client, host, "/login")
+    headers = {**host, "x-csrf-token": token}
     return issuer, app_client, headers
 
 

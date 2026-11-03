@@ -14,7 +14,7 @@ from app.models.assessment import Question, QuestionBank
 from app.models.cohort import Cohort
 from app.models.course import Course
 from app.models.track import CohortTrack, Track
-from tests.conftest import client_for
+from tests.conftest import client_for, csrf_for
 
 
 def _cohort_with_exam(admin_session, tenant):
@@ -92,6 +92,7 @@ def test_apply_offers_assessment_and_grades_profile(app_client, tenant_a, admin_
             "email": "cand@a.ex",
             "track_choice": f"{cohort.id}:{track.id}",
         },
+        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     assert r.status_code == 200, r.text
     assert "Start the assessment" in r.text
@@ -144,6 +145,7 @@ def test_assessment_heartbeat_uses_server_clock(app_client, tenant_a, admin_sess
             "email": "timer@a.ex",
             "track_choice": f"{cohort.id}:{track.id}",
         },
+        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
 
@@ -196,5 +198,6 @@ def test_apply_requires_an_open_canonical_track(app_client, tenant_a):
     r = a.post(
         "/apply",
         data={"first_name": "No", "last_name": "Exam", "email": "noexam@a.ex"},
+        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     assert r.status_code == 422

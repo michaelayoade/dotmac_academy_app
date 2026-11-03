@@ -7,46 +7,73 @@ from http import cookies
 from typing import Any
 from uuid import uuid4
 
-from dotmac_kernel.middleware.csrf import CSRF_COOKIE, CSRFMiddleware
+from dotmac_kernel.middleware.csrf import CSRF_COOKIE, CSRFMiddleware, require_csrf
 from dotmac_kernel.middleware.observability import ObservabilityMiddleware
 from dotmac_kernel.middleware.rate_limit import RateLimitMiddleware
 from dotmac_kernel.middleware.security_headers import SecurityHeadersMiddleware
 from dotmac_kernel.middleware.tenant import TenantResolverMiddleware
 from dotmac_kernel.models import Tenant
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 from app.assembly import assembly
 
 
-def test_csrf_sets_cookie_on_safe_request_and_blocks_cookie_post_without_header():
-    app = CSRFMiddleware(_ok_app)
+def _csrf_client() -> TestClient:
+    """Minimal app whose route carries the kernel's ``require_csrf`` dependency.
 
-    get_response = _run(app, method="GET", path="/form")
-    assert get_response["status"] == 200
-    csrf_cookie = _cookie_value(get_response, CSRF_COOKIE)
-    assert csrf_cookie is not None
+    The middleware only issues a cookie on a safe request to a route carrying
+    ``require_csrf``, and validation happens only in that dependency.
+    """
+    app = FastAPI()
 
-    post_response = _run(
-        app,
-        method="POST",
-        path="/form",
-        headers=[(b"cookie", f"{CSRF_COOKIE}={csrf_cookie}".encode())],
+    @app.get("/form", dependencies=[Depends(require_csrf)])
+    def form() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.post("/form", dependencies=[Depends(require_csrf)])
+    def submit() -> dict[str, bool]:
+        return {"ok": True}
+
+    app.add_middleware(
+        CSRFMiddleware,
+        secret="unit-test-csrf-secret",
+        session_cookie_names=("session",),
     )
-    assert post_response["status"] == 403
+    return TestClient(app, base_url="http://testserver")
+
+
+def test_csrf_sets_cookie_on_safe_request_and_blocks_cookie_post_without_header():
+    client = _csrf_client()
+
+    get_response = client.get("/form")
+    assert get_response.status_code == 200
+    issued = client.cookies.get(CSRF_COOKIE)
+    assert issued
+
+    # The cookie alone (no header or form field) is not proof.
+    post_response = client.post("/form")
+    assert post_response.status_code == 403
 
 
 def test_csrf_allows_matching_double_submit_token():
-    app = CSRFMiddleware(_ok_app)
+    client = _csrf_client()
+    assert client.get("/form").status_code == 200
+    issued = client.cookies.get(CSRF_COOKIE)
+    assert issued
 
-    response = _run(
-        app,
-        method="POST",
-        path="/form",
-        headers=[
-            (b"cookie", f"{CSRF_COOKIE}=known-token".encode()),
-            (b"x-csrf-token", b"known-token"),
-        ],
-    )
-    assert response["status"] == 200
+    ok = client.post("/form", headers={"x-csrf-token": issued})
+    assert ok.status_code == 200
+
+    # A self-chosen value is refused even when cookie and header agree.
+    forged = TestClient(client.app, base_url="http://testserver")
+    forged.cookies.set(CSRF_COOKIE, "known-token")
+    refused = forged.post("/form", headers={"x-csrf-token": "known-token"})
+    assert refused.status_code == 403
+
+    # A genuine token paired with a different header value is refused.
+    mismatch = client.post("/form", headers={"x-csrf-token": issued + "x"})
+    assert mismatch.status_code == 403
 
 
 def test_rate_limit_key_isolated_by_path():

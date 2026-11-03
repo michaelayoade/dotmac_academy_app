@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
 from app.models.cohort import Enrollment
-from tests.conftest import client_for
+from tests.conftest import client_for, csrf_for
 
 
 def _csrf(web, token):
@@ -235,11 +235,14 @@ def test_invite_token_activates_student_login(
     raw = parse_qs(urlparse(setup_url).query)["token"][0]
 
     fresh = client_for(TestClient(app_client.app), tenant_a.slug)
-    assert fresh.get(setup_url).status_code == 200
+    # Follow the emailed link by path so the issued CSRF cookie lands on the
+    # same host the POST uses (the link's absolute host is not the test base).
+    link = urlparse(setup_url)
+    assert fresh.get(f"{link.path}?{link.query}").status_code == 200
     r = fresh.post(
         "/accept-invite",
         data={"token": raw, "password": "a fine password"},
-        headers={"x-csrf-token": fresh.cookies.get("csrf_token", "")},
+        headers={"x-csrf-token": csrf_for(fresh, {}, f"{link.path}?{link.query}")},
     )
     assert r.status_code == 200, r.text
     login = fresh.post("/auth/login", json={"email": "login@a.ex", "password": "a fine password"})

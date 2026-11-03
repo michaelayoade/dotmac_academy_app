@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import client_for
+from tests.conftest import client_for, csrf_for
 
 
 def _track_choice(admin_session, tenant):
@@ -66,13 +66,14 @@ def test_apply_form_renders(app_client, tenant_a, admin_session):
     r = a.get("/apply")
     assert r.status_code == 200
     assert 'hx-post="/apply"' in r.text
-    assert "csrf_token" in r.text  # the CSRF shim is present
+    assert "/static/csrf.js" in r.text  # the CSRF shim is present
+    assert a.cookies.get("csrf_token")  # the safe GET issued a signed token
     assert "Fiber Installer" in r.text
 
 
 def test_apply_post_creates_applicant(app_client, tenant_a, admin_session, api_actor):
-    # Fresh client, no prior cookies -> CSRF middleware is a no-op, so a direct
-    # POST exercises the handler + service wiring.
+    # A fresh client first GETs the form (which issues the signed CSRF token),
+    # then posts that token, exercising the handler + service wiring.
     a = client_for(TestClient(app_client.app), tenant_a.slug)
     track_choice = _track_choice(admin_session, tenant_a)
     r = a.post(
@@ -84,6 +85,7 @@ def test_apply_post_creates_applicant(app_client, tenant_a, admin_session, api_a
             "phone": "0800",
             "track_choice": track_choice,
         },
+        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     assert r.status_code == 200, r.text
     assert "Application received" in r.text
@@ -107,6 +109,7 @@ def test_apply_post_escapes_name(app_client, tenant_a, admin_session):
             "email": "xss@a.ex",
             "track_choice": track_choice,
         },
+        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     assert r.status_code == 200
     assert "<script>x</script>" not in r.text  # escaped

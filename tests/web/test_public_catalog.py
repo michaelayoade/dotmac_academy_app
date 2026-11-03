@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.models.course import Course
 from app.models.email_outbox import EmailOutbox
-from tests.conftest import make_person_credential, make_person_party
+from tests.conftest import csrf_for, make_person_credential, make_person_party
 
 H = {"Host": "alpha.localhost"}
 
@@ -74,9 +74,10 @@ def test_management_enrollment_form_renders_management_courses(app_client, admin
     assert "Fiber Basics" not in r.text
 
 def test_management_enrollment_post_queues_inquiry(app_client, admin_session, tenant_a):
+    csrf = csrf_for(app_client, H, "/management-enrollment")
     r = app_client.post(
         "/management-enrollment",
-        headers=H,
+        headers={**H, "x-csrf-token": csrf},
         data={
             "first_name": "Morgan",
             "last_name": "Lee",

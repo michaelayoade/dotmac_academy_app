@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.models.email_outbox import EmailOutbox
-from tests.conftest import client_for
+from tests.conftest import client_for, csrf_for
 from tests.services.test_canonical_onboarding import _snapshot, onboarding_case
 
 assert onboarding_case
@@ -52,11 +52,14 @@ def test_genuine_get_csrf_completion_redirect_and_actual_queued_invitation(app_c
     # Genuine claim/login is a future33 installed-owner prerequisite. This test
     # intentionally reaches the actual composed claim surface without re-mint.
     fresh = client_for(TestClient(app_client.app), c.a.tenant.slug)
-    assert fresh.get(setup).status_code == 200
+    # Follow the emailed link by path so the issued CSRF cookie lands on the
+    # same host the POST uses (the link's absolute host is not the test base).
+    link = urlparse(setup)
+    assert fresh.get(f"{link.path}?{link.query}").status_code == 200
     response = fresh.post(
         "/accept-invite",
         data={"token": raw, "password": "chosen-password9"},
-        headers={"x-csrf-token": fresh.cookies.get("csrf_token", "")},
+        headers={"x-csrf-token": csrf_for(fresh, {}, f"{link.path}?{link.query}")},
     )
     assert response.status_code == 200, response.text
     response = fresh.post("/auth/login", json={"email": c.email, "password": "chosen-password9"})

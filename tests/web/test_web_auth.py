@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
+from tests.conftest import csrf_for, grant_role, make_person_credential, make_person_party, web_login
 
 
 def test_login_sets_cookie_and_protects(app_client, admin_session, tenant_a):
@@ -81,8 +81,7 @@ def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a)
     h = {"Host": "alpha.localhost"}
 
     # Obtain csrf_token.
-    r = app_client.get("/login", headers=h, follow_redirects=False)
-    csrf = r.cookies.get("csrf_token") or app_client.cookies.get("csrf_token", "")
+    csrf = csrf_for(app_client, h, "/login")
 
     # Login — captures session cookie.
     r = app_client.post(
@@ -94,7 +93,9 @@ def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a)
     assert r.status_code == 303 and "session" in r.cookies
     old_session_token = r.cookies["session"]
 
-    # Logout.
+    # Logout. The session changed at login, so the pre-login token is no longer
+    # valid; fetch the freshly issued session-bound token.
+    csrf = csrf_for(app_client, h, "/account")
     r = app_client.post(
         "/logout",
         headers={**h, "x-csrf-token": csrf},
