@@ -274,39 +274,6 @@ jobs:
           poetry run python -m app.migration_cli upgrade heads
           poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy --verify-only
 
-      # TEMPORARY (lab-worker ACL dump): read-only evidence of the direct grants of
-      # four roles, role/table/column names only. Revert with its single commit.
-      - name: Print role ACL dump (read-only, names only)
-        if: '!cancelled()'
-        env:
-          PGPASSWORD: academy_super
-        run: |
-          psql -h localhost -p 5437 -U postgres -d academy -X -A -t -v ON_ERROR_STOP=1 <<'SQL'
-          BEGIN READ ONLY;
-          SELECT 'ACL ' || n.nspname || ' ' || c.relname || ' ' || pg_catalog.pg_get_userbyid(a.grantee) || ' ' || a.privilege_type
-          FROM pg_catalog.pg_class c
-          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
-          WHERE n.nspname IN ('public', 'mod_learning') AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
-            AND pg_catalog.pg_get_userbyid(a.grantee) IN ('academy_lab_worker', 'app_user', 'platform_api', 'app_admin')
-          ORDER BY 1;
-          SELECT 'ACL ' || n.nspname || ' ' || c.relname || ' ' || pg_catalog.pg_get_userbyid(a.grantee) || ' ' || a.privilege_type || ' ' || t.attname
-          FROM pg_catalog.pg_attribute t
-          JOIN pg_catalog.pg_class c ON c.oid = t.attrelid
-          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-          CROSS JOIN LATERAL pg_catalog.aclexplode(t.attacl) a
-          WHERE n.nspname IN ('public', 'mod_learning') AND NOT t.attisdropped AND t.attnum > 0
-            AND pg_catalog.pg_get_userbyid(a.grantee) IN ('academy_lab_worker', 'app_user', 'platform_api', 'app_admin')
-          ORDER BY 1;
-          SELECT 'ACL ' || n.nspname || ' - ' || pg_catalog.pg_get_userbyid(a.grantee) || ' ' || a.privilege_type
-          FROM pg_catalog.pg_namespace n
-          CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
-          WHERE n.nspname IN ('public', 'mod_learning')
-            AND pg_catalog.pg_get_userbyid(a.grantee) IN ('academy_lab_worker', 'app_user', 'platform_api', 'app_admin')
-          ORDER BY 1;
-          COMMIT;
-          SQL
-
       # The tenant bootstrap tests commit tenants through the platform runtime and
       # nothing may delete them (audit rows are immutable), so they get their own
       # database, bootstrapped and verified exactly like the application one.
