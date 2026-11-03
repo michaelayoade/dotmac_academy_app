@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -44,16 +45,29 @@ def _instance(admin_session, tenant, *, name, last_active=None):
     return inst
 
 
-def _put_seen(admin_session, inst, tenant, ts):
-    """Backdate a heartbeat. The stamp trigger overwrites every client value, so
-    fixtures bypass it with replica mode (superuser only), then restore it."""
-    admin_session.execute(text("SET LOCAL session_replication_role = replica"))
+def _heartbeat(admin_session, inst, tenant):
+    """Record a heartbeat the way the product does: the stamp trigger sets the
+    database clock, nothing is bypassed. Returns the stamped time."""
     admin_session.execute(
         text("INSERT INTO lab_console_activity (instance_id, tenant_id, last_seen_at) "
-             "VALUES (:i, :t, :ts) ON CONFLICT (instance_id) DO UPDATE SET last_seen_at = :ts"),
-        {"i": inst.id, "t": tenant.id, "ts": ts},
+             "VALUES (:i, :t, now()) ON CONFLICT (instance_id) DO UPDATE SET last_seen_at = now()"),
+        {"i": inst.id, "t": tenant.id},
     )
-    admin_session.commit()  # SET LOCAL ends with the transaction
+    admin_session.commit()
+    return _seen(admin_session, inst)
+
+
+def _reaper_clock(monkeypatch, *, minutes_ahead):
+    """Move only the idle reaper's clock forward, so a real heartbeat becomes old
+    without backdating the database row or touching its trigger."""
+    shift = timedelta(minutes=minutes_ahead)
+
+    class _Shifted(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + shift
+
+    monkeypatch.setattr(lab_jobs, "datetime", _Shifted)
 
 
 def _as_tenant(db, tenant):
@@ -99,15 +113,19 @@ def test_sql_guard_skips_a_fresh_row_even_when_the_process_gate_is_open(
     assert _seen(admin_session, inst) == first  # ...but the guard did not rewrite
 
 
-def test_stale_row_is_refreshed(admin_session, app_user_session, tenant_a):
+def test_stale_row_is_refreshed(admin_session, app_user_session, tenant_a, monkeypatch):
+    # A row older than the SQL guard interval is rewritten. The interval is the
+    # product's module constant; shrink it and let real time pass instead of
+    # backdating the row.
+    monkeypatch.setattr(lca, "HEARTBEAT_INTERVAL_SECONDS", 1)
     inst = _instance(admin_session, tenant_a, name="rl3")
-    old = datetime.now(UTC) - timedelta(minutes=10)
-    _put_seen(admin_session, inst, tenant_a, old)
+    first = _heartbeat(admin_session, inst, tenant_a)
+    time.sleep(1.5)
     db = app_user_session
     _as_tenant(db, tenant_a)
     lca.record(db, tenant_id=tenant_a.id, instance_id=inst.id)
     db.commit()
-    assert _seen(admin_session, inst) > old + timedelta(minutes=9)
+    assert _seen(admin_session, inst) > first
 
 
 def test_in_process_throttle_is_bounded():
@@ -162,7 +180,7 @@ def test_other_roles_have_no_access(app_user_session):
 
 def test_deleting_an_instance_cascades(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="cas1")
-    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC))
+    _heartbeat(admin_session, inst, tenant_a)
     admin_session.delete(inst)
     admin_session.commit()
     assert admin_session.get(LabConsoleActivity, inst.id) is None
@@ -185,22 +203,26 @@ def test_reaper_still_reaps_an_idle_lab_without_heartbeat(admin_session, tenant_
 def test_recent_console_heartbeat_keeps_the_lab_alive(admin_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="rp2",
                      last_active=datetime.now(UTC) - timedelta(minutes=999))
-    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=5))
+    _heartbeat(admin_session, inst, tenant_a)
     assert lab_jobs.request_idle_reaps(admin_session) == 0
     assert _ops(admin_session, inst) == 0
 
 
-def test_stale_heartbeat_does_not_save_an_idle_lab(admin_session, tenant_a):
+def test_stale_heartbeat_does_not_save_an_idle_lab(admin_session, tenant_a, monkeypatch):
     inst = _instance(admin_session, tenant_a, name="rp3",
                      last_active=datetime.now(UTC) - timedelta(minutes=999))
-    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=500))
+    _heartbeat(admin_session, inst, tenant_a)
+    _reaper_clock(monkeypatch, minutes_ahead=500)  # the heartbeat is now 500 minutes old
     assert lab_jobs.request_idle_reaps(admin_session) == 1
 
 
-def test_recent_lifecycle_activity_still_counts_with_an_old_heartbeat(admin_session, tenant_a):
+def test_recent_lifecycle_activity_still_counts_with_an_old_heartbeat(admin_session, tenant_a, monkeypatch):
+    # On the reaper's clock (500 minutes ahead) the heartbeat is 500 minutes old
+    # while lifecycle activity was 2 minutes ago.
     inst = _instance(admin_session, tenant_a, name="rp4",
-                     last_active=datetime.now(UTC) - timedelta(minutes=2))
-    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=500))
+                     last_active=datetime.now(UTC) + timedelta(minutes=498))
+    _heartbeat(admin_session, inst, tenant_a)
+    _reaper_clock(monkeypatch, minutes_ahead=500)
     assert lab_jobs.request_idle_reaps(admin_session) == 0
 
 
@@ -223,8 +245,7 @@ def test_client_supplied_future_timestamp_is_overwritten_on_insert(admin_session
 
 def test_client_supplied_future_timestamp_is_overwritten_on_update(admin_session, app_user_session, tenant_a):
     inst = _instance(admin_session, tenant_a, name="trg2")
-    old = datetime.now(UTC) - timedelta(hours=3)
-    _put_seen(admin_session, inst, tenant_a, old)
+    _heartbeat(admin_session, inst, tenant_a)
     db = app_user_session
     _as_tenant(db, tenant_a)
     db.execute(
@@ -236,7 +257,7 @@ def test_client_supplied_future_timestamp_is_overwritten_on_update(admin_session
     assert abs((seen - datetime.now(UTC)).total_seconds()) < 60
 
 
-def test_a_future_value_cannot_keep_a_lab_from_being_reaped(admin_session, app_user_session, tenant_a):
+def test_a_future_value_cannot_keep_a_lab_from_being_reaped(admin_session, app_user_session, tenant_a, monkeypatch):
     inst = _instance(admin_session, tenant_a, name="trg3",
                      last_active=datetime.now(UTC) - timedelta(minutes=999))
     db = app_user_session
@@ -248,8 +269,8 @@ def test_a_future_value_cannot_keep_a_lab_from_being_reaped(admin_session, app_u
     db.commit()
     # The stamp is the database clock, not the future value: the lab is alive now...
     assert lab_jobs.request_idle_reaps(admin_session) == 0
-    # ...and goes idle again once real time passes (simulated by backdating).
-    _put_seen(admin_session, inst, tenant_a, datetime.now(UTC) - timedelta(minutes=999))
+    # ...and goes idle again once real time passes (the reaper's clock moves on).
+    _reaper_clock(monkeypatch, minutes_ahead=999)
     assert lab_jobs.request_idle_reaps(admin_session) == 1
 
 
