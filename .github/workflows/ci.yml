@@ -375,8 +375,15 @@ jobs:
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
         run: |
           poetry run python scripts/check_ci_test_skips.py artifacts/pytest.xml tests/ci_skip_allowlist.txt
+          # Shard 1 runs the dedicated-database bootstrap tests: their JUnit is required.
+          if [ "$SHARD_INDEX" = "1" ] && [ ! -f artifacts/pytest-bootstrap.xml ]; then
+            echo 'missing bootstrap test evidence' >&2
+            exit 1
+          fi
           if [ -f artifacts/pytest-bootstrap.xml ]; then
             poetry run python scripts/check_ci_test_skips.py artifacts/pytest-bootstrap.xml tests/ci_skip_allowlist.txt
           fi
@@ -388,9 +395,17 @@ jobs:
           name: academy-hosted-tests-${{ github.run_id }}-shard-${{ matrix.shard }}
           path: |
             artifacts/pytest.xml
-            artifacts/pytest-bootstrap.xml
             artifacts/convergence.xml
             artifacts/shard-files.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain tenant-bootstrap test evidence
+        if: always() && matrix.shard == 1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: academy-bootstrap-tests-${{ github.run_id }}
+          path: artifacts/pytest-bootstrap.xml
           if-no-files-found: error
           retention-days: 30
 
