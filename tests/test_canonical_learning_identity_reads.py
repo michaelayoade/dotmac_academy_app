@@ -17,9 +17,13 @@ from tests.services.test_canonical_current_user import current_account
 
 assert current_account
 
-_IDENTITY = r"(?:public\.)?(?:parties|party_persons)"
+# Optionally schema-qualified, optionally quoted parties/party_persons.
+_IDENTITY = r'(?:(?:public|"public")\.)?(?:parties|party_persons|"parties"|"party_persons")'
 _IDENTITY_WRITE = re.compile(
-    rf"\bupdate\s+{_IDENTITY}\b|\binsert\s+into\s+{_IDENTITY}\b|\bdelete\s+from\s+{_IDENTITY}\b"
+    rf"\bupdate\s+(?:only\s+)?{_IDENTITY}(?![\w\"])"
+    rf"|\binsert\s+into\s+(?:only\s+)?{_IDENTITY}(?![\w\"])"
+    rf"|\bdelete\s+from\s+(?:only\s+)?{_IDENTITY}(?![\w\"])"
+    rf"|\bmerge\s+into\s+(?:only\s+)?{_IDENTITY}(?![\w\"])"
 )
 _ROW_LOCK = re.compile(r"\bfor\s+(?:no\s+key\s+)?(?:update|share)\b|\bfor\s+key\s+share\b")
 
@@ -29,7 +33,7 @@ def identity_write_statements(statements):
     found = []
     for statement in statements:
         lowered = " ".join(statement.lower().split())
-        touches = re.search(rf"\b{_IDENTITY}\b", lowered) is not None
+        touches = re.search(rf"(?<![\w\"]){_IDENTITY}(?![\w\"])", lowered) is not None
         if _IDENTITY_WRITE.search(lowered) or (touches and _ROW_LOCK.search(lowered)):
             found.append(lowered[:200])
     return found
@@ -67,7 +71,7 @@ def write_free_identity_read(a):
     finally:
         event.remove(engine, "before_cursor_execute", capture)
         db.rollback()
-    assert any(re.search(rf"\b{_IDENTITY}\b", s.lower()) for s in statements), "the read touched no identity table"
+    assert any(re.search(rf"(?<![\w\"]){_IDENTITY}(?![\w\"])", s.lower()) for s in statements), "the read touched no identity table"
     assert identity_write_statements(statements) == []
 
 
