@@ -1,5 +1,6 @@
-"""The sharded hosted CI runs every test file exactly once and keeps every gate."""
+"""The sharded hosted CI runs every test exactly once and keeps every gate."""
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -33,12 +34,62 @@ def _independent_discovery() -> set[str]:
     }
 
 
-def test_every_test_file_is_in_exactly_one_shard(count):
+def _module_test_functions(path: str) -> list[str]:
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    return [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test")
+    ]
+
+
+def test_every_test_is_in_exactly_one_shard(count):
+    """Each unsplit file, or each module-level test function of a split file, lands in one shard.
+
+    This is finer than file-level coverage: a split file's path never appears whole,
+    and a function of a split file is placed exactly once.
+    """
     everything = _independent_discovery()
     assert everything and set(sharding.discover(ROOT)) == everything
-    placed = [path for shard in sharding.shards(count, ROOT) for path in shard]
-    assert len(placed) == len(set(placed)), "a test file appears in more than one shard"
-    assert set(placed) == everything, "a test file is missing from every shard"
+    split = sharding.load_weights(ROOT)["split"]
+    expected = set()
+    for path in everything:
+        if path in split:
+            expected |= {f"{path}::{name}" for name in _module_test_functions(path)}
+        else:
+            expected.add(path)
+    placed = [unit for shard in sharding.shards(count, ROOT) for unit in shard]
+    assert len(placed) == len(set(placed)), "a test unit appears in more than one shard"
+    assert set(placed) == expected, "a test unit is missing from every shard or unknown"
+    assert not set(split) & set(placed), "a split file's path must never appear whole"
+
+
+def test_weight_table_matches_the_tree():
+    table = sharding.load_weights(ROOT)
+    discovered = set(sharding.discover(ROOT))
+    assert set(table["files"]) <= discovered
+    assert set(table["split"]) <= discovered
+    assert not set(table["files"]) & set(table["split"])
+    for path, by_function in table["split"].items():
+        # No stale and no missing function; split files have no test classes.
+        assert set(by_function) == set(_module_test_functions(path)), path
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+        assert not [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name.startswith("Test")], path
+        assert all(type(v) is int and v > 0 for v in by_function.values())
+    assert all(type(v) is int and v > 0 for v in table["files"].values())
+    assert table["seconds_per_byte"] > 0
+    assert set(table["estimated"]) <= set(table["split"])
+
+
+# The job allows 25 minutes (1500 s) and spends about 3.6 minutes before pytest starts.
+MAX_PREDICTED_SHARD_SECONDS = 1080
+
+
+def test_predicted_slowest_shard_fits_the_budget(count):
+    weights = sharding.units(ROOT)
+    assert max(weights.values()) <= MAX_PREDICTED_SHARD_SECONDS, "a single unit exceeds the shard budget"
+    totals = [sum(weights[unit] for unit in shard) for shard in sharding.shards(count, ROOT)]
+    assert max(totals) <= MAX_PREDICTED_SHARD_SECONDS, totals
 
 
 def test_no_shard_is_empty_and_the_split_is_deterministic(count):

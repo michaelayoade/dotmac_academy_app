@@ -12,15 +12,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The suite cannot finish inside one 25-minute job, so the Tests step runs one
-    # deterministic shard of the test files per matrix job (scripts/ci_test_shards.py;
-    # tests/test_ci_test_shards.py proves every test file runs in exactly one shard).
+    # deterministic shard of the tests per matrix job (scripts/ci_test_shards.py, weighted
+    # by scripts/ci_test_weights.json; the slow adoption files are split by test function;
+    # tests/test_ci_test_shards.py proves every test runs in exactly one shard and that the
+    # predicted slowest shard fits well inside this timeout).
     # Each shard is a complete job: it keeps every gate below (image guard, Genesis
     # materialization, H/F convergence, composed bootstrap + verify-only, lint, mypy,
     # CSS, audit, -x pytest and the skip-evidence gate over its own JUnit report).
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
     services:
       db:

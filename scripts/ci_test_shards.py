@@ -1,22 +1,30 @@
-"""Deterministic test-file shards for the hosted CI matrix.
+"""Deterministic test shards for the hosted CI matrix.
 
-Every pytest-collectable test file under ``tests/`` belongs to exactly one shard.
-The split is a pure function of the committed tree: files are discovered with
-pytest's own default patterns (``test_*.py`` / ``*_test.py``), ordered by size
-(a coarse proxy for run time) then path, and placed greedily on the currently
-lightest shard (ties go to the lowest shard index). Adding, removing or
-renaming a test file therefore re-balances deterministically with no manifest to
-forget; ``tests/test_ci_test_shards.py`` proves full, disjoint coverage and that
-the workflow matrix agrees with this script.
+The unit of placement is a test file, except for the few files listed under
+``split`` in ``scripts/ci_test_weights.json``: those are slower than a shard can
+afford, so each of their module-level test functions is its own unit, written as
+``path::function`` (every parametrized case of that function runs with it).
+Every test therefore belongs to exactly one shard.
+
+Units are weighted by measured seconds from the committed table
+(``scripts/ci_test_weights.json``, from CI run 41471936765); a file that is not in
+the table is weighted ``size_bytes x seconds_per_byte``. They are ordered by weight
+then name and placed greedily on the currently lightest shard (ties go to the
+lowest shard index). Adding, removing or renaming a test file re-balances
+deterministically; ``tests/test_ci_test_shards.py`` proves full, disjoint coverage,
+that the table matches the tree, the predicted maximum shard time, and that the
+workflow matrix agrees with this script.
 
 Usage: ``python -m scripts.ci_test_shards --shard I --count N`` prints shard I
-(1-based) of N, one repository-relative POSIX path per line.
+(1-based) of N, one pytest argument per line.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
+import json
 import os
 import sys
 from pathlib import Path
@@ -26,6 +34,7 @@ TESTS = "tests"
 # pytest's default ``norecursedirs`` plus bytecode caches.
 _PRUNED = (".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "__pycache__")
 _PATTERNS = ("test_*.py", "*_test.py")
+WEIGHTS = "scripts/ci_test_weights.json"
 
 
 def discover(root: Path = ROOT) -> list[str]:
@@ -53,14 +62,50 @@ def assign(files: list[str], weights: dict[str, int], count: int) -> list[list[s
     return [sorted(shard) for shard in shards]
 
 
+def load_weights(root: Path = ROOT) -> dict:
+    return json.loads((root / WEIGHTS).read_text(encoding="utf-8"))
+
+
+def test_functions(path: str, root: Path = ROOT) -> list[str]:
+    """Module-level test functions of a split file, in source order.
+
+    A split file must not define test classes: their methods could not be addressed
+    as ``path::function`` units and would silently drop out of every shard.
+    """
+    tree = ast.parse((root / path).read_text(encoding="utf-8"))
+    if any(isinstance(node, ast.ClassDef) and node.name.startswith("Test") for node in tree.body):
+        raise ValueError(f"{path} defines a test class and cannot be split by function")
+    return [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test")
+    ]
+
+
+def units(root: Path = ROOT) -> dict[str, int]:
+    """Every placement unit (``path`` or ``path::function``) with its weight in seconds."""
+    table = load_weights(root)
+    split = table["split"]
+    per_byte = table["seconds_per_byte"]
+    result: dict[str, int] = {}
+    for path in discover(root):
+        if path in split:
+            for name in test_functions(path, root):
+                result[f"{path}::{name}"] = max(1, int(split[path][name]))
+        elif path in table["files"]:
+            result[path] = max(1, int(table["files"][path]))
+        else:
+            result[path] = max(1, round((root / path).stat().st_size * per_byte))
+    return result
+
+
 def shards(count: int, root: Path = ROOT) -> list[list[str]]:
-    files = discover(root)
-    weights = {path: max(1, (root / path).stat().st_size) for path in files}
-    return assign(files, weights, count)
+    weights = units(root)
+    return assign(list(weights), weights, count)
 
 
 def shard_files(index: int, count: int, root: Path = ROOT) -> list[str]:
-    """Files of shard ``index`` (1-based) out of ``count``."""
+    """Units (paths or ``path::function``) of shard ``index`` (1-based) out of ``count``."""
     if not 1 <= index <= count:
         raise ValueError("shard index must satisfy 1 <= index <= count")
     return shards(count, root)[index - 1]
