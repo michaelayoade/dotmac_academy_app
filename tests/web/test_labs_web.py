@@ -20,6 +20,7 @@ from dotmac_learning.participation_models import Cohort, CourseOffering, Enrollm
 
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
+from app.services import settings_store
 from app.services.security import hash_password
 from tests.conftest import grant_role, web_login
 
@@ -606,6 +607,12 @@ def test_reset_retry_reuses_an_open_operation_after_reservation_or_deferral(
         state=operation_state,
         requested_by=person.id,
         claimed_by="worker" if operation_state == "claimed" else None,
+        # ck_lab_operations_claim_lease_required: a claimed row carries its lease.
+        claim_lease_seconds=(
+            settings_store.execution_policy(admin_session).lease_seconds("deploy")
+            if operation_state == "claimed"
+            else None
+        ),
     )
     admin_session.add(operation)
     admin_session.commit()

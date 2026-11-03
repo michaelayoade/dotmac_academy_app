@@ -12,6 +12,7 @@ from app.models.course import Course
 from app.models.identity_extensions import AcademyAccountProfile, AcademyCredentialPolicy
 from app.models.lab import LabInstance, LabOperation, LabTemplate
 from app.models.offering import CourseOffering
+from app.services import settings_store
 from app.services.security import hash_password
 from tests.conftest import grant_role, web_login
 
@@ -135,6 +136,8 @@ def _operation(db, instance, *, kind="check", state="succeeded", when=None):
         claimed_at=when - timedelta(seconds=1) if state != "queued" else None,
         finished_at=when + timedelta(seconds=1) if state not in ("queued", "claimed") else None,
         last_error="recovery failure detail" if state == "failed" else None,
+        # ck_lab_operations_claim_lease_required: a claimed row carries its lease.
+        claim_lease_seconds=settings_store.execution_policy(db).lease_seconds(kind) if state == "claimed" else None,
     )
     db.add(operation)
     db.commit()

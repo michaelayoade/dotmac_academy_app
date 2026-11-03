@@ -80,10 +80,11 @@ def _enroll(admin_session, tenant, person, course):
 
 def _cleanup(admin_session, tenant):
     admin_session.rollback()
-    from sqlalchemy import text
+    from sqlalchemy import delete
 
-    admin_session.execute(text("DELETE FROM courses WHERE tenant_id = :t"), {"t": str(tenant.id)})
-    admin_session.execute(text("DELETE FROM cohorts WHERE tenant_id = :t"), {"t": str(tenant.id)})
+    # Mapped tables resolve their schema (the Learning tables live in mod_learning).
+    admin_session.execute(delete(Course.__table__).where(Course.__table__.c.tenant_id == tenant.id))
+    admin_session.execute(delete(Cohort.__table__).where(Cohort.__table__.c.tenant_id == tenant.id))
     admin_session.commit()
 
 def test_search_requires_login(app_client, admin_session, tenant_a):

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 from dotmac_kernel.models import Party, PartyPerson, PartyType
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.models.cohort import Cohort, Enrollment
@@ -421,8 +422,28 @@ def test_supplied_enrollment_cannot_bypass_filters(
     comp, _, _ = _seed(admin_session, tenant_a)
     enrollment = admin_session.scalars(select(Enrollment).where(Enrollment.person_id == comp.person_id)).one()
     offering = admin_session.scalars(select(CourseOffering).where(CourseOffering.course_id == comp.course_id)).one()
-    setattr(enrollment if target == "enrollment" else offering, field, value)
-    admin_session.flush()
+    if (target, field, value) == ("enrollment", "employee_ref", None):
+        # The database now refuses a staff enrollment without an employee_ref, so
+        # the row can no longer be planted. Prove the refusal, then hand the
+        # exporter a transient (never flushed) enrollment with the missing ref.
+        with pytest.raises(IntegrityError) as refused, admin_session.begin_nested():
+            enrollment.employee_ref = None
+            admin_session.flush()
+        assert refused.value.orig.diag.constraint_name == "ck_enrollments_staff_has_employee_ref"
+        admin_session.refresh(enrollment)
+        enrollment = Enrollment(
+            id=enrollment.id,
+            tenant_id=enrollment.tenant_id,
+            cohort_id=enrollment.cohort_id,
+            person_id=enrollment.person_id,
+            role_in_cohort=enrollment.role_in_cohort,
+            status=enrollment.status,
+            audience=enrollment.audience,
+            employee_ref=None,
+        )
+    else:
+        setattr(enrollment if target == "enrollment" else offering, field, value)
+        admin_session.flush()
     monkeypatch.setattr(erp_sync.httpx, "post", lambda *a, **k: pytest.fail("ineligible HTTP"))
     assert erp_sync.push_completion(
         admin_session, tenant_id=tenant_a.id, completion=comp, enrollment=enrollment,
