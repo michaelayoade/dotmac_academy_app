@@ -22,7 +22,7 @@ LOCK = ROOT / "poetry.lock"
 WEIGHTS = ROOT / "scripts/ci_test_weights.json"
 SKIP_ALLOWLIST = ROOT / "tests/ci_skip_allowlist.txt"
 
-CLASSES = {"duplicate", "obsolete"}
+CLASSES = {"duplicate", "duplicate-internal", "obsolete"}
 PACKAGES = {"dotmac-learning", "dotmac-kernel"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -88,7 +88,27 @@ def test_every_retirement_records_class_reason_and_evidence(inventory):
         assert entry.get("class") in CLASSES, f"{path}: class must be one of {sorted(CLASSES)}"
         assert str(entry.get("reason", "")).strip(), f"{path}: reason missing"
         assert str(entry.get("evidence", "")).strip(), f"{path}: evidence missing"
+        assert entry["evidence"].startswith(("verified", "inferred")), f"{path}: evidence must say verified or inferred"
         assert SHA.match(entry.get("retired_blob_sha", "")), f"{path}: retired_blob_sha missing"
+
+
+def test_internal_duplicates_name_their_twin_and_every_test_is_defined_there(inventory):
+    internal = [e for e in _retired(inventory) if e.get("class") == "duplicate-internal"]
+    assert internal
+    for entry in internal:
+        path = entry["path"]
+        assert entry.get("kept_twin"), f"{path}: duplicate-internal needs kept_twin"
+        assert entry["kept_twin"] != path and (ROOT / entry["kept_twin"]).is_file(), f"{path}: twin missing"
+        names = entry.get("tests") or []
+        assert names, f"{path}: duplicate-internal needs the list of duplicated tests"
+        missing = set(names) - _module_defs(entry["kept_twin"])
+        assert not missing, f"{path}: not defined in {entry['kept_twin']}: {sorted(missing)}"
+
+
+def test_obsolete_retirements_record_evidence(inventory):
+    for entry in _retired(inventory):
+        if entry["class"] == "obsolete":
+            assert str(entry.get("evidence", "")).strip(), entry["path"]
 
 
 def test_duplicates_name_a_starter_test_checked_against_the_locked_wheel(inventory):
@@ -142,6 +162,18 @@ def test_protected_list_covers_the_data_move_and_bug_guard_suites(inventory):
         "tests/architecture/test_academy_web_facet.py",
         "tests/test_display_settings.py",
         "tests/services/test_credential_lifecycle.py",
+        "tests/test_catalog_json_codec.py",
+        "tests/test_historical_runner_refusal_diagnostics.py",
+        "tests/test_hosted_container_inspect_identity.py",
+        "tests/test_hosted_context_refusal_diagnostics.py",
+        "tests/test_identity_history_refusal_diagnostics.py",
+        "tests/test_identity_history_source_composition.py",
+        "tests/test_lab_retained_catalog_projection.py",
+        "tests/test_product_provenance_successor_boundary.py",
+        "tests/test_retained_successor_acl_packets.py",
+        "tests/test_successor_acl_propagation.py",
+        "tests/test_tenancy_binding.py",
+        "tests/web/test_role_admission.py",
     }
     assert must_hold <= protected
 

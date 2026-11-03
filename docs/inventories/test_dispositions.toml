@@ -16,6 +16,16 @@ triage = "test-triage-bc4bae5 (private evidence; not committed)"
 # Production data-move suites and bug-guard files. Retiring any of these is refused.
 [protected]
 data_move = [
+    "tests/test_catalog_json_codec.py",
+    "tests/test_historical_runner_refusal_diagnostics.py",
+    "tests/test_hosted_container_inspect_identity.py",
+    "tests/test_hosted_context_refusal_diagnostics.py",
+    "tests/test_identity_history_refusal_diagnostics.py",
+    "tests/test_identity_history_source_composition.py",
+    "tests/test_lab_retained_catalog_projection.py",
+    "tests/test_product_provenance_successor_boundary.py",
+    "tests/test_retained_successor_acl_packets.py",
+    "tests/test_successor_acl_propagation.py",
     "tests/test_academy_credential_reset_state.py",
     "tests/test_academy_erp_checkpoint_adoption.py",
     "tests/test_academy_hosted_genesis.py",
@@ -42,6 +52,10 @@ data_move = [
     "tests/test_migration_roundtrip.py",
     "tests/test_offering_backfill.py",
     "tests/test_ordinary_migration_graph.py",
+]
+security = [
+    "tests/test_tenancy_binding.py",
+    "tests/web/test_role_admission.py",
 ]
 bug_guards = [
     "tests/architecture/test_academy_web_facet.py",
@@ -101,41 +115,34 @@ kept_adapter_test = "tests/services/test_catalog_adapter_boundary.py"
   test = "test_entitlement_visibility_publication_and_staff_inventory_are_distinct"
   blob_sha_at_tag = "bb7fe6f1ac55f8564b596ae29bdae3e98daec6a0"
 
+  [[retired.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_catalog_reads.py"
+  test = "test_populated_catalog_non_bypass_cross_tenant_isolation"
+  blob_sha_at_tag = "bb7fe6f1ac55f8564b596ae29bdae3e98daec6a0"
+
 [[retired]]
 path = "tests/services/test_reports_owner.py"
-class = "duplicate"
+class = "duplicate-internal"
 reason = "Cohort matrix and transcript behaviour is owned by dotmac-learning; Academy tests/services/test_reports.py holds the same 5 tests. Helpers moved to tests/owner_helpers.py."
-evidence = "verified: Starter gradebook-report tests read at the learning tag; same 5 test names present in tests/services/test_reports.py."
+evidence = "verified: the same 5 test names are defined in the kept twin tests/services/test_reports.py (AST-enforced)."
 lines = 148
 retired_blob_sha = "6808a1a1a4b4fa6a5d82dd5265228b4e20852796"
 kept_twin = "tests/services/test_reports.py"
-
-  [[retired.covering]]
-  repo = "michaelayoade/dotmac_starter_mt"
-  tag = "dotmac-learning-v0.1.0a3"
-  package = "dotmac-learning"
-  locked_version = "0.1.0a3"
-  file = "tests/test_learning_gradebook_reports.py"
-  test = "test_transcript_does_not_share_assessment_override_tie_policy"
-  blob_sha_at_tag = "28cf61ae03fb501cb6c4aebb3260f9556d0674c4"
-
-  [[retired.covering]]
-  repo = "michaelayoade/dotmac_starter_mt"
-  tag = "dotmac-learning-v0.1.0a3"
-  package = "dotmac-learning"
-  locked_version = "0.1.0a3"
-  file = "tests/test_learning_gradebook_reports.py"
-  test = "test_only_active_offerings_and_active_students_without_person_status_filter"
-  blob_sha_at_tag = "28cf61ae03fb501cb6c4aebb3260f9556d0674c4"
+tests = ["test_cohort_matrix_shape_and_best", "test_cohort_matrix_uses_best_score", "test_cohort_matrix_scoped_to_offerings_not_discipline", "test_cohort_matrix_unknown_cohort_raises", "test_student_transcript"]
 
 [[retired]]
 path = "tests/web/test_settings_route_restored.py"
-class = "obsolete"
+class = "duplicate-internal"
 reason = "Academy-internal copy of tests/web/test_settings.py: same docstring, same 9 test names and assertions; it only swapped the real login for a directly set session cookie."
 evidence = "verified by diff against tests/web/test_settings.py."
 lines = 188
 retired_blob_sha = "3b0695c4ec50d9d18cc6ad0795258e9df4def05d"
 kept_twin = "tests/web/test_settings.py"
+tests = ["test_student_forbidden", "test_instructor_forbidden", "test_admin_get_ok_password_not_echoed", "test_admin_post_persists_branding", "test_admin_post_blank_password_keeps_existing", "test_admin_post_rejects_negative_per_tenant_lab_limit", "test_test_email_invokes_send_email", "test_test_email_unconfigured_message", "test_email_auto_on_pass_toggle_off_skips_send"]
 
 # Rewrites (approved 2026-11-03): Learning-owned parts dropped, Academy-owned assertions kept.
 
@@ -145,7 +152,7 @@ class = "duplicate"
 replacement = ["tests/services/test_agenda.py::test_window_items_get_kind_suffix_and_course_link", "tests/services/test_agenda.py::test_due_item_links_to_the_activity", "tests/services/test_agenda.py::test_session_item_labels_location_link_and_join_fields", "tests/services/test_agenda.py::test_omitted_limit_comes_from_settings_and_lead_minutes_are_forwarded", "tests/services/test_agenda.py::test_explicit_limit_including_zero_is_kept"]
 dropped_tests = ["test_future_due_at_appears", "test_past_items_excluded", "test_non_accessible_course_excluded", "test_ordering_chronological", "test_offering_window_events_appear"]
 spec = "Pure test of agenda._item labels, links and join_url, and of the settings-sourced default limit (explicit 0 kept)."
-evidence = "verified: domain selection, scoping and ordering are covered by Starter tests/test_learning_todo_agenda.py (VERIFIED by reading in the triage); test-name mapping is by topic."
+evidence = "inferred: domain selection, scoping and ordering are covered by Starter tests/test_learning_todo_agenda.py (VERIFIED by reading in the triage); test-name mapping is by topic."
 
   [[rewritten.covering]]
   repo = "michaelayoade/dotmac_starter_mt"
@@ -179,7 +186,7 @@ class = "duplicate"
 replacement = ["tests/services/test_grade_cert_corrections.py::test_certificate_auto_issued_idempotently_when_result_emails_are_opted_out"]
 dropped_tests = ["test_attempted_grade_is_graded_only", "test_below_passing_fires_with_volume_gate", "test_below_passing_silent_below_volume_gate", "test_certificate_blocked_only_after_grace"]
 spec = "One test: email_results=False on AcademyAccountProfile still yields an idempotent Certificate and no result email."
-evidence = "rules verified in Starter test_learning_success_queue; attempted_grade is asserted in Starter test_learning_gradebook_reports (graded_weight_fraction); test-name mapping is by topic (inferred)."
+evidence = "inferred (rules read in Starter test_learning_success_queue; attempted_grade coverage in Starter test_learning_gradebook_reports is inferred; test-name mapping is by topic."
 
   [[rewritten.covering]]
   repo = "michaelayoade/dotmac_starter_mt"
@@ -320,4 +327,4 @@ class = "rewrite"
 replacement = ["tests/test_tenancy_binding.py::test_single_tenancy_binds_at_startup", "tests/test_tenancy_binding.py::test_multi_tenancy_binds_nothing", "tests/test_tenancy_binding.py::test_two_tenants_is_fatal_and_binds_nothing"]
 dropped_tests = []
 spec = "Fresh-subprocess create_app against real seeded tenants: one binds; two fails naming every slug; multi binds nothing. Security control, full strength kept; only the refused in-process resolver monkeypatch is replaced."
-evidence = "verified: the sealed a107 runtime refuses the old monkeypatch of dotmac_kernel.db.resolver_session."
+evidence = "inferred: the sealed a107 runtime is said (triage) to refuse the old monkeypatch of dotmac_kernel.db.resolver_session; the kernel side was not re-read."
