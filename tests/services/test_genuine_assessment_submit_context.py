@@ -237,9 +237,9 @@ def test_late_forged_audit_row_is_detected_by_the_consequence_inventory(assessme
         entity_type="applicant", entity_id=str(c.id), details={"source": "forged"}, is_success=None,
         request_id=None, status_code=None, ip_address=None, user_agent=None,
     )
-    with pytest.raises(boundary.AssessmentSubmissionError):
+    with pytest.raises(boundary.AssessmentSubmissionError, match="consequence inventory"):
         c.a.db.commit()
-    with pytest.raises(boundary.AssessmentSubmissionError):
+    with pytest.raises(boundary.AssessmentSubmissionError, match="consequence inventory"):
         c.a.db.commit()
     c.a.db.rollback()
     resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
