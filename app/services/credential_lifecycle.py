@@ -408,6 +408,7 @@ def complete_password_reset(
     except Exception:
         raise CredentialLifecycleError("account password policy failed; caller must roll back") from None
     root = db.get_transaction()
+    ports: _ResetPorts | None = None
     try:
         with conflict_savepoint(db):
             root = db.get_transaction()
@@ -439,6 +440,14 @@ def complete_password_reset(
             or conflict_savepoint_requires_rollback(db, expected_root=root)
         ):
             raise CredentialLifecycleError("reset requires caller transaction rollback") from None
+        # The savepoint rolled the database back, but write_hash refreshed the policy
+        # to the bumped version after a Core UPDATE, which the rollback does not
+        # expire. Drop the cohort's loaded state so the session re-reads the
+        # committed values instead of a version the database no longer has.
+        if ports is not None:
+            for credential, policy in ports._members.values():
+                db.expire(credential)
+                db.expire(policy)
         raise BadRequestError("invalid or expired token or account reset conflict") from None
     finally:
         del new_password
