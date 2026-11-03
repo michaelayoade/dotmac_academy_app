@@ -1,33 +1,37 @@
-"""TDD test for the tenant bootstrap service."""
+"""Tenant bootstrap creates the three standard roles and grants the admin role to the owner.
 
-from dotmac_kernel.models import Party, PartyRoleGrant
+Role admission guard: the web facets admit student/instructor/admin only, so a bootstrap
+that drifts from exactly these three roles, or grants the owner anything but admin, must fail here.
+The owner-credential shape (Party/PartyPerson/profile/credential extension) is asserted by
+tests/services/test_bootstrap_identity.py, which owns the offline runtime fixture used below.
+"""
 
-from app.models.auth import UserCredential
-from app.models.rbac import Role
+from __future__ import annotations
+
+from uuid import uuid4
+
+from dotmac_kernel.models import Party, PartyRoleGrant, Role
+from sqlalchemy import select
+
 from app.services.bootstrap import bootstrap_tenant
+from tests.services.test_bootstrap_identity import offline_runtime  # noqa: F401  (fixture)
 
 
-def test_bootstrap_creates_tenant_roles_and_admin(admin_session):
-    t = bootstrap_tenant(admin_session, slug="acme", name="Acme U",
-                          admin_email="dean@acme.edu", admin_password="supersecret")
-    admin_session.commit()
-    slugs = {r.slug for r in admin_session.query(Role).filter(Role.tenant_id == t.id)}
-    assert slugs == {"student", "instructor", "admin"}
-    admin = admin_session.query(Party).filter(Party.tenant_id == t.id).one()
-    grants = admin_session.query(PartyRoleGrant).filter(PartyRoleGrant.tenant_id == t.id,
-                                                    PartyRoleGrant.party_id == admin.id).all()
-    assert len(grants) == 1
-    admin_role_ids = {r.id for r in admin_session.query(Role).filter(Role.tenant_id == t.id, Role.slug == "admin")}
-    assert grants[0].role_id in admin_role_ids
-    cred = admin_session.query(UserCredential).filter(
-        UserCredential.tenant_id == t.id, UserCredential.person_id == admin.id
-    ).one()
-    assert cred.password_hash != "supersecret"
-    # Cleanup
-    admin_session.query(UserCredential).filter(UserCredential.tenant_id == t.id).delete()
-    admin_session.query(PartyRoleGrant).filter(PartyRoleGrant.tenant_id == t.id).delete()
-    admin_session.query(Party).filter(Party.tenant_id == t.id).delete()
-    admin_session.query(Role).filter(Role.tenant_id == t.id).delete()
-    from app.models.tenant import Tenant
-    admin_session.query(Tenant).filter(Tenant.id == t.id).delete()
-    admin_session.commit()
+def test_bootstrap_creates_the_three_standard_roles_and_one_admin_grant(offline_runtime):  # noqa: F811
+    slug = "bootstrap-roles-" + uuid4().hex
+    with offline_runtime.platform_session() as db:
+        result = bootstrap_tenant(
+            db, slug=slug, name="Roles Tenant", admin_email=slug + "@example.test",
+            admin_password="hosted-bootstrap-secret-923!",
+        )
+        tid, pid = result.id, result.owner_party_id
+    with offline_runtime.platform_session() as db:
+        offline_runtime.set_tenant(db, tid, transaction_local=True)
+        roles = db.scalars(select(Role).where(Role.tenant_id == tid)).all()
+        assert {r.slug for r in roles} == {"student", "instructor", "admin"}
+        assert len(roles) == 3, "no duplicate role rows"
+        grants = db.scalars(select(PartyRoleGrant).where(PartyRoleGrant.tenant_id == tid)).all()
+        assert len(grants) == 1, "the owner receives exactly one grant"
+        assert grants[0].party_id == pid
+        assert db.get(Role, grants[0].role_id).slug == "admin"
+        assert db.get(Party, pid).tenant_id == tid

@@ -1,181 +1,107 @@
 # tests/services/test_agenda.py
-"""Unit tests for app/services/agenda.py — upcoming_for_person."""
+"""Academy agenda facade (app/services/agenda.py): labels, links, join fields and the cap source.
+
+Pure: no database. The calendar domain itself (due/past/window selection, access scoping,
+chronological order) is owned by dotmac-learning and covered by Starter
+tests/test_learning_todo_agenda.py at the locked wheel; see docs/inventories/test_dispositions.toml.
+"""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import uuid4
 
-from app.models.assessment import Activity, Question, QuestionBank
-from app.models.cohort import Cohort, Enrollment
-from app.models.course import Course
-from app.models.offering import CourseOffering
-from app.models.pacing import OfferingActivity
-from app.services.agenda import upcoming_for_person
-from tests.conftest import make_person_party
+import dotmac_learning as learning
+import pytest
+
+from app.services import agenda
+
+NOW = datetime(2026, 10, 18, 12, tzinfo=UTC)
 
 
-def _seed_course(db, tid, slug, title="Course"):
-    c = Course(
-        tenant_id=tid, slug=slug, title=title, discipline="networking",
-        source_ref="x", version=1, status="published",
-        listed=False,
+def _row(kind, *, title="Item", course_title="Course", target=None, session=None, joinable=False):
+    return SimpleNamespace(
+        when=NOW, kind=kind, title=title, course_title=course_title,
+        target=target or SimpleNamespace(id=uuid4(), course_slug="slug"), session=session, joinable=joinable,
     )
-    db.add(c)
-    db.flush()
-    return c
 
-def _seed_activity(db, tid, course_id, title="Act"):
-    bank = QuestionBank(tenant_id=tid, course_id=course_id, chapter_number=1, kind="chapter", version=1)
-    db.add(bank)
-    db.flush()
-    db.add(Question(
-        tenant_id=tid, bank_id=bank.id, ext_id="q1", stem="Q?", type="single",
-        options=["A", "B"], correct=["A"], rubric_category="recall", explanation="", weight=1,
-    ))
-    act = Activity(
-        tenant_id=tid, course_id=course_id, chapter_number=1,
-        type="mcq_test", bank_id=bank.id, title=title, pass_threshold=0.6, grading="auto", weight=1.0,
+
+@pytest.mark.parametrize("kind", ["opens", "closes"])
+def test_window_items_get_kind_suffix_and_course_link(kind):
+    item = agenda._item(_row(kind, title="Networking", target=SimpleNamespace(course_slug="net-101")))
+    assert item == {
+        "when": NOW, "kind": kind, "title": f"Networking {kind}", "course": "Course", "link": "/courses/net-101",
+    }
+
+
+def test_due_item_links_to_the_activity():
+    target = SimpleNamespace(id=uuid4())
+    item = agenda._item(_row("due", title="Quiz 1", target=target))
+    assert item == {"when": NOW, "kind": "due", "title": "Quiz 1", "course": "Course", "link": f"/activities/{target.id}"}
+
+
+def test_session_item_labels_location_link_and_join_fields():
+    session = SimpleNamespace(
+        session_type="lab", title="Lab", location="Room 4", join_url="https://join.example.test/x", id=uuid4()
     )
-    db.add(act)
-    db.flush()
-    return act
+    item = agenda._item(_row("session", title="ignored", course_title="", target=SimpleNamespace(id=session.id),
+                             session=session, joinable=True))
+    assert item == {
+        "when": NOW,
+        "kind": "session",
+        "title": "Lab (lab)",
+        "course": "Room 4",
+        "link": f"/timetable/sessions/{session.id}",
+        "join_url": "https://join.example.test/x",
+        "joinable": True,
+    }
 
-def _enroll_with_offering(db, tid, person_id, course_id, *, starts_at=None, ends_at=None):
-    coh = Cohort(tenant_id=tid, name="Coh", discipline="networking", status="active")
-    db.add(coh)
-    db.flush()
-    db.add(Enrollment(tenant_id=tid, cohort_id=coh.id, person_id=person_id,
-                      role_in_cohort="student", status="active"))
-    off = CourseOffering(
-        tenant_id=tid, cohort_id=coh.id, course_id=course_id,
-        status="active", starts_at=starts_at, ends_at=ends_at,
-    )
-    db.add(off)
-    db.flush()
-    return coh, off
 
-def test_future_due_at_appears(admin_session, tenant_a):
-    """A pacing due_at in the future on an accessible course appears in the agenda."""
-    tid = tenant_a.id
-    person = make_person_party(admin_session, tenant_id=tid, email="ag_due@a.edu", first_name="A", last_name="G")
-    admin_session.add(person)
-    admin_session.flush()
+def test_live_class_session_has_no_type_suffix_and_blank_location_is_empty_string():
+    session = SimpleNamespace(session_type="live_class", title="Seminar", location=None, join_url=None, id=uuid4())
+    item = agenda._item(_row("session", target=SimpleNamespace(id=session.id), session=session))
+    assert item["title"] == "Seminar"
+    assert item["course"] == ""
+    assert item["join_url"] is None
+    assert item["joinable"] is False
 
-    course = _seed_course(admin_session, tid, "ag-due", "Due Course")
-    act = _seed_activity(admin_session, tid, course.id, "Quiz 1")
-    _, off = _enroll_with_offering(admin_session, tid, person.id, course.id)
 
-    future = datetime.now(UTC) + timedelta(days=3)
-    admin_session.add(OfferingActivity(
-        tenant_id=tid, offering_id=off.id, activity_id=act.id, due_at=future,
-    ))
-    admin_session.flush()
+def test_session_item_without_a_session_fact_is_refused():
+    with pytest.raises(AssertionError):
+        agenda._item(_row("session", session=None))
 
-    items = upcoming_for_person(admin_session, tenant_id=tid, person_id=person.id)
-    titles = [i["title"] for i in items]
-    admin_session.rollback()
 
-    assert "Quiz 1" in titles
+def _stub_owner(monkeypatch, db, policy):
+    seen = []
 
-def test_past_items_excluded(admin_session, tenant_a):
-    """A pacing due_at in the past must not appear."""
-    tid = tenant_a.id
-    person = make_person_party(admin_session, tenant_id=tid, email="ag_past@a.edu", first_name="A", last_name="P")
-    admin_session.add(person)
-    admin_session.flush()
+    def effective(actual_db, *, require_store):
+        assert actual_db is db
+        assert require_store is True
+        return policy
 
-    course = _seed_course(admin_session, tid, "ag-past", "Past Course")
-    act = _seed_activity(admin_session, tid, course.id, "Old Quiz")
-    _, off = _enroll_with_offering(admin_session, tid, person.id, course.id)
+    def owner(actual_db, **values):
+        assert actual_db is db
+        seen.append(values)
+        return ()
 
-    past = datetime.now(UTC) - timedelta(days=1)
-    admin_session.add(OfferingActivity(
-        tenant_id=tid, offering_id=off.id, activity_id=act.id, due_at=past,
-    ))
-    admin_session.flush()
+    monkeypatch.setattr(agenda, "effective", effective)
+    monkeypatch.setattr(learning, "upcoming_agenda", owner)
+    return seen
 
-    items = upcoming_for_person(admin_session, tenant_id=tid, person_id=person.id)
-    titles = [i["title"] for i in items]
-    admin_session.rollback()
 
-    assert "Old Quiz" not in titles
+def test_omitted_limit_comes_from_settings_and_lead_minutes_are_forwarded(monkeypatch):
+    db, tenant, person = object(), uuid4(), uuid4()
+    seen = _stub_owner(monkeypatch, db, {"learning_agenda_limit": 7, "learning_join_lead_minutes": 9})
+    assert agenda.upcoming_for_person(db, tenant_id=tenant, person_id=person) == []
+    assert seen[0]["limit"] == 7
+    assert seen[0]["join_lead_minutes"] == 9
+    assert seen[0]["tenant_id"] == tenant and seen[0]["person_id"] == person
 
-def test_non_accessible_course_excluded(admin_session, tenant_a):
-    """Activity due_at from a course the person is NOT enrolled in is excluded."""
-    tid = tenant_a.id
-    person = make_person_party(admin_session, tenant_id=tid, email="ag_noac@a.edu", first_name="A", last_name="N")
-    other = make_person_party(admin_session, tenant_id=tid, email="ag_noac2@a.edu", first_name="B", last_name="N")
-    admin_session.add(person)
-    admin_session.add(other)
-    admin_session.flush()
 
-    accessible_course = _seed_course(admin_session, tid, "ag-acc", "Accessible")
-    inaccessible_course = _seed_course(admin_session, tid, "ag-noacc", "Inaccessible")
-    act_inacc = _seed_activity(admin_session, tid, inaccessible_course.id, "Secret Quiz")
-
-    # Enroll person in accessible course only; other person in inaccessible
-    _enroll_with_offering(admin_session, tid, person.id, accessible_course.id)
-    _, off_inacc = _enroll_with_offering(admin_session, tid, other.id, inaccessible_course.id)
-
-    future = datetime.now(UTC) + timedelta(days=2)
-    admin_session.add(OfferingActivity(
-        tenant_id=tid, offering_id=off_inacc.id, activity_id=act_inacc.id, due_at=future,
-    ))
-    admin_session.flush()
-
-    items = upcoming_for_person(admin_session, tenant_id=tid, person_id=person.id)
-    titles = [i["title"] for i in items]
-    admin_session.rollback()
-
-    assert "Secret Quiz" not in titles
-
-def test_ordering_chronological(admin_session, tenant_a):
-    """Multiple future items are returned in chronological order."""
-    tid = tenant_a.id
-    person = make_person_party(admin_session, tenant_id=tid, email="ag_ord@a.edu", first_name="A", last_name="O")
-    admin_session.add(person)
-    admin_session.flush()
-
-    course = _seed_course(admin_session, tid, "ag-ord", "Ordered Course")
-    act1 = _seed_activity(admin_session, tid, course.id, "Quiz Early")
-    act2 = _seed_activity(admin_session, tid, course.id, "Quiz Late")
-    _, off = _enroll_with_offering(admin_session, tid, person.id, course.id)
-
-    soon = datetime.now(UTC) + timedelta(days=1)
-    later = datetime.now(UTC) + timedelta(days=5)
-    admin_session.add(OfferingActivity(
-        tenant_id=tid, offering_id=off.id, activity_id=act1.id, due_at=soon,
-    ))
-    admin_session.add(OfferingActivity(
-        tenant_id=tid, offering_id=off.id, activity_id=act2.id, due_at=later,
-    ))
-    admin_session.flush()
-
-    items = upcoming_for_person(admin_session, tenant_id=tid, person_id=person.id)
-    titles = [i["title"] for i in items if i["kind"] == "due"]
-    admin_session.rollback()
-
-    assert titles.index("Quiz Early") < titles.index("Quiz Late")
-
-def test_offering_window_events_appear(admin_session, tenant_a):
-    """Future starts_at and ends_at on an offering appear as agenda items."""
-    tid = tenant_a.id
-    person = make_person_party(admin_session, tenant_id=tid, email="ag_win@a.edu", first_name="A", last_name="W")
-    admin_session.add(person)
-    admin_session.flush()
-
-    course = _seed_course(admin_session, tid, "ag-win", "Window Course")
-    future_start = datetime.now(UTC) + timedelta(days=2)
-    future_end = datetime.now(UTC) + timedelta(days=30)
-    _enroll_with_offering(
-        admin_session, tid, person.id, course.id,
-        starts_at=future_start, ends_at=future_end,
-    )
-    admin_session.flush()
-
-    items = upcoming_for_person(admin_session, tenant_id=tid, person_id=person.id)
-    kinds = {i["kind"] for i in items}
-    admin_session.rollback()
-
-    assert "opens" in kinds
-    assert "closes" in kinds
+@pytest.mark.parametrize("explicit", [0, 3])
+def test_explicit_limit_including_zero_is_kept(monkeypatch, explicit):
+    db = object()
+    seen = _stub_owner(monkeypatch, db, {"learning_agenda_limit": 7, "learning_join_lead_minutes": 9})
+    agenda.upcoming_for_person(db, tenant_id=uuid4(), person_id=uuid4(), limit=explicit)
+    assert seen[0]["limit"] == explicit

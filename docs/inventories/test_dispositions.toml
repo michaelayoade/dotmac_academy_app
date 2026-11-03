@@ -136,3 +136,188 @@ evidence = "verified by diff against tests/web/test_settings.py."
 lines = 188
 retired_blob_sha = "3b0695c4ec50d9d18cc6ad0795258e9df4def05d"
 kept_twin = "tests/web/test_settings.py"
+
+# Rewrites (approved 2026-11-03): Learning-owned parts dropped, Academy-owned assertions kept.
+
+[[rewritten]]
+old_path = "tests/services/test_agenda.py"
+class = "duplicate"
+replacement = ["tests/services/test_agenda.py::test_window_items_get_kind_suffix_and_course_link", "tests/services/test_agenda.py::test_due_item_links_to_the_activity", "tests/services/test_agenda.py::test_session_item_labels_location_link_and_join_fields", "tests/services/test_agenda.py::test_omitted_limit_comes_from_settings_and_lead_minutes_are_forwarded", "tests/services/test_agenda.py::test_explicit_limit_including_zero_is_kept"]
+dropped_tests = ["test_future_due_at_appears", "test_past_items_excluded", "test_non_accessible_course_excluded", "test_ordering_chronological", "test_offering_window_events_appear"]
+spec = "Pure test of agenda._item labels, links and join_url, and of the settings-sourced default limit (explicit 0 kept)."
+evidence = "verified: domain selection, scoping and ordering are covered by Starter tests/test_learning_todo_agenda.py (VERIFIED by reading in the triage); test-name mapping is by topic."
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_todo_agenda.py"
+  test = "test_agenda_other_cohort_offering_and_inactive_session_membership"
+  blob_sha_at_tag = "3005cf21dff118a23bc862ea55ff6d3a40d2a8d1"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_todo_agenda.py"
+  test = "test_strict_agenda_now_stable_category_ties_and_window_horizon"
+  blob_sha_at_tag = "3005cf21dff118a23bc862ea55ff6d3a40d2a8d1"
+
+[[rewritten]]
+old_path = "tests/services/test_bootstrap.py"
+class = "rewrite"
+replacement = ["tests/services/test_bootstrap.py::test_bootstrap_creates_the_three_standard_roles_and_one_admin_grant"]
+dropped_tests = []
+spec = "Under offline_runtime, bootstrap_tenant creates exactly the student, instructor and admin roles plus one admin grant. Nothing dropped; the old UserCredential.person_id check is replaced by test_bootstrap_identity.py ownership of the credential shape."
+evidence = "verified: role admission guard; no Learning-owned content removed."
+
+[[rewritten]]
+old_path = "tests/services/test_grade_cert_corrections.py"
+class = "duplicate"
+replacement = ["tests/services/test_grade_cert_corrections.py::test_certificate_auto_issued_idempotently_when_result_emails_are_opted_out"]
+dropped_tests = ["test_attempted_grade_is_graded_only", "test_below_passing_fires_with_volume_gate", "test_below_passing_silent_below_volume_gate", "test_certificate_blocked_only_after_grace"]
+spec = "One test: email_results=False on AcademyAccountProfile still yields an idempotent Certificate and no result email."
+evidence = "rules verified in Starter test_learning_success_queue; attempted_grade is asserted in Starter test_learning_gradebook_reports (graded_weight_fraction); test-name mapping is by topic (inferred)."
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_below_passing_volume_weight_and_severity_boundaries"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_certificate_grace_is_inclusive_and_certificate_suppresses"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_gradebook_reports.py"
+  test = "test_only_active_offerings_and_active_students_without_person_status_filter"
+  blob_sha_at_tag = "28cf61ae03fb501cb6c4aebb3260f9556d0674c4"
+
+[[rewritten]]
+old_path = "tests/services/test_review_corrections.py"
+class = "duplicate"
+replacement = ["tests/services/test_review_corrections.py::test_graded_reminder_skips_auto_scores"]
+dropped_tests = ["test_explicit_prerequisite_locks_course_on_dashboard", "test_below_passing_counts_a_genuine_zero", "test_severity_order_is_rank_not_text", "test_ledger_once_per_subject_is_idempotent"]
+spec = "Keep only test_graded_reminder_skips_auto_scores (Academy reminders)."
+evidence = "inferred from names (triage): Starter entitlements, success_queue and events tests; not diffed line by line."
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_entitlements.py"
+  test = "test_any_unlocked_route_then_explicit_prerequisites_duplicate_unmet_source_order"
+  blob_sha_at_tag = "2c79962eb39095a04cfae87f2eb54e02bc64cb75"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_below_passing_volume_weight_and_severity_boundaries"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_queue_sort_filters_unknown_severity_and_inactive_person_read"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_events.py"
+  test = "test_once_subject_null_subject_and_daily_dedupe"
+  blob_sha_at_tag = "e67fbc1dae9a0fa94503f814671b6fc7a0bcff3b"
+
+[[rewritten]]
+old_path = "tests/services/test_success_queue.py"
+class = "duplicate"
+replacement = ["tests/services/test_success_queue.py::test_csv_reports_content", "tests/services/test_success_queue.py::test_adapter_forwards_configured_success_policy_to_public_owner"]
+dropped_tests = ["test_inactivity_rule_fires_with_facts_and_refreshes_not_duplicates", "test_overdue_rule_fires_and_auto_resolves_when_passed", "test_transitions_are_audited", "test_segment_membership_is_deterministic", "test_message_segment_enqueues_outbox_and_audits"]
+spec = "Keep test_csv_reports_content and test_adapter_forwards_configured_success_policy_to_public_owner. The _seed and _entries helpers stay (imported by test_genuine_success_queue_context)."
+evidence = "inferred (triage): rules, sweep and segments in Starter test_learning_success_queue; web transitions and messages in Academy tests/services/test_genuine_success_queue_context.py; overlap not diffed."
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_inactivity_threshold_and_never_active_anchor"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_overdue_strict_time_count_and_day_boundary"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_auto_resolve_only_population_and_preserve_arbitrary_history"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_inactive_segment_all_role_anchor_and_explicit_account_population"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_transition_source_predicates_required_audit_and_caller_continuity"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+  [[rewritten.covering]]
+  repo = "michaelayoade/dotmac_starter_mt"
+  tag = "dotmac-learning-v0.1.0a3"
+  package = "dotmac-learning"
+  locked_version = "0.1.0a3"
+  file = "tests/test_learning_success_queue.py"
+  test = "test_message_required_sequential_delivery_audit_zero_audience_and_scope"
+  blob_sha_at_tag = "6cace34055dd88ee379cbce7bc081286eca92e8b"
+
+[[rewritten]]
+old_path = "tests/test_tenancy_binding.py"
+class = "rewrite"
+replacement = ["tests/test_tenancy_binding.py::test_single_tenancy_binds_at_startup", "tests/test_tenancy_binding.py::test_multi_tenancy_binds_nothing", "tests/test_tenancy_binding.py::test_two_tenants_is_fatal_and_binds_nothing"]
+dropped_tests = []
+spec = "Fresh-subprocess create_app against real seeded tenants: one binds; two fails naming every slug; multi binds nothing. Security control, full strength kept; only the refused in-process resolver monkeypatch is replaced."
+evidence = "verified: the sealed a107 runtime refuses the old monkeypatch of dotmac_kernel.db.resolver_session."

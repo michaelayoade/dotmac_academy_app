@@ -1,5 +1,9 @@
-"""Success Queue (roadmap P3b): explainable rules, idempotent sweep,
-audited lifecycle, deterministic segments, message action, CSV reports."""
+"""Success Queue Academy facade: CSV reports and the configured-policy hand-off.
+
+The rules, sweep, segments and transition/message commands are owned by dotmac-learning and covered by
+Starter tests/test_learning_success_queue.py at the locked wheel; the web transitions/messages are
+covered by Academy tests/services/test_genuine_success_queue_context.py. See docs/inventories/test_dispositions.toml.
+"""
 
 from __future__ import annotations
 
@@ -7,28 +11,16 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from dotmac_kernel.models import Party, PartyPerson, PartyType
-from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 
-from app.models.assessment import Activity, Score, Submission
+from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
-from app.models.email_outbox import EmailOutbox
 from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.success_queue import (
-    REASON_INACTIVITY,
-    REASON_OVERDUE_WORK,
-    STATUS_OPEN,
-    STATUS_RESOLVED,
-    SuccessQueueEntry,
-)
+from app.models.success_queue import SuccessQueueEntry
 from app.services import csv_reports, success_queue
-from app.services.audit import list_events
-from tests.services.roster_request_fixtures import roster_actors
-
-assert roster_actors
 
 
 def _seed(admin_session, tenant, *, email, due_hours=None, enrolled_days_ago=30):
@@ -99,6 +91,7 @@ def _seed(admin_session, tenant, *, email, due_hours=None, enrolled_days_ago=30)
 
 
 def _entries(db, tenant, person, reason=None):
+    # Shared with tests/services/test_genuine_success_queue_context.py.
     q = (
         select(SuccessQueueEntry)
         .where(SuccessQueueEntry.tenant_id == tenant.id)
@@ -107,109 +100,6 @@ def _entries(db, tenant, person, reason=None):
     if reason:
         q = q.where(SuccessQueueEntry.reason_kind == reason)
     return db.scalars(q).all()
-
-
-def test_inactivity_rule_fires_with_facts_and_refreshes_not_duplicates(admin_session, tenant_a):
-    person, *_ = _seed(admin_session, tenant_a, email="inact@a.edu", enrolled_days_ago=20)
-    now = datetime.now(UTC)
-    success_queue.sweep(admin_session, tenant_id=tenant_a.id, now=now)
-    success_queue.sweep(admin_session, tenant_id=tenant_a.id, now=now + timedelta(hours=1))
-    admin_session.commit()
-    rows = _entries(admin_session, tenant_a, person, REASON_INACTIVITY)
-    assert len(rows) == 1
-    entry = rows[0]
-    assert entry.status == STATUS_OPEN
-    assert entry.supporting_facts["days_inactive"] >= 14
-    assert entry.supporting_facts["threshold_days"] == 7
-    assert entry.severity == "high"  # 20 days >= 2x threshold
-    assert entry.recommended_action
-
-
-def test_overdue_rule_fires_and_auto_resolves_when_passed(admin_session, tenant_a):
-    person, _, course, act = _seed(admin_session, tenant_a, email="ovd@a.edu", due_hours=-30)
-    now = datetime.now(UTC)
-    success_queue.sweep(admin_session, tenant_id=tenant_a.id, now=now)
-    admin_session.commit()
-    (entry,) = _entries(admin_session, tenant_a, person, REASON_OVERDUE_WORK)
-    assert entry.supporting_facts["overdue_count"] == 1
-
-    sub = Submission(tenant_id=tenant_a.id, activity_id=act.id, person_id=person.id, answers={}, attempt_no=1)
-    admin_session.add(sub)
-    admin_session.flush()
-    admin_session.add(
-        Score(tenant_id=tenant_a.id, submission_id=sub.id, score=9, max_score=10, fraction=0.9, passed=True)
-    )
-    admin_session.commit()
-    success_queue.sweep(admin_session, tenant_id=tenant_a.id, now=now + timedelta(hours=1))
-    admin_session.commit()
-    (entry,) = _entries(admin_session, tenant_a, person, REASON_OVERDUE_WORK)
-    assert entry.status == STATUS_RESOLVED
-    assert entry.supporting_facts.get("auto_resolved")
-
-
-def test_transitions_are_audited(roster_actors):
-    a = roster_actors.account
-    admin_session, tenant_a, actor = a.admin, a.tenant, roster_actors.instructor
-    person, *_ = _seed(admin_session, tenant_a, email="trans@a.edu")
-    success_queue.sweep(admin_session, tenant_id=tenant_a.id)
-    admin_session.commit()
-    resolve_database_runtime().set_tenant(a.db, a.tid)
-    admin_session = a.db
-    (entry,) = _entries(admin_session, tenant_a, person, REASON_INACTIVITY)
-
-    success_queue.transition(
-        admin_session, tenant_id=tenant_a.id, entry_id=entry.id, action="acknowledge", request=actor.request
-    )
-    success_queue.transition(
-        admin_session, tenant_id=tenant_a.id, entry_id=entry.id, action="resolve", request=actor.request
-    )
-    admin_session.commit()
-    resolve_database_runtime().set_tenant(admin_session, a.tid)
-    assert entry.status == STATUS_RESOLVED
-    assert entry.resolved_by == actor.pid
-    actions = [e.action for e in list_events(admin_session, tenant_id=tenant_a.id, limit=20)]
-    assert "success_queue.acknowledge" in actions
-    assert "success_queue.resolve" in actions
-
-
-def test_segment_membership_is_deterministic(admin_session, tenant_a):
-    person, cohort, *_ = _seed(admin_session, tenant_a, email="seg@a.edu", enrolled_days_ago=15)
-    members = success_queue.segment_members(
-        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, segment="inactive"
-    )
-    assert [m.id for m in members] == [person.id]
-    again = success_queue.segment_members(admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, segment="inactive")
-    assert [m.id for m in again] == [person.id]
-    none = success_queue.segment_members(
-        admin_session, tenant_id=tenant_a.id, cohort_id=cohort.id, segment="failed_final"
-    )
-    assert none == []
-
-
-def test_message_segment_enqueues_outbox_and_audits(roster_actors):
-    a = roster_actors.account
-    admin_session, tenant_a, actor = a.admin, a.tenant, roster_actors.instructor
-    person, cohort, *_ = _seed(admin_session, tenant_a, email="msg@a.edu", enrolled_days_ago=15)
-    resolve_database_runtime().set_tenant(a.db, a.tid)
-    admin_session = a.db
-    result = success_queue.message_segment(
-        admin_session,
-        tenant_id=tenant_a.id,
-        cohort_id=cohort.id,
-        segment="inactive",
-        subject="Check in",
-        body="How are you getting on?",
-        request=actor.request,
-    )
-    admin_session.commit()
-    resolve_database_runtime().set_tenant(admin_session, a.tid)
-    assert result["recipients"] == 1
-    rows = admin_session.scalars(
-        select(EmailOutbox).where(EmailOutbox.tenant_id == tenant_a.id).where(EmailOutbox.kind == "segment_message")
-    ).all()
-    assert len(rows) == 1 and rows[0].recipient == person.email
-    actions = [e.action for e in list_events(admin_session, tenant_id=tenant_a.id, limit=20)]
-    assert "success_queue.message_segment" in actions
 
 
 def test_csv_reports_content(admin_session, tenant_a):

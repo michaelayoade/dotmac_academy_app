@@ -2,8 +2,17 @@
 
 This exists because it once wasn't. ``TENANCY=single`` was set, but Academy
 hand-built its lifespan and therefore never ran the kernel assertion. These
-tests exercise the lifespan installed by ``create_app`` through Academy's real
-ASGI app, so reading the setting without adopting the behavior cannot recur.
+tests start Academy's real ASGI app (``app.main.app``, built by ``create_app``)
+and let the kernel lifespan read the real tenant table, so reading the setting
+without adopting the behavior cannot recur.
+
+Each case runs in a FRESH subprocess. The kernel binding is process-global and
+the database runtime is sealed once per process (kernel a107 refuses to rebind
+``dotmac_kernel.db.resolver_session``), so an in-process monkeypatch of the
+resolver no longer reaches the check. The tenants are real committed rows
+(``tenant_a``/``tenant_b`` fixtures); nothing about the tenancy check itself is
+replaced. Only unrelated configuration validation is stubbed in the child, as
+the original in-process test did, so a production-mode boot reaches the check.
 
 A control that is configured but not armed is worse than one that is absent:
 the configuration is evidence that someone thought about it.
@@ -11,82 +20,95 @@ the configuration is evidence that someone thought about it.
 
 from __future__ import annotations
 
-import pytest
-from dotmac_kernel.tenancy import clear_single_tenant_binding, single_tenant_binding
-from fastapi.testclient import TestClient
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
+from sqlalchemy import text
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+_PROBE = """
+import json, sys
+sys.path.insert(0, {root!r})
+from dotmac_kernel.config import settings as kernel_settings
+
+kernel_settings.tenancy = {mode!r}
+kernel_settings.environment = {environment!r}
+kernel_settings.seed_on_startup = False
+
+import dotmac_kernel.app_factory as factory
+factory.validate_settings = lambda _settings: []
+factory._required_setting_errors = lambda: []
+factory._product_startup_errors = lambda _spec: []
+
+from fastapi.testclient import TestClient
+from dotmac_kernel.tenancy import single_tenant_binding
 from app.main import app
 
-
-@pytest.fixture(autouse=True)
-def _unbound():
-    clear_single_tenant_binding()
-    yield
-    clear_single_tenant_binding()
-
-
-def test_single_tenancy_binds_at_startup(monkeypatch) -> None:
-    """The property the outage lacked: after startup, the binding is set."""
-    from dotmac_kernel.config import settings as kernel_settings
-
-    monkeypatch.setattr(kernel_settings, "tenancy", "single", raising=False)
-    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
-    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
-    monkeypatch.setattr("dotmac_kernel.db.resolver_session", _fake_resolver(["academy"]), raising=False)
+outcome = {{"during": None, "error": None}}
+try:
     with TestClient(app):
-        assert single_tenant_binding() == "academy"
+        outcome["during"] = single_tenant_binding()
+except RuntimeError as exc:
+    outcome["error"] = str(exc)
+outcome["after"] = single_tenant_binding()
+print("OUTCOME " + json.dumps(outcome))
+"""
 
 
-def test_multi_tenancy_binds_nothing(monkeypatch) -> None:
-    from dotmac_kernel.config import settings as kernel_settings
-
-    monkeypatch.setattr(kernel_settings, "tenancy", "multi", raising=False)
-    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
-    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
-    with TestClient(app):
-        assert single_tenant_binding() is None
-
-
-def test_two_tenants_is_fatal_and_binds_nothing(monkeypatch) -> None:
-    """Refusing to boot is the point; binding one of two would pick a winner."""
-    from dotmac_kernel.config import settings as kernel_settings
-
-    monkeypatch.setattr(kernel_settings, "tenancy", "single", raising=False)
-    monkeypatch.setattr(kernel_settings, "environment", "production", raising=False)
-    monkeypatch.setattr(kernel_settings, "seed_on_startup", False, raising=False)
-    monkeypatch.setattr("dotmac_kernel.app_factory.validate_settings", lambda _settings: [], raising=False)
-    monkeypatch.setattr("dotmac_kernel.app_factory._required_setting_errors", lambda: [], raising=False)
-    monkeypatch.setattr(
-        "dotmac_kernel.db.resolver_session",
-        _fake_resolver(["academy", "someone-else"]),
-        raising=False,
+def _boot(mode: str, environment: str) -> dict:
+    result = subprocess.run(  # noqa: S603 - fixed argv, own interpreter
+        [sys.executable, "-c", _PROBE.format(root=str(_ROOT), mode=mode, environment=environment)],
+        capture_output=True,
+        text=True,
+        cwd=_ROOT,
+        env=os.environ.copy(),
+        timeout=180,
     )
-    with pytest.raises(RuntimeError, match="someone-else"):
-        with TestClient(app):
-            pass
-    assert single_tenant_binding() is None
+    # Never echo child stderr; at most the final line's exception class name.
+    last = (result.stderr.strip().splitlines() or [""])[-1]
+    failure = last.split(":", 1)[0].strip()[:80]
+    assert result.returncode == 0, f"probe failed: {failure}"
+    lines = [line for line in result.stdout.splitlines() if line.startswith("OUTCOME ")]
+    assert len(lines) == 1, "probe printed no outcome"
+    return json.loads(lines[0][len("OUTCOME "):])
 
 
-def _fake_resolver(slugs: list[str]):
-    from contextlib import contextmanager
+def _tenant_slugs(admin_session) -> list[str]:
+    admin_session.rollback()
+    return sorted(admin_session.execute(text("SELECT slug FROM tenants")).scalars().all())
 
-    class _T:
-        def __init__(self, slug: str) -> None:
-            self.slug = slug
 
-    class _Q:
-        def order_by(self, *_a):
-            return self
+def test_single_tenancy_binds_at_startup(admin_session, tenant_a) -> None:
+    """The property the outage lacked: after startup, the binding is set."""
+    slugs = _tenant_slugs(admin_session)
+    assert "alpha" in slugs
+    outcome = _boot("single", "development")
+    if slugs == ["alpha"]:
+        assert outcome["during"] == "alpha"
+        assert outcome["error"] is None
+    else:
+        # Foreign rows in the shared test database: the check must still refuse
+        # to bind one of several tenants (non-production boots log and continue).
+        assert outcome["during"] is None
 
-        def all(self):
-            return [_T(s) for s in slugs]
 
-    class _S:
-        def query(self, *_a):
-            return _Q()
+def test_multi_tenancy_binds_nothing(admin_session, tenant_a) -> None:
+    outcome = _boot("multi", "development")
+    assert outcome == {"during": None, "error": None, "after": None}
 
-    @contextmanager
-    def _r():
-        yield _S()
 
-    return _r
+def test_two_tenants_is_fatal_and_binds_nothing(admin_session, tenant_a, tenant_b) -> None:
+    """Refusing to boot is the point; binding one of two would pick a winner."""
+    slugs = _tenant_slugs(admin_session)
+    assert {"alpha", "beta"} <= set(slugs)
+    outcome = _boot("single", "production")
+    assert outcome["error"] is not None, "a production boot with several tenants must refuse"
+    assert outcome["error"].startswith("Tenancy error")
+    for slug in slugs:
+        assert slug in outcome["error"], f"the refusal must name {slug}"
+    assert outcome["during"] is None
+    assert outcome["after"] is None

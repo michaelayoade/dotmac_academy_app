@@ -1,26 +1,28 @@
-"""Review corrections R2-A: below-passing graded-only trigger + volume gate,
-and certificate auto-issue on completion."""
+"""Certificate auto-issue on completion for a learner who opted out of result emails.
+
+The grading/rule parts that used to live here (attempted_grade, the below-passing and
+certificate-blocked success-queue rules) are owned by dotmac-learning and covered by Starter
+tests/test_learning_success_queue.py and tests/test_learning_gradebook_reports.py at the locked wheel;
+see docs/inventories/test_dispositions.toml.
+"""
 
 from __future__ import annotations
-
-from datetime import UTC, datetime, timedelta
-
-from dotmac_learning import attempted_grade
 
 from app.models.assessment import Activity, Score, Submission
 from app.models.certificate import Certificate
 from app.models.cohort import Cohort, Enrollment
 from app.models.course import Course
+from app.models.email_outbox import EmailOutbox
 from app.models.offering import CourseOffering
-from app.services import success_queue
 from app.services.certificates import issue_certificate
 from app.services.completion import recompute_completion
 from tests.conftest import make_person_party
 
 
-def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
-    person = make_person_party(admin_session, tenant_id=tenant.id, email=f"{slug}@a.edu", first_name="G", last_name="C")
-    admin_session.add(person)
+def _course_with_activities(admin_session, tenant, slug, *, n, prefs=None):
+    person = make_person_party(
+        admin_session, tenant_id=tenant.id, email=f"{slug}@a.edu", first_name="G", last_name="C", prefs=prefs
+    )
     course = Course(tenant_id=tenant.id, slug=slug, title=slug.title(),
                     discipline="fiber", source_ref="t@1", status="published", listed=False)
     admin_session.add(course)
@@ -34,11 +36,12 @@ def _course_with_activities(admin_session, tenant, slug, *, n, weight=1):
     acts = []
     for i in range(n):
         a = Activity(tenant_id=tenant.id, course_id=course.id, chapter_number=i + 1,
-                     type="mcq_test", title=f"A{i}", pass_threshold=0.6, weight=weight, grading="auto")
+                     type="mcq_test", title=f"A{i}", pass_threshold=0.6, weight=1, grading="auto")
         admin_session.add(a)
         acts.append(a)
     admin_session.flush()
     return person, course, acts
+
 
 def _score(admin_session, tenant, person, act, fraction):
     sub = Submission(tenant_id=tenant.id, activity_id=act.id, person_id=person.id, answers={})
@@ -49,55 +52,14 @@ def _score(admin_session, tenant, person, act, fraction):
                             per_item=[], source="auto"))
     admin_session.flush()
 
-def test_attempted_grade_is_graded_only(admin_session, tenant_a):
-    person, course, acts = _course_with_activities(admin_session, tenant_a, "att-grade", n=4)
-    _score(admin_session, tenant_a, person, acts[0], 0.4)  # graded
-    _score(admin_session, tenant_a, person, acts[1], 0.6)  # graded
-    admin_session.commit()
-    g = attempted_grade(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
-    assert g.graded_count == 2
-    assert g.graded_weight_fraction == 0.5          # 2 of 4 equal-weight activities
-    assert g.pct == 50                               # (0.4 + 0.6)/2 — course_grade would say 25
 
-def test_below_passing_fires_with_volume_gate(admin_session, tenant_a):
-    person, course, acts = _course_with_activities(admin_session, tenant_a, "bp-fire", n=5)
-    _score(admin_session, tenant_a, person, acts[0], 0.2)
-    _score(admin_session, tenant_a, person, acts[1], 0.3)   # 2 graded, 40% weight, avg 25% < 60
-    admin_session.commit()
-    hit = success_queue._rule_below_passing(
-        admin_session, tenant_id=tenant_a.id, person_id=person.id,
-        course_ids=[course.id], min_grade_pct=60,
+def test_certificate_auto_issued_idempotently_when_result_emails_are_opted_out(admin_session, tenant_a):
+    # email_results=False lives on the AcademyAccountProfile prefs, not on the party.
+    person, course, acts = _course_with_activities(
+        admin_session, tenant_a, "cert-auto", n=2, prefs={"email_results": False}
     )
-    assert hit is not None
-    facts = hit[0]
-    assert facts["grade_pct"] == 25 and facts["graded_count"] == 2 and facts["graded_weight_pct"] == 40
-
-def test_below_passing_silent_below_volume_gate(admin_session, tenant_a):
-    # One graded activity: below the 2-graded minimum -> no false positive.
-    person, course, acts = _course_with_activities(admin_session, tenant_a, "bp-one", n=5)
-    _score(admin_session, tenant_a, person, acts[0], 0.1)
-    admin_session.commit()
-    assert success_queue._rule_below_passing(
-        admin_session, tenant_id=tenant_a.id, person_id=person.id,
-        course_ids=[course.id], min_grade_pct=60,
-    ) is None
-
-    # Two graded but < 20% of course weight (2 of 20) -> still silent.
-    p2, c2, a2 = _course_with_activities(admin_session, tenant_a, "bp-weight", n=20)
-    _score(admin_session, tenant_a, p2, a2[0], 0.1)
-    _score(admin_session, tenant_a, p2, a2[1], 0.1)
-    admin_session.commit()
-    assert success_queue._rule_below_passing(
-        admin_session, tenant_id=tenant_a.id, person_id=p2.id,
-        course_ids=[c2.id], min_grade_pct=60,
-    ) is None
-
-def test_certificate_auto_issued_on_completion(admin_session, tenant_a):
-    person, course, acts = _course_with_activities(admin_session, tenant_a, "cert-auto", n=2)
     for a in acts:
         _score(admin_session, tenant_a, person, a, 1.0)
-    # Learner has opted out of result emails: issuance must still happen.
-    person.prefs = {"email_results": False}
     admin_session.flush()
     rec = recompute_completion(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
     admin_session.commit()
@@ -105,32 +67,12 @@ def test_certificate_auto_issued_on_completion(admin_session, tenant_a):
     cert = admin_session.query(Certificate).filter_by(
         tenant_id=tenant_a.id, person_id=person.id, course_id=course.id).one()
     assert cert.serial and cert.issued_at is not None
-    # Idempotent: a second issue returns the same record.
+    # Issuance happened but the opt-out suppressed the result email.
+    assert admin_session.query(EmailOutbox).filter_by(tenant_id=tenant_a.id, recipient=person.email).count() == 0
+    # Idempotent: a second issue returns the same record and still queues no email.
     again = issue_certificate(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
     assert again.id == cert.id
-
-def test_certificate_blocked_only_after_grace(admin_session, tenant_a):
-    person, course, acts = _course_with_activities(admin_session, tenant_a, "cert-block", n=1)
-    _score(admin_session, tenant_a, person, acts[0], 1.0)
-    rec = recompute_completion(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
     admin_session.commit()
-    # Auto-issued -> no blocked entry regardless of grace.
-    assert success_queue._rule_certificate_blocked(
-        admin_session, tenant_id=tenant_a.id, person_id=person.id,
-        now=datetime.now(UTC) + timedelta(hours=24), grace_hours=6,
-    ) is None
-    # Simulate genuine issuance failure: remove the cert, backdate completion.
-    admin_session.query(Certificate).filter_by(
-        tenant_id=tenant_a.id, person_id=person.id, course_id=course.id).delete()
-    rec.completed_at = datetime.now(UTC) - timedelta(hours=10)
-    admin_session.flush()
-    within = success_queue._rule_certificate_blocked(
-        admin_session, tenant_id=tenant_a.id, person_id=person.id,
-        now=datetime.now(UTC), grace_hours=48,   # still inside grace -> silent
-    )
-    assert within is None
-    past = success_queue._rule_certificate_blocked(
-        admin_session, tenant_id=tenant_a.id, person_id=person.id,
-        now=datetime.now(UTC), grace_hours=6,    # past grace -> fires
-    )
-    assert past is not None and past[0]["missing"] == "certificate"
+    assert admin_session.query(Certificate).filter_by(
+        tenant_id=tenant_a.id, person_id=person.id, course_id=course.id).count() == 1
+    assert admin_session.query(EmailOutbox).filter_by(tenant_id=tenant_a.id, recipient=person.email).count() == 0
