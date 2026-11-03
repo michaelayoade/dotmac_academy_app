@@ -42,9 +42,14 @@ def test_roster_csv_keeps_best_grade_and_neutralizes_cells(current_account):
     name, text = csv_reports.cohort_roster_csv(a.admin, tenant_id=a.tid, cohort_id=cohort.id)
     rows = list(csv.DictReader(io.StringIO(text)))
     assert name == "roster-progress-abuja-2026.csv" and len(rows) == 2
-    assert rows[0]["name"].startswith("'=SUM")
-    assert rows[0]["courses"] == "1" and rows[0]["avg_grade_pct"] == "70"
-    assert rows[1]["avg_grade_pct"] == "90"  # lower later score is not the best
+    # Row order is the owner's; select the two learners by email.
+    by_email = {row["email"]: row for row in rows}
+    assert set(by_email) == {pa.email, pb.email}
+    forged_row, other_row = by_email[pa.email], by_email[pb.email]
+    assert forged_row["name"].startswith("'=SUM")
+    assert not other_row["name"].startswith("'")
+    assert forged_row["courses"] == "1" and forged_row["avg_grade_pct"] == "70"
+    assert other_row["avg_grade_pct"] == "90"  # lower later score is not the best
     assert a.admin.get_transaction() is root
     assert csv_reports.sanitize_cell("@formula") == "'@formula"
     assert csv_reports.sanitize_cell(0) == 0

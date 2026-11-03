@@ -87,7 +87,7 @@ def test_lab_limits_reject_invalid_writes_and_ignore_legacy_invalid_rows(
     admin_session,
 ):
     _clear(admin_session)
-    with pytest.raises(ValueError, match="max_concurrent_labs_per_tenant must be at least 0"):
+    with pytest.raises(ValueError, match="max_concurrent_labs_per_tenant must be an integer between 0 and 2147483647"):
         set_many(admin_session, {"max_concurrent_labs_per_tenant": "-1"})
 
     admin_session.add(

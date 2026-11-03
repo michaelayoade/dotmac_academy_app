@@ -20,6 +20,7 @@ from app.services.identity import AcademyCurrentAccount
 from app.services.teaching_access import require_teaching_access
 from app.services.web_auth import require_web_user
 from app.web import teaching as routes
+from tests.conftest import login_location
 from tests.services.test_canonical_current_user import current_account
 from tests.services.test_notifications_owner import _party
 from tests.web.test_bookmarks_owner import _request
@@ -138,7 +139,12 @@ def test_teaching_live_cookie_status_and_session_refuse(current_account, app_cli
         a.admin.execute(update(AcademyAccountProfile).where(AcademyAccountProfile.party_id == a.pid).values(status="suspended"))
     a.admin.commit()
     denied = app_client.get("/instructor", headers=headers, follow_redirects=False)
-    assert denied.status_code == 303 and denied.headers["Location"] == "/login"
+    if mutation == "revoked":
+        # A revoked session is refused by the kernel facet auth with the exact
+        # login redirect for the requested path.
+        assert denied.status_code == 302 and denied.headers["Location"] == login_location("/instructor")
+    else:
+        assert denied.status_code == 303 and denied.headers["Location"] == "/login"
 
 
 def test_teaching_policy_separate_from_settings_and_foreign_cookie(current_account, tenant_b):

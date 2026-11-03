@@ -197,7 +197,10 @@ def test_preferences_merge_unrelated_keys_and_absent_checkboxes(current_account)
     a.db.get(AcademyAccountProfile, a.pid).prefs = {"other": {"nested": [1, None]}, "email_results": True}
     a.db.flush()
     stale = _current_person(a.db, a.tid, a.token)
-    r = account.notifications_save(_request(a.tenant, a.token), None, None, stale, a.db)
+    request = _request(a.tenant, a.token)
+    # The rendered page reads request.url, which needs a path in the scope.
+    request.scope.update({"path": "/account/notifications", "query_string": b""})
+    r = account.notifications_save(request, None, None, stale, a.db)
     assert r.status_code == 200
     assert a.db.get(AcademyAccountProfile, a.pid).prefs == {
         "other": {"nested": [1, None]},

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.models.identity_extensions import AcademyCredentialPolicy
 from tests.conftest import csrf_for, grant_role, make_person_credential, make_person_party, web_login
 
 
@@ -60,9 +61,11 @@ def test_login_canonicalizes_email_and_ignores_credential_email_drift(
 
     assert response.status_code == 303
     admin_session.refresh(person)
-    admin_session.refresh(credential)
+    policy = admin_session.get(AcademyCredentialPolicy, credential.id)
+    assert policy is not None
+    admin_session.refresh(policy)
     assert person.email == "mixed.case@alpha.edu"
-    assert credential.email == person.email
+    assert policy.email == person.email
 
 def test_logout_revokes_server_side_session(app_client, admin_session, tenant_a):
     """Logout must mark the AuthSession revoked; replaying the old cookie is rejected."""

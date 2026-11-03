@@ -141,7 +141,10 @@ def test_console_counts_all_people_all_learning_rows_and_product_labs(current_ac
     assert response.status_code == 200
     assert count_all_people(a.db, tenant_id=a.tid) == baseline + 1
     from tests.services.test_canonical_current_user import _request
-    result = admin_home.admin_console(_request(a.tenant, a.token), a.db)
+    request = _request(a.tenant, a.token)
+    # The rendered page reads request.url, which needs a path in the scope.
+    request.scope.update({"path": "/admin", "query_string": b""})
+    result = admin_home.admin_console(request, a.db)
     import dotmac_learning as learning
     assert result.context["stats"]["people"] == baseline + 1
     assert result.context["stats"]["courses"] == len(learning.all_courses(a.db, tenant_id=a.tid))

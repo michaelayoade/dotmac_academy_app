@@ -3,11 +3,21 @@ from uuid import uuid4
 
 import dotmac_learning as learning
 import pytest
+from dotmac_kernel.audit_actions import AuditActionRegistry
 from dotmac_learning import CourseWrite, bank_questions, create_course
 
+from app.owner_composition import compose_migration_owner_declarations
 from app.services.bank_loader import lint_bank, load_bank, parse_bank
 
 FX = Path(__file__).resolve().parent.parent / "fixtures" / "banks" / "foundation-ch3.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _audit_registry_installed(monkeypatch):
+    # The registry is process-global and installed only by the app entry points
+    # (create_app / bind_academy_database_runtime); install the composed one.
+    registry = AuditActionRegistry.from_manifests(compose_migration_owner_declarations())
+    monkeypatch.setattr("dotmac_kernel.audit_actions._active_registry", registry)
 
 
 def test_lint_passes_on_balanced_bank():

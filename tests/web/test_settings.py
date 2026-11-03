@@ -68,7 +68,8 @@ def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
         "/admin/settings",
         headers={**h, "x-csrf-token": csrf},
         data={"branding_name": "Renamed Academy", "smtp_port": "587",
-              "max_concurrent_labs": "20", "lab_idle_minutes": "60"},
+              "max_concurrent_labs": "20", "max_concurrent_labs_per_tenant": "0",
+              "lab_idle_minutes": "60"},
         follow_redirects=False,
     )
     assert r.status_code in (200, 303)
@@ -85,7 +86,8 @@ def test_admin_post_blank_password_keeps_existing(app_client, admin_session, ten
         "/admin/settings",
         headers={**h, "x-csrf-token": csrf},
         data={"branding_name": "X", "smtp_password": "", "smtp_host": "h.example",
-              "smtp_port": "587", "max_concurrent_labs": "20", "lab_idle_minutes": "60"},
+              "smtp_port": "587", "max_concurrent_labs": "20", "max_concurrent_labs_per_tenant": "0",
+              "lab_idle_minutes": "60"},
         follow_redirects=False,
     )
     row = admin_session.get(PlatformSetting, "smtp_password")

@@ -8,6 +8,7 @@ quiet-hours deferral, and the audited admin resend.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -24,6 +25,10 @@ from app.services import reminders
 from app.services.audit import list_events
 from app.services.localtime import academy_zone
 from tests.conftest import make_person_party
+from tests.services.test_canonical_current_user import _request, current_account
+from tests.web.test_product_admin_routes_owner import _allow, _restore_policy
+
+assert current_account and _restore_policy
 
 
 def _seed(admin_session, tenant, *, email="rem@a.edu", due_offsets_hours=(), session_offsets_hours=()):
@@ -151,18 +156,22 @@ def test_quiet_hours_defer_then_flush(admin_session, tenant_a):
     assert all(r.status == "sent" for r in rows)
     assert len(_outbox_rows(admin_session, tenant_a)) == before + 1
 
-def test_resend_requeues_and_audits(admin_session, tenant_a):
-    person, *_ = _seed(admin_session, tenant_a, email="resend@a.edu", due_offsets_hours=(20,))
-    reminders.sweep(admin_session, tenant_id=tenant_a.id)
-    admin_session.commit()
-    log = _log_rows(admin_session, tenant_a, person)[0]
-    before = len(_outbox_rows(admin_session, tenant_a))
-    reminders.resend(admin_session, tenant_id=tenant_a.id, log_id=log.id,
-                     actor_person_id=person.id)
-    admin_session.commit()
-    assert len(_outbox_rows(admin_session, tenant_a)) == before + 1
-    events = list_events(admin_session, tenant_id=tenant_a.id, action="reminder.resend")
-    assert events and str(log.id) in (events[0].entity_id or "")
+def test_resend_requeues_and_audits(current_account):
+    # The command takes a genuine session-cookie Request; an actor id is never authority.
+    a = current_account
+    _allow(a)
+    log = ReminderLog(tenant_id=a.tid, person_id=a.pid, event_kind="graded",
+                      occurrence_key=f"resend:{uuid4()}", title="Resend me", link="/progress", status="queued")
+    a.admin.add(log)
+    a.admin.commit()
+    log_id = log.id
+    before = len(_outbox_rows(a.admin, a.tenant))
+    reminders.resend(a.db, request=_request(a.tenant, a.token), tenant_id=a.tid, log_id=log_id)
+    a.db.commit()
+    a.admin.expire_all()
+    assert len(_outbox_rows(a.admin, a.tenant)) == before + 1
+    events = list_events(a.admin, tenant_id=a.tid, action="reminder.resend")
+    assert events and str(log_id) in (events[0].entity_id or "")
 
 # ---------------------------------------------------------------------------
 # Inactivity nudges escalate, then stop

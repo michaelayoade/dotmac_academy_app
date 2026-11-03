@@ -199,7 +199,8 @@ def test_form_hx_blank_password_and_current_account_branded_email(current_accoun
     assert all("smtp_password" not in context.get("cfg", {}) for context in captures)
     data = {"branding_name": brand, "smtp_host": "smtp.example.test", "smtp_port": "587",
             "smtp_password": "", "smtp_user": "sender@example.test", "smtp_from": "",
-            "max_concurrent_labs": "20", "lab_idle_minutes": "60"}
+            "max_concurrent_labs": "20", "max_concurrent_labs_per_tenant": "0",
+              "lab_idle_minutes": "60"}
     response = app_client.post("/admin/settings", headers={**headers, "HX-Request": "true"}, data=data)
     assert write_roles and all(role != "app_user" for role in write_roles)
     assert response.status_code == 200 and "Settings saved" in response.text and secret not in response.text
