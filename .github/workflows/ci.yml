@@ -322,7 +322,7 @@ jobs:
             echo 'empty test shard' >&2
             exit 1
           fi
-          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
+          poetry run pytest -rfE --tb=line -v -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
       # scripts/ci_test_shards.py leaves these two files out of every shard. They run
       # once (on shard 1), in their own process, with every database URL pointed at
@@ -338,7 +338,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest-bootstrap.xml tests/services/test_bootstrap_identity.py tests/services/test_bootstrap.py
+          poetry run pytest -rfE --tb=line -v -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest-bootstrap.xml tests/services/test_bootstrap_identity.py tests/services/test_bootstrap.py
 
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
