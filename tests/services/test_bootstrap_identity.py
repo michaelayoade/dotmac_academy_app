@@ -28,6 +28,7 @@ from app.services.bootstrap_identity import _catalog
 OFFLINE_ROLE_PAIR = ("platform_api", "platform_api")
 
 INSUFFICIENT_PRIVILEGE = "42501"
+BOOTSTRAP_DATABASE = "academy_bootstrap_identity"
 
 # Every refusal message raised inside app.services.bootstrap_identity._catalog.
 _CATALOGUE_REFUSAL = (
@@ -53,6 +54,9 @@ def offline_runtime(monkeypatch):
     runtime = bind_academy_database_runtime()
     with runtime.platform_session() as db:
         assert db.get_bind().dialect.name == "postgresql"
+        # These tests commit tenants. They run only against their dedicated
+        # database (own pytest process in CI), never the shared application one.
+        assert db.scalar(text("SELECT current_database()")) == BOOTSTRAP_DATABASE
         pair = db.execute(text("SELECT session_user, current_user")).one()
         # Deployment must deliberately supply this actual role pair. Tests do
         # not invent a privileged boolean or infer authority from a role name.

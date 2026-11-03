@@ -20,6 +20,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.pool import NullPool
 
+#: The shared application database and the dedicated database of the tenant
+#: bootstrap tests (they commit tenants through the platform runtime, which the
+#: shared database must never see). Both are bootstrapped identically.
+ALLOWED_DATABASES = ("academy", "academy_bootstrap_identity")
+
 
 class BootstrapRefused(RuntimeError):
     """Material-free failure; discard this disposable target and replay."""
@@ -44,7 +49,7 @@ def declared_target(environment: Mapping[str, str], expected_database: str) -> t
     _require(re.fullmatch(r"[0-9a-f]{40}", revision) is not None)
     marker = f"academy-ci:{run_id}:{attempt}:{revision}"
     _require(environment.get("ACADEMY_CI_DATABASE_MARKER") == marker)
-    _require(expected_database == "academy")
+    _require(expected_database in ALLOWED_DATABASES)
     try:
         url = make_url(environment.get("MIGRATION_DATABASE_URL", ""))
         valid = (
@@ -72,14 +77,14 @@ def _checkout_source_revision() -> str:
     return result.stdout.strip()
 
 
-def _verify_target(connection, marker: str, *, empty: bool) -> None:
+def _verify_target(connection, marker: str, *, empty: bool, database: str) -> None:
     actual = connection.execute(text(
         "SELECT session_user,current_user,current_database(),"
         "pg_catalog.pg_get_userbyid(d.datdba),"
         "pg_catalog.shobj_description(d.oid,'pg_database') "
         "FROM pg_catalog.pg_database d WHERE d.datname=current_database()"
     )).one()
-    _require(tuple(actual) == ("app_admin", "app_admin", "academy", "app_admin", marker))
+    _require(tuple(actual) == ("app_admin", "app_admin", database, "app_admin", marker))
     if empty:
         count = connection.execute(text(
             "SELECT count(*) FROM pg_catalog.pg_class c "
@@ -102,7 +107,7 @@ def bootstrap(environment: Mapping[str, str], *, expected_database: str, verify_
             try:
                 if verify_only:
                     connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-                _verify_target(connection, marker, empty=not verify_only)
+                _verify_target(connection, marker, empty=not verify_only, database=expected_database)
                 if verify_only:
                     receipt = verify_fresh_composed_db(connection)
                 else:

@@ -211,6 +211,7 @@ jobs:
           CREATE DATABASE academy_migration_graph OWNER app_admin;
           CREATE DATABASE academy_account_token_fresh OWNER app_admin;
           CREATE DATABASE academy_fresh_entry OWNER app_admin;
+          CREATE DATABASE academy_bootstrap_identity OWNER app_admin;
           CREATE DATABASE academy_facilitator_runtime OWNER app_admin;
           CREATE DATABASE academy_legacy_roundtrip OWNER app_admin;
           CREATE DATABASE academy_retained_history OWNER app_admin ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8';
@@ -236,6 +237,9 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy_fresh_entry -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
+          psql -h localhost -p 5437 -U postgres -d academy_bootstrap_identity -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
+          SQL
           psql -h localhost -p 5437 -U postgres -d academy_facilitator_runtime -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
           SQL
@@ -245,6 +249,7 @@ jobs:
           psql -h localhost -p 5437 -U postgres -d academy -v ON_ERROR_STOP=1 -v ci_marker="$ACADEMY_CI_DATABASE_MARKER" <<'SQL'
           ALTER DATABASE academy OWNER TO app_admin;
           COMMENT ON DATABASE academy IS :'ci_marker';
+          COMMENT ON DATABASE academy_bootstrap_identity IS :'ci_marker';
           SQL
 
       - name: Declare hosted environment expectations before profile observation
@@ -268,6 +273,16 @@ jobs:
         run: |
           poetry run python -m app.migration_cli upgrade heads
           poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy --verify-only
+
+      # The tenant bootstrap tests commit tenants through the platform runtime and
+      # nothing may delete them (audit rows are immutable), so they get their own
+      # database, bootstrapped and verified exactly like the application one.
+      - name: Bootstrap qualified empty tenant-bootstrap database
+        env:
+          MIGRATION_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_bootstrap_identity
+        run: |
+          poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy_bootstrap_identity
+          poetry run python -m scripts.ci_bootstrap_composed_db --expect-database academy_bootstrap_identity --verify-only
 
       # Each gate runs even if an earlier one failed, so a lint error can't mask a
       # broken test. The job still fails if any gate fails — you just see all of
@@ -309,9 +324,29 @@ jobs:
           fi
           poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest.xml "${shard_files[@]}"
 
+      # scripts/ci_test_shards.py leaves these two files out of every shard. They run
+      # once (on shard 1), in their own process, with every database URL pointed at
+      # the dedicated database; the shared `academy` database never sees their tenants.
+      - name: Tests (tenant bootstrap, dedicated database)
+        if: "!cancelled() && matrix.shard == 1"
+        env:
+          MIGRATION_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_bootstrap_identity
+          TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://app_admin:app_admin@localhost:5437/academy_bootstrap_identity
+          TEST_DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy_bootstrap_identity
+          DATABASE_URL: postgresql+psycopg://app_user:app_user@localhost:5437/academy_bootstrap_identity
+          PLATFORM_DATABASE_URL: postgresql+psycopg://platform_api:platform_api@localhost:5437/academy_bootstrap_identity
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          poetry run pytest -x -vv --capture=tee-sys --tb=short -o faulthandler_timeout=120 -o junit_family=xunit1 --junitxml=artifacts/pytest-bootstrap.xml tests/services/test_bootstrap_identity.py tests/services/test_bootstrap.py
+
       - name: Refuse unreviewed test skips
         if: '!cancelled()'
-        run: poetry run python scripts/check_ci_test_skips.py artifacts/pytest.xml tests/ci_skip_allowlist.txt
+        run: |
+          poetry run python scripts/check_ci_test_skips.py artifacts/pytest.xml tests/ci_skip_allowlist.txt
+          if [ -f artifacts/pytest-bootstrap.xml ]; then
+            poetry run python scripts/check_ci_test_skips.py artifacts/pytest-bootstrap.xml tests/ci_skip_allowlist.txt
+          fi
 
       - name: Retain hosted rehearsal execution evidence
         if: always()
@@ -320,6 +355,7 @@ jobs:
           name: academy-hosted-tests-${{ github.run_id }}-shard-${{ matrix.shard }}
           path: |
             artifacts/pytest.xml
+            artifacts/pytest-bootstrap.xml
             artifacts/convergence.xml
             artifacts/shard-files.txt
           if-no-files-found: error

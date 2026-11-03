@@ -35,6 +35,13 @@ TESTS = "tests"
 _PRUNED = (".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "__pycache__")
 _PATTERNS = ("test_*.py", "*_test.py")
 WEIGHTS = "scripts/ci_test_weights.json"
+#: Files that commit tenants through the platform runtime. They run once, in
+#: their own pytest process against the dedicated ``academy_bootstrap_identity``
+#: database (see the workflow), so the shared database never holds their rows.
+ISOLATED = (
+    "tests/services/test_bootstrap_identity.py",
+    "tests/services/test_bootstrap.py",
+)
 
 
 def discover(root: Path = ROOT) -> list[str]:
@@ -106,6 +113,8 @@ def units(root: Path = ROOT) -> dict[str, int]:
     per_byte = table["seconds_per_byte"]
     result: dict[str, int] = {}
     for path in discover(root):
+        if path in ISOLATED:
+            continue
         if path in split:
             for name in test_functions(path, root):
                 result[f"{path}::{name}"] = max(1, int(split[path][name]))

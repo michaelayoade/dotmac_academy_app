@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import MetaData, Table, create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 # Expose the genuine shared fixture chain in every requesting test module.
@@ -36,7 +37,10 @@ def pytest_sessionstart(session):
     from scripts.ci_bootstrap_composed_db import bootstrap
 
     try:
-        bootstrap(os.environ, expected_database="academy", verify_only=True)
+        # The tenant bootstrap tests run in their own process against a dedicated,
+        # identically bootstrapped database; any other target is refused.
+        database = make_url(os.environ.get("MIGRATION_DATABASE_URL", "")).database or "academy"
+        bootstrap(os.environ, expected_database=database, verify_only=True)
     except Exception:
         raise pytest.UsageError("CI application database is not independently qualified and bootstrapped") from None
 

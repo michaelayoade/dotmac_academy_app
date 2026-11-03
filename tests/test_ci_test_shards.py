@@ -54,6 +54,8 @@ def test_every_test_is_in_exactly_one_shard(count):
     split = sharding.load_weights(ROOT)["split"]
     expected = set()
     for path in everything:
+        if path in sharding.ISOLATED:
+            continue  # run once in the dedicated-database step, see the workflow test below
         if path in split:
             expected |= {f"{path}::{name}" for name in _module_test_functions(path)}
         else:
@@ -62,6 +64,8 @@ def test_every_test_is_in_exactly_one_shard(count):
     assert len(placed) == len(set(placed)), "a test unit appears in more than one shard"
     assert set(placed) == expected, "a test unit is missing from every shard or unknown"
     assert not set(split) & set(placed), "a split file's path must never appear whole"
+    assert set(sharding.ISOLATED) <= everything
+    assert not set(sharding.ISOLATED) & {unit.partition("::")[0] for unit in placed}, "isolated file in a shard"
 
 
 def test_weight_table_matches_the_tree():
@@ -133,6 +137,27 @@ def test_workflow_runs_each_shard_with_every_gate_and_its_own_evidence(workflow)
     upload = steps["Retain hosted rehearsal execution evidence"]
     assert upload["with"]["name"].endswith("-shard-${{ matrix.shard }}")
     assert "artifacts/shard-files.txt" in upload["with"]["path"]
+
+
+def test_isolated_bootstrap_tests_run_once_against_their_dedicated_database(workflow):
+    steps = {step.get("name"): step for step in workflow["jobs"]["test"]["steps"]}
+    dedicated = "academy_bootstrap_identity"
+    prepare = steps["Bootstrap qualified empty tenant-bootstrap database"]
+    assert prepare["env"]["MIGRATION_DATABASE_URL"].endswith("/" + dedicated)
+    assert f"--expect-database {dedicated} --verify-only" in prepare["run"]
+    run = steps["Tests (tenant bootstrap, dedicated database)"]
+    assert run["if"] == "!cancelled() && matrix.shard == 1"
+    for key in (
+        "MIGRATION_DATABASE_URL", "TEST_MIGRATION_DATABASE_URL", "TEST_DATABASE_URL",
+        "DATABASE_URL", "PLATFORM_DATABASE_URL",
+    ):
+        assert run["env"][key].endswith("/" + dedicated), key
+    # Exactly the files the shard script leaves out, and nothing that deletes their tenants.
+    named = {token for token in run["run"].split() if token.startswith("tests/")}
+    assert named == set(sharding.ISOLATED)
+    setup = next(step for step in workflow["jobs"]["test"]["steps"] if "CREATE DATABASE" in step.get("run", ""))
+    assert f"CREATE DATABASE {dedicated} OWNER app_admin;" in setup["run"]
+    assert f"COMMENT ON DATABASE {dedicated} IS :'ci_marker';" in setup["run"]
 
 
 def test_aggregate_check_requires_every_shard(workflow):

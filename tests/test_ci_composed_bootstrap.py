@@ -144,3 +144,15 @@ def test_cli_refusal_does_not_print_driver_or_connection_material(monkeypatch, c
     assert first == "CI composed database bootstrap refused; discard and replay required"
     assert re.fullmatch(r"refused at tests/test_ci_composed_bootstrap\.py:[0-9]+ RuntimeError", site)
     assert rest == "" and "sensitive" not in output.err and "postgresql" not in output.err
+
+
+def test_dedicated_bootstrap_identity_database_is_allowed_only_when_url_and_flag_agree(declarations):
+    dedicated = "academy_bootstrap_identity"
+    declarations["MIGRATION_DATABASE_URL"] = f"postgresql+psycopg://app_admin:disposable@localhost:5437/{dedicated}"
+    url, _ = bootstrap.declared_target(declarations, dedicated)
+    assert url.database == dedicated
+    with pytest.raises(bootstrap.BootstrapRefused):
+        bootstrap.declared_target(declarations, "academy")
+    declarations["MIGRATION_DATABASE_URL"] = "postgresql+psycopg://app_admin:disposable@localhost:5437/academy"
+    with pytest.raises(bootstrap.BootstrapRefused):
+        bootstrap.declared_target(declarations, dedicated)
