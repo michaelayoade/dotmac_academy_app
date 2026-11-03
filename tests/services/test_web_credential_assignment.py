@@ -750,6 +750,10 @@ def test_canonical_cookie_expiring_while_waiting_for_principal_refuses(canonical
     # the worker thread. The main thread only operates the other connection.
     assert account.request.state.tenant.id == tenant_id
     worker_pid = account.db.execute(text("SELECT pg_backend_pid()")).scalar_one()
+    # The sole holder of the principal's row lock is the admin connection. Blocking
+    # is read with pg_blocking_pids, which needs no pg_read_all_stats membership;
+    # wait_event_type of another role's backend is hidden from app_admin.
+    blocker_pid = account.admin.execute(text("SELECT pg_backend_pid()")).scalar_one()
     email = f"expiry-wait-{uuid4().hex}@example.edu"
     failures = []
 
@@ -764,11 +768,10 @@ def test_canonical_cookie_expiring_while_waiting_for_principal_refuses(canonical
     try:
         deadline = monotonic() + 5
         while monotonic() < deadline:
-            account.admin.execute(text("SELECT pg_stat_clear_snapshot()"))
-            waiting = account.admin.execute(
-                text("SELECT wait_event_type FROM pg_stat_activity WHERE pid=:pid"), {"pid": worker_pid}
+            blocked = account.admin.execute(
+                text("SELECT :blocker = ANY(pg_blocking_pids(:pid))"), {"blocker": blocker_pid, "pid": worker_pid}
             ).scalar_one()
-            if waiting == "Lock":
+            if blocked:
                 break
             sleep(0.01)
         else:
@@ -802,6 +805,8 @@ def test_canonical_normalized_email_race_one_complete_account(canonical_web_acco
     winner = _create_canonical(account, email=email)
     ready = Event()
     pids, failures = [], []
+    # The winner's uncommitted account rows (account.db) are what the contender waits on.
+    blocker_pid = account.db.execute(text("SELECT pg_backend_pid()")).scalar_one()
 
     def contender():
         # A genuine second worker connection using the existing fixture engine,
@@ -833,11 +838,10 @@ def test_canonical_normalized_email_race_one_complete_account(canonical_web_acco
         assert ready.wait(timeout=5), "second canonical worker did not start"
         deadline = monotonic() + 5
         while monotonic() < deadline:
-            account.admin.execute(text("SELECT pg_stat_clear_snapshot()"))
-            waiting = account.admin.execute(
-                text("SELECT wait_event_type FROM pg_stat_activity WHERE pid=:pid"), {"pid": pids[0]}
+            blocked = account.admin.execute(
+                text("SELECT :blocker = ANY(pg_blocking_pids(:pid))"), {"blocker": blocker_pid, "pid": pids[0]}
             ).scalar_one()
-            if waiting == "Lock":
+            if blocked:
                 break
             sleep(0.01)
         else:
