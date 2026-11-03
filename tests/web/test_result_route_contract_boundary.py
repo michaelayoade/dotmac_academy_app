@@ -132,11 +132,22 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
     monkeypatch.setattr(learn, "get_activity", lambda db, **kw: activity)
     monkeypatch.setattr(learn, "require_course_open", lambda *args, **kw: None)
     monkeypatch.setattr(learn, "require_activity_submittable", lambda *args, **kw: None)
-    monkeypatch.setattr(
-        learn,
-        "close_open_attempt",
-        lambda *args, **kw: None if selection == [] else SimpleNamespace(question_ext_ids=selection),
-    )
+    # learn.submit reads the open attempt WITHOUT closing it (Learning grades
+    # against its bank-version pin) and closes it after a successful submit.
+    def open_attempt(db, **kw):
+        assert db is session
+        assert kw == {"tenant_id": tenant_id, "person_id": person_id, "activity_id": activity_id}
+        calls.append("open_attempt")
+        return None if selection == [] else SimpleNamespace(question_ext_ids=selection, bank_version_id=None)
+
+    def close_attempt(db, **kw):
+        assert db is session
+        assert kw == {"tenant_id": tenant_id, "person_id": person_id, "activity_id": activity_id}
+        calls.append("close")
+
+    monkeypatch.setattr(learn, "get_open_attempt", open_attempt)
+    monkeypatch.setattr(learn, "close_open_attempt", close_attempt)
+    monkeypatch.setattr(learn.learning_policy, "feedback_reveal_terms", lambda db: "terms")
 
     def questions(db, **kw):
         assert db is session
@@ -144,6 +155,7 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
             "tenant_id": tenant_id,
             "bank_id": bank_id,
             "only_ext_ids": selection,
+            "bank_version_id": activity.bank_version_id,
         }
         calls.append("questions")
         return selected
@@ -156,7 +168,7 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
 
     def display(db, **kw):
         assert db is session
-        assert kw == {"tenant_id": tenant_id, "bank_id": bank_id}
+        assert kw == {"tenant_id": tenant_id, "bank_id": bank_id, "bank_version_id": activity.bank_version_id}
         calls.append("display")
         return stored
 
@@ -183,7 +195,10 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
     assert captured["submission"]["answers"] == expected
     assert captured["submission"]["only_ext_ids"] == selection
     assert captured["submission"]["activity"] is activity
-    assert calls == ["questions", "submit", "display", "course"]
+    pooled = question_count is not None
+    expected_calls = (["open_attempt"] if pooled else []) + ["questions", "submit"]
+    expected_calls += (["close"] if pooled else []) + ["display", "course"]
+    assert calls == expected_calls
     context = captured["context"]
     assert context["score"] is score and context["reveal"] is True
     assert context["course"] is None and context["course_completion"] is None

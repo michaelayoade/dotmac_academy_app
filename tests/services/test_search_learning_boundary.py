@@ -129,9 +129,17 @@ def test_owner_fact_order_and_population_are_not_sorted_or_recapped(monkeypatch)
     courses = tuple(_course(tenant, index) for index in range(23, 0, -1))
     chapters = tuple(_chapter(course, index) for index, course in enumerate(courses, 1))
     facts = SearchResults("Needle", courses, chapters)
-    monkeypatch.setattr(facade, "search_learning", lambda *args, **kwargs: facts)
-    monkeypatch.setattr(facade, "_CAP", 0)
+    seen = []
+
+    def owner(*args, **kwargs):
+        seen.append(kwargs)
+        return facts
+
+    monkeypatch.setattr(facade, "search_learning", owner)
+    # The limit is a policy value handed to the owner, never re-applied here.
+    monkeypatch.setattr(facade, "effective", lambda db, **kw: {"learning_search_limit": 7})
     result = facade.search(_NoDatabaseUse(), tenant_id=tenant, person_id=person, q="Needle", is_staff=True)
+    assert [kwargs["limit"] for kwargs in seen] == [7]
     assert len(result["courses"]) == 23 and len(result["chapters"]) == 23
     assert [row["slug"] for row in result["courses"]] == [course.slug for course in courses]
     assert [row["course_slug"] for row in result["chapters"]] == [hit.course_slug for hit in chapters]

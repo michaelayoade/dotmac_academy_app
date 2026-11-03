@@ -235,12 +235,17 @@ def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, 
 
     monkeypatch.setattr(outbox_svc, "send_email_detailed", fake_send)
 
+    # Issue a real certificate through its owner; the email carries that fact.
+    from app.services.certificates import issue_certificate
+
+    certificate = issue_certificate(admin_session, tenant_id=tenant_a.id, person_id=person.id, course_id=course.id)
     ok = completion_svc._email_certificate(
         admin_session,
         tenant_id=tenant_a.id,
         person_id=person.id,
         course_id=course.id,
         course_title="Cert Course",
+        certificate=certificate,
     )
     assert ok
     admin_session.commit()

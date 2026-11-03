@@ -22,6 +22,7 @@ from app.services.exceptions import NotFoundError
 from app.services.lookups import cohort_or_404
 from tests.owner_helpers import person as _person
 from tests.services.test_analytics_owner import _score
+from tests.services.test_canonical_invitation_issuance import _set_actor_role
 from tests.web.test_bookmarks_owner import _request
 from tests.web.test_reports_access_policy import _restore_settings
 
@@ -126,23 +127,27 @@ def test_actual_instructor_routes_render_owner_results_and_cohort_404(current_ac
     from app.web import instructor as routes
 
     a = current_account
+    # The routes now require teaching access for the authenticated person
+    # (an instructor grant is global staff); they take ``person`` before ``db``.
+    _set_actor_role(a, "instructor")
     cid, foreign, aid, _, _, _ = _seed(a, tenant_b.id)
     request = _request(a.tenant, a.token)
-    dashboard = routes.cohort_dashboard(cid, request, a.db)
+    person = a.login_snapshot
+    dashboard = routes.cohort_dashboard(cid, request, person=person, db=a.db)
     assert {"request", "cohort", "rows"}.issubset(dashboard.context)
     assert dashboard.context["cohort"].id == cid and len(dashboard.context["rows"]) == 2
     assert b"Read owner cohort" in dashboard.body and b"40%" in dashboard.body
     assert b"At risk" in dashboard.body and b"On track" in dashboard.body
-    analysis = routes.item_analytics(aid, request, a.db)
+    analysis = routes.item_analytics(aid, request, person=person, db=a.db)
     assert {"request", "activity", "items"}.issubset(analysis.context)
     assert analysis.context["activity"].pass_threshold == 0.73
     assert len(analysis.context["items"]) == 2
     assert b"0.50" in analysis.body and b"Offered A" in analysis.body
     for hidden in (foreign, uuid4()):
         with pytest.raises(NotFoundError):
-            routes.cohort_dashboard(hidden, request, a.db)
+            routes.cohort_dashboard(hidden, request, person=person, db=a.db)
     with pytest.raises(HTTPException) as caught:
-        routes.item_analytics(uuid4(), request, a.db)
+        routes.item_analytics(uuid4(), request, person=person, db=a.db)
     assert caught.value.status_code == 404
 
 

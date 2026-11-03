@@ -249,7 +249,7 @@ def test_comparison_and_csv_helper_preserve_owner_order_and_duplicates(monkeypat
     assert rows[0]["completion_pct"] == 50 and rows[1]["completion_pct"] == 0
     assert rows[1]["learners"] == 0 and rows[1]["completed"] == 0
     assert insights._cohort_course_ids(session, tenant_id, cohort_id) is courses
-    html = _render("instructor/reports_index.html", comparison=rows, cohorts=[])
+    html = _render("instructor/reports_index.html", comparison=rows, cohorts=[], insight_terms=COHORT_TERMS)
     assert html.index("Alpha") < html.index("ALPHA")
     assert "50%" in html and "0%" in html
 

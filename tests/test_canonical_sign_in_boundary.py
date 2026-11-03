@@ -67,14 +67,15 @@ def test_web_session_precedes_roles_and_cookie_contract(monkeypatch, slugs, targ
         assert kwargs["tenant_id"] == tid
         return SimpleNamespace(account=SimpleNamespace(id=pid), session_token="response-only")
 
-    def roles(db, tenant_id, party_id):
-        assert calls == ["session"] and (tenant_id, party_id) == (tid, pid)
-        calls.append("roles")
-        return slugs
+    def access(db, *, tenant_id, person_id):
+        assert calls == ["session"] and (tenant_id, person_id) == (tid, pid)
+        calls.append("access")
+        return SimpleNamespace(can_teach=bool(slugs & {"instructor", "admin"}), is_admin="admin" in slugs)
 
     monkeypatch.setattr(web.web_auth, "sign_in", operation)
-    monkeypatch.setattr(web, "role_slugs", roles)
+    monkeypatch.setattr(web, "facilitator_access", access)
     response = web.login(request(False, True), "user@a.edu", "chosen9", object())
+    assert calls == ["session", "access"]
     assert response.status_code == 303 and response.headers["location"] == target
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" in cookie

@@ -669,18 +669,22 @@ def _explicit_learning_policy_settings(monkeypatch):
 
     original = settings_store.effective
 
+    overrides = {
+        "learning_missing_question_weight": 1,
+        "learning_default_extra_attempts": 1,
+        "learning_default_course_status": "published",
+        "learning_default_course_listed": False,
+        "learning_exam_seconds_per_question": 12.0,
+        "learning_exam_near_chance_margin": 1.33,
+        "learning_exam_fallback_score_floor": 1.0 / 3.0,
+        "learning_exam_fallback_duration_seconds": 360.0,
+    }
+
     def effective(db, *, require_store=False):
         if require_store:
-            return {
-                "learning_missing_question_weight": 1,
-                "learning_default_extra_attempts": 1,
-                "learning_default_course_status": "published",
-                "learning_default_course_listed": False,
-                "learning_exam_seconds_per_question": 12.0,
-                "learning_exam_near_chance_margin": 1.33,
-                "learning_exam_fallback_score_floor": 1.0 / 3.0,
-                "learning_exam_fallback_duration_seconds": 360.0,
-            }
+            # A real EffectiveSettings (attribute access, other policies intact)
+            # with only the learning characterization keys replaced.
+            return settings_store.EffectiveSettings({**vars(original(None)), **overrides})
         return original(db)
 
     monkeypatch.setattr(settings_store, "effective", effective)

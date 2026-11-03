@@ -50,6 +50,19 @@ def _setup(monkeypatch, *, activity_missing=False, uncapped=False):
         return None if activity_missing else activity
 
     monkeypatch.setattr(instructor, "get_activity", get_activity)
+
+    # The #188 scope checks run before the grant; both must receive the
+    # authenticated person, never a client-supplied id.
+    def course_ids(db, *, tenant_id: object, instructor_id: object):
+        assert db is session and instructor_id == person.id
+        return {activity.course_id}
+
+    def person_ids(db, *, tenant_id: object, instructor_id: object, course_id: object):
+        assert db is session and instructor_id == person.id and course_id == activity.course_id
+        return frozenset({target_id})
+
+    monkeypatch.setattr(instructor, "_assessment_course_ids", course_ids)
+    monkeypatch.setattr(instructor, "_assessment_person_ids_for_course", person_ids)
     monkeypatch.setattr(kernel_audit, "host_application_or_none", lambda: "academy.installed.test")
     monkeypatch.setattr(instructor, "hx_redirect", lambda request, url: ("redirect", url))
     return session, tenant_id, person, target_id, activity_id, request
