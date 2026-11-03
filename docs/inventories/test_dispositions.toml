@@ -360,3 +360,11 @@ replacement = ["tests/web/test_teaching_home_owner.py::test_teaching_policy_sepa
 dropped_tests = []
 spec = "M15, #188 cohort scope: the admin grant is replaced by a settings-only custom role, because admin reaches teaching as global staff through the facilitator fallback (teaching_access.py:23-27). The policy refusal and the foreign-cookie refusal are kept; a cohort nomination is added as a positive control."
 evidence = "verified: app/services/teaching_access.py read; census failure 125 (DID NOT RAISE) matches."
+
+[[rewritten]]
+old_path = "tests/services/test_lab_operations_worker.py"
+class = "rewrite"
+replacement = ["tests/services/test_lab_operations_worker.py::test_unknown_recovery_uses_explicit_policy_fallback_and_retains_terminal_stamp"]
+dropped_tests = []
+spec = "M16(a): the legacy-unknown kind cannot exist under ck_lab_operations_kind, so the unknown-kind lease and attempt fallback is proved on the execution policy and on _claimed_duration with an in-memory operation, with no database row. The retained-stamp property is kept; the DB-level reconcile of such a row is not representable and is not claimed."
+evidence = "verified: app/services/lab_operations.py claim_next, reconcile_stuck and _claimed_duration read; app/config.py lease_seconds and max_attempts read."

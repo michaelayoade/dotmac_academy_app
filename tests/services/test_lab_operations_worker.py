@@ -4956,30 +4956,24 @@ def test_policy_stamp_or_engine_identity_mismatch_refuses_before_external_work(a
     db.rollback()
 
 
-def test_unknown_recovery_uses_explicit_policy_fallback_and_retains_terminal_stamp(admin_session, tenant_a, policy):
-    db = admin_session
+def test_unknown_recovery_uses_explicit_policy_fallback_and_retains_terminal_stamp(policy):
+    # ck_lab_operations_kind admits only deploy/destroy/check, so an unknown-kind
+    # row cannot exist in the canonical database. The fallback is therefore
+    # proved on the policy and on the in-memory stamp reader, with no DB row.
     custom = replace(_small_policy(policy), lab_operation_unknown_lease_seconds=7, lab_operation_unknown_max_attempts=2)
-    instance, person = _seed(db, tenant_a.id, name="unknown-lease")
-    op = lab_operations.enqueue(db, instance=instance, kind="deploy", requested_by=person.id)
-    op.kind = "legacy-unknown"
-    db.flush()
-    claimed = lab_operations.claim_next(db, claimed_by="unknown", policy=custom)
-    assert claimed.claim_lease_seconds == 7
-    claimed.attempts = 2
-    operation_id = op.id
-    db.commit()
-    db.execute(
-        update(LabOperation)
-        .where(LabOperation.id == operation_id)
-        .values(heartbeat_at=func.clock_timestamp() - text("interval '8 seconds'"))
-    )
-    db.commit()
-    assert lab_operations.reconcile_stuck(db, policy=custom) == 1
-    db.refresh(op)
-    assert op.state == "failed"
-    assert op.claim_lease_seconds == 7
-    assert op.kind == "legacy-unknown"
-    db.rollback()
+    # claim_next stamps policy.lease_seconds(op.kind); reconcile_stuck compares
+    # attempts with policy.max_attempts(op.kind).
+    assert custom.lease_seconds("legacy-unknown") == 7
+    assert custom.max_attempts("legacy-unknown") == 2
+    for kind in ("deploy", "destroy", "check"):
+        assert custom.lease_seconds(kind) == custom.lab_operation_lease_seconds_by_kind[kind]
+        assert custom.max_attempts(kind) == custom.lab_operation_max_attempts_by_kind[kind]
+    # The granted lease is retained on the operation: a later policy change to
+    # the fallback never rewrites a stamp already granted.
+    op = LabOperation(kind="legacy-unknown", state="claimed", claim_lease_seconds=custom.lease_seconds("legacy-unknown"))
+    changed = replace(custom, lab_operation_unknown_lease_seconds=11)
+    assert changed.lease_seconds(op.kind) == 11
+    assert lab_operations._claimed_duration(op) == 7
 
 
 def test_invalid_claim_duration_refuses_without_guessing(policy):
