@@ -344,3 +344,19 @@ replacement = ["tests/web/test_catalog_gradebook_owner.py::test_genuine_weighted
 dropped_tests = []
 spec = "M11(a), #188 cohort scope: route 200s hold an active cohort nomination; empty-deny and grant withdrawal are also proved at require_gradebook_access with the nomination withdrawn."
 evidence = "verified: app/services/gradebook_access.py and app/web/gradebook.py read; the revoked-session redirect expectation (302 with ?next=) is inferred from the other revoked-session tests."
+
+[[rewritten]]
+old_path = "tests/web/test_instructor_canonical_identity.py"
+class = "rewrite"
+replacement = ["tests/web/test_instructor_canonical_identity.py::test_rosters_keep_all_statuses_raw_names_and_candidate_profile_only_admission", "tests/web/test_instructor_canonical_identity.py::test_human_roster_requires_product_profile_without_deleting_subtype", "tests/web/test_instructor_canonical_identity.py::test_two_valid_tenant_rosters_and_candidates_keep_own_identity_membership", "tests/web/test_instructor_canonical_identity.py::test_results_tuple_keeps_inactive_suspended_human_email_and_score"]
+dropped_tests = []
+spec = "M15 (M11(a) family), #188 cohort scope: facilitators are active nominations, not instructor enrollments; routes are called with person= and a teaching scope (global-staff grant or active cohort nomination). Added refusals: no scope gives 403, and each actor is refused in the other tenant. All identity/status assertions are kept."
+evidence = "verified: app/web/instructor.py cohorts_list/cohort_detail/results and app/services/facilitator_access.py read; census failures 99-102 match."
+
+[[rewritten]]
+old_path = "tests/web/test_teaching_home_owner.py"
+class = "rewrite"
+replacement = ["tests/web/test_teaching_home_owner.py::test_teaching_policy_separate_from_settings_and_foreign_cookie"]
+dropped_tests = []
+spec = "M15, #188 cohort scope: the admin grant is replaced by a settings-only custom role, because admin reaches teaching as global staff through the facilitator fallback (teaching_access.py:23-27). The policy refusal and the foreign-cookie refusal are kept; a cohort nomination is added as a positive control."
+evidence = "verified: app/services/teaching_access.py read; census failure 125 (DID NOT RAISE) matches."

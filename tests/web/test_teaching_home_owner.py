@@ -24,6 +24,7 @@ from tests.conftest import login_location
 from tests.services.test_canonical_current_user import current_account
 from tests.services.test_notifications_owner import _party
 from tests.web.test_bookmarks_owner import _request
+from tests.web.test_reports_access_policy import _nominate_cohort
 from tests.web.test_settings_access_policy import _grant
 
 assert current_account
@@ -149,13 +150,20 @@ def test_teaching_live_cookie_status_and_session_refuse(current_account, app_cli
 
 def test_teaching_policy_separate_from_settings_and_foreign_cookie(current_account, tenant_b):
     a = current_account
-    _grant(a, "admin")
-    settings_store.set_many(a.admin, {KEY: '["teaching-custom"]', "settings_access_roles": '["admin"]'})
+    # M15 / #188: an admin grant reaches teaching as global staff through the
+    # facilitator fallback, so it cannot prove the policy is separate. A custom
+    # settings-only role holds no teaching authority of its own.
+    _grant(a, "settings-only")
+    settings_store.set_many(a.admin, {KEY: '["teaching-custom"]', "settings_access_roles": '["settings-only"]'})
     a.admin.commit()
     request = _request(a.tenant, a.token)
     with pytest.raises(HTTPException) as denied:
         require_teaching_access(request, require_web_user(request, a.db), a.db)
     assert denied.value.status_code == 403
+    # Positive control: an active cohort nomination (the #188 scope) admits the
+    # same account, so the refusal above was the policy and not the account.
+    _nominate_cohort(a)
+    assert require_teaching_access(request, require_web_user(request, a.db), a.db).id == a.pid
     with pytest.raises(HTTPException) as foreign:
         require_web_user(_request(tenant_b, a.token), a.db)
     assert foreign.value.status_code == 303

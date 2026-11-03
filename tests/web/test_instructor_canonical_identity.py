@@ -5,10 +5,12 @@ Requires the genuine migrated assembly via the hosted current-account fixture.
 """
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from dotmac_kernel.models import Party, PartyPerson, PartyRoleGrant, PartyType, Role
+from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 from starlette.requests import Request
 
@@ -18,6 +20,7 @@ from app.models.course import Course
 from app.models.identity_extensions import AcademyAccountProfile
 from app.web import instructor
 from tests.services.test_canonical_current_user import current_account
+from tests.web.test_reports_access_policy import _nominate_cohort
 
 assert current_account
 
@@ -68,6 +71,10 @@ def test_rosters_keep_all_statuses_raw_names_and_candidate_profile_only_admissio
         Enrollment(tenant_id=a.tid, cohort_id=cid, person_id=a.pid, role_in_cohort=role, status=enrollment_status)
     )
     a.admin.commit()
+    # Facilitators are active nominations (#188), not instructor enrollments.
+    nominated = role == "instructor" and enrollment_status == "active"
+    if nominated:
+        _nominate_cohort(a, cid)
     context = instructor.cohorts_list(request, person=a.login_snapshot, db=a.admin)
     ours = next(row for row in context["cohort_rows"] if row["cohort"].id == cid)
     row = next(row for row in ours["roster"] if row["person"].id == a.pid)
@@ -84,7 +91,7 @@ def test_rosters_keep_all_statuses_raw_names_and_candidate_profile_only_admissio
     assert ours["active_student_count"] == int(
         role == "student" and enrollment_status == "active" and profile_status == "active"
     )
-    assert (a.pid in {p.id for p in ours["facilitators"]}) is (role == "instructor" and enrollment_status == "active")
+    assert (a.pid in {item["person"].id for item in ours["facilitators"]}) is nominated
     available = next(row for row in context["cohort_rows"] if row["cohort"].id == spare_id)["available_facilitators"]
     assert sum(p.id == a.pid for p in available) == int(profile_status == "active")
     detail = instructor.cohort_detail(cid, request, person=a.login_snapshot, db=a.admin, limit=1, offset=0)
@@ -105,6 +112,12 @@ def test_human_roster_requires_product_profile_without_deleting_subtype(current_
     cid = cohort.id
     a.admin.add(Enrollment(tenant_id=a.tid, cohort_id=cid, person_id=a.pid, role_in_cohort="student", status="active"))
     a.admin.commit()
+    # Without a teaching scope the account is refused (#188); an active cohort
+    # nomination then grants exactly this cohort.
+    with pytest.raises(HTTPException) as refused:
+        instructor.cohorts_list(request, person=a.login_snapshot, db=a.admin)
+    assert refused.value.status_code == 403
+    _nominate_cohort(a, cid)
     context = instructor.cohorts_list(request, person=a.login_snapshot, db=a.admin)
     assert any(item["person"].id == a.pid for row in context["cohort_rows"] for item in row["roster"])
     a.admin.execute(delete(AcademyAccountProfile).where(AcademyAccountProfile.party_id == a.pid))
@@ -167,11 +180,17 @@ def test_two_valid_tenant_rosters_and_candidates_keep_own_identity_membership(cu
     )
     a.admin.commit()
     # Positive controls for both real tenant-local graphs; no malformed FK edges.
-    for request, own_cid, own_pid, other_cid, other_pid in (
-        (request_a, cid, a.pid, foreign_cid, foreign_pid),
-        (request_b, foreign_cid, foreign_pid, cid, a.pid),
+    foreign_account = SimpleNamespace(id=foreign_pid)  # routes read only person.id
+    # Teaching authority is tenant-local: each actor is refused in the other tenant.
+    for request, outsider in ((request_a, foreign_account), (request_b, a.login_snapshot)):
+        with pytest.raises(HTTPException) as refused:
+            instructor.cohorts_list(request, person=outsider, db=a.admin)
+        assert refused.value.status_code == 403
+    for request, actor, own_cid, own_pid, other_cid, other_pid in (
+        (request_a, a.login_snapshot, cid, a.pid, foreign_cid, foreign_pid),
+        (request_b, foreign_account, foreign_cid, foreign_pid, cid, a.pid),
     ):
-        context = instructor.cohorts_list(request, person=a.login_snapshot, db=a.admin)
+        context = instructor.cohorts_list(request, person=actor, db=a.admin)
         assert own_cid in {row["cohort"].id for row in context["cohort_rows"]}
         assert other_cid not in {row["cohort"].id for row in context["cohort_rows"]}
         own_row = next(row for row in context["cohort_rows"] if row["cohort"].id == own_cid)
@@ -179,7 +198,7 @@ def test_two_valid_tenant_rosters_and_candidates_keep_own_identity_membership(cu
         assert other_pid not in {item["person"].id for row in context["cohort_rows"] for item in row["roster"]}
         assert own_pid in {p.id for p in own_row["available_facilitators"]}
         assert other_pid not in {p.id for row in context["cohort_rows"] for p in row["available_facilitators"]}
-        detail = instructor.cohort_detail(own_cid, request, person=a.login_snapshot, db=a.admin, limit=12, offset=0)
+        detail = instructor.cohort_detail(own_cid, request, person=actor, db=a.admin, limit=12, offset=0)
         assert own_pid in {row["person"].id for row in detail["students"]}
         assert other_pid not in {row["person"].id for row in detail["students"]}
 
@@ -222,7 +241,13 @@ def test_results_tuple_keeps_inactive_suspended_human_email_and_score(current_ac
     )
     a.admin.add(score)
     a.admin.commit()
-    rows = instructor.results(request, db=a.admin)["rows"]
+    # Results need teaching access (#188): refused without it, global staff with it.
+    with pytest.raises(HTTPException) as refused:
+        instructor.results(request, person=a.login_snapshot, db=a.admin)
+    assert refused.value.status_code == 403
+    _instructor_grant(a)
+    a.admin.commit()
+    rows = instructor.results(request, person=a.login_snapshot, db=a.admin)["rows"]
     ours = [row for row in rows if row[2].submission_id == submission.id]
     assert len(ours) == 1
     email, title, result = ours[0]
