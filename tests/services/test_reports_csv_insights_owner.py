@@ -34,7 +34,6 @@ def test_roster_csv_keeps_best_grade_and_neutralizes_cells(current_account):
     a.admin.add(Score(tenant_id=a.tid, submission_id=sub.id, score=0, max_score=10,
                       fraction=0, passed=False, per_item=[], source="auto"))
     a.admin.flush()
-    a.admin.flush()
     # The raw fact the CSV is built from carries the formula; only the CSV cell is neutralised.
     fact = learning.cohort_roster_progress(a.admin, tenant_id=a.tid, cohort_id=cohort.id)
     forged = next(r for r in fact.rows if r.person.email == pa.email)
