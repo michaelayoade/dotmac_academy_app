@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dotmac_kernel.models import Party
 from sqlalchemy import select
 
 from app.models.auth import AuthSession
+from app.models.identity_extensions import AcademyAccountProfile
 from app.services.security import hash_password
-from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, login_location, make_person_credential, make_person_party, web_login
 
 
 def _login(app_client, admin_session, tenant, password="password1"):
@@ -88,11 +88,11 @@ def test_password_change_success(app_client, admin_session, tenant_a):
 
     admin_session.rollback()
     sessions = admin_session.scalars(
-        select(AuthSession).where(AuthSession.tenant_id == tenant_a.id).where(AuthSession.person_id == person.id)
+        select(AuthSession).where(AuthSession.tenant_id == tenant_a.id).where(AuthSession.party_id == person.id)
     ).all()
     assert sessions and all(session.revoked_at is not None for session in sessions)
     revoked = app_client.get("/account", headers=h, follow_redirects=False)
-    assert revoked.status_code == 302 and revoked.headers["Location"] == "/login"
+    assert revoked.status_code == 302 and revoked.headers["Location"] == login_location("/account")
 
     # New password works; old does not.
     assert _can_login(app_client, h, csrf, "brandnew2") is True
@@ -113,8 +113,8 @@ def test_avatar_upload_sets_path(app_client, admin_session, tenant_a):
 
     # avatar_path now persisted + rendered on the profile page.
     admin_session.expire_all()
-    person = admin_session.get(Party, p.id)
-    assert person.avatar_path == f"/static/avatars/{tenant_a.id}/{p.id}.png"
+    profile = admin_session.get(AcademyAccountProfile, p.id)
+    assert profile.avatar_path == f"/static/avatars/{tenant_a.id}/{p.id}.png"
 
     r = app_client.get("/account", headers=h)
     assert "/static/avatars/" in r.text
@@ -132,7 +132,7 @@ def test_avatar_upload_rejects_non_image(app_client, admin_session, tenant_a):
     assert "image" in r.text.lower() or "PNG" in r.text
 
     admin_session.expire_all()
-    assert admin_session.get(Party, p.id).avatar_path is None
+    assert admin_session.get(AcademyAccountProfile, p.id).avatar_path is None
 
 def test_notifications_toggle_persists(app_client, admin_session, tenant_a):
     p, h, csrf = _login(app_client, admin_session, tenant_a)
@@ -146,7 +146,7 @@ def test_notifications_toggle_persists(app_client, admin_session, tenant_a):
     assert r.status_code == 200
 
     admin_session.expire_all()
-    prefs = admin_session.get(Party, p.id).prefs
+    prefs = admin_session.get(AcademyAccountProfile, p.id).prefs
     assert prefs.get("email_results") is False
     assert prefs.get("email_digest") is True
 

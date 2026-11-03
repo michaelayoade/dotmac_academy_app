@@ -340,7 +340,7 @@ def test_admin_resends_invitation_extends_deadline_and_audits(app_client, admin_
     event = admin_session.scalars(
         select(AuditEvent).where(AuditEvent.entity_id == str(applicant.id)).where(AuditEvent.action == "applicant.invitation_resent")
     ).one()
-    assert event.actor_person_id == actor.id
+    assert event.actor_party_id == actor.id
     assert event.details["extended_access"] is True
 
 def test_resend_invitation_without_extension_preserves_active_deadline(app_client, admin_session, tenant_a):

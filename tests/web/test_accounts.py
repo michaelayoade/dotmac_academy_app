@@ -67,7 +67,7 @@ def test_instructor_can_create_student(app_client, admin_session, tenant_a):
     )
     cred = (
         admin_session.query(UserCredential)
-        .filter(UserCredential.tenant_id == tenant_a.id, UserCredential.person_id == person.id)
+        .filter(UserCredential.tenant_id == tenant_a.id, UserCredential.party_id == person.id)
         .one()
     )
     assert cred is not None

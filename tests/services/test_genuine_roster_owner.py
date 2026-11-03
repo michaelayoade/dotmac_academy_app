@@ -95,7 +95,7 @@ def test_one_policy_snapshot_after_guard_and_cohort_before_actual_owner(roster_a
     actors, a = roster_actors, roster_actors.account
     cid = _cohort(a)
     order = []
-    cohort_exists, policy, owner = roster.learning.cohort_exists, roster.bulk_enrollment_policy, roster.learning.bulk_enroll
+    cohort_exists, policy, owner = roster.learning.instructor_cohort_exists, roster.bulk_enrollment_policy, roster.learning.bulk_enroll
 
     def cohort_read(*args, **kw):
         order.append("cohort")
@@ -109,7 +109,7 @@ def test_one_policy_snapshot_after_guard_and_cohort_before_actual_owner(roster_a
         order.append("owner")
         return owner(*args, **kw)
 
-    monkeypatch.setattr(roster.learning, "cohort_exists", cohort_read)
+    monkeypatch.setattr(roster.learning, "instructor_cohort_exists", cohort_read)
     monkeypatch.setattr(roster, "bulk_enrollment_policy", snapshot)
     monkeypatch.setattr(roster.learning, "bulk_enroll", write)
     assert _bulk(actors, cid)["enrolled"] == [actors.instructor.email]

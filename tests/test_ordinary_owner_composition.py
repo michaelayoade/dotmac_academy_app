@@ -38,7 +38,13 @@ def test_ordinary_factory_uses_all_actual_owner_declarations():
     assert registry.startup_order() == ModuleRegistry(OWNER_DECLARATIONS).startup_order()
     assert assembly.modules == OWNER_DECLARATIONS
     assert registry.get("learning") is learning_module
-    assert registry.codes() == {"academy", "learning", "academy_invitations", "academy_admissions"}
+    assert registry.codes() == {
+        "academy",
+        "learning",
+        "academy_invitations",
+        "academy_admissions",
+        "academy_reminders",
+    }
     assert any(middleware.cls is AcademyInstrumentationMiddleware for middleware in app.user_middleware)
     graph = inspect_owner_registry(registry, declarations=OWNER_DECLARATIONS)
     assert {key for key, owner in graph.owners.items() if owner == "learning"} == {
