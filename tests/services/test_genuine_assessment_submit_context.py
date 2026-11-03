@@ -12,10 +12,11 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 import pytest
-from dotmac_kernel.audit import AuditEvent
+from dotmac_kernel.audit import AuditEvent, write_audit_event
 from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_learning import TransactionChanged
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import PendingRollbackError, ProgrammingError
 from starlette.requests import Request
 
 from app import admission_assessment_context as boundary
@@ -175,7 +176,7 @@ def test_actual_producer_failures_roll_back_result_and_keep_prior_work(assessmen
     assert c.a.db.get(Cohort, c.cohort_id).name == "Prior work"
 
 
-@pytest.mark.parametrize("fault", ["score", "profile", "version", "token", "outbox", "audit", "policy", "expiry"])
+@pytest.mark.parametrize("fault", ["score", "profile", "version", "token", "outbox", "policy", "expiry"])
 def test_late_tamper_sticks_through_caught_commit_denial(assessment_case, fault):
     c = assessment_case
     result = _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
@@ -191,12 +192,51 @@ def test_late_tamper_sticks_through_caught_commit_denial(assessment_case, fault)
     elif fault == "outbox":
         c.a.db.scalars(select(EmailOutbox).where(EmailOutbox.kind == "onboarding_invite",
                                                EmailOutbox.tenant_id == c.a.tid)).first().html_body = "tampered"
-    elif fault == "audit":
-        _audit(c)[0].actor_id = "forged"
     elif fault == "policy":
         c.a.db.execute(update(Cohort).where(Cohort.id == c.cohort_id).values(auto_accept_threshold=.99))
     else:
         row.assessment_deadline = datetime.now(UTC) - timedelta(seconds=1)
+    with pytest.raises(boundary.AssessmentSubmissionError):
+        c.a.db.commit()
+    with pytest.raises(boundary.AssessmentSubmissionError):
+        c.a.db.commit()
+    c.a.db.rollback()
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
+    assert c.a.db.get(Applicant, c.id).assessment_taken_at is None
+    assert _audit(c) == []
+
+
+def test_late_audit_update_is_refused_by_the_database(assessment_case):
+    """The runtime role cannot rewrite the append-only audit trail: PostgreSQL says so."""
+    c = assessment_case
+    _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
+    _audit(c)[0].actor_id = "forged"
+    with pytest.raises(ProgrammingError) as first:
+        c.a.db.commit()
+    assert first.value.orig.sqlstate == "42501" and "audit_events" in str(first.value.orig)
+    with pytest.raises((PendingRollbackError, boundary.AssessmentSubmissionError)):
+        c.a.db.commit()
+    c.a.db.rollback()
+    resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
+    assert not c.a.db.scalar(text(
+        "SELECT has_table_privilege('app_user', 'audit_events', 'UPDATE') "
+        "OR has_table_privilege('app_user', 'audit_events', 'DELETE')"
+    ))
+    row = c.a.db.get(Applicant, c.id)
+    assert row.assessment_taken_at is None
+    assert _audit(c) == []
+
+
+def test_late_forged_audit_row_is_detected_by_the_consequence_inventory(assessment_case):
+    """One extra audit row for the same applicant (INSERT only) breaks the inventory."""
+    c = assessment_case
+    _submit(c, answers={f"q{i}": ["A"] for i in range(1, 5)})
+    write_audit_event(
+        c.a.db, tenant_id=c.a.tid, actor_type="system", actor_id="forged", actor_party_id=None,
+        actor_label=None, source_application="dotmac_academy_app", action="applicant.transition",
+        entity_type="applicant", entity_id=str(c.id), details={"source": "forged"}, is_success=None,
+        request_id=None, status_code=None, ip_address=None, user_agent=None,
+    )
     with pytest.raises(boundary.AssessmentSubmissionError):
         c.a.db.commit()
     with pytest.raises(boundary.AssessmentSubmissionError):
