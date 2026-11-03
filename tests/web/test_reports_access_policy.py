@@ -17,7 +17,7 @@ from app.services import settings_store
 from app.services.identity import AcademyCurrentAccount
 from app.services.reports_access import require_reports_access
 from app.services.web_auth import require_web_user
-from tests.conftest import grant_role
+from tests.conftest import grant_role, login_location
 from tests.services.test_canonical_current_user import _request
 
 KEY = "reports_access_roles"
@@ -137,7 +137,7 @@ def test_revoked_session_denies_every_reports_route(current_account, app_client)
     assert stale_session.revoked_at is None
     responses = _all_routes(app_client, headers)
     assert [r.status_code for r in responses] == [302] * 11
-    assert all(r.headers["Location"] == "/login" for r in responses)
+    assert all(r.headers["Location"] == login_location(r.request.url.path) for r in responses)
 
 
 @pytest.mark.parametrize("raw", [None, "null", "", "{}", "true", '["owner","owner"]', '[" owner"]', '[1]'])

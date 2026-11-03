@@ -8,6 +8,7 @@ Original tests/web/test_account.py remains intact in its legacy cohort.
 from dotmac_kernel.models import AuthSession
 from sqlalchemy import select
 
+from tests.conftest import login_location
 from tests.web.test_canonical_self_profile import profile_client
 
 assert profile_client
@@ -51,7 +52,7 @@ def test_password_change_success(profile_client):
     ).all()
     assert sessions and all(session.revoked_at is not None for session in sessions)
     revoked = app_client.get("/account", headers=h, follow_redirects=False)
-    assert revoked.status_code == 302 and revoked.headers["Location"] == "/login"
+    assert revoked.status_code == 302 and revoked.headers["Location"] == login_location("/account")
     assert _can_login(app_client, h, csrf, a.email, "brandnew2") is True
     assert _can_login(app_client, h, csrf, a.email, "chosen-password9") is False
 

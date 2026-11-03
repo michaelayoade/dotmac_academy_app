@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.services import notifications as notif_svc
 from app.services.security import hash_password
-from tests.conftest import grant_role, make_person_credential, make_person_party, web_login
+from tests.conftest import grant_role, login_location, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -29,7 +29,7 @@ def test_notifications_requires_auth(app_client, tenant_a):
     r = app_client.get("/notifications", headers=H, follow_redirects=False)
     # The kernel facet auth redirects (302) before Academy's own 303 guard.
     assert r.status_code == 302
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == login_location("/notifications")
 
 def test_notifications_list_200(app_client, admin_session, tenant_a):
     """Authenticated user gets 200 on /notifications."""

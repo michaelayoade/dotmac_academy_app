@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from urllib.parse import quote
 from uuid import uuid4
 
 import pytest
@@ -301,6 +302,11 @@ def client_for(client: TestClient, tenant_slug: str) -> TestClient:
     """Wrap a TestClient so every request carries Host: {slug}.localhost."""
     client.headers.update({"Host": f"{tenant_slug}.localhost"})
     return client
+
+
+def login_location(path: str) -> str:
+    """Exact kernel redirect for an unauthenticated request to ``path``."""
+    return "/login?next=" + quote(path, safe="")
 
 
 def csrf_for(client: TestClient, headers, path: str) -> str:

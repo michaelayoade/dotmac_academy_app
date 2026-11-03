@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.models.cohort import Cohort
 from app.services.bootstrap import ensure_roles
 from app.services.security import hash_password
-from tests.conftest import make_person_credential, make_person_party, web_login
+from tests.conftest import login_location, make_person_credential, make_person_party, web_login
 
 H = {"Host": "alpha.localhost"}
 
@@ -40,7 +40,7 @@ def test_announcements_requires_auth(app_client, tenant_a):
     r = app_client.get("/announcements", headers=H, follow_redirects=False)
     # The kernel facet auth redirects (302) before Academy's own 303 guard.
     assert r.status_code == 302
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == login_location("/announcements")
 
 def test_announcements_learner_200(app_client, admin_session, tenant_a):
     _make_user(admin_session, tenant_a, "ann_l200@a.edu")

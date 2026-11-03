@@ -21,6 +21,7 @@ from app.models.course import Course
 from app.models.lab import LabInstance
 from app.models.offering import CourseOffering
 from app.web.labs import _console_target
+from tests.conftest import login_location
 
 
 def _entitled_activity(admin_session, tenant, person_id):
@@ -157,7 +158,7 @@ def test_unauthenticated_redirects(app_client, admin_session, tenant_a):
     )
     # The kernel facet auth redirects (302) before Academy's own 303 guard.
     assert r.status_code == 302
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == login_location(f"/labs/instances/{li.id}/console/r1")
 
 
 # --- non-live instances must never reach a console (security hotfix) --------
