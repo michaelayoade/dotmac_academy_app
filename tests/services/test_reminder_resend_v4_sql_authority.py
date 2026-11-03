@@ -353,7 +353,8 @@ def test_unsupported_completion_family_never_reaches_original(current_account, m
     _refused_effects(a, lid)
 
 
-def _pending(a, mutation):
+def _pending(a, mutation, allowed=None):
+    """Pending change; ``allowed`` is the ``(grant_id, slug)`` that ``_allow`` returned."""
     if mutation == "session":
         row = a.db.get(AuthSession, a.session_id)
         row.revoked_at = datetime.now(UTC)
@@ -370,12 +371,10 @@ def _pending(a, mutation):
         row = a.db.get(PlatformSetting, "reminders_admin_access_roles")
         row.value = "[]"
     elif mutation == "grant":
-        row = a.db.scalars(select(PartyRoleGrant).where(PartyRoleGrant.tenant_id == a.tid,
-            PartyRoleGrant.party_id == a.pid)).first()
+        row = a.db.get(PartyRoleGrant, allowed[0])
         a.db.delete(row)
     elif mutation == "role":
-        grant = a.db.scalars(select(PartyRoleGrant).where(PartyRoleGrant.tenant_id == a.tid,
-            PartyRoleGrant.party_id == a.pid)).first()
+        grant = a.db.get(PartyRoleGrant, allowed[0])
         row = a.db.get(Role, grant.role_id)
         row.slug = "unselected-role"
     elif mutation == "pk":
@@ -392,9 +391,9 @@ def _pending(a, mutation):
 @pytest.mark.parametrize("mutation", ["session", "party", "profile", "person", "policy", "grant", "role", "pk", "new"])
 def test_initial_preflight_preserves_native_pending_state_and_history(current_account, mutation):
     a = current_account
-    _allow(a)
+    allowed = _allow(a)
     lid = _log(a)
-    row = _pending(a, mutation)
+    row = _pending(a, mutation, allowed)
     before = dict(inspect(row).dict)
     before_history = tuple((attr.key, attr.history) for attr in inspect(row).attrs
                            if attr.history.has_changes())
@@ -452,10 +451,20 @@ def _assert_native_flush_rollback(a, row, evidence, lid):
 def test_native_logical_flush_preserves_revocation_then_refuses_fresh_authority(current_account, mutation, monkeypatch):
     from fastapi import HTTPException
     a = current_account
-    _allow(a)
+    allowed = _allow(a)
     lid = _log(a)
     _invoke(a, lid)
-    row = _pending(a, mutation)
+    if mutation in ("grant", "role"):
+        # The account also holds the standard student grant. It must grant nothing
+        # under the policy, so the pending change below is the only authority.
+        remaining = a.admin.scalars(
+            select(Role.slug).join(PartyRoleGrant, PartyRoleGrant.role_id == Role.id)
+            .where(PartyRoleGrant.tenant_id == a.tid, PartyRoleGrant.party_id == a.pid,
+                   PartyRoleGrant.id != allowed[0])
+        ).all()
+        a.admin.rollback()
+        assert remaining and allowed[1] not in remaining
+    row = _pending(a, mutation, allowed)
     def changed():
         state = inspect(row)
         if mutation == "session":
@@ -487,6 +496,13 @@ def test_native_logical_flush_preserves_revocation_then_refuses_fresh_authority(
         with pytest.raises((HTTPException, ReminderResendError)):
             a.db.commit()
         _assert_native_flush_rollback(a, row, evidence, lid)
+        if mutation == "role":
+            # Nothing renamed may stay committed on the shared tenant roles.
+            a.admin.rollback()
+            assert a.admin.scalar(select(Role.id).where(Role.tenant_id == a.tid,
+                                                        Role.slug == "unselected-role")) is None
+            assert a.admin.scalar(select(Role.id).where(Role.tenant_id == a.tid, Role.slug == allowed[1]))
+            a.admin.rollback()
 
 
 @pytest.mark.parametrize("entry", ["session", "root", "context"])
@@ -933,11 +949,14 @@ def test_returned_command_privileged_policy_revocation_uses_fresh_authority(curr
     lid = _log(a)
     _invoke(a, lid)
     _actual_effects(a, lid)
-    # admin_session uses MIGRATION_DATABASE_URL: this is the existing privileged
-    # fixture, never a claim of restricted platform_api login coverage.
+    # admin_session uses MIGRATION_DATABASE_URL: the non-superuser app_admin (the
+    # pin requires it not to be a superuser). It can still write platform_settings,
+    # which is all the revocation below needs.
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
     a.admin.rollback()
-    assert a.admin.scalar(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")) is True
+    assert a.admin.scalar(text("SELECT current_user")) == "app_admin"
+    assert a.admin.scalar(text("SELECT has_table_privilege(current_user, 'public.platform_settings', 'UPDATE')"))
+    a.admin.rollback()
     settings_store.set_many(a.admin, {"reminders_admin_access_roles": "[]"})
     a.admin.commit()
     a.admin.expire_all()
