@@ -380,8 +380,10 @@ def test_real_login_edit_route_keeps_parsing_and_redirects(roster_actors, app_cl
         follow_redirects=False,
     )
     assert missing.status_code == 422
+    body = missing.json()
+    assert body["code"] == "validation_error"
     assert any(
-        error["loc"] == ["body", "starts_at"] and error["type"] == "missing" for error in missing.json()["detail"]
+        error["loc"] == ["body", "starts_at"] and error["msg"] == "Field required" for error in body["details"]
     )
     response = app_client.post(
         f"/instructor/sessions/{sid}/edit",

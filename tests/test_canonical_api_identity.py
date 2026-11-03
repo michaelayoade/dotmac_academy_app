@@ -145,7 +145,8 @@ def test_api_email_exact_discovery_and_canonical_lower_no_trim_index(api_admin, 
     )
     assert response.status_code == expected, response.text
     if expected == 409:
-        assert response.json()["detail"] == "Email already registered"
+        body = response.json()
+        assert body["code"] == "conflict" and body["message"] == "Email already registered"
     assert a.admin.scalar(select(Party.email).where(Party.email == stored)) == stored
 
 
@@ -157,12 +158,14 @@ def test_roles_exact_fields_duplicate_nonidempotence_and_grant_duplicate(api_adm
     role = response.json()
     assert set(role) == {"id", "slug", "name"} and role["name"] == " Exact Name "
     duplicate = a.client.post("/rbac/roles", headers=a.headers, json={"slug": slug, "name": "Other"})
-    assert duplicate.status_code == 409 and duplicate.json()["detail"] == "Role already exists"
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "conflict" and duplicate.json()["message"] == "Role already exists"
     pid = _target(a, active=False, status="suspended")
     body = {"person_id": str(pid), "role_id": role["id"]}
     assert a.client.post("/rbac/role-grants", headers=a.headers, json=body).status_code == 204
     duplicate = a.client.post("/rbac/role-grants", headers=a.headers, json=body)
-    assert duplicate.status_code == 409 and duplicate.json()["detail"] == "Role already assigned"
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "conflict" and duplicate.json()["message"] == "Role already assigned"
     assert (
         a.client.post("/rbac/role-grants", headers=a.headers, json={**body, "role_id": str(uuid4())}).status_code == 404
     )
@@ -192,7 +195,8 @@ def test_nonself_delete_surviving_actor_and_missing_target(api_admin):
     assert response.status_code == 204 and response.content == b""
     assert a.client.get("/people", headers=a.headers).status_code == 200
     missing = a.client.delete(f"/people/{pid}", headers=a.headers)
-    assert missing.status_code == 404 and missing.json()["detail"] == "Person not found"
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "not_found" and missing.json()["message"] == "Person not found"
     event_row = a.db.scalar(
         select(AuditEvent).where(AuditEvent.action == "person.delete", AuditEvent.entity_id == str(pid))
     )
