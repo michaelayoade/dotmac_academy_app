@@ -21,14 +21,12 @@ from __future__ import annotations
 from html import escape
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.exceptions import BadRequestError, ForbiddenError
 from dotmac_kernel.identity_storage import ensure_grant, lock_grants, remove_grants
 from dotmac_kernel.models import Party, PartyPerson, PartyType
 from dotmac_kernel.transactions import conflict_savepoint
-from dotmac_kernel.web_surfaces import surface_path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import or_, select
@@ -61,6 +59,7 @@ from app.services.web_account_authority import (
     revalidate_web_admin_write,
 )
 from app.services.web_auth import require_web_user
+from app.web.email_links import absolute_surface_link
 from app.web.responses import hx_redirect
 from app.web.templating import templates
 
@@ -303,7 +302,7 @@ def users_invite(
         token = result.token
         existing_user = not result.created_person
         assignments = result.assignments
-        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}" if token else ""
+        link = absolute_surface_link(request, 'accept_form', token=token) if token else ""
         assignment_html = ""
         assignment_text = ""
         if assignments:
@@ -388,7 +387,7 @@ def users_reset_link(
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    link = f"{surface_path(request, 'reset_form')}?{urlencode({'token': token})}"
+    link = absolute_surface_link(request, 'reset_form', token=token)
     sent = enqueue_email(
         db,
         tenant_id=tenant.id,
@@ -435,7 +434,7 @@ def users_invite_link(
                 )
             )
         token = result.token
-        link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': token})}"
+        link = absolute_surface_link(request, 'accept_form', token=token)
         sent = enqueue_email(
             db,
             tenant_id=tenant.id,

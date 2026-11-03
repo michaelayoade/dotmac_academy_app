@@ -21,12 +21,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import cast
-from urllib.parse import urlencode
 from uuid import UUID
 
 from dotmac_kernel.audit import resolve_event_attribution
 from dotmac_kernel.models import Party, PartyPerson, PartyType
-from dotmac_kernel.web_surfaces import surface_path
 from dotmac_learning import (
     AttemptAuditContext,
     BankLifecycleError,
@@ -92,6 +90,7 @@ from app.services.roster import bulk_enroll, set_roster_state
 from app.services.security import hash_token
 from app.services.settings_store import effective
 from app.services.web_auth import require_web_role, require_web_user
+from app.web.email_links import absolute_surface_link
 from app.web.pagination import pagination_context
 from app.web.responses import hx_redirect
 from app.web.templating import templates
@@ -1090,7 +1089,7 @@ def invite_to_cohort(
             invited_person = result.person
             sent = False
             if result.token is not None:
-                link = f"{surface_path(request, 'accept_form')}?{urlencode({'token': result.token})}"
+                link = absolute_surface_link(request, 'accept_form', token=result.token)
                 link_e = _e(link)
                 sent = enqueue_email(
                     db,
