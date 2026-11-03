@@ -35,11 +35,12 @@ def _csrf_client() -> TestClient:
     def submit() -> dict[str, bool]:
         return {"ok": True}
 
-    app.add_middleware(
-        CSRFMiddleware,
-        secret="unit-test-csrf-secret",
-        session_cookie_names=("session",),
-    )
+    # Build the middleware from the product's own configuration (secret,
+    # session cookie names, lifetime), never from a hand copy. Kwargs are not printed.
+    from app.main import app as product
+
+    spec = next(m for m in product.user_middleware if m.cls is CSRFMiddleware)
+    app.add_middleware(CSRFMiddleware, **spec.kwargs)
     return TestClient(app, base_url="http://testserver")
 
 
@@ -74,6 +75,18 @@ def test_csrf_allows_matching_double_submit_token():
     # A genuine token paired with a different header value is refused.
     mismatch = client.post("/form", headers={"x-csrf-token": issued + "x"})
     assert mismatch.status_code == 403
+
+
+def test_csrf_token_is_bound_to_the_session_cookie():
+    client = _csrf_client()
+    client.cookies.set("session", "session-one")
+    assert client.get("/form").status_code == 200
+    issued = client.cookies.get(CSRF_COOKIE)
+    assert issued
+    assert client.post("/form", headers={"x-csrf-token": issued}).status_code == 200
+    # The same token under a different session is refused.
+    client.cookies.set("session", "session-two")
+    assert client.post("/form", headers={"x-csrf-token": issued}).status_code == 403
 
 
 def test_rate_limit_key_isolated_by_path():
