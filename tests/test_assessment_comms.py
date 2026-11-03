@@ -15,7 +15,7 @@ from app.config import settings
 from app.models.admissions import Applicant
 from app.models.email_outbox import EmailOutbox
 from app.services.localtime import to_local
-from tests.conftest import client_for, csrf_for, make_person_party
+from tests.conftest import client_for, make_person_party
 from tests.test_apply_assessment import _cohort_with_exam
 
 
@@ -29,7 +29,6 @@ def _apply(app_client, tenant, cohort, track, email):
             "email": email,
             "track_choice": f"{cohort.id}:{track.id}",
         },
-        headers={"x-csrf-token": csrf_for(a, {}, "/apply")},
     )
     token = re.search(r"/apply/assessment\?token=([A-Za-z0-9_-]+)", r.text).group(1)
     return a, token
