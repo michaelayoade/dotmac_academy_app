@@ -1,11 +1,14 @@
 """Hosted canonical recipient reads; authored here, never run locally."""
 
+import re
+from contextlib import contextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from dotmac_kernel.models import Party, PartyPerson
-from sqlalchemy import delete, text, update
+from dotmac_kernel.session_runtime import resolve_database_runtime
+from sqlalchemy import delete, event, text, update
 
 from app.models.identity_extensions import AcademyAccountProfile
 from app.services import assessment, completion, email, lab_lifecycle
@@ -13,6 +16,59 @@ from app.services.exceptions import ConflictError
 from tests.services.test_canonical_current_user import current_account
 
 assert current_account
+
+_IDENTITY = r"(?:public\.)?(?:parties|party_persons)"
+_IDENTITY_WRITE = re.compile(
+    rf"\bupdate\s+{_IDENTITY}\b|\binsert\s+into\s+{_IDENTITY}\b|\bdelete\s+from\s+{_IDENTITY}\b"
+)
+_ROW_LOCK = re.compile(r"\bfor\s+(?:no\s+key\s+)?(?:update|share)\b|\bfor\s+key\s+share\b")
+
+
+def identity_write_statements(statements):
+    """Statements that write, or row-lock, parties/party_persons (case-insensitive)."""
+    found = []
+    for statement in statements:
+        lowered = " ".join(statement.lower().split())
+        touches = re.search(rf"\b{_IDENTITY}\b", lowered) is not None
+        if _IDENTITY_WRITE.search(lowered) or (touches and _ROW_LOCK.search(lowered)):
+            found.append(lowered[:200])
+    return found
+
+
+@contextmanager
+def write_free_identity_read(a):
+    """Run an identity read as ``app_user`` in a READ ONLY transaction and prove it write-free.
+
+    The Kernel migration (``_grant_roles``) intentionally grants ``app_user``
+    SELECT/INSERT/UPDATE/DELETE on ``parties``/``party_persons``, with tenant
+    isolation enforced by RLS, so the absence of an UPDATE privilege is not the
+    property to assert. The property is that these read paths never write or lock
+    identity rows: PostgreSQL refuses writes and row locks inside a READ ONLY
+    transaction (``SET TRANSACTION READ ONLY`` is the transaction's first statement),
+    and the SQL text emitted during the read is checked for UPDATE/INSERT/DELETE and
+    FOR UPDATE/SHARE on the identity tables. Only statement text is collected,
+    never parameters.
+    """
+    db = a.db
+    engine = db.get_bind()
+    db.rollback()
+    db.execute(text("SET TRANSACTION READ ONLY"))
+    resolve_database_runtime().set_tenant(db, a.tid)
+    assert db.scalar(text("SELECT current_user")) == "app_user"
+    statements: list[str] = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        yield statements
+        assert db.scalar(text("SHOW transaction_read_only")) == "on"
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+        db.rollback()
+    assert any(re.search(rf"\b{_IDENTITY}\b", s.lower()) for s in statements), "the read touched no identity table"
+    assert identity_write_statements(statements) == []
 
 
 def test_recipient_joins_current_fields_and_preferences_without_identity_map_staleness(current_account):
@@ -139,9 +195,8 @@ def test_lab_optional_intent_keeps_instance_person_and_required_effect_order(cur
 def test_restricted_app_role_recipient_read_needs_no_identity_update_grant(current_account):
     a = current_account
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
-    assert not a.db.scalar(text("SELECT has_table_privilege(current_user, 'public.parties', 'UPDATE')"))
-    assert not a.db.scalar(text("SELECT has_table_privilege(current_user, 'public.party_persons', 'UPDATE')"))
-    assert completion._notification_recipient(a.db, tenant_id=a.tid, person_id=a.pid).id == a.pid
+    with write_free_identity_read(a):
+        assert completion._notification_recipient(a.db, tenant_id=a.tid, person_id=a.pid).id == a.pid
 
 
 def test_assessment_admission_refusal_precedes_optional_identity_read(current_account, monkeypatch):

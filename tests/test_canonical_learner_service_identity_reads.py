@@ -20,6 +20,7 @@ from app.services.facilitator_nominations import FacilitatorScope, NominateFacil
 from app.services.roles import role_slugs
 from tests.services.roster_request_fixtures import roster_actors
 from tests.services.test_canonical_current_user import current_account
+from tests.test_canonical_learning_identity_reads import write_free_identity_read
 
 assert roster_actors
 assert current_account
@@ -184,12 +185,14 @@ def test_cross_tenant_account_selection_and_digest_return_no_foreign_ids(current
     a = current_account
     _cohort(a)
     recipients, queued = _digest_effects(monkeypatch)
-    assert a.pid not in a.db.scalars(success_queue._accounts(tenant_b.id).active_person_ids).all()
-    result = learner_digest.send_weekly_digests(a.db, tenant_id=tenant_b.id, base_url="https://academy.example")
-    assert result == {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
+    # The Kernel grants app_user write privileges on parties by design (RLS isolates
+    # tenants); the read paths are proven write-free in a READ ONLY transaction.
+    with write_free_identity_read(a):
+        assert a.pid not in a.db.scalars(success_queue._accounts(tenant_b.id).active_person_ids).all()
+        result = learner_digest.send_weekly_digests(a.db, tenant_id=tenant_b.id, base_url="https://academy.example")
+        assert result == {"queued": 0, "skipped_optout": 0, "skipped_no_courses": 0}
     assert recipients == queued == []
     assert a.db.scalar(text("SELECT current_user")) == "app_user"
-    assert not a.db.scalar(text("SELECT has_table_privilege(current_user, 'public.parties', 'UPDATE')"))
 
 
 def test_success_segment_delegation_keeps_canonical_account_relation_and_raw_member_order(current_account, monkeypatch):
