@@ -19,6 +19,7 @@ from app.config import Settings
 from app.models.platform_settings import PlatformSetting
 from app.services import settings_store, web_auth
 from app.web import search
+from tests.conftest import grant_role
 
 KEY = "learning_search_staff_roles"
 
@@ -50,6 +51,12 @@ def _policy(a, value):
 
 
 def _grant(a, slug, tenant_id=None, party_id=None):
+    # A custom purpose role never admits anyone to the web facet by itself (only
+    # student/instructor/admin do), so the account also holds the standard student
+    # role. The policy-level refusals under test are unchanged: student is not in
+    # any *_access_roles policy.
+    if tenant_id is None and party_id is None and slug not in {"student", "instructor", "admin"}:
+        grant_role(a.admin, tenant_id=a.tid, party_id=a.pid)
     tid = a.tid if tenant_id is None else tenant_id
     role = Role(tenant_id=tid, slug=slug, name=slug)
     a.admin.add(role)
