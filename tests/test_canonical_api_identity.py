@@ -15,7 +15,7 @@ from dotmac_kernel.audit_actions import active_audit_actions
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, PartyType, Role, UserCredential
 from dotmac_kernel.session_runtime import resolve_database_runtime
 from fastapi import HTTPException
-from sqlalchemy import event, select, text, update
+from sqlalchemy import event, insert, inspect, select, text, update
 from starlette.requests import Request
 
 from app.api_identity_declarations import API_IDENTITY_AUDIT_ACTIONS, API_IDENTITY_AUDIT_DECLARATION
@@ -422,11 +422,15 @@ def test_delete_same_uuid_reinsertion_and_copied_context_refuse(api_admin):
 def test_public_audit_exact_seven_fields_and_raw_historical_details(api_admin):
     a = api_admin
     result = _create(a)
-    audit = a.db.scalar(select(AuditEvent).where(AuditEvent.entity_id == result["id"]))
-    a.db.execute(
-        update(AuditEvent).where(AuditEvent.id == audit.id).values(details=["historical", None], created_at=None)
-    )
+    produced = a.db.scalar(select(AuditEvent).where(AuditEvent.entity_id == result["id"]))
+    # Plant the historical row by INSERT: the runtime role cannot UPDATE audit_events.
+    table = AuditEvent.__table__
+    mapper = inspect(AuditEvent)
+    values = {column.name: getattr(produced, mapper.get_property_by_column(column).key) for column in table.columns}
+    values.update(id=uuid4(), details=["historical", None], created_at=None)
+    a.db.execute(insert(table).values(**values))
     a.db.commit()
+    audit = a.db.scalar(select(AuditEvent).where(AuditEvent.id == values["id"]))
     response = a.client.get("/rbac/audit-events", headers=a.headers)
     assert response.status_code == 200, response.text
     row = next(row for row in response.json() if row["id"] == str(audit.id))
