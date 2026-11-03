@@ -262,9 +262,9 @@ evidence = "inferred from names (triage): Starter entitlements, success_queue an
 [[rewritten]]
 old_path = "tests/services/test_success_queue.py"
 class = "duplicate"
-replacement = ["tests/services/test_success_queue.py::test_csv_reports_content", "tests/services/test_success_queue.py::test_adapter_forwards_configured_success_policy_to_public_owner"]
-dropped_tests = ["test_inactivity_rule_fires_with_facts_and_refreshes_not_duplicates", "test_overdue_rule_fires_and_auto_resolves_when_passed", "test_transitions_are_audited", "test_segment_membership_is_deterministic", "test_message_segment_enqueues_outbox_and_audits"]
-spec = "Keep test_csv_reports_content and test_adapter_forwards_configured_success_policy_to_public_owner. The _seed and _entries helpers stay (imported by test_genuine_success_queue_context)."
+replacement = ["tests/services/test_success_queue.py::test_transitions_are_audited", "tests/services/test_success_queue.py::test_csv_reports_content", "tests/services/test_success_queue.py::test_adapter_forwards_configured_success_policy_to_public_owner"]
+dropped_tests = ["test_inactivity_rule_fires_with_facts_and_refreshes_not_duplicates", "test_overdue_rule_fires_and_auto_resolves_when_passed", "test_segment_membership_is_deterministic", "test_message_segment_enqueues_outbox_and_audits"]
+spec = "Keep test_transitions_are_audited (acknowledge/resolve audit events and resolved_by), test_csv_reports_content and test_adapter_forwards_configured_success_policy_to_public_owner. The _seed and _entries helpers stay (imported by test_genuine_success_queue_context)."
 evidence = "inferred (triage): rules, sweep and segments in Starter test_learning_success_queue; web transitions and messages in Academy tests/services/test_genuine_success_queue_context.py; overlap not diffed."
 
   [[rewritten.covering]]

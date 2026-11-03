@@ -1,8 +1,8 @@
 """Success Queue Academy facade: CSV reports and the configured-policy hand-off.
 
-The rules, sweep, segments and transition/message commands are owned by dotmac-learning and covered by
+The rules, sweep, segments and message commands are owned by dotmac-learning and covered by
 Starter tests/test_learning_success_queue.py at the locked wheel; the web transitions/messages are
-covered by Academy tests/services/test_genuine_success_queue_context.py. See docs/inventories/test_dispositions.toml.
+covered by Academy tests/services/test_genuine_success_queue_context.py. The audited acknowledge/resolve transition stays asserted here. See docs/inventories/test_dispositions.toml.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from dotmac_kernel.models import Party, PartyPerson, PartyType
+from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import select
 
 from app.models.assessment import Activity
@@ -19,8 +20,12 @@ from app.models.course import Course
 from app.models.identity_extensions import AcademyAccountProfile
 from app.models.offering import CourseOffering
 from app.models.pacing import OfferingActivity
-from app.models.success_queue import SuccessQueueEntry
+from app.models.success_queue import REASON_INACTIVITY, STATUS_RESOLVED, SuccessQueueEntry
 from app.services import csv_reports, success_queue
+from app.services.audit import list_events
+from tests.services.roster_request_fixtures import roster_actors
+
+assert roster_actors  # fixture import
 
 
 def _seed(admin_session, tenant, *, email, due_hours=None, enrolled_days_ago=30):
@@ -100,6 +105,31 @@ def _entries(db, tenant, person, reason=None):
     if reason:
         q = q.where(SuccessQueueEntry.reason_kind == reason)
     return db.scalars(q).all()
+
+
+def test_transitions_are_audited(roster_actors):
+    a = roster_actors.account
+    admin_session, tenant_a, actor = a.admin, a.tenant, roster_actors.instructor
+    person, *_ = _seed(admin_session, tenant_a, email="trans@a.edu")
+    success_queue.sweep(admin_session, tenant_id=tenant_a.id)
+    admin_session.commit()
+    resolve_database_runtime().set_tenant(a.db, a.tid)
+    admin_session = a.db
+    (entry,) = _entries(admin_session, tenant_a, person, REASON_INACTIVITY)
+
+    success_queue.transition(
+        admin_session, tenant_id=tenant_a.id, entry_id=entry.id, action="acknowledge", request=actor.request
+    )
+    success_queue.transition(
+        admin_session, tenant_id=tenant_a.id, entry_id=entry.id, action="resolve", request=actor.request
+    )
+    admin_session.commit()
+    resolve_database_runtime().set_tenant(admin_session, a.tid)
+    assert entry.status == STATUS_RESOLVED
+    assert entry.resolved_by == actor.pid
+    actions = [e.action for e in list_events(admin_session, tenant_id=tenant_a.id, limit=20)]
+    assert "success_queue.acknowledge" in actions
+    assert "success_queue.resolve" in actions
 
 
 def test_csv_reports_content(admin_session, tenant_a):

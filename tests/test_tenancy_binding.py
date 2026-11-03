@@ -12,7 +12,10 @@ the database runtime is sealed once per process (kernel a107 refuses to rebind
 resolver no longer reaches the check. The tenants are real committed rows
 (``tenant_a``/``tenant_b`` fixtures); nothing about the tenancy check itself is
 replaced. Only unrelated configuration validation is stubbed in the child, as
-the original in-process test did, so a production-mode boot reaches the check.
+the original in-process test did, so a production-mode boot reaches the check. The
+``_product_startup_errors`` stub is NEW (the original did not have it) and is applied only to the
+production case: production turns any product configuration error into a fatal boot error that
+would mask the tenancy verdict, whereas a development boot only logs it.
 
 A control that is configured but not armed is worse than one that is absent:
 the configuration is evidence that someone thought about it.
@@ -42,7 +45,8 @@ kernel_settings.seed_on_startup = False
 import dotmac_kernel.app_factory as factory
 factory.validate_settings = lambda _settings: []
 factory._required_setting_errors = lambda: []
-factory._product_startup_errors = lambda _spec: []
+if {environment!r} == "production":
+    factory._product_startup_errors = lambda _spec: []
 
 from fastapi.testclient import TestClient
 from dotmac_kernel.tenancy import single_tenant_binding
@@ -85,15 +89,21 @@ def _tenant_slugs(admin_session) -> list[str]:
 def test_single_tenancy_binds_at_startup(admin_session, tenant_a) -> None:
     """The property the outage lacked: after startup, the binding is set."""
     slugs = _tenant_slugs(admin_session)
-    assert "alpha" in slugs
+    assert slugs == ["alpha"], f"foreign tenant rows leaked into the test database: {sorted(set(slugs) - {'alpha'})}"
     outcome = _boot("single", "development")
-    if slugs == ["alpha"]:
-        assert outcome["during"] == "alpha"
-        assert outcome["error"] is None
-    else:
-        # Foreign rows in the shared test database: the check must still refuse
-        # to bind one of several tenants (non-production boots log and continue).
-        assert outcome["during"] is None
+    assert outcome["during"] == "alpha"
+    assert outcome["error"] is None
+
+
+def test_single_tenancy_with_two_tenants_outside_production_binds_nothing_and_does_not_fail(
+    admin_session, tenant_a, tenant_b
+) -> None:
+    """Outside production the check only logs: no binding is picked and the boot continues."""
+    assert {"alpha", "beta"} <= set(_tenant_slugs(admin_session))
+    outcome = _boot("single", "development")
+    assert outcome["during"] is None
+    assert outcome["error"] is None
+    assert outcome["after"] is None
 
 
 def test_multi_tenancy_binds_nothing(admin_session, tenant_a) -> None:
