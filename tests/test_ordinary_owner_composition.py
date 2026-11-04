@@ -51,7 +51,32 @@ def test_ordinary_factory_uses_all_actual_owner_declarations():
         (learning_module.db_schema, name) for name in (*learning_module.tables, *learning_module.platform_tables)
     }
     products = product_owned_tables()
-    assert len(products) == 15
+    # Reviewed literal inventory of the product-owned tables (not derived from the code under test).
+    assert {physical_key(table) for table in products} == {
+        ("public", name)
+        for name in (
+            "academy_account_profiles",
+            "academy_credential_policies",
+            "academy_erp_completion_checkpoints",
+            "academy_erp_imported_completion_keys",
+            "account_tokens",
+            "applicants",
+            "email_outbox",
+            "facilitator_nominations",
+            "facilitator_requirements",
+            "lab_console_activity",
+            "lab_instances",
+            "lab_operations",
+            "lab_templates",
+            "notifications",
+            "onboarding_tasks",
+            "platform_settings",
+            "reminder_log",
+            "reminder_preferences",
+            "tenant_entrance_defaults",
+        )
+    }
+    assert len(products) == 19
     assert {key for key, owner in graph.owners.items() if owner == "academy"} == {
         physical_key(table) for table in products
     }
