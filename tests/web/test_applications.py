@@ -248,7 +248,7 @@ def test_admin_assigns_canonical_intake_then_accepts_with_audited_history(
         ).all()
     )
     assert events[0].action == "applicant.intake_assigned"
-    assert events[0].actor_person_id == actor.id
+    assert events[0].actor_party_id == actor.id
     assert events[0].details["reason"] == "Mapped legacy application"
     transitions = [event for event in events if event.action == "applicant.transition"]
     assert [event.details["to_status"] for event in transitions] == [

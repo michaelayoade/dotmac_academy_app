@@ -72,8 +72,11 @@ def test_teaching_directory_exact_active_counts_paging_and_foreign_tenant(curren
     a.admin.add_all([*cohorts, foreign])
     a.admin.flush()
     active, suspended, inactive, withdrawn, facilitator = [_party(a, a.tid) for _ in range(5)]
+    stamp = datetime.now(UTC)
     for party in (active, suspended, inactive, withdrawn, facilitator):
-        a.admin.add(AcademyAccountProfile(party_id=party.id, tenant_id=a.tid, status="active", prefs={}))
+        a.admin.add(AcademyAccountProfile(
+            party_id=party.id, tenant_id=a.tid, status="active", prefs={}, created_at=stamp, updated_at=stamp,
+        ))
     a.admin.flush()
     a.admin.execute(update(AcademyAccountProfile).where(AcademyAccountProfile.party_id == suspended.id).values(status="suspended"))
     a.admin.execute(update(Party).where(Party.id == inactive.id).values(is_active=False))

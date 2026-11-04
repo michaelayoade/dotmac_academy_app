@@ -434,6 +434,7 @@ def test_public_audit_exact_seven_fields_and_raw_historical_details(api_admin):
     values.update(id=uuid4(), details=["historical", None], created_at=None)
     a.db.execute(insert(table).values(**values))
     a.db.commit()
+    resolve_database_runtime().set_tenant(a.db, a.tid)  # the tenant GUC is transaction-local
     audit = a.db.scalar(select(AuditEvent).where(AuditEvent.id == values["id"]))
     response = a.client.get("/rbac/audit-events", headers=a.headers)
     assert response.status_code == 200, response.text
