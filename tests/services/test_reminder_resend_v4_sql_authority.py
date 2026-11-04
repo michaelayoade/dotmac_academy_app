@@ -922,9 +922,11 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(
 
     def on_reset(dbapi_conn, _record, reset_state):
         if dbapi_conn is dbapi_connection:
-            # Connection.close() rolls an attached root back itself, then checks in with
-            # transaction_reset=True, so the pool does no rollback of its own
-            # (transaction_was_reset=False). Record the native-driver count seen at this moment.
+            # The root was already rolled back natively, so Connection.close() had no transaction to
+            # close inline and checks in with transaction_was_reset=False: the pool performs its own
+            # reset-on-return rollback right after this event. (Had Connection.close() rolled a
+            # transaction back inline it would check in with transaction_reset=True, giving
+            # transaction_was_reset=True.) Record the native-driver count at this moment.
             resets.append((
                 reset_state.transaction_was_reset,
                 reset_state.terminate_only,
@@ -955,7 +957,8 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(
             assert a.db.in_transaction() and not a.db.get_transaction().is_active
         else:
             # Exactly one native rollback of the root had happened when the connection was checked in
-            # (transaction_was_reset=False: the pool itself did no rollback); the second driver call is
+            # (transaction_was_reset=False: Connection.close() reset nothing inline, so the pool performs
+            # its own rollback right after the reset event); the second driver call is
             # the pool's own reset-on-return rollback afterwards. A double native rollback would show
             # driver=2 already at the reset event.
             assert resets == [(False, False, True, 1)]
@@ -1435,6 +1438,9 @@ def test_forged_internal_rollback_during_flush_is_refused_and_caller_can_roll_ba
     def forge(session, flush_context):
         with pytest.raises(ReminderResendError, match="no exact native flush origin"):
             flush_context.transaction.rollback()
+        # Non-vacuous: the refused forged call must have kept the wrapper for the genuine abort.
+        assert unit.internal_aborts.get(flush_context.transaction) is not None
+        assert "rollback" in flush_context.transaction.__dict__
         attempts.append(True)
 
     event.listen(a.db, "after_flush", forge)
@@ -1443,6 +1449,36 @@ def test_forged_internal_rollback_during_flush_is_refused_and_caller_can_roll_ba
     finally:
         event.remove(a.db, "after_flush", forge)
     assert attempts == [True] and unit.failed and unit.corrupt
+    with pytest.raises(ReminderResendError):
+        a.db.commit()
+    a.db.rollback()
+    assert not unit.internal_aborts and unit.native_abort is None
+    _independent_absent(a, lid)
+
+
+def test_forged_internal_rollback_propagating_out_of_flush_keeps_native_abort_path(current_account):
+    # R2b: the refused forged call escapes the listener. The genuine flush abort must still find
+    # the wrapper (an "always remove" variant would instead raise "flush callback attempted
+    # transaction completion"), and the caller can then roll back.
+    a = current_account
+    _allow(a)
+    lid = _log(a)
+    _invoke(a, lid)
+    _actual_effects(a, lid)
+    from app.services.reminder_resend_unit import _unit
+    unit = _unit(a.db)
+    notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort escapes")
+
+    def forge(session, flush_context):
+        flush_context.transaction.rollback()
+
+    event.listen(a.db, "after_flush", forge)
+    try:
+        with pytest.raises(ReminderResendError, match="no exact native flush origin"):
+            a.db.flush()
+    finally:
+        event.remove(a.db, "after_flush", forge)
+    assert unit.failed and unit.corrupt
     with pytest.raises(ReminderResendError):
         a.db.commit()
     a.db.rollback()
