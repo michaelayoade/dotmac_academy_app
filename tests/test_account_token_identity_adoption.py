@@ -195,11 +195,31 @@ def test_exact_single_use_context_and_actual_receipt_required(legacy_engine, tmp
 
 
 def test_wrong_root_is_not_import_proof(legacy_engine, tmp_path, monkeypatch):
+    # Test-local replacement for the shared entry_transaction: it owns the root WITHOUT a
+    # `with connection.begin()` context, so the test can replace the root natively (SQLAlchemy
+    # refuses a new root inside a closed context). Shared fixtures are not edited.
+    @contextmanager
+    def replaceable_entry_transaction(engine):
+        with engine.connect() as connection:
+            connection.begin()
+            try:
+                connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+                yield connection
+            finally:
+                current = connection.get_transaction()
+                if current is not None:
+                    current.rollback()
+
+    monkeypatch.setattr(history, "entry_transaction", replaceable_entry_transaction)
     with _historical(legacy_engine, tmp_path, monkeypatch) as (connection, expected, operation, entry):
         receipt = import_academy_identity_history(connection, expected, operation)
-        connection.get_transaction().rollback()
+        root = connection.get_transaction()
+        root.rollback()
         connection.begin()
         connection.execute(sa.text("SET LOCAL ROLE app_admin"))
+        # The refusal must be the root clause, not the missing-state clause.
+        assert connection.get_transaction() is not root
+        assert token_owner._issued(connection).entry is entry
         with pytest.raises(IdentityHistoryImportRefused):
             authorize_historical_account_token_adoption(connection, entry, receipt)
 
