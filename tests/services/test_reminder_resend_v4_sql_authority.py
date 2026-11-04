@@ -918,14 +918,25 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(
     resets = []
     dbapi_connection = connection.connection.dbapi_connection
 
-    def on_reset(dbapi_conn, _record, _reset_state):
+    seen = {}
+
+    def on_reset(dbapi_conn, _record, reset_state):
         if dbapi_conn is dbapi_connection:
-            resets.append(True)
+            # Connection.close() rolls an attached root back itself, then checks in with
+            # transaction_reset=True, so the pool does no rollback of its own
+            # (transaction_was_reset=False). Record the native-driver count seen at this moment.
+            resets.append((
+                reset_state.transaction_was_reset,
+                reset_state.terminate_only,
+                reset_state.asyncio_safe,
+                len(seen["native"]["driver"]),
+            ))
 
     pool = connection.engine.pool
     event.listen(pool, "reset", on_reset)
     request.addfinalizer(lambda: event.remove(pool, "reset", on_reset))
     with _native_abort_observer(a, connection, target, monkeypatch, skip=skip) as native:
+        seen["native"] = native
         with pytest.raises(DBAPIError) as caught:
             if entry == "session":
                 a.db.commit()
@@ -943,9 +954,13 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(
             _assert_selected_abort(a, native, caught.value, target, "23505" if failure == "constraint" else "42501", skip=skip)
             assert a.db.in_transaction() and not a.db.get_transaction().is_active
         else:
-            assert len(resets) == 1
-            assert len(native["driver"]) - len(resets) == 1
-            assert all(item is target for item in native["driver"]) and not target.is_active
+            # Exactly one native rollback of the root had happened when the connection was checked in
+            # (transaction_was_reset=False: the pool itself did no rollback); the second driver call is
+            # the pool's own reset-on-return rollback afterwards. A double native rollback would show
+            # driver=2 already at the reset event.
+            assert resets == [(False, False, True, 1)]
+            assert len(native["driver"]) == 2
+            assert not target.is_active
             assert native["soft"][0] is caught.value
             assert caught.value.orig.sqlstate == ("23505" if failure == "constraint" else "42501")
             if not skip:
