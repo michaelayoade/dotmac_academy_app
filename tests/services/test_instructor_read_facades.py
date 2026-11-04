@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event, text
+from dotmac_kernel.models import PartyRoleGrant, Role
+from sqlalchemy import event, select, text
 
 from app.models.assessment import Activity
 from app.models.cohort import Cohort, Enrollment
@@ -20,6 +21,7 @@ from app.services.analytics import item_analysis
 from app.services.dashboards import cohort_overview
 from app.services.exceptions import NotFoundError
 from app.services.lookups import cohort_or_404
+from app.services.web_auth import require_web_user
 from tests.owner_helpers import person as _person
 from tests.services.test_analytics_owner import _score
 from tests.web.test_bookmarks_owner import _request
@@ -127,22 +129,30 @@ def test_actual_instructor_routes_render_owner_results_and_cohort_404(current_ac
 
     a = current_account
     cid, foreign, aid, _, _, _ = _seed(a, tenant_b.id)
+    role = a.admin.scalars(select(Role).where(Role.tenant_id == a.tid, Role.slug == "instructor")).first()
+    if role is None:
+        role = Role(tenant_id=a.tid, slug="instructor", name="instructor")
+        a.admin.add(role)
+        a.admin.flush()
+    a.admin.add(PartyRoleGrant(tenant_id=a.tid, party_id=a.pid, role_id=role.id))
+    a.admin.commit()
     request = _request(a.tenant, a.token)
-    dashboard = routes.cohort_dashboard(cid, request, a.db)
+    person = require_web_user(request, a.db)
+    dashboard = routes.cohort_dashboard(cid, request, person=person, db=a.db)
     assert {"request", "cohort", "rows"}.issubset(dashboard.context)
     assert dashboard.context["cohort"].id == cid and len(dashboard.context["rows"]) == 2
     assert b"Read owner cohort" in dashboard.body and b"40%" in dashboard.body
     assert b"At risk" in dashboard.body and b"On track" in dashboard.body
-    analysis = routes.item_analytics(aid, request, a.db)
+    analysis = routes.item_analytics(aid, request, person=person, db=a.db)
     assert {"request", "activity", "items"}.issubset(analysis.context)
     assert analysis.context["activity"].pass_threshold == 0.73
     assert len(analysis.context["items"]) == 2
     assert b"0.50" in analysis.body and b"Offered A" in analysis.body
     for hidden in (foreign, uuid4()):
         with pytest.raises(NotFoundError):
-            routes.cohort_dashboard(hidden, request, a.db)
+            routes.cohort_dashboard(hidden, request, person=person, db=a.db)
     with pytest.raises(HTTPException) as caught:
-        routes.item_analytics(uuid4(), request, a.db)
+        routes.item_analytics(uuid4(), request, person=person, db=a.db)
     assert caught.value.status_code == 404
 
 

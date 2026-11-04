@@ -859,7 +859,8 @@ def test_later_automatic_policy_refusal_rolls_back_owned_effects_after_actual_ad
         )
         calls.append(applicant.person_id)
         stored = c.a.admin.get(PlatformSetting, key)
-        stored.value = None
+        # A stored None falls back to the default, so plant a role that fails the strip check.
+        stored.value = " student " if key == "onboarding_enrollment_global_role" else None
         c.a.admin.commit()
         return applicant
 
