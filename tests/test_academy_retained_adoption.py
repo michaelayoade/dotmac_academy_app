@@ -6,6 +6,7 @@ one disposable caller root. No commit, role substitution, shim or fresh issuer.
 
 from contextlib import contextmanager
 from copy import copy
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -47,18 +48,21 @@ def _rich_retained(monkeypatch):
             sa.text(
                 "INSERT INTO public.applicants(id,tenant_id,email,first_name,last_name,cohort_id,track_id,"
                 "assessment_bank_id,assessment_profile,assessment_answers) "
-                "SELECT gen_random_uuid(),tenant_id,'partial@example.invalid','Partial','Compound',"
+                "SELECT gen_random_uuid(),tenant_id,:email,'Partial','Compound',"
                 "gen_random_uuid(),NULL,NULL,NULL,'null'::jsonb FROM public.applicants LIMIT 1"
-            )
+            ),
+            # Unique per call: stacked _rich_retained patches populate more than once per test.
+            {"email": f"partial-{uuid4().hex}@example.invalid"},
         )
         result = connection.execute(
             sa.text(
                 "INSERT INTO public.applicants(id,tenant_id,email,first_name,last_name,cohort_id,track_id,assessment_bank_id) "
-                "SELECT gen_random_uuid(),a.tenant_id,'complete@example.invalid','Complete','Compound',"
+                "SELECT gen_random_uuid(),a.tenant_id,:email,'Complete','Compound',"
                 "ct.cohort_id,ct.track_id,q.id FROM public.applicants a "
                 "JOIN public.cohort_tracks ct ON ct.tenant_id=a.tenant_id "
                 "JOIN public.question_banks q ON q.tenant_id=a.tenant_id LIMIT 1"
-            )
+            ),
+            {"email": f"complete-{uuid4().hex}@example.invalid"},
         )
         assert result.rowcount == 1
 
@@ -306,7 +310,7 @@ def test_data_target_security_or_unrelated_catalog_drift_refuses_before_ddl(
             "nullable_ack": "UPDATE public.course_completions SET erp_synced_at=now() WHERE erp_synced_at IS NULL",
             "target": "ALTER TABLE public.party_persons RENAME TO hidden_person_subtype",
             "key": "ALTER INDEX public.uq_parties_tenant_id_id RENAME TO hidden_tenant_party_key",
-            "role": "GRANT SELECT ON public.notifications TO lab_worker",
+            "role": "GRANT DELETE ON public.notifications TO academy_lab_worker",
             "unrelated_ri": "ALTER TABLE public.account_tokens ADD CONSTRAINT unexpected_retained_ri FOREIGN KEY(person_id) REFERENCES public.party_persons(party_id)",
             "extra_trigger": "CREATE TRIGGER a004_unexpected_trigger BEFORE INSERT ON public.notifications FOR EACH ROW EXECUTE FUNCTION public.a004_drift_trigger()",
             "canonical_trigger": "CREATE TRIGGER a004_unexpected_trigger BEFORE INSERT ON public.parties FOR EACH ROW EXECUTE FUNCTION public.a004_drift_trigger()",

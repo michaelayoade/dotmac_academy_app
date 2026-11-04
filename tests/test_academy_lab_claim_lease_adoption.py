@@ -435,6 +435,8 @@ def test_check_semantics_and_web_worker_column_boundaries(hosted_declaration, tm
     with _checkpoint_adopted(hosted_declaration, tmp_path, monkeypatch) as (connection, handle):
         product._run_lab_claim_lease_transition(connection, handle)
         state = product._state_for(handle)
+        # Continuity first: the hosted context is poisoned by any later DB error, caught or not.
+        product._continuity(connection, state)
         insert = (
             "INSERT INTO public.lab_operations(id,tenant_id,instance_id,kind,state,claim_lease_seconds) "
             "SELECT gen_random_uuid(),tenant_id,id,'check',:state,:stamp FROM public.lab_instances "
@@ -469,7 +471,6 @@ def test_check_semantics_and_web_worker_column_boundaries(hosted_declaration, tm
                 )
             }
             assert held == expected
-        product._continuity(connection, state)
 
 
 def test_copied_pending_entry_refuses_before_first_effect(hosted_declaration, tmp_path, monkeypatch):
