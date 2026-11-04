@@ -17,7 +17,7 @@ from dotmac_kernel.audit import AuditEvent
 from dotmac_kernel.models import AuthSession, Party, PartyPerson, PartyRoleGrant, Role
 from dotmac_kernel.session_runtime import resolve_database_runtime
 from sqlalchemy import DDL, Integer, bindparam, event, inspect, literal_column, select, text, update
-from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.exc import DBAPIError, IntegrityError, PendingRollbackError, ProgrammingError
 from sqlalchemy.sql.elements import ReleaseSavepointClause, RollbackToSavepointClause, SavepointClause
 
 from app.models.email_outbox import EmailOutbox
@@ -1479,7 +1479,10 @@ def test_forged_internal_rollback_propagating_out_of_flush_keeps_native_abort_pa
     finally:
         event.remove(a.db, "after_flush", forge)
     assert unit.failed and unit.corrupt
-    with pytest.raises(ReminderResendError):
+    # With no caller savepoint, the genuine abort rolls back the physical root and clears the unit;
+    # the Session root is left inactive, so commit is refused by SQLAlchemy itself.
+    assert _unit(a.db) is None and a.db.in_transaction() and not a.db.get_transaction().is_active
+    with pytest.raises(PendingRollbackError):
         a.db.commit()
     a.db.rollback()
     assert not unit.internal_aborts and unit.native_abort is None
