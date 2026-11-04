@@ -381,9 +381,8 @@ def test_a010_grandfather_requires_actual_instructor_grant_and_preserves_enrollm
         pass
 
     def seeded_upgrade(cfg, revision, *args, **kwargs):
-        if revision != "heads":
+        if revision != REVISION:
             return original_upgrade(cfg, revision, *args, **kwargs)
-        original_upgrade(cfg, "a009_applicant_bank_version_pin")
         db = Session(bind=connection, expire_on_commit=False)
         try:
             expected = set()

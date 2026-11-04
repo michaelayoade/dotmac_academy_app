@@ -239,7 +239,7 @@ def test_late_forged_audit_row_is_detected_by_the_consequence_inventory(assessme
     )
     with pytest.raises(boundary.AssessmentSubmissionError, match="consequence inventory"):
         c.a.db.commit()
-    with pytest.raises(boundary.AssessmentSubmissionError, match="consequence inventory"):
+    with pytest.raises(boundary.AssessmentSubmissionError, match="assessment private origin differs"):
         c.a.db.commit()
     c.a.db.rollback()
     resolve_database_runtime().set_tenant(c.a.db, c.a.tid)

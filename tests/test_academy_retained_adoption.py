@@ -18,6 +18,7 @@ from app.maintenance import product_adoption as product
 from app.maintenance import retained_history as retained
 from app.maintenance import retained_schema as schema
 from app.maintenance import retained_transition as transition
+from tests import test_academy_learning_history as learning_tests
 from tests import test_academy_product_adoption as product_tests
 from tests.fixtures import product_adoption_entry as entry
 from tests.fixtures.hosted_genesis import hosted_declaration
@@ -384,8 +385,20 @@ def test_partial_history_refuses_capture_without_fresh_fallback(hosted_declarati
         entered.append(True)
         pytest.fail("partial history entered a004")
 
+    def lock_without_dropped(connection):
+        # Same coordinator lock list as the helper, minus the table this test drops.
+        names = sorted((
+            *history._SOURCE_NAMES, *learning_tests._IDENTITY, *learning_tests._RETAINED, "alembic_version",
+        ))
+        names = [name for name in names if name != "platform_settings"]
+        assert len(names) == len(set(names)) == 47
+        connection.execute(
+            sa.text("LOCK TABLE " + ",".join('public."' + name + '"' for name in names) + " IN ACCESS EXCLUSIVE MODE")
+        )
+
     monkeypatch.setattr(entry, "_populate_retained", partial)
     monkeypatch.setattr(transition, "_apply_retained_transition", forbidden)
+    monkeypatch.setattr(learning_tests, "_lock_complete_source", lock_without_dropped)
     with pytest.raises(product.ProductAdoptionRefused):
         with product_tests._prepared_product(hosted_declaration, tmp_path, monkeypatch):
             pytest.fail("partial history issued a product handle")
