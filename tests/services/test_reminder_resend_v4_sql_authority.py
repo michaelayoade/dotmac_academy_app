@@ -1393,3 +1393,58 @@ def test_postexec_caught_completion_denial_cannot_authorize_later_commit(current
         a.db.rollback()
     assert not target.is_active
     _independent_absent(a, lid)
+
+
+def test_refused_internal_abort_never_strands_wrapper_for_caller_rollback(current_account, monkeypatch):
+    # A2-2: a native internal abort refused at the boundary association must not leave the
+    # wrapper installed; the caller's later root rollback has to remain possible.
+    a = current_account
+    _allow(a)
+    lid, conflict = _log(a), _log(a)
+    _invoke(a, lid)
+    _actual_effects(a, lid)
+    from app.services.reminder_resend_unit import _unit
+    unit = _unit(a.db)
+    a.db.begin_nested()  # after-return savepoint: SQLAlchemy creates the SAVEPOINT lazily
+    # Fault injection: the after-return savepoint never gets an association/pair.
+    monkeypatch.setattr(unit, "capture_association", lambda logical: None)
+    _duplicate_occurrence(a, conflict)
+    with pytest.raises(ReminderResendError, match="boundary association changed"):
+        a.db.flush()
+    assert unit.failed and unit.corrupt and not unit.internal_aborts
+    with pytest.raises(ReminderResendError):
+        a.db.commit()
+    a.db.rollback()
+    _independent_absent(a, lid)
+    _observe(a, conflict, "queued", 0)
+
+
+def test_forged_internal_rollback_during_flush_is_refused_and_caller_can_roll_back(current_account):
+    # A2-2 (narrow variant): a forged call refused during an active flush keeps the wrapper for
+    # the genuine flush abort; the flush completes, commit stays refused, rollback works.
+    a = current_account
+    _allow(a)
+    lid = _log(a)
+    _invoke(a, lid)
+    _actual_effects(a, lid)
+    from app.services.reminder_resend_unit import _unit
+    unit = _unit(a.db)
+    notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort")
+    attempts = []
+
+    def forge(session, flush_context):
+        with pytest.raises(ReminderResendError, match="no exact native flush origin"):
+            flush_context.transaction.rollback()
+        attempts.append(True)
+
+    event.listen(a.db, "after_flush", forge)
+    try:
+        a.db.flush()
+    finally:
+        event.remove(a.db, "after_flush", forge)
+    assert attempts == [True] and unit.failed and unit.corrupt
+    with pytest.raises(ReminderResendError):
+        a.db.commit()
+    a.db.rollback()
+    assert not unit.internal_aborts and unit.native_abort is None
+    _independent_absent(a, lid)

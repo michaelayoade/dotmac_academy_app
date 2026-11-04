@@ -613,27 +613,35 @@ class ReminderUnit:
         transaction = record.transaction
         capture = kwargs.get("_capture_exception", args[0] if args else False)
         to_root = kwargs.get("_to_root", args[1] if len(args) > 1 else False)
-        if (not native or capture is not True or to_root is not False or len(args) > 2
-                or set(kwargs) - {"_capture_exception", "_to_root"}
-                or sys.exception() is None or self.ended or not self.db._flushing
-                or self.native_abort is not None or record.consumed or record.ended
-                or self.internal_aborts.get(transaction) is not record
-                or transaction is not self.db._transaction or record.root is not self.root
-                or record.epoch != self.command_epoch or self.db.get_transaction() is not self.root
-                or self.db.get_bind() is not self.bind or self.connection.closed or self.connection.invalidated
-                or self.connection.get_transaction() is not self.physical_root
-                or self.connection.connection.dbapi_connection is not self.physical):
-            self.refuse("internal rollback has no exact native flush origin", corrupt=True)
-        # Same nearest actual root/nested-boundary rule as native rollback.
-        boundary = next((t for t in _chain(transaction, "parent") if t.parent is None or t.nested), None)
-        target = self.pairs.get(boundary)
-        association = set(boundary._connections.values()) if boundary is not None else set()
-        if (boundary not in self.logical or target is None or not target.is_active
-                or not association or any(c is not self.connection or p is not target
-                                          for c, p, _commit, _close in association)
-                or target not in self.physical_transactions
-                or (target is not self.physical_root and self.connection.get_nested_transaction() is not target)):
-            self.refuse("internal rollback boundary association changed", corrupt=True)
+        try:
+            if (not native or capture is not True or to_root is not False or len(args) > 2
+                    or set(kwargs) - {"_capture_exception", "_to_root"}
+                    or sys.exception() is None or self.ended or not self.db._flushing
+                    or self.native_abort is not None or record.consumed or record.ended
+                    or self.internal_aborts.get(transaction) is not record
+                    or transaction is not self.db._transaction or record.root is not self.root
+                    or record.epoch != self.command_epoch or self.db.get_transaction() is not self.root
+                    or self.db.get_bind() is not self.bind or self.connection.closed or self.connection.invalidated
+                    or self.connection.get_transaction() is not self.physical_root
+                    or self.connection.connection.dbapi_connection is not self.physical):
+                self.refuse("internal rollback has no exact native flush origin", corrupt=True)
+            # Same nearest actual root/nested-boundary rule as native rollback.
+            boundary = next((t for t in _chain(transaction, "parent") if t.parent is None or t.nested), None)
+            target = self.pairs.get(boundary)
+            association = set(boundary._connections.values()) if boundary is not None else set()
+            if (boundary not in self.logical or target is None or not target.is_active
+                    or not association or any(c is not self.connection or p is not target
+                                              for c, p, _commit, _close in association)
+                    or target not in self.physical_transactions
+                    or (target is not self.physical_root and self.connection.get_nested_transaction() is not target)):
+                self.refuse("internal rollback boundary association changed", corrupt=True)
+        except BaseException:
+            # A refusal must never strand the wrapper: only a forged call refused
+            # during an active flush keeps it for the genuine native abort.
+            self.failed = self.corrupt = True
+            if native or not self.db._flushing:
+                self.remove_internal_abort(record)
+            raise
         outer = self.frame
         frame: _Frame | None = _Frame("abort", transaction, frozenset((boundary,)), frozenset((target,)), target)
         record.consumed = record.active = True
