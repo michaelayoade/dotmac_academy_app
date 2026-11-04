@@ -77,7 +77,11 @@ def test_source_canonical_and_whole_product_extent_are_independent(legacy_engine
             "source": "UPDATE academy_identity_compat.people SET first_name='changed'",
             "canonical": "UPDATE public.party_persons SET first_name='changed'",
             "missing_profile": "DELETE FROM public.academy_account_profiles",
-            "same_count_policy": "UPDATE public.academy_credential_policies SET email='changed@example.test'",
+            # One row only: uq_academy_policy_tenant_email rejects a multi-row identical email.
+            "same_count_policy": (
+                "UPDATE public.academy_credential_policies SET email='changed@example.test' WHERE credential_id="
+                "(SELECT credential_id FROM public.academy_credential_policies ORDER BY credential_id LIMIT 1)"
+            ),
             "catalog": "REVOKE SELECT ON public.academy_account_profiles FROM app_user",
         }
         connection.execute(sa.text(statements[attack]))

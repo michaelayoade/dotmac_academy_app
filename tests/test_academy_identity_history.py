@@ -311,15 +311,32 @@ def test_extension_tenant_rls_and_cross_tenant_fk(legacy_engine, tmp_path, monke
             )
             connection.execute(sa.text("SET LOCAL ROLE app_admin"))
         # Admin bypasses RLS; the composite FK itself rejects tenant drift.
+        update = (
+            sa.update(target_table)
+            .where(target_table.c.tenant_id == sa.bindparam("tenant", type_=sa.Uuid))
+            .values(tenant_id=sa.bindparam("other", type_=sa.Uuid))
+        )
+        parameters = {"other": tenants[1], "tenant": tenants[0]}
+        if table == "academy_credential_policies":
+            # uq_academy_policy_tenant_email is checked per row, before the end-of-statement FK, so
+            # move exactly one row whose email has no twin in the destination tenant.
+            moved = connection.scalar(
+                sa.text(
+                    "SELECT credential_id FROM public.academy_credential_policies p WHERE p.tenant_id=:tenant "
+                    "AND NOT EXISTS (SELECT 1 FROM public.academy_credential_policies q "
+                    "WHERE q.tenant_id=:other AND q.email=p.email) ORDER BY p.credential_id LIMIT 1"
+                ),
+                parameters,
+            )
+            assert moved is not None
+            update = update.where(sa.column(key, sa.Uuid) == sa.bindparam("moved", type_=sa.Uuid))
+            parameters["moved"] = moved
         with pytest.raises(DBAPIError) as failure:
             with connection.begin_nested():
-                connection.execute(
-                    sa.update(target_table)
-                    .where(target_table.c.tenant_id == sa.bindparam("tenant", type_=sa.Uuid))
-                    .values(tenant_id=sa.bindparam("other", type_=sa.Uuid)),
-                    {"other": tenants[1], "tenant": tenants[0]},
-                )
+                connection.execute(update, parameters)
         assert failure.value.orig.sqlstate == "23503"
+        if table == "academy_credential_policies":
+            assert failure.value.orig.diag.constraint_name == "fk_academy_policy_tenant_credential"
 
 
 def test_account_requires_person_subtype(legacy_engine, tmp_path, monkeypatch):
