@@ -116,7 +116,7 @@ def test_push_marks_synced_and_signs(admin_session, tenant_a, monkeypatch):
     outcome = erp_sync.push_completion(admin_session, tenant_id=tenant_a.id, completion=comp)
     assert outcome == erp_sync.SYNCED
     assert admin_session.get(ERPCompletionCheckpoint, (tenant_a.id, comp.id)).erp_synced_at is not None
-    assert _marker(admin_session, tenant_a, comp, "erp_synced_at") is None
+    assert _marker(admin_session, tenant_a, comp, "erp_synced_pct") == comp.pct
     body = json.loads(captured["content"])
     assert body["event"] == "course_completed"
     assert body["employee_ref"] == "EMP-2026-0001"

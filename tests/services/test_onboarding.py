@@ -180,6 +180,7 @@ def test_admission_error_priority_precedes_person_and_learning(onboarding_case, 
     cohort = c.cohort_id
     if guard == "status":
         applicant.status = "applied"
+        db.flush()
     if guard in {"status", "tasks"}:
         task = onboarding.list_tasks(db, tenant_id=c.a.tid, applicant_id=c.id)[0]
         onboarding.set_task_status(db, task_id=task.id, status="pending")

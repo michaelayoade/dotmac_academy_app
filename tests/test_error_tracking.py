@@ -11,6 +11,7 @@ from importlib.metadata import version
 from uuid import uuid4
 
 import pytest
+from fastapi import Request
 
 from app.config import settings
 from app.error_tracking import init_error_tracking, tag_request
@@ -50,7 +51,7 @@ def test_malformed_dsn_has_fixed_diagnostic(monkeypatch, caplog):
 
 def test_genuine_sdk_error_and_transaction_projection(monkeypatch):
     import sentry_sdk
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from sentry_sdk.transport import Transport
     from sqlalchemy import create_engine, text

@@ -748,7 +748,7 @@ def _stub_pacing_policy(monkeypatch, db):
 )
 def test_track_lifecycle_public_boundary(monkeypatch, operation):
     """Value boundary only; domain mutations and transaction checks belong to Learning."""
-    db = object()
+    db = SimpleNamespace(get_transaction=lambda: SimpleNamespace(is_active=True))
     tenant_id, cohort_id, person_id, track_id = (uuid4() for _ in range(4))
     now = datetime.now(UTC)
     kwargs = {"tenant_id": tenant_id, "cohort_id": cohort_id}
@@ -830,7 +830,7 @@ def test_track_lifecycle_public_boundary(monkeypatch, operation):
     ],
 )
 def test_track_lifecycle_error_boundary(monkeypatch, operation, source_type, target_type):
-    db = object()
+    db = SimpleNamespace(get_transaction=lambda: SimpleNamespace(is_active=True))
     tenant_id, cohort_id, person_id, track_id = (uuid4() for _ in range(4))
     kwargs = {"tenant_id": tenant_id, "cohort_id": cohort_id}
     if operation != "clear_enrollment_track":
