@@ -9,6 +9,7 @@ qualifies synthetic value copy, not live adoption/auth.
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -292,7 +293,9 @@ def test_extension_tenant_rls_and_cross_tenant_fk(legacy_engine, tmp_path, monke
     ):
         import_academy_identity_history(connection, expected, operation)
         tenants = sorted(expected.cohort.tenants, key=str)
-        target_table = sa.table(quoted_name(table, True), sa.column("tenant_id", sa.Uuid), schema="public")
+        target_table = sa.table(
+            quoted_name(table, True), sa.column("tenant_id", sa.Uuid), sa.column("email", sa.String), schema="public"
+        )
         for role in ("app_user", "platform_api"):
             connection.execute(sa.text(f"SET LOCAL ROLE {role}"))
             connection.execute(
@@ -318,18 +321,21 @@ def test_extension_tenant_rls_and_cross_tenant_fk(legacy_engine, tmp_path, monke
         )
         parameters = {"other": tenants[1], "tenant": tenants[0]}
         if table == "academy_credential_policies":
-            # uq_academy_policy_tenant_email is checked per row, before the end-of-statement FK, so
-            # move exactly one row whose email has no twin in the destination tenant.
+            # Every legacy tenant is seeded with the same emails, so uq_academy_policy_tenant_email
+            # would fire per row before the end-of-statement FK. Move exactly one row and change
+            # tenant AND email in the SAME single UPDATE, so only the composite FK can refuse it.
             moved = connection.scalar(
                 sa.text(
-                    "SELECT credential_id FROM public.academy_credential_policies p WHERE p.tenant_id=:tenant "
-                    "AND NOT EXISTS (SELECT 1 FROM public.academy_credential_policies q "
-                    "WHERE q.tenant_id=:other AND q.email=p.email) ORDER BY p.credential_id LIMIT 1"
+                    "SELECT credential_id FROM public.academy_credential_policies "
+                    "WHERE tenant_id=:tenant ORDER BY credential_id LIMIT 1"
                 ),
                 parameters,
             )
             assert moved is not None
-            update = update.where(sa.column(key, sa.Uuid) == sa.bindparam("moved", type_=sa.Uuid))
+            update = update.where(sa.column(key, sa.Uuid) == sa.bindparam("moved", type_=sa.Uuid)).values(
+                tenant_id=sa.bindparam("other", type_=sa.Uuid),
+                email=f"drift-{uuid4().hex}@example.invalid",
+            )
             parameters["moved"] = moved
         with pytest.raises(DBAPIError) as failure:
             with connection.begin_nested():
