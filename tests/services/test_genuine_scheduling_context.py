@@ -4,6 +4,7 @@ No installed/runtime qualification is claimed by these authored source tests.
 Public owner wrappers below always execute the actual owner before injected faults.
 """
 
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from datetime import UTC, datetime, timedelta
@@ -422,7 +423,7 @@ def test_owned_failure_frames_clear_request_context_and_command_aliases(roster_a
         while traceback is not None:
             frame = traceback.tb_frame
             if frame.f_code.co_filename in {boundary.__file__, scheduling.__file__}:
-                owned.append(frame.f_code.co_name)
+                owned.append((frame.f_code.co_filename, frame.f_code.co_name))
                 for alias in (
                     "request",
                     "self",
@@ -442,7 +443,12 @@ def test_owned_failure_frames_clear_request_context_and_command_aliases(roster_a
                     assert frame.f_locals.get(alias) is None
             traceback = traceback.tb_next
         pending.extend(value for value in (error.__cause__, error.__context__) if value is not None)
-    assert "_human_operation" in owned and owned.count("update_session") == 2
+    # Two different functions are named update_session in the owned files, so count per file and name.
+    assert Counter(owned) == {
+        (scheduling.__file__, "update_session"): 2,
+        (boundary.__file__, "_human_operation"): 2,
+        (boundary.__file__, "update_session"): 1,
+    }
     a.db.commit()
     resolve_database_runtime().set_tenant(a.db, a.tid)
     assert a.db.get(ClassSession, sid).title == "Before" and _events(a.db, sid) == []
