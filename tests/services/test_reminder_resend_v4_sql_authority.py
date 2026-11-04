@@ -1432,7 +1432,6 @@ def test_forged_internal_rollback_during_flush_is_refused_and_caller_can_roll_ba
     _actual_effects(a, lid)
     from app.services.reminder_resend_unit import _unit
     unit = _unit(a.db)
-    notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort")
     attempts = []
 
     def forge(session, flush_context):
@@ -1445,7 +1444,8 @@ def test_forged_internal_rollback_during_flush_is_refused_and_caller_can_roll_ba
 
     event.listen(a.db, "after_flush", forge)
     try:
-        a.db.flush()
+        # notify() flushes itself; it must be the flush the listener observes.
+        notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort")
     finally:
         event.remove(a.db, "after_flush", forge)
     assert attempts == [True] and unit.failed and unit.corrupt
@@ -1467,7 +1467,6 @@ def test_forged_internal_rollback_propagating_out_of_flush_keeps_native_abort_pa
     _actual_effects(a, lid)
     from app.services.reminder_resend_unit import _unit
     unit = _unit(a.db)
-    notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort escapes")
 
     def forge(session, flush_context):
         flush_context.transaction.rollback()
@@ -1475,7 +1474,8 @@ def test_forged_internal_rollback_propagating_out_of_flush_keeps_native_abort_pa
     event.listen(a.db, "after_flush", forge)
     try:
         with pytest.raises(ReminderResendError, match="no exact native flush origin"):
-            a.db.flush()
+            # notify() flushes itself; it must be the flush the listener observes.
+            notifications.notify(a.db, tenant_id=a.tid, person_id=a.pid, kind="caller", title="forged abort escapes")
     finally:
         event.remove(a.db, "after_flush", forge)
     assert unit.failed and unit.corrupt
