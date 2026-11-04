@@ -16,7 +16,7 @@ from dotmac_kernel.audit import AuditEvent, write_audit_event
 from dotmac_kernel.session_runtime import resolve_database_runtime
 from dotmac_learning import TransactionChanged
 from sqlalchemy import select, text, update
-from sqlalchemy.exc import PendingRollbackError, ProgrammingError
+from sqlalchemy.exc import InvalidRequestError, PendingRollbackError, ProgrammingError
 from starlette.requests import Request
 
 from app import admission_assessment_context as boundary
@@ -437,7 +437,11 @@ def test_actual_session_root_replacement_is_typed_and_has_no_result(assessment_c
     def replaced(*args, **kwargs):
         result = actual(*args, **kwargs)
         c.a.db.rollback()
-        resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
+        # The call runs inside the owner's savepoint context manager, so SQLAlchemy itself
+        # refuses to autobegin on the ended root; the product's own custody check then
+        # raises TransactionChanged for the ended root.
+        with pytest.raises(InvalidRequestError, match="closed transaction inside context manager"):
+            resolve_database_runtime().set_tenant(c.a.db, c.a.tid)
         return result
 
     monkeypatch.setattr(applicant_email, "send_onboarding_invite", replaced)
