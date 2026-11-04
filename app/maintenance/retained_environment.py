@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
 
 from app.maintenance import retained_hosted_genesis as hosted
 from app.maintenance import retained_schema as retained
@@ -431,7 +432,11 @@ def observe_retained_environment(
         if bindings is None:
             raise RetainedEnvironmentUnsupported("Required hosted environment bindings absent")
         _check_bindings(bindings)
-        root = retained._preflight(connection)
+        try:
+            root = retained._preflight(connection)
+        except (retained.RetainedSchemaRefused, DBAPIError):
+            # Typed refusal; still fail-closed (the outer handler poisons the issued context).
+            raise RetainedEnvironmentRefused("Retained preflight refused; root rollback required") from None
         if root is None:
             raise RetainedEnvironmentRefused("Disposable hosted Genesis environment refused; root rollback required")
         if _hosted_context is not None:
