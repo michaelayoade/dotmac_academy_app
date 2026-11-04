@@ -332,9 +332,10 @@ jobs:
           ACADEMY_NAMES_ONLY_PROBE: "1"
         run: |
           set -uo pipefail
-          PYTHONPATH=. poetry run pytest -p tests.names_only_probe --tb=no -q -p no:cacheprovider -o faulthandler_timeout=120 \
+          PYTHONPATH=. poetry run pytest -p tests.names_only_probe --tb=no -q -s -p no:cacheprovider -o faulthandler_timeout=120 \
             tests/services/test_genuine_assessment_submit_context.py::test_actual_session_root_replacement_is_typed_and_has_no_result \
-            tests/services/test_genuine_scheduling_context.py::test_owned_failure_frames_clear_request_context_and_command_aliases
+            tests/services/test_genuine_scheduling_context.py::test_owned_failure_frames_clear_request_context_and_command_aliases \
+            tests/services/test_reminder_resend_v3_caller_transactions.py::test_caller_nesting_created_after_return_preserves_earlier_claims
           # Diagnostic only: expected failures must not fail the job.
           exit 0
 
