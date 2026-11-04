@@ -69,7 +69,8 @@ def test_teaching_directory_exact_active_counts_paging_and_foreign_tenant(curren
     prefix = uuid4().hex
     cohorts = [Cohort(tenant_id=a.tid, name=f"{prefix}-{i:02d}", discipline="Teaching") for i in range(8)]
     foreign = Cohort(tenant_id=tenant_b.id, name=f"{prefix}-foreign", discipline="Hidden")
-    a.admin.add_all([*cohorts, foreign])
+    unnominated = Cohort(tenant_id=a.tid, name=f"{prefix}-unnominated", discipline="Teaching")
+    a.admin.add_all([*cohorts, foreign, unnominated])
     a.admin.flush()
     active, suspended, inactive, withdrawn, facilitator = [_party(a, a.tid) for _ in range(5)]
     stamp = datetime.now(UTC)
@@ -86,10 +87,15 @@ def test_teaching_directory_exact_active_counts_paging_and_foreign_tenant(curren
         a.admin.add(Enrollment(tenant_id=a.tid, cohort_id=cohorts[0].id, person_id=party.id,
                                role_in_cohort=role, status=status))
     a.admin.commit()
+    # A purpose-role account sees only nominated cohorts (no global staff access).
+    for cohort in cohorts:
+        _nominate_cohort(a, cohort.id)
     require_web_user(_request(a.tenant, a.token), a.db)
     root = a.db.get_transaction()
     first = _render(a, limit=50)
     rows = first.context["cohorts"]
+    assert unnominated.id not in {row["cohort"].id for row in rows}
+    assert len(rows) == 8
     expected = sorted([row["cohort"].name for row in rows])
     assert [row["cohort"].name for row in rows] == expected
     assert next(row["count"] for row in rows if row["cohort"].id == cohorts[0].id) == 1
