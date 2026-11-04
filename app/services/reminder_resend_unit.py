@@ -3,7 +3,6 @@
 Private SQLAlchemy ancestry/association reads are version-pinned dependencies.
 No engine, transaction authority, business policy or public capability is issued.
 """
-import os
 import re
 import sys
 from collections.abc import Callable
@@ -711,25 +710,12 @@ class ReminderUnit:
         provisioning = (current in self.logical and current.nested
                         and getattr(current._state, "name", "") == "PROVISIONING_CONNECTION")
         active = self.db.is_active or (prepared and self.frame is not None) or provisioning
-        # TEMPORARY A2 probe: same short-circuit order as the original ORed condition.
-        clauses = (
-            ("ended", lambda: self.ended),
-            ("corrupt", lambda: self.corrupt),
-            ("not_active", lambda: not active),
-            ("root_changed", lambda: self.db.get_transaction() is not self.root),
-            ("conflict_savepoint", lambda: conflict_savepoint_requires_rollback(self.db, expected_root=self.root)),
-            ("bind_changed", lambda: self.db.get_bind() is not self.bind),
-            ("connection_closed", lambda: self.connection.closed),
-            ("connection_invalidated", lambda: self.connection.invalidated),
-            ("physical_root_changed", lambda: self.connection.get_transaction() is not self.physical_root),
-            ("physical_root_inactive", lambda: not self.physical_root.is_active),
-            ("dbapi_changed", lambda: self.connection.connection.dbapi_connection is not self.physical),
-        )
-        for clause_name, clause in clauses:
-            if clause():
-                if os.environ.get("ACADEMY_NAMES_ONLY_PROBE") == "1":
-                    print(f"A2-PROBE {clause_name}", file=sys.stderr)
-                self.refuse("resend caller transaction custody changed", corrupt=True)
+        if (self.ended or self.corrupt or not active or self.db.get_transaction() is not self.root
+                or conflict_savepoint_requires_rollback(self.db, expected_root=self.root)
+                or self.db.get_bind() is not self.bind or self.connection.closed or self.connection.invalidated
+                or self.connection.get_transaction() is not self.physical_root or not self.physical_root.is_active
+                or self.connection.connection.dbapi_connection is not self.physical):
+            self.refuse("resend caller transaction custody changed", corrupt=True)
         if self.executing and (self.db.get_nested_transaction() is not self.helper
                                or self.connection.get_nested_transaction() is not self.helper_physical):
             self.refuse("resend helper ancestry changed", corrupt=True)
