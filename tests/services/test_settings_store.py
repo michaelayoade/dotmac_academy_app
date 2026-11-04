@@ -83,7 +83,7 @@ def test_set_many_upserts(admin_session):
     admin_session.rollback()
 
 
-def test_lab_limits_reject_invalid_writes_and_ignore_legacy_invalid_rows(
+def test_lab_limits_reject_invalid_writes_and_refuse_stored_invalid_rows(
     admin_session,
 ):
     _clear(admin_session)
@@ -94,7 +94,9 @@ def test_lab_limits_reject_invalid_writes_and_ignore_legacy_invalid_rows(
         PlatformSetting(key="max_concurrent_labs_per_tenant", value="-1")
     )
     admin_session.flush()
-    assert effective(admin_session).max_concurrent_labs_per_tenant == 0
+    # Strict policy read: a stored invalid lab limit is refused like every other policy key.
+    with pytest.raises(ValueError, match="max_concurrent_labs_per_tenant must be an integer between 0 and 2147483647"):
+        effective(admin_session)
     admin_session.rollback()
 
 
