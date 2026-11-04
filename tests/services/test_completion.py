@@ -189,10 +189,12 @@ def test_attempt_close_and_submit_admission_locks_remain_mutually_exclusive(
     factory = sessionmaker(bind=admin_engine, autoflush=False)
     with factory() as holder, factory() as contender:
         try:
+            holder.begin()  # the owner requires an active caller root
             closed = attempts.close_open_attempt(
                 holder, tenant_id=tid, person_id=person_id, activity_id=quiz_id
             )
             assert closed is not None and closed.id == attempt_id
+            contender.begin()  # the owner requires an active caller root
             contender.execute(text("SET LOCAL lock_timeout = '250ms'"))
             activity = contender.get(Activity, quiz_id)
             with pytest.raises(OperationalError) as refused:
