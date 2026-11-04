@@ -286,13 +286,15 @@ def test_stale_context_cannot_outlive_destroyed_resource(hosted_declaration, tmp
 
 
 def test_real_docker_restart_poison_survives_same_name_and_image(hosted_owner):
-    with pytest.raises((hosted.HostedGenesisRefused, sa.exc.DBAPIError)):
-        with qualified_root(hosted_owner) as (connection, _root, context, bindings):
-            hosted_owner.command("restart", hosted_owner.container)
-            with pytest.raises(environment.RetainedEnvironmentRefused):
-                observe(connection, bindings, context)
-            assert hosted_owner.poisoned
-            # Fixture rollback can also refuse because its backend was killed.
+    with qualified_root(hosted_owner) as (connection, _root, context, bindings):
+        hosted_owner.command("restart", hosted_owner.container)
+        with pytest.raises(environment.RetainedEnvironmentRefused):
+            observe(connection, bindings, context)
+        assert hosted_owner.poisoned
+        # The restart broke the driver connection, so SQLAlchemy invalidated it and the
+        # fixture's root rollback is a no-op instead of raising at teardown.
+        assert connection.invalidated
+    assert hosted_owner.poisoned
 
 
 def test_actual_persistent_configuration_repair_poison(hosted_owner):
