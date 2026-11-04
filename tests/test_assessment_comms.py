@@ -139,8 +139,19 @@ def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch
     admin_session.commit()
 
     sent: list[str] = []
-    monkeypatch.setattr(ae, "send_waitlist_notice", lambda db, *, applicant: sent.append("waitlist") or True)
-    monkeypatch.setattr(ae, "send_results_received", lambda db, *, applicant: sent.append("received") or True)
+    # Record the call but run the real sender: the assessment context requires the keyed outbox row.
+    real_waitlist, real_received = ae.send_waitlist_notice, ae.send_results_received
+
+    def recording_waitlist(db, *, applicant):
+        sent.append("waitlist")
+        return real_waitlist(db, applicant=applicant)
+
+    def recording_received(db, *, applicant):
+        sent.append("received")
+        return real_received(db, applicant=applicant)
+
+    monkeypatch.setattr(ae, "send_waitlist_notice", recording_waitlist)
+    monkeypatch.setattr(ae, "send_results_received", recording_received)
 
     csrf = a.cookies.get("csrf_token", "")
     r = a.post(
@@ -154,6 +165,13 @@ def test_waitlist_outcome_email(app_client, tenant_a, admin_session, monkeypatch
     applicant = admin_session.scalars(select(Applicant).where(Applicant.email == "wl@a.ex")).first()
     assert applicant.status == "waitlisted"  # 0.5 valid, below 0.9
     assert sent == ["waitlist"]
+    assert admin_session.scalars(
+        select(EmailOutbox).where(
+            EmailOutbox.tenant_id == tenant_a.id,
+            EmailOutbox.kind == "assessment_waitlist",
+            EmailOutbox.recipient == "wl@a.ex",
+        )
+    ).one()
 
 def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session, monkeypatch):
     import app.services.applicant_email as ae
@@ -165,8 +183,19 @@ def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session
     _start(a, token)
 
     sent: list[str] = []
-    monkeypatch.setattr(ae, "send_waitlist_notice", lambda db, *, applicant: sent.append("waitlist") or True)
-    monkeypatch.setattr(ae, "send_results_received", lambda db, *, applicant: sent.append("received") or True)
+    # Record the call but run the real sender: the assessment context requires the keyed outbox row.
+    real_waitlist, real_received = ae.send_waitlist_notice, ae.send_results_received
+
+    def recording_waitlist(db, *, applicant):
+        sent.append("waitlist")
+        return real_waitlist(db, applicant=applicant)
+
+    def recording_received(db, *, applicant):
+        sent.append("received")
+        return real_received(db, applicant=applicant)
+
+    monkeypatch.setattr(ae, "send_waitlist_notice", recording_waitlist)
+    monkeypatch.setattr(ae, "send_results_received", recording_received)
 
     csrf = a.cookies.get("csrf_token", "")
     # Submit with ~zero elapsed: score 0.5 clears 0.4 but the sitting is too
@@ -183,6 +212,13 @@ def test_invalid_sitting_gets_received_email(app_client, tenant_a, admin_session
     assert applicant.status == "applied"
     assert applicant.assessment_valid is False
     assert sent == ["received"]
+    assert admin_session.scalars(
+        select(EmailOutbox).where(
+            EmailOutbox.tenant_id == tenant_a.id,
+            EmailOutbox.kind == "assessment_review",
+            EmailOutbox.recipient == "inv2@a.ex",
+        )
+    ).one()
 
 def test_certificate_emailed_on_completion(app_client, tenant_a, admin_session, monkeypatch):
     from app.models.completion import CourseCompletion
