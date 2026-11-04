@@ -897,7 +897,9 @@ def _native_caller_reuse(a):
 @pytest.mark.parametrize("entry", ["session", "root", "flush", "no_autoflush", "context"])
 @pytest.mark.parametrize("failure", ["constraint", "permission"])
 @pytest.mark.parametrize("skip", [False, True])
-def test_genuine_native_root_flush_abort_preserves_selected_exception(current_account, monkeypatch, entry, failure, skip):
+def test_genuine_native_root_flush_abort_preserves_selected_exception(
+    current_account, monkeypatch, request, entry, failure, skip
+):
     a = current_account
     _allow(a)
     lid, conflict = _log(a), _log(a)
@@ -910,6 +912,19 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(current_ac
     row = _duplicate_occurrence(a, conflict) if failure == "constraint" else _pending(a, "policy")
     connection = a.db.connection()
     target = connection.get_transaction()
+    # The context exit releases the connection, and the pool's reset-on-return then calls the same
+    # dialect.do_rollback the observer wraps. Count those resets for this DBAPI connection so the
+    # one native rollback of the root is still proven exactly once.
+    resets = []
+    dbapi_connection = connection.connection.dbapi_connection
+
+    def on_reset(dbapi_conn, _record, _reset_state):
+        if dbapi_conn is dbapi_connection:
+            resets.append(True)
+
+    pool = connection.engine.pool
+    event.listen(pool, "reset", on_reset)
+    request.addfinalizer(lambda: event.remove(pool, "reset", on_reset))
     with _native_abort_observer(a, connection, target, monkeypatch, skip=skip) as native:
         with pytest.raises(DBAPIError) as caught:
             if entry == "session":
@@ -928,7 +943,9 @@ def test_genuine_native_root_flush_abort_preserves_selected_exception(current_ac
             _assert_selected_abort(a, native, caught.value, target, "23505" if failure == "constraint" else "42501", skip=skip)
             assert a.db.in_transaction() and not a.db.get_transaction().is_active
         else:
-            assert native["driver"] == [target] and not target.is_active
+            assert len(resets) == 1
+            assert len(native["driver"]) - len(resets) == 1
+            assert all(item is target for item in native["driver"]) and not target.is_active
             assert native["soft"][0] is caught.value
             assert caught.value.orig.sqlstate == ("23505" if failure == "constraint" else "42501")
             if not skip:
