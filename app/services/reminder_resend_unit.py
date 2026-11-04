@@ -709,6 +709,17 @@ class ReminderUnit:
         current = self.db._transaction
         provisioning = (current in self.logical and current.nested
                         and getattr(current._state, "name", "") == "PROVISIONING_CONNECTION")
+        parent = getattr(current, "parent", None)
+        # SQLAlchemy's own transient provisioning state: a native flush
+        # subtransaction directly under a registered caller savepoint that has
+        # no pair yet. Only the active clause is relaxed.
+        provisioning = provisioning or (
+            current is not None and self.db._flushing and not current.nested
+            and current.origin is SessionTransactionOrigin.SUBTRANSACTION
+            and self.internal_aborts.get(current) is not None
+            and parent in self.logical and parent.nested and parent not in self.pairs
+            and getattr(current._state, "name", "") == "PROVISIONING_CONNECTION"
+            and getattr(parent._state, "name", "") == "PROVISIONING_CONNECTION")
         active = self.db.is_active or (prepared and self.frame is not None) or provisioning
         if (self.ended or self.corrupt or not active or self.db.get_transaction() is not self.root
                 or conflict_savepoint_requires_rollback(self.db, expected_root=self.root)
