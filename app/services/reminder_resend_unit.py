@@ -927,6 +927,12 @@ class ReminderUnit:
         except BaseException:
             if committing:
                 self.failed = True
+            elif (obj in frame.physical and name in ("rollback", "close") and was_active
+                    and not self.ended):
+                # PRODUCT: a physical savepoint rollback that raised is unproven; the server savepoint
+                # may be intact. Refuse every commit until the caller rolls back for real.
+                self.failed = True
+                self.waiting_aborts.add(obj)
             raise
         finally:
             frame.calls.discard(key)

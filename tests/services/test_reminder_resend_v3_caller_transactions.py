@@ -277,7 +277,7 @@ def test_unproven_physical_nested_rollback_cannot_retire_receipts(current_accoun
     _allow(a)
     lid = _log(a)
     nested = a.db.begin_nested()
-    _invoke(a, lid)
+    outbox_key = _invoke(a, lid).outbox_key
     dialect = a.db.connection().dialect
     actual = dialect.do_rollback_to_savepoint
     class RecoveryFailure(Exception):
@@ -294,6 +294,9 @@ def test_unproven_physical_nested_rollback_cannot_retire_receipts(current_accoun
         a.db.commit()
     a.db.rollback()
     _observe(a, lid, "queued", 0)
+    # Neither the outbox email nor any audit row survived the refused commit.
+    assert a.admin.scalar(select(EmailOutbox.id).where(
+        EmailOutbox.tenant_id == a.tid, EmailOutbox.idempotency_key == outbox_key)) is None
 
 
 @pytest.mark.parametrize("fault", ["dirty", "core", "before_commit", "flush", "late_caught_sql"])
