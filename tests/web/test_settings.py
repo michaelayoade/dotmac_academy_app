@@ -19,7 +19,7 @@ from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
 from app.services.settings_store import effective, set_many
 
-_STORED_SMTP_PASSWORD = f"legacy-stored-{uuid4().hex}"
+_STORED_SMTP_PASSWORD = uuid4().hex
 
 
 @pytest.fixture(autouse=True)
