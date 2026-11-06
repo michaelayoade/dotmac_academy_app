@@ -44,10 +44,8 @@
                class="w-full px-3.5 py-2.5 text-[0.95rem]">
       </div>
       <div>
-        <label for="smtp_password" class="mb-1.5 block text-sm font-semibold text-ink">SMTP password</label>
-        <input id="smtp_password" type="password" name="smtp_password" value=""
-               placeholder="leave blank to keep unchanged"
-               class="w-full px-3.5 py-2.5 text-[0.95rem]">
+        <span class="mb-1.5 block text-sm font-semibold text-ink">SMTP password</span>
+        <p class="text-[0.95rem] text-ink/70">Set via the SMTP_PASSWORD environment variable (deployment secret), never stored here.</p>
       </div>
       <div class="sm:col-span-2">
         <label for="smtp_from" class="mb-1.5 block text-sm font-semibold text-ink">From address</label>

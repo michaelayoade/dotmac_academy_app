@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
+from app.config import settings
 from app.models.assessment import Activity, Score, Submission
 from app.models.auth import UserCredential
 from app.models.course import Course
@@ -14,7 +17,9 @@ from app.services import email as email_mod
 from app.services.bootstrap import ensure_roles
 from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
-from app.services.settings_store import set_many
+from app.services.settings_store import effective, set_many
+
+_STORED_SMTP_PASSWORD = uuid4().hex
 
 
 @pytest.fixture(autouse=True)
@@ -58,13 +63,28 @@ def test_instructor_forbidden(app_client, admin_session, tenant_a):
     assert app_client.get("/admin/settings", headers=h).status_code == 403
 
 
+def test_set_many_refuses_smtp_password(admin_session):
+    with pytest.raises(ValueError, match="environment-only"):
+        set_many(admin_session, {"smtp_password": "s3cr3t"})
+    assert admin_session.get(PlatformSetting, "smtp_password") is None
+
+
+def test_stored_smtp_password_row_is_ignored(admin_session):
+    # A legacy row written before the key became environment-only must not
+    # override the environment value.
+    admin_session.add(PlatformSetting(key="smtp_password", value=_STORED_SMTP_PASSWORD))
+    admin_session.commit()
+    assert effective(admin_session).smtp_password == settings.smtp_password
+    assert effective(admin_session).smtp_password != _STORED_SMTP_PASSWORD
+
+
 def test_admin_get_ok_password_not_echoed(app_client, admin_session, tenant_a):
-    set_many(admin_session, {"smtp_password": "s3cr3t-stored"})
+    admin_session.add(PlatformSetting(key="smtp_password", value=_STORED_SMTP_PASSWORD))
     admin_session.commit()
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
     r = app_client.get("/admin/settings", headers=h)
     assert r.status_code == 200
-    assert "s3cr3t-stored" not in r.text
+    assert _STORED_SMTP_PASSWORD not in r.text
 
 
 def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
@@ -83,8 +103,8 @@ def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
     assert "Renamed Academy" in again.text
 
 
-def test_admin_post_blank_password_keeps_existing(app_client, admin_session, tenant_a):
-    set_many(admin_session, {"smtp_password": "keep-me", "smtp_host": "h.example"})
+def test_admin_post_smtp_password_is_not_stored(app_client, admin_session, tenant_a):
+    set_many(admin_session, {"smtp_host": "h.example"})
     admin_session.commit()
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
     app_client.get("/admin/settings", headers=h)
@@ -92,12 +112,11 @@ def test_admin_post_blank_password_keeps_existing(app_client, admin_session, ten
     app_client.post(
         "/admin/settings",
         headers={**h, "x-csrf-token": csrf},
-        data={"branding_name": "X", "smtp_password": "", "smtp_host": "h.example",
+        data={"branding_name": "X", "smtp_password": "do-not-store-me", "smtp_host": "h.example",
               "smtp_port": "587", "max_concurrent_labs": "20", "lab_idle_minutes": "60"},
         follow_redirects=False,
     )
-    row = admin_session.get(PlatformSetting, "smtp_password")
-    assert row is not None and row.value == "keep-me"
+    assert admin_session.get(PlatformSetting, "smtp_password") is None
 
 
 def test_admin_post_rejects_negative_per_tenant_lab_limit(
