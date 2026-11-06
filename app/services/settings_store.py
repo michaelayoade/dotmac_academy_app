@@ -35,13 +35,19 @@ _INT_MINIMUMS = {
     "lab_idle_minutes": 1,
 }
 
+# Keys that are environment-only: resolved from `settings` (env) and never
+# read from or written to the platform_settings table. The SMTP password is
+# a credential, not configuration an admin edits in the web form; it is
+# materialized from the deployment secret store into the process
+# environment (SMTP_PASSWORD), like LAB_WORKER_DATABASE_URL.
+_ENV_ONLY_KEYS = frozenset({"smtp_password"})
+
 # The full set of known keys, with their default sourced live from `settings`
 # (or a literal) so monkeypatching `settings.*` in tests is reflected here.
 KNOWN_KEYS: tuple[str, ...] = (
     "smtp_host",
     "smtp_port",
     "smtp_user",
-    "smtp_password",
     "smtp_from",
     "smtp_starttls",
     "email_auto_on_pass",
@@ -127,7 +133,14 @@ def get_all(db: Session) -> dict[str, str]:
 
 
 def set_many(db: Session, values: dict[str, str | None]) -> None:
-    """Upsert each ``key -> value`` (string). Flushes; never commits."""
+    """Upsert each ``key -> value`` (string). Flushes; never commits.
+
+    Environment-only keys (credentials) are refused: persisting one would
+    put a plaintext secret in a table the lab worker can SELECT.
+    """
+    refused = _ENV_ONLY_KEYS.intersection(values)
+    if refused:
+        raise ValueError(f"{sorted(refused)[0]} is environment-only and cannot be stored")
     for key, value in values.items():
         if key not in _INT_MINIMUMS or value is None or not value.strip():
             continue
@@ -200,6 +213,6 @@ def effective(db: Session | None = None) -> EffectiveSettings:
             logger.debug("settings_store.effective falling back to env defaults: %s", exc)
             stored = {}
         for key, raw in stored.items():
-            if key in merged:
+            if key in merged and key not in _ENV_ONLY_KEYS:
                 merged[key] = _coerce(key, raw, merged[key])
     return EffectiveSettings(merged)

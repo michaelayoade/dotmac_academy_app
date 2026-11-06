@@ -75,6 +75,8 @@ class Settings(KernelSettings):
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
+    # Environment-only credential (SMTP_PASSWORD, materialized from the
+    # deployment secret store). Never persisted to platform_settings.
     smtp_password: str = ""
     smtp_from: str = "Dotmac Academy <academy@localhost>"
     smtp_starttls: bool = True

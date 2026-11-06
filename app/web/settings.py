@@ -47,10 +47,7 @@ def _context(request: Request, db: Session) -> dict:
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_form(request: Request, db: Session = Depends(get_db)):
-    """Render the settings form pre-filled with current effective values.
-
-    The SMTP password is intentionally rendered BLANK (never echoed).
-    """
+    """Render the settings form pre-filled with current effective values."""
     return templates.TemplateResponse(request, "admin/settings.html", _context(request, db))
 
 
@@ -60,7 +57,6 @@ def settings_save(
     smtp_host: str = Form(""),
     smtp_port: str = Form(""),
     smtp_user: str = Form(""),
-    smtp_password: str = Form(""),
     smtp_from: str = Form(""),
     branding_name: str = Form(""),
     max_concurrent_labs: str = Form(""),
@@ -71,7 +67,11 @@ def settings_save(
     email_digest_enabled: str | None = Form(None),
     platform_db: Session = Depends(get_platform_db),
 ):
-    """Upsert settings via a platform_api session. Blank password keeps existing."""
+    """Upsert settings via a platform_api session.
+
+    The SMTP password is environment-only (SMTP_PASSWORD) and is neither
+    accepted nor stored here.
+    """
     smtp_from = (smtp_from or "").strip()
     if smtp_user and smtp_from in {"", settings.smtp_from, "Dotmac Academy <academy@localhost>"}:
         smtp_from = smtp_user.strip()
@@ -89,10 +89,6 @@ def settings_save(
         "email_auto_on_pass": "true" if email_auto_on_pass is not None else "false",
         "email_digest_enabled": "true" if email_digest_enabled is not None else "false",
     }
-    # Blank password => keep the existing stored value (never wipe on blank).
-    if smtp_password:
-        values["smtp_password"] = smtp_password
-
     try:
         set_many(platform_db, values)
     except ValueError as exc:
