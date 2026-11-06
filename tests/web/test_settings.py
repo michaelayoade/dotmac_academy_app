@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from app.config import settings
@@ -16,6 +18,8 @@ from app.services.bootstrap import ensure_roles
 from app.services.email import notify_score_if_first_pass
 from app.services.security import hash_password
 from app.services.settings_store import effective, set_many
+
+_STORED_SMTP_PASSWORD = f"legacy-stored-{uuid4().hex}"
 
 
 @pytest.fixture(autouse=True)
@@ -68,19 +72,19 @@ def test_set_many_refuses_smtp_password(admin_session):
 def test_stored_smtp_password_row_is_ignored(admin_session):
     # A legacy row written before the key became environment-only must not
     # override the environment value.
-    admin_session.add(PlatformSetting(key="smtp_password", value="s3cr3t-stored"))
+    admin_session.add(PlatformSetting(key="smtp_password", value=_STORED_SMTP_PASSWORD))
     admin_session.commit()
     assert effective(admin_session).smtp_password == settings.smtp_password
-    assert effective(admin_session).smtp_password != "s3cr3t-stored"
+    assert effective(admin_session).smtp_password != _STORED_SMTP_PASSWORD
 
 
 def test_admin_get_ok_password_not_echoed(app_client, admin_session, tenant_a):
-    admin_session.add(PlatformSetting(key="smtp_password", value="s3cr3t-stored"))
+    admin_session.add(PlatformSetting(key="smtp_password", value=_STORED_SMTP_PASSWORD))
     admin_session.commit()
     h = _seed_login(app_client, admin_session, tenant_a, "adm@a.edu", "admin")
     r = app_client.get("/admin/settings", headers=h)
     assert r.status_code == 200
-    assert "s3cr3t-stored" not in r.text
+    assert _STORED_SMTP_PASSWORD not in r.text
 
 
 def test_admin_post_persists_branding(app_client, admin_session, tenant_a):
