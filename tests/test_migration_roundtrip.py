@@ -368,13 +368,25 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
 
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
-        # A same-run reference: the state a normal, uninterrupted migration
-        # produces, captured before this test disturbs anything.
-        reference = _full_snapshot(conn)
-        assert reference["column_insert"] == {
+        assert _column_insert_snapshot(conn) == {
             "lab_operations": LAB_OPERATIONS_APP_USER_INSERT_COLUMNS,
             "lab_instances": LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD,
         }, "app_user's column-scoped INSERT grants at head don't match 0055/0056's exact column lists"
+
+    # A same-run reference: the state a normal, uninterrupted migration to
+    # TARGET_REVISION produces. Captured at TARGET, not at head: since 0067,
+    # a later revision legitimately changes one grant this snapshot covers
+    # (the worker's email_outbox SELECT), so a head snapshot no longer
+    # describes the state an uninterrupted 0056 produces.
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION)
+            command.upgrade(cfg, TARGET_REVISION)
+            with admin_engine.connect() as conn:
+                reference = _full_snapshot(conn)
+            command.downgrade(cfg, DOWN_REVISION)
+        finally:
+            command.upgrade(cfg, "head")
 
     script = ScriptDirectory.from_config(cfg)
     revision_script = script.get_revision(TARGET_REVISION)
