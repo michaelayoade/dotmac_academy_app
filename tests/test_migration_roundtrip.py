@@ -63,7 +63,7 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 # from "head", because the whole point is to exercise exactly the 0055/0056
 # boundary regardless of what head is. These two constants are pinned to that
 # boundary specifically and must NOT be read as "head" anywhere below — the
-# repo head is now 0066 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
+# repo head is now 0067 (see HEAD_REVISION), and the 0055/0056, 0056/0057,
 # 0057/0058, and 0058/0059 tests are updated to assert against that instead of
 # assuming an earlier revision is still head.
 DOWN_REVISION = "0055_lab_operations"
@@ -75,7 +75,7 @@ TARGET_REVISION = "0056_lab_instance_worker"
 # below stop silently assuming an earlier revision is head once a later one
 # exists — mirroring how the 0058->0059 transition itself updated this same
 # constant last time, rather than the fixed boundary constants below it.
-HEAD_REVISION = "0066_erp_completion_checkpoint"
+HEAD_REVISION = "0067_worker_outbox_narrowing"
 
 # 0056 <-> 0057 boundary, for the 0057-specific tests further down this file.
 DOWN_REVISION_0057 = TARGET_REVISION  # "0056_lab_instance_worker"
@@ -368,13 +368,25 @@ def test_0056_interrupted_upgrade_is_resumable(admin_engine):
 
     with admin_engine.connect() as conn:
         assert _current_version(conn) == HEAD_REVISION
-        # A same-run reference: the state a normal, uninterrupted migration
-        # produces, captured before this test disturbs anything.
-        reference = _full_snapshot(conn)
-        assert reference["column_insert"] == {
+        assert _column_insert_snapshot(conn) == {
             "lab_operations": LAB_OPERATIONS_APP_USER_INSERT_COLUMNS,
             "lab_instances": LAB_INSTANCES_APP_USER_INSERT_COLUMNS_AT_HEAD,
         }, "app_user's column-scoped INSERT grants at head don't match 0055/0056's exact column lists"
+
+    # A same-run reference: the state a normal, uninterrupted migration to
+    # TARGET_REVISION produces. Captured at TARGET, not at head: since 0067,
+    # a later revision legitimately changes one grant this snapshot covers
+    # (the worker's email_outbox SELECT), so a head snapshot no longer
+    # describes the state an uninterrupted 0056 produces.
+    with _migration_env(url):
+        try:
+            command.downgrade(cfg, DOWN_REVISION)
+            command.upgrade(cfg, TARGET_REVISION)
+            with admin_engine.connect() as conn:
+                reference = _full_snapshot(conn)
+            command.downgrade(cfg, DOWN_REVISION)
+        finally:
+            command.upgrade(cfg, "head")
 
     script = ScriptDirectory.from_config(cfg)
     revision_script = script.get_revision(TARGET_REVISION)
