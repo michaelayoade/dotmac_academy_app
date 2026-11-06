@@ -14,8 +14,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
+from uuid import uuid4
 
+import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.models.assessment import Score, Submission
 from app.models.email_outbox import EmailOutbox
@@ -23,6 +26,7 @@ from app.models.lab import LabOperation, LabTemplate
 from app.models.learning_event import LearningEvent
 from app.models.notification import Notification
 from app.services import lab_jobs, lab_operations
+from app.services.email_outbox import enqueue_email
 from app.services.labengine.interface import ExecResult, LabHandle
 from tests.services.test_lab_operations_worker import _seed
 
@@ -33,8 +37,26 @@ SELECT_INSERT_TABLES = (
     "scores",
     "learning_events",
     "notifications",
-    "email_outbox",
     "certificates",
+)
+# email_outbox is deliberately not in SELECT_INSERT_TABLES since 0067: the
+# worker INSERTs and may SELECT only the conflict-key columns its
+# idempotent enqueue needs (see the email_outbox block below).
+EMAIL_OUTBOX_READABLE_COLUMNS = ("id", "tenant_id", "idempotency_key")
+EMAIL_OUTBOX_SECRET_COLUMNS = (
+    "kind",
+    "recipient",
+    "subject",
+    "html_body",
+    "text_body",
+    "payload",
+    "status",
+    "attempts",
+    "available_at",
+    "sent_at",
+    "last_error",
+    "created_at",
+    "updated_at",
 )
 LAB_INSTANCES_PRIVILEGES = ("SELECT", "UPDATE")
 
@@ -101,6 +123,7 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         **{table: {"SELECT"} for table in SELECT_ONLY_TABLES},
         **{table: {"INSERT", "SELECT"} for table in SELECT_INSERT_TABLES},
         "course_completions": {"SELECT"},
+        "email_outbox": {"INSERT"},
     }
     direct_acl = {
         table: set(privileges)
@@ -170,6 +193,23 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
             lab_worker_session, table, "DELETE"
         ), f"academy_lab_worker should not have DELETE on {table}"
 
+    # --- email_outbox: INSERT plus conflict-key SELECT only (0067) --------
+    # The worker enqueues intents (INSERT ... ON CONFLICT DO NOTHING
+    # RETURNING id) but must never read recipients or bodies back: raw
+    # password-reset and invite links live there.
+    assert not _has_privilege(lab_worker_session, "email_outbox", "SELECT")
+    assert _has_privilege(lab_worker_session, "email_outbox", "INSERT")
+    for privilege in ("UPDATE", "DELETE"):
+        assert not _has_privilege(lab_worker_session, "email_outbox", privilege)
+    for column in EMAIL_OUTBOX_READABLE_COLUMNS:
+        assert _has_column_privilege(
+            lab_worker_session, "academy_lab_worker", "email_outbox", column, "SELECT"
+        ), f"expected academy_lab_worker to have SELECT on email_outbox.{column}"
+    for column in EMAIL_OUTBOX_SECRET_COLUMNS:
+        assert not _has_column_privilege(
+            lab_worker_session, "academy_lab_worker", "email_outbox", column, "SELECT"
+        ), f"academy_lab_worker must not have SELECT on email_outbox.{column}"
+
     # Facilitator activation is exposed only as a policy-enforcing capability.
     # The worker cannot inspect or mutate nomination/requirement/audit rows.
     for table in ("facilitator_nominations", "facilitator_requirements"):
@@ -213,7 +253,7 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         {"capability": capability},
     ).one()
     assert capability_security.prosecdef is True
-    assert capability_security.proconfig == ["search_path=pg_catalog"]
+    assert capability_security.proconfig == ["search_path=pg_catalog, pg_temp"]
     assert capability_security.provolatile == "v"
     assert capability_security.proparallel == "u"
     assert capability_security.proisstrict is False
@@ -375,3 +415,51 @@ def test_lab_worker_privilege_matrix_and_worker_consequences(
         .where(LabOperation.kind == "deploy")
     ).first()
     assert repair_operation is not None
+
+
+def test_lab_worker_enqueue_email_true_then_false_and_secret_reads_refused(
+    lab_worker_session, tenant_a
+):
+    """0067: idempotent enqueue still works; secret columns refuse with 42501.
+
+    ``enqueue_email`` relies on INSERT ... ON CONFLICT (tenant_id,
+    idempotency_key) DO NOTHING RETURNING id, which needs SELECT on exactly
+    the conflict-key columns — no more. Reading any body/recipient column
+    back as the worker must fail with permission denied.
+    """
+    key = f"0067-probe:{uuid4()}"
+    created = enqueue_email(
+        lab_worker_session,
+        tenant_id=tenant_a.id,
+        idempotency_key=key,
+        kind="score_pass",
+        recipient="probe@invalid",
+        subject="probe",
+        html_body="probe",
+    )
+    duplicate = enqueue_email(
+        lab_worker_session,
+        tenant_id=tenant_a.id,
+        idempotency_key=key,
+        kind="score_pass",
+        recipient="probe@invalid",
+        subject="probe",
+        html_body="probe",
+    )
+    assert created is True
+    assert duplicate is False
+
+    try:
+        for column in ("html_body", "recipient", "subject", "payload"):
+            with pytest.raises(DBAPIError) as raised:
+                lab_worker_session.execute(
+                    text(f"SELECT {column} FROM public.email_outbox LIMIT 1")  # noqa: S608
+                ).all()
+            assert raised.value.orig is not None
+            assert raised.value.orig.sqlstate == "42501", column
+            lab_worker_session.rollback()
+    finally:
+        # Never leave this session's transaction open: the tenant fixture's
+        # teardown DELETE would otherwise wait forever on the FK key-share
+        # lock this session's enqueue insert holds on the tenant row.
+        lab_worker_session.rollback()
