@@ -82,20 +82,21 @@
     {
       "id": "credential-operation-adoption",
       "priority": "low_internal",
-      "status": "operation_specific_gates_pending",
+      "status": "stale_blockers_corrected_current_user_flows_wired",
       "evidence": [
-        "reset_required already persists via a0003_identity_domain",
-        "Canonical sign-in uses Kernel CredentialLifecycle.verify and Party/UserCredential"
+        "a0003 already persists lifecycle_version/reset_required",
+        "a0004 already binds AccountToken to canonical Party/PartyPerson identities",
+        "Kernel a108 already provides verify, complete_account_reset, assign_authorized_password and change_authenticated_account_password",
+        "Active route callsites consume these owners; the misleading source-only/future migration headers are corrected in this revision"
       ],
-      "scope": "Remaining lifecycle operations, including the source-only authenticated password-change adapter",
+      "scope": "Active login, token-authorized reset, invitation assignment and authenticated password change consume released Kernel owners",
       "closure": [
-        "Map each active writer and the specific remaining operation contract",
-        "Confirm actual Kernel API, token-FK and migration requirements against current released source",
-        "Implement/qualify adapters and retire replaced writers with hosted proof"
+        "Qualify active credential HTTP journeys at the exact revision",
+        "Track future cohort force-reset/generated-material provisioning separately if product scope requires them"
       ],
       "limits": [
-        "A generic missing reset_required migration claim is stale",
-        "Working reset/invite behavior does not establish all operation-owner adoption"
+        "Current user flows do not require the future API/schema work described by stale headers",
+        "No Academy caller/operator workflow exists for cohort force-reset or generated-material provisioning; this change does not add those use cases"
       ]
     },
     {

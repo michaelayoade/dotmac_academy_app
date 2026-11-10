@@ -270,6 +270,19 @@ old = post("/login", {"email": email, "password": "chosen-password9"})
 assert old.status_code == 401 and not client.cookies.get("session")
 login(email, "changed-password9")
 assert csrf_get("/account").status_code == 200
+wrong = post("/account/password", {"current_password": "incorrect-password9",
+    "new_password": "final-password9", "confirm_password": "final-password9"}, htmx=True)
+assert wrong.status_code == 200 and "Current password is incorrect" in wrong.text
+updated = post("/account/password", {"current_password": "changed-password9",
+    "new_password": "final-password9", "confirm_password": "final-password9"}, htmx=True)
+assert updated.status_code == 200 and "Password updated" in updated.text
+assert client.get("/account").status_code == 302  # Current session was revoked by the change.
+assert post("/logout").status_code == 303 and not client.cookies.get("session")
+csrf_get("/login")
+old = post("/login", {"email": email, "password": "changed-password9"})
+assert old.status_code == 401 and not client.cookies.get("session")
+login(email, "final-password9")
+assert csrf_get("/account").status_code == 200
 assert post("/logout").status_code == 303 and not client.cookies.get("session")
 assert client.get("/account").status_code == 302
 assert all(mail.status == "pending" and mail.sent_at is None for mail in rows(EmailOutbox))
