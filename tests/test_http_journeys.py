@@ -164,6 +164,7 @@ assert graded.status_code == 200 and "Assessment submitted" in graded.text
 applicant = rows(Applicant, email=email)[0]
 assert applicant.assessment_taken_at is not None and applicant.assessment_score == 1.0
 assert applicant.status == "applied"  # Manual review; this cohort has no auto-accept threshold.
+assert len(rows(EmailOutbox, recipient=email, kind="assessment_review")) == 1
 
 login(os.environ["JOURNEY_EMAIL"], "chosen-password9")
 detail = csrf_get(f"/admin/applications/{applicant.id}")
@@ -215,7 +216,14 @@ assert post("/onboarding/orientation", {"token": onboarding_token}).status_code 
 assert len(rows(Enrollment, person_id=enrolled.person_id)) == 1
 assert len(rows(Party, email=email)) == 1
 assert len(rows(EmailOutbox, recipient=email, kind="enrollment_welcome")) == 1
-assert all(mail.status == "pending" and mail.attempts == 0 for mail in rows(EmailOutbox, recipient=email))
+mail = rows(EmailOutbox, recipient=email)
+assert len(mail) == 5
+assert {item.kind for item in mail} == {
+    "application_received", "entrance_invite", "assessment_review", "onboarding_invite", "enrollment_welcome",
+}
+assert len({item.id for item in mail}) == 5
+assert len({item.idempotency_key for item in mail}) == 5
+assert all(item.status == "pending" and item.attempts == 0 and item.sent_at is None for item in mail)
 assert rows(LabInstance) == [] and rows(LabOperation) == []
 assert rows(ERPCompletionCheckpoint) == []
 """
