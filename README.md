@@ -9,7 +9,7 @@ classification.md` in the projects workspace.
 
 Composition:
 
-- `dotmac-kernel` 0.1.0a107 — tenancy, identity, authorization, sessions,
+- `dotmac-kernel` 0.1.0a108 — tenancy, identity, authorization, sessions,
   settings, audit, application construction (`create_app`).
 - `dotmac-learning` 0.1.0a6 — the learning domain and its `mod_learning`
   storage (`lr` lineage through `lr_0012`); SQL is the sole
