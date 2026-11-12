@@ -7,10 +7,11 @@ from __future__ import annotations
 import html
 from itertools import groupby
 from uuid import UUID
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 import dotmac_learning as learning
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -36,8 +37,51 @@ from app.web.templating import templates
 router = APIRouter(dependencies=[Depends(require_tenant)])
 
 
+_SITEMAP_ORIGIN = "https://academy.dotmac.io"
+_SITEMAP_PATHS = (
+    "/",
+    "/courses",
+    "/free-technical-training",
+    "/siwes-ict-training",
+    "/nysc-ict-training",
+    "/fibre-optic-training",
+)
+
+
+@router.get("/sitemap.xml", include_in_schema=False)
+def sitemap() -> Response:
+    urlset = Element("urlset", xmlns="http://www.sitemaps.org/schemas/sitemap/0.9")
+    for path in _SITEMAP_PATHS:
+        url = SubElement(urlset, "url")
+        SubElement(url, "loc").text = f"{_SITEMAP_ORIGIN}{path}"
+    return Response(
+        tostring(urlset, encoding="utf-8", xml_declaration=True),
+        media_type="application/xml",
+    )
+
+
 def _is_staff(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return bool(set(effective(db, require_store=True).catalog_staff_roles) & role_slugs(db, tenant_id, person_id))
+
+
+@router.get("/free-technical-training", response_class=HTMLResponse)
+def free_technical_training(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "public/free-technical-training.html", {})
+
+
+@router.get("/siwes-ict-training", response_class=HTMLResponse)
+def siwes_ict_training(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "public/siwes-ict-training.html", {})
+
+
+@router.get("/nysc-ict-training", response_class=HTMLResponse)
+def nysc_ict_training(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "public/nysc-ict-training.html", {})
+
+
+@router.get("/fibre-optic-training", response_class=HTMLResponse)
+def fibre_optic_training(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "public/fibre-optic-training.html", {})
 
 
 @router.get("/courses", response_class=HTMLResponse)
