@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en-NG" {{ dotmac_ui_theme_attribute }}="{{ dotmac_ui_theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %}</title>
+  {% block description %}{% endblock %}
+  <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
+  {% include "_dotmac_ui_head.html" %}
+  <link rel="stylesheet" href="/static/public.css?v=4">
+</head>
+<body class="pub">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <nav class="nav" aria-label="Main navigation">
+    <div class="wrap">
+      <a href="/" class="nav-logo"><img src="/static/img/dotmac-logo.png" alt="Dotmac" width="132" height="30"> <span>Academy</span></a>
+      <div class="nav-links">
+        <a href="/#programs">Programs</a>
+        <a href="/courses">Courses</a>
+        <a href="/#faq">FAQ</a>
+        <a href="/apply" class="btn btn-orange">Apply now</a>
+        <a href="/login" class="btn btn-ghost">Sign in</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <header class="hero">
+      <div class="wrap">
+        <div class="hero-inner-l">
+          {% block introduction %}{% endblock %}
+        </div>
+      </div>
+    </header>
+    <div class="section">
+      <div class="wrap">
+        {% block details %}{% endblock %}
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>© {{ branding_name | default("Dotmac Academy") }} · part of <a href="https://dotmac.ng/">Dotmac Technologies</a></span>
+      <span><a href="/courses">Courses</a> · <a href="/apply">Apply</a> · <a href="/login">Student sign in</a></span>
+    </div>
+  </footer>
+</body>
+</html>
