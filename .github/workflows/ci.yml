@@ -44,6 +44,7 @@ jobs:
       # Disjoint safety partition runs first for fast feedback; maintained
       # excludes exactly these files so every test still runs once per CI run.
       MIGRATION_SAFETY_TESTS: >-
+        tests/test_kernel_a109_upgrade.py
         tests/test_v6_import.py tests/test_flip_decisions.py
         tests/test_product_conservation.py tests/test_import_atomicity.py
         tests/test_erp_import_conservation.py tests/test_flip_preflight_safety.py
