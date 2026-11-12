@@ -40,6 +40,11 @@ def _is_staff(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
     return bool(set(effective(db, require_store=True).catalog_staff_roles) & role_slugs(db, tenant_id, person_id))
 
 
+@router.get("/free-technical-training", response_class=HTMLResponse)
+def free_technical_training(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "public/free-technical-training.html", {})
+
+
 @router.get("/siwes-ict-training", response_class=HTMLResponse)
 def siwes_ict_training(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "public/siwes-ict-training.html", {})
