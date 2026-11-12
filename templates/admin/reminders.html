@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components/_pagination.html" import table_pagination %}
+{% from "components/table_macros.html" import table_pagination %}
 {% block title %}Reminder history — {{ branding_name | default("Dotmac Academy") }}{% endblock %}
 {% block content_width %}max-w-[1360px]{% endblock %}
 {% block content %}

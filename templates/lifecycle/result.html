@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ brand.name }}{% endblock %}
+{% block content %}
+<section id="{{ card }}" class="card p-6" role="{{ 'status' if ok else 'alert' }}">
+  <div class="rounded-lg {{ 'bg-brand-100 text-brand-800' if ok else 'bg-clay-500/15 text-clay-600' }} p-4"{% if redirect %} data-redirect-after='3000' data-redirect-href='/login'{% endif %}>
+    <h1 class="font-display text-2xl mb-4">{{ title }}</h1>
+    <p>{{ message }}</p>
+    {% if redirect %}<p class="mt-2 text-xs">Returning to login...</p>{% endif %}
+    <a class="btn-primary mt-5 inline-flex w-full justify-center" href="{{ surface.login_path }}">Go to login</a>
+  </div>
+</section>
+{% endblock %}

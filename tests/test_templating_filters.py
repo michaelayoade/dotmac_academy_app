@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from app.web.templating import templates
-
-
-def _elapsed(value):
-    return templates.env.filters["elapsed"](value)
+from app.web.templating import _elapsed
 
 
 def test_elapsed_filter_formats_recent_and_older_timestamps():

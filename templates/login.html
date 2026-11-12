@@ -8,6 +8,7 @@
   {% include "_dotmac_ui_head.html" %}
   <link rel="stylesheet" href="{{ academy_app_css_url }}">
   <script src="/static/htmx.min.js" defer></script>
+  {% include "components/request_feedback_assets.html" %}
 </head>
 <body class="min-h-screen bg-sand-100 text-ink antialiased">
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -124,6 +125,7 @@
 
   </main>
 
+  {% include "components/toasts.html" %}
   <script src="/static/csrf.js?v=2"></script>
 </body>
 </html>

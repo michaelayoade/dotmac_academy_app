@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from dotmac_learning import ActivityFact, AssessmentQuestion, QuestionFact, ScoreFact
 from fastapi.responses import HTMLResponse
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.datastructures import FormData
 
 from app.web import learn
@@ -132,6 +134,7 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
     monkeypatch.setattr(learn, "get_activity", lambda db, **kw: activity)
     monkeypatch.setattr(learn, "require_course_open", lambda *args, **kw: None)
     monkeypatch.setattr(learn, "require_activity_submittable", lambda *args, **kw: None)
+
     # learn.submit reads the open attempt WITHOUT closing it (Learning grades
     # against its bank-version pin) and closes it after a successful submit.
     def open_attempt(db, **kw):
@@ -180,7 +183,11 @@ def test_submit_public_question_shapes(monkeypatch, selection, question_count, b
     def render(request, name, context):
         assert name == "_activity_result.html"
         captured["context"] = context
-        return HTMLResponse(learn.templates.env.get_template(name).render(context))
+        env = Environment(
+            loader=FileSystemLoader(Path(__file__).resolve().parents[2] / "templates"),
+            autoescape=select_autoescape(("html", "xml")),
+        )
+        return HTMLResponse(env.get_template(name).render(context))
 
     monkeypatch.setattr(learn, "questions_for", questions)
     monkeypatch.setattr(learn, "submit_activity", submit)

@@ -102,6 +102,5 @@
     }());
   
 window.addEventListener('error', function (e) { var t = e.target; if (t && t.hasAttribute && t.hasAttribute('data-hide-on-error')) t.style.display = 'none'; }, true);
-document.addEventListener('change', function (e) { if (e.target.hasAttribute('data-submit-on-change') && e.target.form) e.target.form.submit(); });
 document.addEventListener('submit', function (e) { var f = e.target; if (f.hasAttribute('data-version-action-form')) f.action = f.action.replace('__VERSION__', f.version_id.value); });
 document.addEventListener('submit', function (e) { var f = e.target; if (f.hasAttribute('data-confirm-submit') && !confirm(f.getAttribute('data-confirm-submit'))) e.preventDefault(); });
