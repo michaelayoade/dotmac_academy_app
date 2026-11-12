@@ -1,22 +1,17 @@
-<!doctype html>
-<html lang="en-NG">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Free NYSC ICT Training | Dotmac Academy</title>
+{% extends "public/training_base.html" %}
+
+{% block title %}Free NYSC ICT Training | Dotmac Academy{% endblock %}
+{% block description %}
   <meta name="description" content="Explore free networking and ICT training for eligible NYSC corps members. See available technical tracks and how to apply to Dotmac Academy.">
-</head>
-<body>
-  <header>
-    <nav aria-label="Academy navigation">
-      <a href="/">Dotmac Academy</a>
-      <a href="/courses">Course catalogue</a>
-    </nav>
-  </header>
-  <main>
+{% endblock %}
+
+{% block introduction %}
     <h1>Free ICT training for NYSC corps members</h1>
     <p>Dotmac Technical Academy offers free technical training to eligible National Youth Service Corps (NYSC) members who want to build practical ICT and networking skills during their service year.</p>
     <p>Eligible corps members can combine free online training in ICT and networking with practical sessions during their service year.</p>
+{% endblock %}
+
+{% block details %}
     <section>
       <h2>What ICT skills can corps members learn?</h2>
       <p>Browse fibre engineering, wireless and radio, routing and switching, network operations, and technical support in the course catalogue.</p>
@@ -28,8 +23,6 @@
     <section>
       <h2>How do I apply for NYSC ICT training?</h2>
       <p>Choose a training track on the application form and follow the emailed instructions for your entrance assessment.</p>
-      <p><a href="/apply">Apply for NYSC ICT training</a> or <a href="/fibre-optic-training">explore the Fiber Engineering track</a>.</p>
+      <p><a href="/apply" class="btn btn-orange">Apply for NYSC ICT training</a> or <a href="/fibre-optic-training">explore the Fiber Engineering track</a>.</p>
     </section>
-  </main>
-</body>
-</html>
+{% endblock %}
