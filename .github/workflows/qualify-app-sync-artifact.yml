@@ -1,0 +1,47 @@
+name: Capture encrypted app-sync artifact provenance
+
+on:
+  push:
+    branches:
+      - ops/a109-artifact-provenance-20261112
+    paths:
+      - .github/workflows/qualify-app-sync-artifact.yml
+      - scripts/ci/capture_app_sync_artifact.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-sync-artifact-provenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: ${{ github.repository == 'michaelayoade/dotmac_academy_app' && github.ref == 'refs/heads/ops/a109-artifact-provenance-20261112' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1; same pinned action as owner release lane
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0; same owner-lane pin
+        with:
+          python-version: "3.12"
+      # No Forgejo/GitHub credentials are needed: the exact Git dependency
+      # origin is public HTTPS. Credential helpers and prompts are disabled.
+      # Package bytes remain PRIVATE regardless of source visibility.
+      - name: Build once and seal evidence to the root-owned public recipient
+        run: python -I -S -B scripts/ci/capture_app_sync_artifact.py
+      # A differing wheel digest is recorded inside the encrypted provenance;
+      # it does not suppress the useful artifact or fabricate byte parity.
+      - name: Retain ciphertext and hashes only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1; owner release-lane pin
+        with:
+          name: encrypted-app-sync-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifact-provenance-sealed/app-sync-provenance.tar.age
+            .artifact-provenance-sealed/public-hashes.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
