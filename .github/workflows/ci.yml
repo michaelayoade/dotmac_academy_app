@@ -140,6 +140,14 @@ jobs:
       - name: Verify migration safety execution evidence
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome != 'skipped' }}
         run: poetry run python scripts/check_ci_test_skips.py artifacts/migration-safety.xml tests/ci-skips.txt
+      - name: Preserve migration safety evidence promptly
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: academy-v2-migration-safety-${{ github.sha }}
+          path: artifacts/migration-safety.xml
+          if-no-files-found: error
+          retention-days: 30
       - name: Maintained composition and transfer tests
         id: maintained
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome == 'success' }}
