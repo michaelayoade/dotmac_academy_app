@@ -434,14 +434,14 @@ reference = "forgejo"
 
 [[package]]
 name = "dotmac-kernel"
-version = "0.1.0a108"
+version = "0.1.0a109"
 description = "DotMac platform kernel — multi-tenant FastAPI foundation (config, RLS db, identity/tenancy models, security, platform auth, middleware, settings, features registry, audit)"
 optional = false
 python-versions = ">=3.11,<3.14"
 groups = ["main"]
 files = [
-    {file = "dotmac_kernel-0.1.0a108-py3-none-any.whl", hash = "sha256:a4cd5953c195b29fc8550dc7f048ca403de48f7bb9b09d26c7b5f7608ce17ab9"},
-    {file = "dotmac_kernel-0.1.0a108.tar.gz", hash = "sha256:d78d5480debabb28d272e8ea19c63271735af2f5d8e7ae133f94a297af5700d7"},
+    {file = "dotmac_kernel-0.1.0a109-py3-none-any.whl", hash = "sha256:745aa9682eff1b5ff6d8f20a4f95e25805b9c62cbb05fa19a1f1554bb9bf36b2"},
+    {file = "dotmac_kernel-0.1.0a109.tar.gz", hash = "sha256:24b49a4575f83579739e6ba745691bca42c0f976347951e0060e4960a11b463a"},
 ]
 
 [package.dependencies]
@@ -2804,4 +2804,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "5ccad67941698c1ab092ea90a50042ddf819add832fca12417f712e97d146673"
+content-hash = "8147973a38af9fd7e91b03efa7b70a8541b9d03ee1c2029af7bec57cfbf51b19"
