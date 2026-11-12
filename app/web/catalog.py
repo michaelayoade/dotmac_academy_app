@@ -7,10 +7,11 @@ from __future__ import annotations
 import html
 from itertools import groupby
 from uuid import UUID
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 import dotmac_learning as learning
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_tenant
@@ -34,6 +35,29 @@ from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_tenant)])
+
+
+_SITEMAP_ORIGIN = "https://academy.dotmac.io"
+_SITEMAP_PATHS = (
+    "/",
+    "/courses",
+    "/free-technical-training",
+    "/siwes-ict-training",
+    "/nysc-ict-training",
+    "/fibre-optic-training",
+)
+
+
+@router.get("/sitemap.xml", include_in_schema=False)
+def sitemap() -> Response:
+    urlset = Element("urlset", xmlns="http://www.sitemaps.org/schemas/sitemap/0.9")
+    for path in _SITEMAP_PATHS:
+        url = SubElement(urlset, "url")
+        SubElement(url, "loc").text = f"{_SITEMAP_ORIGIN}{path}"
+    return Response(
+        tostring(urlset, encoding="utf-8", xml_declaration=True),
+        media_type="application/xml",
+    )
 
 
 def _is_staff(db: Session, tenant_id: UUID, person_id: UUID) -> bool:
