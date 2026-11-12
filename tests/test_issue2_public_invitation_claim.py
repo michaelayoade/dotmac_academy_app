@@ -63,7 +63,7 @@ def test_invitation_claim_spends_token_and_sibling_atomically(public_invitation,
     root = db.get_transaction()
 
     # Invalid bearer: existing response shape, real proof unspent.
-    for htmx, expected_status in ((False, 200), (True, 400)):
+    for htmx, expected_status in ((False, 200), (True, 200)):
         response = routes.accept_submit(
             _scoped_request(tenant, htmx=htmx), token="invalid-<bearer>", password="welcome12", db=db
         )
@@ -114,7 +114,7 @@ def test_existing_credential_conflict_keeps_proof_unspent(public_invitation):
     db.add(UserCredential(tenant_id=tenant.id, party_id=party.id, password_hash="existing-material"))
     db.flush()
     response = routes.accept_submit(_scoped_request(tenant, htmx=True), token=raw, password="welcome12", db=db)
-    assert response.status_code == 400
+    assert response.status_code == 200
     assert "Account was not activated" in response.body.decode()
     assert token.used_at is None and sibling.used_at is None
     assert db.is_active
@@ -132,12 +132,26 @@ def test_form_and_claim_use_the_same_actual_configured_minimum(public_invitation
     try:
         response = routes.accept_form(_scoped_request(tenant), token='<unsafe>&"', db=db)
         body = response.body.decode()
-        assert "minlength='11'" in body
-        assert "Choose a password (min 11 chars)" in body
-        assert "&lt;unsafe&gt;&amp;&quot;" in body
+        from html.parser import HTMLParser
+
+        class Inputs(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                if tag == "input" and dict(attrs).get("name") == "token":
+                    assert dict(attrs)["value"] == '<unsafe>&"'
+                    self.token_found = True
+                if tag == "input" and dict(attrs).get("name") == "password":
+                    assert dict(attrs)["minlength"] == "11"
+                    self.found = True
+
+        inputs = Inputs()
+        inputs.found = False
+        inputs.token_found = False
+        inputs.feed(body)
+        assert inputs.found and inputs.token_found
+        assert "At least 11 characters." in body
         assert "<unsafe>" not in body
         response = routes.accept_submit(_scoped_request(tenant, htmx=True), token=raw, password="welcome12", db=db)
-        assert response.status_code == 400
+        assert response.status_code == 200
         assert "Account was not activated" in response.body.decode()
         assert token.used_at is None and sibling.used_at is None
         response = routes.accept_submit(_scoped_request(tenant, htmx=True), token=raw, password="welcome12345", db=db)

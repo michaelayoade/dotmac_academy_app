@@ -203,11 +203,15 @@ setup = emailed_link("enrollment_welcome", "/accept-invite", email)
 invite = parse_qs(urlsplit(setup).query)["token"][0]
 csrf_get(setup)
 invalid = post("/accept-invite", {"token": "invalid-token", "password": "student-password9"}, htmx=True)
-assert invalid.status_code == 400 and "Account was not activated" in invalid.text
+assert invalid.status_code == 200 and "Account was not activated" in invalid.text
+assert invalid.headers["HX-Reselect"] == invalid.headers["HX-Retarget"] == "#accept-card"
+assert 'id="accept-card"' in invalid.text
 activated = post("/accept-invite", {"token": invite, "password": "student-password9"}, htmx=True)
 assert activated.status_code == 200 and "Account activated" in activated.text
 reused = post("/accept-invite", {"token": invite, "password": "replacement-password9"}, htmx=True)
-assert reused.status_code == 400 and "Account was not activated" in reused.text
+assert reused.status_code == 200 and "Account was not activated" in reused.text
+assert reused.headers["HX-Reselect"] == reused.headers["HX-Retarget"] == "#accept-card"
+assert 'id="accept-card"' in reused.text
 login(email, "student-password9")
 assert csrf_get("/account").status_code == 200
 # Repeated completion cannot duplicate membership, identity, or welcome delivery.
@@ -258,13 +262,17 @@ reset = emailed_link("password_reset", "/reset", email)
 token = parse_qs(urlsplit(reset).query)["token"][0]
 csrf_get(reset)
 bad = post("/reset", {"token": "invalid-token", "password": "changed-password9"}, htmx=True)
-assert bad.status_code == 400 and "Password was not changed" in bad.text
+assert bad.status_code == 200 and "Password was not changed" in bad.text
+assert bad.headers["HX-Reselect"] == bad.headers["HX-Retarget"] == "#reset-card"
+assert 'id="reset-card"' in bad.text
 changed = post("/reset", {"token": token, "password": "changed-password9"}, htmx=True)
 assert changed.status_code == 200 and "Password updated" in changed.text
 spent = rows(AccountToken, kind="password_reset")
 assert len(spent) == 1 and spent[0].used_at is not None
 again = post("/reset", {"token": token, "password": "another-password9"}, htmx=True)
-assert again.status_code == 400 and "Password was not changed" in again.text
+assert again.status_code == 200 and "Password was not changed" in again.text
+assert again.headers["HX-Reselect"] == again.headers["HX-Retarget"] == "#reset-card"
+assert 'id="reset-card"' in again.text
 csrf_get("/login")
 old = post("/login", {"email": email, "password": "chosen-password9"})
 assert old.status_code == 401 and not client.cookies.get("session")

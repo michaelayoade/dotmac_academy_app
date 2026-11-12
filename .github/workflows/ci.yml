@@ -44,6 +44,7 @@ jobs:
       # Disjoint safety partition runs first for fast feedback; maintained
       # excludes exactly these files so every test still runs once per CI run.
       MIGRATION_SAFETY_TESTS: >-
+        tests/test_kernel_a109_upgrade.py
         tests/test_v6_import.py tests/test_flip_decisions.py
         tests/test_product_conservation.py tests/test_import_atomicity.py
         tests/test_erp_import_conservation.py tests/test_flip_preflight_safety.py
@@ -139,6 +140,14 @@ jobs:
       - name: Verify migration safety execution evidence
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome != 'skipped' }}
         run: poetry run python scripts/check_ci_test_skips.py artifacts/migration-safety.xml tests/ci-skips.txt
+      - name: Preserve migration safety evidence promptly
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: academy-v2-migration-safety-${{ github.sha }}
+          path: artifacts/migration-safety.xml
+          if-no-files-found: error
+          retention-days: 30
       - name: Maintained composition and transfer tests
         id: maintained
         if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.migration_safety.outcome == 'success' }}

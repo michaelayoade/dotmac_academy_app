@@ -1,6 +1,7 @@
 """Hosted-only checks of public insight facts at Academy's presentation boundary."""
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -20,10 +21,11 @@ from dotmac_learning import (
     ReportCohort,
     WeekBucket,
 )
-from jinja2 import ChoiceLoader, DictLoader
+from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader, select_autoescape
 
 from app.services import insights
-from app.web.templating import templates
+from app.services.localtime import to_local
+from app.web.templating import _datefmt, _elapsed
 
 LEARNER_TERMS = LearnerInsightTerms(8, 4, 7, GradeTrendTerms(10, 4, 0.05))
 COHORT_TERMS = CohortInsightTerms(7, 4, 0.5)
@@ -37,14 +39,16 @@ def explicit_policy(monkeypatch):
 
 def _render(name, **context):
     # Exercise the actual page template, with navigation/auth layout isolated.
-    env = templates.env.overlay(
+    env = Environment(
+        autoescape=select_autoescape(("html", "xml")),
         loader=ChoiceLoader(
             [
                 DictLoader({"base.html": "{% block content %}{% endblock %}"}),
-                templates.env.loader,
+                FileSystemLoader(Path(__file__).resolve().parents[2] / "templates"),
             ]
-        )
+        ),
     )
+    env.filters.update(localtime=to_local, datefmt=_datefmt, elapsed=_elapsed)
     return env.get_template(name).render(**context)
 
 

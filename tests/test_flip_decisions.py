@@ -66,6 +66,7 @@ def test_imported_person_without_login_claims_via_invite(genesis_database):
     from dotmac_kernel.models import Tenant, UserCredential
     from dotmac_kernel.security import verify_password
 
+    from app.kernel_runtime import create_academy_app
     from app.models.account_token import AccountToken
     from app.services.credential_authentication import sign_in
     from app.services.security import hash_token
@@ -133,7 +134,10 @@ def test_imported_person_without_login_claims_via_invite(genesis_database):
                 )
                 db.commit()
                 db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": str(tenant_id)})
-                request = Request({"type": "http", "method": "POST", "path": "/accept-invite", "headers": []})
+                academy_app = create_academy_app()
+                request = Request(
+                    {"type": "http", "method": "POST", "path": "/accept-invite", "headers": [], "app": academy_app}
+                )
                 request.state.tenant = tenant
                 response = routes.accept_submit(request, token=raw, password="welcome12", db=db)
                 assert response.status_code == 200

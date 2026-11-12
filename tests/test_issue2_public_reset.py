@@ -109,7 +109,7 @@ def test_public_reset_anti_enumeration_and_token_spend(canonical_account):
 
     # Invalid bearer: response shape kept, actual proof and credential intact.
     before = db.get(UserCredential, cid).password_hash
-    for htmx, expected_status in ((False, 200), (True, 400)):
+    for htmx, expected_status in ((False, 200), (True, 200)):
         response = routes.reset_submit(
             _request(db, tid, htmx=htmx), token="invalid-<bearer>", password="brandnew9", db=db
         )
@@ -155,13 +155,28 @@ def test_reset_form_and_real_owner_share_configured_minimum(canonical_account, a
     admin_session.commit()
     try:
         form = routes.reset_form(_request(db, tid), token='<unsafe>&"', db=db)
-        assert "minlength='11'" in form.body.decode()
-        assert "New password (min 11 chars)" in form.body.decode()
-        assert "&lt;unsafe&gt;&amp;&quot;" in form.body.decode()
+        from html.parser import HTMLParser
+
+        class Inputs(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                if tag == "input" and dict(attrs).get("name") == "token":
+                    assert dict(attrs)["value"] == '<unsafe>&"'
+                    self.token_found = True
+                if tag == "input" and dict(attrs).get("name") == "password":
+                    assert dict(attrs)["minlength"] == "11"
+                    self.found = True
+
+        inputs = Inputs()
+        inputs.found = False
+        inputs.token_found = False
+        inputs.feed(form.body.decode())
+        assert inputs.found and inputs.token_found
+        assert "At least 11 characters." in form.body.decode()
+        assert "<unsafe>" not in form.body.decode()
         raw = canonical_lifecycle.request_password_reset(db, tenant_id=tid, email=email)
         assert raw is not None
         refused = routes.reset_submit(_request(db, tid, htmx=True), token=raw, password="brandnew9", db=db)
-        assert refused.status_code == 400
+        assert refused.status_code == 200
         assert _tokens(db, tid, pid)[0].used_at is None
         accepted = routes.reset_submit(_request(db, tid, htmx=True), token=raw, password="brandnew12345", db=db)
         assert accepted.status_code == 200

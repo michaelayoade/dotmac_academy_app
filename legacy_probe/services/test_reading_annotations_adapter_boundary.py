@@ -1,17 +1,19 @@
 """Hosted-only reading facade boundaries; no database or installed proof."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import dotmac_learning as learning
 import pytest
 from fastapi.responses import HTMLResponse
-from jinja2 import ChoiceLoader, DictLoader
+from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader, select_autoescape
 
 from app.services import bookmarks, reading_progress
+from app.services.localtime import to_local
 from app.web import bookmarks as bookmarks_web
-from app.web.templating import templates
+from app.web.templating import _datefmt, _elapsed
 
 
 def _facts():
@@ -24,14 +26,16 @@ def _facts():
 
 
 def _render(name, **context):
-    env = templates.env.overlay(
+    env = Environment(
+        autoescape=select_autoescape(("html", "xml")),
         loader=ChoiceLoader(
             [
                 DictLoader({"base.html": "{% block content %}{% endblock %}"}),
-                templates.env.loader,
+                FileSystemLoader(Path(__file__).resolve().parents[2] / "templates"),
             ]
-        )
+        ),
     )
+    env.filters.update(localtime=to_local, datefmt=_datefmt, elapsed=_elapsed)
     return env.get_template(name).render(**context)
 
 

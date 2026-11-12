@@ -33,9 +33,12 @@ assert current_account
 
 
 def _request(tenant, token=None):
+    from app.kernel_runtime import create_academy_app
+
     request = account_request(tenant, token)
     request.scope.update(
         {
+            "app": create_academy_app(),
             "scheme": "https",
             "server": ("alpha.localhost", 443),
             "path": "/bookmarks",

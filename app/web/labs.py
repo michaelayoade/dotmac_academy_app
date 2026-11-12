@@ -155,9 +155,6 @@ def _console_live(instance: LabInstance) -> bool:
     return instance.status == "active" and instance.error is None and instance.runtime_presence == "present"
 
 
-templates.env.globals["lab_console_live"] = _console_live
-
-
 def _authorize_console(
     db: Session,
     tenant: _TenantContext,
@@ -582,6 +579,7 @@ def lab_detail(
         "labs/detail.html",
         {
             "request": request,
+            "lab_console_live": _console_live,
             "activity": act,
             "template": tpl,
             "instance": instance,
@@ -610,7 +608,9 @@ def lab_launch(
     require_course_open(db, tenant_id=tenant.id, person_id=person.id, course_id=act.course_id)
     tpl = _lab_template(db, tenant, activity_id)
     instance = lab_lifecycle.request_lab(db, tenant_id=tenant.id, person_id=person.id, activity=act, template=tpl)
-    resp = templates.TemplateResponse(request, "labs/_status.html", {"request": request, "instance": instance})
+    resp = templates.TemplateResponse(
+        request, "labs/_status.html", {"request": request, "lab_console_live": _console_live, "instance": instance}
+    )
     # The instance's seed now exists but the instructions column (rendered
     # server-side into the surrounding page, not this swapped fragment) has
     # not been refreshed — force a full-page reload so the follow-up GET
@@ -633,7 +633,12 @@ def lab_status(
     return templates.TemplateResponse(
         request,
         "labs/_status.html",
-        {"request": request, "instance": instance, **_result_context(db, tenant, person, instance)},
+        {
+            "request": request,
+            "lab_console_live": _console_live,
+            "instance": instance,
+            **_result_context(db, tenant, person, instance),
+        },
     )
 
 
@@ -659,7 +664,13 @@ def lab_check(
     return templates.TemplateResponse(
         request,
         "labs/_operation.html",
-        {"request": request, "operation": operation, "instance": instance, "score": None},
+        {
+            "request": request,
+            "lab_console_live": _console_live,
+            "operation": operation,
+            "instance": instance,
+            "score": None,
+        },
     )
 
 
@@ -693,6 +704,7 @@ def lab_reset(
                 "labs/_operation.html",
                 {
                     "request": request,
+                    "lab_console_live": _console_live,
                     "operation": operation,
                     "instance": instance,
                     "score": None,
@@ -709,7 +721,13 @@ def lab_reset(
     return templates.TemplateResponse(
         request,
         "labs/_operation.html",
-        {"request": request, "operation": operation, "instance": instance, "score": None},
+        {
+            "request": request,
+            "lab_console_live": _console_live,
+            "operation": operation,
+            "instance": instance,
+            "score": None,
+        },
     )
 
 
@@ -741,6 +759,7 @@ def lab_operation_status(
         template,
         {
             "request": request,
+            "lab_console_live": _console_live,
             "operation": operation,
             "instance": instance,
             "score": score,

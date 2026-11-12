@@ -2,18 +2,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
-from fastapi.templating import Jinja2Templates
+from dotmac_kernel.templating import render
 
 from app.services.localtime import academy_tz_label, to_local
 from app.ui import template_globals
 from app.web.context import nav_context
-
-_TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR), context_processors=[nav_context])
-# Render stored-UTC datetimes as academy wall-clock (see app/services/localtime).
-templates.env.filters["localtime"] = to_local
 
 
 def _datefmt(dt):
@@ -21,9 +15,6 @@ def _datefmt(dt):
     if dt is None:
         return ""
     return dt.strftime("%b %d, %H:%M")
-
-
-templates.env.filters["datefmt"] = _datefmt
 
 
 def _elapsed(dt: datetime | None) -> str:
@@ -50,7 +41,43 @@ def _elapsed(dt: datetime | None) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
-templates.env.filters["elapsed"] = _elapsed
-# Dynamic wall-clock zone label (e.g. "WAT") for UI copy — no hardcoded strings.
-templates.env.globals["academy_tz_label"] = academy_tz_label()
-templates.env.globals.update(template_globals())
+_PRODUCT_FILTERS = {"localtime": to_local, "datefmt": _datefmt, "elapsed": _elapsed}
+
+
+class _ProductTemplates:
+    """Compatibility spelling backed solely by Kernel's public render port."""
+
+    def TemplateResponse(self, *args, **kwargs):
+        # Starlette supports both (name, context) and (request, name, context).
+        fields = (
+            ("name", "context", "status_code")
+            if args and isinstance(args[0], str)
+            else ("request", "name", "context", "status_code")
+        )
+        if len(args) > len(fields):
+            raise TypeError("unsupported positional TemplateResponse arguments")
+        values = dict(kwargs)
+        for key, value in zip(fields, args, strict=False):
+            if key in values:
+                raise TypeError(f"multiple values for {key}")
+            values[key] = value
+        unsupported = values.keys() - {"request", "name", "context", "status_code"}
+        if unsupported:
+            raise TypeError(f"unsupported TemplateResponse arguments: {sorted(unsupported)}")
+        context = dict(values.get("context") or {})
+        request = values.get("request", context.get("request"))
+        if request is None or "name" not in values:
+            raise TypeError("TemplateResponse requires request and name")
+        navigation = nav_context(request)
+        context = {**template_globals(), "academy_tz_label": academy_tz_label(), **context, **navigation}
+        if context.get("lifecycle_page"):
+            brand = dict(context["brand"])
+            brand["name"] = navigation["branding_name"]
+            brand["mark"] = brand["name"][:1]
+            context["brand"] = brand
+        return render(
+            request, values["name"], context, status_code=values.get("status_code", 200), filters=_PRODUCT_FILTERS
+        )
+
+
+templates = _ProductTemplates()

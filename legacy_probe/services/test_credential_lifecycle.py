@@ -266,6 +266,7 @@ def test_version_overflow_refuses_before_hash(reset_account, monkeypatch):
 
 
 def test_actual_route_catches_bad_request_after_real_savepoint_rollback(reset_account, monkeypatch):
+    from app.kernel_runtime import create_academy_app
     from app.web import lifecycle as route
 
     db, tid, party, credentials, raw, token, sibling, _ = reset_account
@@ -286,9 +287,34 @@ def test_actual_route_catches_bad_request_after_real_savepoint_rollback(reset_ac
         ),
     )
     monkeypatch.setattr(route, "require_tenant", lambda request: SimpleNamespace(id=tid))
-    request = Request({"type": "http", "headers": [(b"hx-request", b"true")]})
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "server": ("academy.example.test", 443),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+            "path": "/reset",
+            "raw_path": b"/reset",
+            "query_string": b"",
+            "headers": [(b"host", b"academy.example.test"), (b"hx-request", b"true")],
+            "app": create_academy_app(),
+        }
+    )
     response = route.reset_submit(request, token=raw, password="chosen-new9", db=db)
-    assert response.status_code == 400
+    # Handled validation uses 200 so HTMX swaps in the failure card.
+    assert response.status_code == 200
+    assert response.headers["HX-Retarget"] == response.headers["HX-Reselect"] == "#reset-card"
+    assert response.headers["HX-Reswap"] == "outerHTML"
+    body = response.body.decode()
+    assert 'id="reset-card"' in body
+    assert 'role="alert"' in body
+    assert "Password was not changed" in body
+    assert "invalid or expired token or account reset conflict" in body
+    assert raw not in body and "chosen-new9" not in body
     assert db.is_active
     # Route returns normally: caller may flush/commit its root. All reset
     # effects must already be absent without a caller rollback.
