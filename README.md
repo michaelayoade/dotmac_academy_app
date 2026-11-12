@@ -12,9 +12,9 @@ hosts on 2026-11-10. Recovery is **fix forward only**. Legacy data, source and
 receipts remain archive/evidence until Michael explicitly approves deletion.
 See [cutover status and remaining work](docs/cutover.md).
 
-Composition:
+Source candidate composition (hosted qualification and deployment pending):
 
-- `dotmac-kernel` 0.1.0a108 — tenancy, identity, authorization, sessions,
+- `dotmac-kernel` 0.1.0a109 — tenancy, identity, authorization, sessions,
   settings, audit, application construction (`create_app`).
 - `dotmac-learning` 0.1.0a6 — the learning domain and its `mod_learning`
   storage (`lr` lineage through `lr_0012`); SQL is the sole
@@ -29,6 +29,10 @@ Composition:
   delivery policy, presentation), ported slice by slice per the
   service ownership classification. Anything the kernel or a module owns
   is consumed, never reimplemented.
+
+The last accepted production composition remains Kernel `0.1.0a108`.
+The [a109 adoption record](docs/kernel-ui-adoption.md) identifies the verified
+artifact, shared UI changes and explicit composed-upgrade qualification.
 
 Genesis uses the kernel and Learning module lineages. The historical V6
 transform-to-fit transfer and downtime flip are complete; a second import or

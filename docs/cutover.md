@@ -57,6 +57,13 @@ migration, integration or module-adoption debt.
 
 ## Remaining work and authority boundaries
 
+The source candidate now pins verified Kernel `0.1.0a109`; its
+[adoption record](kernel-ui-adoption.md) covers shared UI and the explicit
+Kernel `0031` then Academy `a0011` upgrade checks. Fresh hosted qualification,
+an exact candidate deployment approval and live acceptance remain required.
+The accepted production evidence above remains tied to `d12260b6` and Kernel
+`0.1.0a108`.
+
 | Work item | Current status / acceptance still needed |
 | --- | --- |
 | Admissions business journey | Live apply-to-enrolled proof is not recorded. Do not infer it from login, lab acceptance or the older D1 route. |
