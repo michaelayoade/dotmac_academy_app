@@ -1,0 +1,44 @@
+name: Qualify cutover code
+
+on:
+  push:
+    paths:
+      - "ops/academy_cutover/**"
+      - ".github/workflows/qualify-cutover-code.yml"
+  pull_request:
+    paths:
+      - "ops/academy_cutover/**"
+      - ".github/workflows/qualify-cutover-code.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: academy-cutover-code-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked public test tools
+        run: |
+          python -m venv .cutover-code-venv
+          .cutover-code-venv/bin/python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r ops/academy_cutover/requirements-ci.txt
+      - name: Verify source byte inventory
+        working-directory: ops/academy_cutover
+        run: sha256sum --check SOURCE_FILES.sha256
+      - name: Lint operational code and synthetic tests
+        run: .cutover-code-venv/bin/ruff check --isolated --target-version py312 --line-length 120 --select E,F,W,I,B,S,RUF ops/academy_cutover
+      - name: Qualify protocol and refusal behavior
+        run: .cutover-code-venv/bin/python -m pytest -c ops/academy_cutover/pytest.ini --confcutdir=ops/academy_cutover/tests ops/academy_cutover/tests -q --tb=short

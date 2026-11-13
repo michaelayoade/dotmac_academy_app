@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dotmac.io/schemas/academy-census-peer-entry-policy-v1.json",
+  "description": "Static receiver policy only; no keys, policy instances or trust are provisioned. The producer hash is declared and actual producer/bootstrap authority must be verified by the protected producer. Forced entry accepts only exact existing transport command strings.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "AcademyCensusPeerEntryPolicy.v1"
+    },
+    "role": {
+      "enum": [
+        "web",
+        "lab"
+      ]
+    },
+    "hostname": {
+      "enum": [
+        "vmi2490731",
+        "academy-labs"
+      ]
+    },
+    "receiving_uid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/root/(?:(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(?![\\s\\S])",
+          "maxLength": 2048,
+          "allOf": [
+            {
+              "pattern": "/candidate_external_census[.]py$"
+            }
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ]
+    },
+    "peer_packet_root": {
+      "type": "string",
+      "pattern": "^/root/(?:(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(?![\\s\\S])",
+      "maxLength": 2048
+    },
+    "entrypoint_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "role",
+    "hostname",
+    "receiving_uid",
+    "producer",
+    "peer_packet_root",
+    "entrypoint_sha256"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "web"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hostname": {
+            "const": "vmi2490731"
+          },
+          "receiving_uid": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "lab"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hostname": {
+            "const": "academy-labs"
+          },
+          "receiving_uid": {
+            "minimum": 1
+          }
+        }
+      }
+    }
+  ]
+}
