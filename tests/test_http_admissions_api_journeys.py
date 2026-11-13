@@ -17,7 +17,8 @@ assert current_account  # Imported pytest fixture.
 
 
 _API_INTAKE = r"""
-email = "api-intake@example.test"
+# Keep the API's request/response EmailStr validation active with a valid example domain.
+email = "api-intake@example.com"
 page = csrf_get("/apply")
 assert os.environ["JOURNEY_CHOICE"] in page.text
 submitted = post("/apply", {
@@ -199,7 +200,7 @@ def test_public_applicant_api_rejects_foreign_admin_and_local_student_writes(cur
     a = current_account
     extra = _intake(a)
     for tenant, role, key in ((a.tenant_b, "admin", "OTHER"), (a.tenant, "student", "STUDENT")):
-        email = f"api-{key.lower()}@example.test"
+        email = f"api-{key.lower()}@example.com"
         person = make_person_party(a.admin, tenant_id=tenant.id, email=email, first_name="API", last_name=key)
         make_person_credential(
             a.admin,
