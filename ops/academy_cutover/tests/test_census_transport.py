@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import re
 import signal
 import unittest
 from pathlib import Path
@@ -130,6 +131,109 @@ class Protocol(unittest.TestCase):
         self.assertIn("ForwardAgent=no", args)
         self.assertIn("ProxyCommand=none", args)
         self.assertIn("-B -I -S", args[-1])
+
+    def test_dot_prefixed_ascii_paths_preserve_exact_spelling(self):
+        for path in (
+            "/root/.ssh/id", "/root/.ssh/known_hosts", "/root/.ssh/id_ed25519",
+            "/root/.private/.packet/source.json", "/root/.hidden", "/root/a-b_c.1",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(T._path(path), path)
+                T._ref({"path": path, "sha256": HASH})
+
+    def test_dot_paths_reject_traversal_aliases_and_unsafe_characters(self):
+        for path in (
+            "", "/root", "/root/", "root/.ssh/id", "//root/.ssh/id", "/root//.ssh/id",
+            "/root/.ssh//id", "/root/.ssh/id/", "/root/./.ssh/id", "/root/.ssh/./id",
+            "/root/.ssh/../id", "/root/../other/id", "/root/.", "/root/..",
+            "/root/.ssh/.", "/root/.ssh/..", "/rooted/.ssh/id", "/outside/.ssh/id",
+            "/ROOT/.ssh/id", "/root/.ssh/id key", "/root/.ssh/id\tkey", "/root/.ssh/id\n",
+            "/root/.ssh/id\rkey", "/root/.ssh/id\0key", "/root/.ssh/id;command",
+            "/root/.ssh/$(command)", "/root/.ssh/`command`", "/root/.ssh/id&command",
+            "/root/.ssh/id|command", "/root/.ssh/id>file", "/root/.ssh/id<file",
+            "/root/.ssh/id'key", '/root/.ssh/id"key', "/root/.ssh/id*", "/root/.ssh/id?",
+            "/root/.ssh/{id}", "/root/.ssh/[id]", "/root/.ssh/id=key", "/root/.ssh/id:key",
+            "/root/.ssh/id%2fkey", "/root/.ssh/%2e%2e/id", "/root/.ssh/id\\key",
+            "/root/.ssh/idé", "/root/.ssh/\uff49\uff44", "/root/.ssh/id\u00a0key",
+        ):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                T._path(path)
+        for path in (None, 1, True, b"/root/.ssh/id", Path("/root/.ssh/id")):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                T._path(path)
+
+    def test_schema_path_patterns_match_runtime_without_normalizing(self):
+        schema = json.loads((Path(__file__).parents[1] / "census-transport.schema.json").read_text())
+        definitions = schema["$defs"]
+        fields = [definitions["reference"]["properties"]["path"]]
+        fields.extend(definitions["profile"]["properties"][name] for name in (
+            "peer_packet_root", "local_packet_root",
+        ))
+        self.assertEqual(len({field["pattern"] for field in fields}), 1)
+        accepted = (
+            "/root/.ssh/id", "/root/.ssh/known_hosts", "/root/.packet/.source.json",
+            "/root/x", "/root/a-b_c.1", "/root/.../x", "/root/.name/..name", "/root/-/_",
+        )
+        rejected = (
+            "", "/root", "/root/", "root/.ssh/id", "//root/.ssh/id", "/root//.ssh/id",
+            "/root/.ssh//id", "/root/.ssh/id/", "/root/./.ssh/id", "/root/.ssh/./id",
+            "/root/.ssh/../id", "/root/../other/id", "/root/.", "/root/..",
+            "/root/.ssh/.", "/root/.ssh/..", "/rooted/.ssh/id", "/outside/.ssh/id",
+            "/ROOT/.ssh/id", "/root/.ssh/id key", "/root/.ssh/id\tkey", "/root/.ssh/id\n",
+            "/root/.ssh/id\rkey", "/root/.ssh/id\0key", "/root/.ssh/id;command",
+            "/root/.ssh/$(command)", "/root/.ssh/`command`", "/root/.ssh/id&command",
+            "/root/.ssh/id|command", "/root/.ssh/id>file", "/root/.ssh/id<file",
+            "/root/.ssh/id'key", '/root/.ssh/id"key', "/root/.ssh/id*", "/root/.ssh/id?",
+            "/root/.ssh/{id}", "/root/.ssh/[id]", "/root/.ssh/id=key", "/root/.ssh/id:key",
+            "/root/.ssh/id%2fkey", "/root/.ssh/%2e%2e/id", "/root/.ssh/id\\key",
+            "/root/.ssh/id\u00e9", "/root/.ssh/\uff49\uff44", "/root/.ssh/id\u00a0key",
+        )
+        for expected, cases in ((True, accepted), (False, rejected)):
+            for path in cases:
+                with self.subTest(path=path):
+                    if expected:
+                        self.assertEqual(T._path(path), path)
+                    else:
+                        with self.assertRaises(ValueError):
+                            T._path(path)
+                    for field in fields:
+                        self.assertEqual(field["type"], "string")
+                        # JSON Schema pattern uses search semantics, not fullmatch.
+                        self.assertEqual(re.search(field["pattern"], path) is not None, expected)
+
+    def test_dot_ssh_profile_and_argv_validate_without_reading_credentials(self):
+        value = profile()
+        value["identity"]["path"] = "/root/.ssh/id"
+        value["known_hosts"]["path"] = "/root/.ssh/known_hosts"
+        m = {
+            "census_transport": {"web": reference("profile")},
+            "roles": {"web": {"hostname": "synthetic-web"}, "lab": {"hostname": "synthetic-lab"}},
+            "helpers": {"external_census": HASH},
+        }
+        common = Mock()
+        common.decode.return_value = value
+        with patch.object(T, "_pin", return_value=b"{}") as pin:
+            self.assertEqual(T.validate_profile(common, m, "web", reference("profile")), value)
+            pin.assert_called_once_with(common, reference("profile"))
+        common.read_bytes.assert_not_called()
+        argv = T._argv(value, "/root/peer-packet/current-gate-web-inputs.json")
+        self.assertEqual(argv[argv.index("-i") + 1], "/root/.ssh/id")
+        self.assertIn("UserKnownHostsFile=/root/.ssh/known_hosts", argv)
+
+    def test_dot_ssh_pins_keep_private_root0600_custody_and_hash_checks(self):
+        raw = b"synthetic-public-test-bytes"
+        for path in ("/root/.ssh/id", "/root/.ssh/known_hosts"):
+            with self.subTest(path=path):
+                common = Mock()
+                common.read_bytes.return_value = raw
+                ref = {"path": path, "sha256": hashlib.sha256(raw).hexdigest()}
+                self.assertEqual(T._pin(common, ref, 65_536), raw)
+                common.read_bytes.assert_called_once_with(
+                    path, limit=65_536, private=True, root_file=True, mode=0o600
+                )
+                common.read_bytes.return_value = raw + b"changed"
+                with self.assertRaisesRegex(ValueError, "source_hash"):
+                    T._pin(common, ref, 65_536)
 
     def test_missing_or_wrong_profile_does_not_read_credentials(self):
         common = Mock()

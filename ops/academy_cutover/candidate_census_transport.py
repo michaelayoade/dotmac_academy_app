@@ -33,7 +33,8 @@ MAX_SECONDS = 30
 # Persisted artifacts are audit inputs and never substitute for a new live call.
 _ISSUED = {}
 _UNCERTAIN_CHILDREN = []
-PATH = re.compile(r"/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\Z")
+# Dot-prefixed names (for example .ssh) are safe; _path rejects literal . and .. segments.
+PATH = re.compile(r"/root/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\Z")
 HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\Z")
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 BINDING_FIELDS = (

@@ -14,7 +14,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+          "pattern": "^/root/(?:(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(?![\\s\\S])"
         },
         "sha256": {
           "type": "string",
@@ -445,11 +445,11 @@
         },
         "peer_packet_root": {
           "type": "string",
-          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+          "pattern": "^/root/(?:(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(?![\\s\\S])"
         },
         "local_packet_root": {
           "type": "string",
-          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+          "pattern": "^/root/(?:(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(?![\\s\\S])"
         }
       },
       "description": "Existing approved static v2 profile only: credentials, endpoint, opposite-role caller+target host identities, pinned known peer producer code and protected packet root directories. NO future bootstrap/source/index hashes or refs. Reject v1 and extra fields. Runtime caller must be actual OTHER manifest role host; workstation is unsupported. Static validation does not require actual caller or open credentials. All actual files anchored root-private single-link regular0600; no auth/trust provisioning."
