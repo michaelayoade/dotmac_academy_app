@@ -3,7 +3,9 @@
 import argparse
 import errno
 import hashlib
+import io
 import json
+import math
 import os
 import re
 import selectors
@@ -59,6 +61,129 @@ SYSTEMD_ENDPOINT_PROFILE = {
     "repeated_pass_attempts": 65536,
     "total_attempts": 131072,
 }
+# Captured payload counts only explicit read results, including rejected bytes.
+MIB = 1024 * 1024
+RESOURCE_PROFILE = {
+    "schema": "AcademyDiscoveryResourceProfile.v1",
+    "captured_payload_bytes": 256 * MIB,
+    "record_json_bytes": 2 * MIB,
+    "ordinary_record_json_bytes": 46 * MIB,
+    "definition_domain_json_bytes": 16 * MIB,
+    "metadata_json_bytes": MIB,
+    "normal_json_bytes": 63 * MIB,
+    "failure_json_bytes": MIB,
+    "overflow_probe_bytes": 1,
+    "readlink_bytes": 65536,
+    "json_depth": 32,
+    "json_container_entries": 262144,
+    "json_nodes": 4000000,
+    "json_string_characters": 2 * MIB,
+    "json_key_characters": 256,
+    "json_integer_bits": 128,
+}
+DEFINITION_DOMAIN = "systemd_template_definitions"
+JSON_OPTIONS = dict(sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
+
+class ResourceLimitError(ValueError):
+    """Fixed resource refusal; never carries payload or exception text."""
+
+
+def canonical_size(value, limit, *, forbidden_containers=None):
+    """Validate before encoding; count ASCII JSON without allocating escaped strings.
+
+    Keys and strings are scanned only after their primitive bounds are checked.
+    Container identity is tracked on the active path, permitting shared acyclic trees.
+    Tuples are deliberately accepted: historical file identities encode as arrays.
+    """
+    total = 0
+    nodes = 0
+    active = set()
+
+    def charge(size):
+        nonlocal total
+        total += size
+        if total > limit:
+            raise ResourceLimitError
+
+    def string(text, key=False):
+        if len(text) > RESOURCE_PROFILE["json_key_characters" if key else "json_string_characters"]:
+            raise ResourceLimitError
+        charge(2)
+        for character in text:
+            code = ord(character)
+            charge(2 if character in '\"\\\b\f\n\r\t' else 6 if code < 32 or 127 <= code <= 65535
+                   else 12 if code > 65535 else 1)
+
+    def walk(item, depth=0):
+        nonlocal nodes
+        nodes += 1
+        if nodes > RESOURCE_PROFILE["json_nodes"] or depth > RESOURCE_PROFILE["json_depth"]:
+            raise ResourceLimitError
+        kind = type(item)
+        if item is None:
+            charge(4)
+        elif kind is bool:
+            charge(4 if item else 5)
+        elif kind is int:
+            if item.bit_length() > RESOURCE_PROFILE["json_integer_bits"]:
+                raise ResourceLimitError
+            charge(len(str(item)))
+        elif kind is float:
+            if not math.isfinite(item):
+                raise ResourceLimitError
+            charge(len(json.dumps(item, **JSON_OPTIONS)))
+        elif kind is str:
+            string(item)
+        elif kind in (dict, list, tuple):
+            if forbidden_containers is not None and id(item) in forbidden_containers:
+                raise ResourceLimitError
+            if id(item) in active or len(item) > RESOURCE_PROFILE["json_container_entries"]:
+                raise ResourceLimitError
+            active.add(id(item))
+            charge(2 + max(0, len(item) - 1))
+            if kind is dict:
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ResourceLimitError
+                    nodes += 1
+                    if nodes > RESOURCE_PROFILE["json_nodes"]:
+                        raise ResourceLimitError
+                    string(key, key=True)
+                    charge(1)
+                    walk(child, depth + 1)
+            else:
+                for child in item:
+                    walk(child, depth + 1)
+            active.remove(id(item))
+        else:
+            raise ResourceLimitError
+
+    walk(value)
+    return total
+
+
+def canonical_bytes(value, limit):
+    canonical_size(value, limit)
+    return json.dumps(value, **JSON_OPTIONS).encode("ascii")
+
+
+def stage_json(value, limit):
+    """No bytes escape until the entire validated document (newline included) fits."""
+    expected = canonical_size(value, limit - 1) + 1
+    staged = io.BytesIO()
+    for chunk in json.JSONEncoder(**JSON_OPTIONS).iterencode(value):
+        block = chunk.encode("ascii")
+        if staged.tell() + len(block) + 1 > limit:
+            raise ResourceLimitError
+        staged.write(block)
+    staged.write(b"\n")
+    if staged.tell() != expected:
+        raise ResourceLimitError
+    staged.seek(0)
+    return staged
+
+
 MAX_FILES = 16384
 MAX_BYTES = 1048576
 MAX_COMMAND_BYTES = 8388608
@@ -148,7 +273,17 @@ def projection(data):
 
 class Discovery:
     def __init__(self, role):
+        self.role = role
         self.host = HOSTS[role]
+        self.captured_payload_bytes = 0
+        self.resource_stopped = False
+        self.resource_stop_reason = None
+        self.observation_retention_incomplete = False
+        self.normal_evidence_refused = False
+        self.ordinary_record_json_bytes = 0
+        # Strong references prevent id reuse; values are (domain, record, encoded size).
+        self.record_ledger = {}
+        self._readlink_adapter = None
         self.deadline = time.monotonic() + MAX_SECONDS
         self.commands = 0
         self.files = 0
@@ -173,12 +308,20 @@ class Discovery:
         self.child_metadata["termination_requests"] += 1
 
     def interrupted(self, domain):
+        if self.resource_stopped:
+            self.gap(domain, self.resource_stop_reason or "captured_payload_limit")
+            return True
         if self.pending_signal is not None:
             self.gap(domain, "interrupted_signal")
             return True
         return False
 
     def domain(self, name):
+        if type(name) is not str or not re.fullmatch(r"[a-z_0-9]{1,64}", name):
+            self.metadata_refused()
+        # Reserve one finalization slot so the collector can always report refusal.
+        if name not in self.domains and len(self.domains) >= (32 if name == "collector" else 31):
+            self.metadata_refused()
         target = self.domains.setdefault(
             name,
             {
@@ -205,14 +348,94 @@ class Discovery:
 
     @staticmethod
     def endpoint_profile_hash():
-        return digest(json.dumps(SYSTEMD_ENDPOINT_PROFILE, sort_keys=True, separators=(",", ":")).encode("ascii"))
+        return digest(json.dumps(SYSTEMD_ENDPOINT_PROFILE, **JSON_OPTIONS).encode("ascii"))
 
     def gap(self, name, reason, raced=False):
         domain = self.domain(name)
+        if type(reason) is not str or not re.fullmatch(r"[a-z_0-9]{1,128}", reason):
+            self.metadata_refused()
         if reason not in domain["gaps"]:
+            if len(domain["gaps"]) >= 128:
+                self.metadata_refused()
             domain["gaps"].append(reason)
         if raced:
             domain["raced"] += 1
+
+    def payload_allowance(self, requested, domain, end=None):
+        if self.interrupted(domain):
+            raise ResourceLimitError
+        if time.monotonic() >= min(self.deadline, end if end is not None else self.deadline):
+            self.gap(domain, "file_or_time_limit")
+            raise ResourceLimitError
+        remaining = RESOURCE_PROFILE["captured_payload_bytes"] - self.captured_payload_bytes
+        if remaining <= 0:
+            self.resource_stopped = True
+            self.resource_stop_reason = self.resource_stop_reason or "captured_payload_limit"
+            self.gap(domain, self.resource_stop_reason)
+            raise ResourceLimitError
+        if requested <= 0:
+            raise ResourceLimitError
+        return min(requested, remaining)
+
+    def charge_payload(self, size):
+        self.captured_payload_bytes += size
+        if self.captured_payload_bytes >= RESOURCE_PROFILE["captured_payload_bytes"]:
+            self.resource_stopped = True
+            self.resource_stop_reason = self.resource_stop_reason or "captured_payload_limit"
+
+    def read_payload(self, fd, requested, domain, *, end=None):
+        allowance = self.payload_allowance(requested, domain, end)
+        block = os.read(fd, allowance)
+        self.charge_payload(len(block))
+        if len(block) > allowance:  # Defensive against an invalid injected adapter.
+            raise ResourceLimitError
+        return block
+
+    def read_link(self, directory, name, domain):
+        """Anchored proc exe/cwd only. No unbounded Python readlink fallback."""
+        if name not in ("exe", "cwd"):
+            raise ResourceLimitError
+        request = self.payload_allowance(RESOURCE_PROFILE["readlink_bytes"], domain)
+        try:
+            if self._readlink_adapter is None:
+                import ctypes
+
+                libc = ctypes.CDLL(None, use_errno=True)
+                adapter = libc.readlinkat
+                adapter.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t]
+                adapter.restype = ctypes.c_ssize_t
+                self._readlink_adapter = (ctypes, adapter, libc)
+            ctypes, adapter, _libc = self._readlink_adapter
+            buffer = ctypes.create_string_buffer(request)
+            # Initialization may take time: check the gate again immediately before I/O.
+            request = self.payload_allowance(request, domain)
+            count = adapter(directory, os.fsencode(name), buffer, request)
+            if count < 0:
+                raise OSError
+            self.charge_payload(count)
+            if count >= request:
+                raise ResourceLimitError
+            return buffer.raw[:count]
+        except (ImportError, AttributeError, OSError, TypeError, ResourceLimitError):
+            self.gap(domain, "userspace_process_link_unavailable")
+            raise ResourceLimitError from None
+
+    def stop_retention(self):
+        self.observation_retention_incomplete = True
+        self.resource_stopped = True
+        self.resource_stop_reason = self.resource_stop_reason or "observation_retention_limit"
+
+    def metadata_refused(self):
+        # No domain/gap lookup here: this channel must also work when those are full.
+        self.stop_retention()
+        self.normal_evidence_refused = True
+        raise ResourceLimitError
+
+    def retention_refused(self, domain):
+        self.stop_retention()
+        self.gap(domain, "observation_retention_limit")
+        self.domain(domain)["skipped"] += 1
+        return False
 
     def record(self, domain, entity, facts):
         target = self.domain(domain)
@@ -220,21 +443,48 @@ class Discovery:
             self.gap(domain, "row_limit")
             target["skipped"] += 1
             return False
-        target["records"].append(
-            {
-                "authority_id": digest(
-                    (self.host + "\0" + domain + "\0" + entity).encode()
-                ),
-                "identity": entity if entity in KNOWN else None,
-                "identity_sha256": digest(entity.encode()),
-                "unknown_identity": entity not in KNOWN,
-                "relevance": "unresolved",
-                "facts": facts,
-            }
-        )
+        record = {
+            "authority_id": digest((self.host + "\0" + domain + "\0" + entity).encode()),
+            "identity": entity if entity in KNOWN else None,
+            "identity_sha256": digest(entity.encode()),
+            "unknown_identity": entity not in KNOWN,
+            "relevance": "unresolved",
+            "facts": facts,
+        }
+        try:
+            size = canonical_size(record, RESOURCE_PROFILE["record_json_bytes"],
+                                  forbidden_containers=self.record_ledger)
+            if (domain != DEFINITION_DOMAIN and self.ordinary_record_json_bytes + size
+                    > RESOURCE_PROFILE["ordinary_record_json_bytes"]):
+                raise ResourceLimitError
+        except ResourceLimitError:
+            return self.retention_refused(domain)
+        target["records"].append(record)
+        self.record_ledger[id(facts)] = (domain, record, size)
+        if domain != DEFINITION_DOMAIN:
+            self.ordinary_record_json_bytes += size
         target["inspected"] += 1
-        # Complete fact projection, never authority classification.
         target["complete"] += 1
+        return True
+
+    def replace_record_facts(self, existing_facts, replacement):
+        """Measure the containing record before committing, preserving facts identity."""
+        domain, record, previous_size = self.record_ledger[id(existing_facts)]
+        candidate = dict(record, facts=replacement)
+        try:
+            size = canonical_size(candidate, RESOURCE_PROFILE["record_json_bytes"],
+                                  forbidden_containers=self.record_ledger)
+            delta = size - previous_size
+            if (domain != DEFINITION_DOMAIN and self.ordinary_record_json_bytes + delta
+                    > RESOURCE_PROFILE["ordinary_record_json_bytes"]):
+                raise ResourceLimitError
+        except ResourceLimitError:
+            return self.retention_refused(domain)
+        existing_facts.clear()
+        existing_facts.update(replacement)
+        self.record_ledger[id(existing_facts)] = (domain, record, size)
+        if domain != DEFINITION_DOMAIN:
+            self.ordinary_record_json_bytes += delta
         return True
 
     def run(self, args, domain, *, getter=False):
@@ -268,6 +518,10 @@ class Discovery:
         if self.commands >= MAX_COMMANDS or time.monotonic() >= self.deadline:
             self.gap(domain, "command_or_time_limit")
             return None
+        try:
+            self.payload_allowance(1, domain)
+        except ResourceLimitError:
+            return None
         self.commands += 1
         child = None
         output = bytearray()
@@ -299,7 +553,9 @@ class Discovery:
                         raise TimeoutError
                     if not selector.select(min(remaining, 0.1)):
                         continue
-                    block = os.read(child.stdout.fileno(), 65536)
+                    block = self.read_payload(
+                        child.stdout.fileno(), min(65536, MAX_COMMAND_BYTES + 1 - len(output)), domain, end=end
+                    )
                     if not block:
                         break
                     output.extend(block)
@@ -419,13 +675,14 @@ class Discovery:
                     }
                 )
             # Validate the full bounded representation before projecting any row.
+            # Derived row hashes preserve historical spacing; report framing is canonical.
             for row in rows:
                 self.record(
                     domain,
                     row["unit"],
                     {
                         "row_projection": projection(
-                            json.dumps(row, sort_keys=True).encode()
+                            json.dumps(row, sort_keys=True, ensure_ascii=True, allow_nan=False).encode("ascii")
                         )
                     },
                 )
@@ -457,7 +714,7 @@ class Discovery:
                     value,
                     {
                         "row_projection": projection(
-                            json.dumps(row, sort_keys=True).encode()
+                            json.dumps(row, sort_keys=True, ensure_ascii=True, allow_nan=False).encode("ascii")
                         )
                     },
                 )
@@ -963,7 +1220,7 @@ class Discovery:
             self.gap(domain, "enumeration_membership_changed", raced=True)
         names = sorted(installed | loaded | final_installed | final_loaded)
         target["enumerated"] = len(names)
-        target["skipped"] = max(0, len(names) - target["inspected"])
+        target["skipped"] = max(target["skipped"], len(names) - target["inspected"])
         endpoints = set()
         for name in names:
             if self.graph_stopped():
@@ -1014,13 +1271,14 @@ class Discovery:
                             unresolved.add(endpoint)
             if unresolved:
                 gaps.add("unresolved_graph_endpoint")
-            facts.update(
-                membership_after=after, graph_fields_unchanged=unchanged,
+            replacement = dict(
+                facts, membership_after=after, graph_fields_unchanged=unchanged,
                 unresolved_endpoint_sha256=sorted(unresolved), gaps=sorted(gaps),
             )
+            admitted = self.replace_record_facts(facts, replacement)
             for reason in sorted(gaps):
                 self.gap(domain, reason)
-            if not gaps:
+            if not gaps and admitted:
                 target["complete"] += 1
 
     def systemd(self):
@@ -1073,7 +1331,7 @@ class Discovery:
                 )
                 repeated_graph = self.collect_unit_graph(repeated_raw, graph_fields, graph_only=True)
                 if graph_facts is not None:
-                    graph_facts["repeated"] = repeated_graph
+                    self.replace_record_facts(graph_facts, dict(graph_facts, repeated=repeated_graph))
             canonical = None
             facts = {
                 "name_shape": self.unit_name_shape(name),
@@ -1228,7 +1486,7 @@ class Discovery:
                 return None
             data = bytearray()
             while len(data) <= limit:
-                block = os.read(fd, min(65536, limit + 1 - len(data)))
+                block = self.read_payload(fd, min(65536, limit + 1 - len(data)), domain)
                 if not block:
                     break
                 data.extend(block)
@@ -1244,6 +1502,8 @@ class Discovery:
             if self.file_identity(before) != self.file_identity(named_after):
                 raise SnapshotChangedError
             return bytes(data)
+        except ResourceLimitError:
+            return None
         except SnapshotChangedError:
             self.gap(domain, "file_snapshot_changed", raced=True)
             return None
@@ -1305,9 +1565,14 @@ class Discovery:
         result = []
         try:
             with os.scandir(fd) as entries:
-                for entry in entries:
+                while True:
                     if self.interrupted(domain):
                         return None
+                    if time.monotonic() >= self.deadline:
+                        raise ValueError
+                    entry = next(entries, None)
+                    if entry is None:
+                        break
                     if len(result) >= MAX_FILES or time.monotonic() >= self.deadline:
                         raise ValueError
                     result.append(entry.name)
@@ -1467,7 +1732,7 @@ class Discovery:
             limit = limits[name]
             # Kernel proc files normally report size0; bound bytes actually read.
             while len(data) <= limit:
-                block = os.read(fd, min(65536, limit + 1 - len(data)))
+                block = self.read_payload(fd, min(65536, limit + 1 - len(data)), domain)
                 if not block:
                     break
                 data.extend(block)
@@ -1491,6 +1756,8 @@ class Discovery:
             if before.st_uid == 0 and parent.st_uid != 0 and name not in exceptions:
                 exceptions.append(name)
             return bytes(data)
+        except ResourceLimitError:
+            return None
         except SnapshotChangedError:
             self.gap(domain, "procfs_snapshot_changed", raced=True)
             return None
@@ -1607,9 +1874,9 @@ class Discovery:
                         for field in ("exe", "cwd"):
                             try:
                                 facts[field] = projection(
-                                    os.fsencode(os.readlink(field, dir_fd=fd))
+                                    self.read_link(fd, field, domain)
                                 )
-                            except OSError:
+                            except (OSError, ResourceLimitError):
                                 failed = True
                                 missing_fields.append(field)
                                 # Unavailable is not evidence that a PID vanished.
@@ -1824,7 +2091,7 @@ class Discovery:
                     self.gap(domain, "nss_syntax_or_clause_unsupported")
             # A continuation anywhere makes all interpretation explicitly partial.
             supported = supported and boundaries_supported
-            self.record(domain, "nss:" + database.decode("ascii"), {
+            recorded = self.record(domain, "nss:" + database.decode("ascii"), {
                 "nss_database": database.decode("ascii"),
                 "nss_source": source,
                 "nss_line_sha256": [digest(line) for line, _content, _continued in lines],
@@ -1832,7 +2099,7 @@ class Discovery:
                 "nss_providers": providers if supported else [],
                 "account_enumeration_proven": False,
             })
-            if not supported:
+            if not supported and recorded:
                 self.domain(domain)["complete"] -= 1
             syntax_complete = syntax_complete and supported
         self.domain(domain)["enumeration_complete"] = syntax_complete
@@ -2047,6 +2314,106 @@ class Discovery:
         finally:
             os.close(fd)
 
+    def recount_retained_graph(self):
+        """One final linear recount; performed decode counters never decrease."""
+        target = self.domains.get("systemd_unit_graph")
+        if target is None:
+            return
+        accounting = target["endpoint_accounting"]
+        for phase in ("initial", "repeated", "total"):
+            accounting[phase]["retained_endpoint_count"] = 0
+        for record in target["records"]:
+            facts = record["facts"]
+            for phase in ("initial", "repeated"):
+                count = sum(len(item["endpoint_sha256"]) for item in facts[phase]["fields"].values()
+                            if item is not None)
+                accounting[phase]["retained_endpoint_count"] += count
+                accounting["total"]["retained_endpoint_count"] += count
+
+    def resource_accounting(self):
+        return {
+            "captured_payload_bytes": self.captured_payload_bytes,
+            "resource_stopped": self.resource_stopped,
+            "resource_stop_reason": self.resource_stop_reason,
+            "observation_retention_incomplete": self.observation_retention_incomplete,
+            "retained_ordinary_record_json_bytes": self.ordinary_record_json_bytes,
+        }
+
+    def envelope(self, *, failure=False):
+        result = {
+            "schema": "AcademyAuthorityDiscoveryFailure.v2" if failure else "AcademyAuthorityDiscovery.v2",
+            "role": self.role,
+            "host": self.host,
+            "coverage_complete": False,
+            "campaign_authority_claimed": False,
+            "classification_complete": False,
+            "purpose": "readonly_discovery_facts_only",
+            "domains": {} if failure else self.domains,
+            "commands_attempted": self.commands,
+            "files_attempted": self.files,
+            "child_lifecycle": self.child_metadata,
+            "signal_interrupted": self.pending_signal is not None,
+            "resource_profile": RESOURCE_PROFILE,
+            "resource_profile_sha256": digest(json.dumps(RESOURCE_PROFILE, **JSON_OPTIONS).encode("ascii")),
+            "resource_accounting": self.resource_accounting(),
+        }
+        if failure:
+            result.update(reason="normal_evidence_resource_or_encoding_refusal", normal_evidence_not_emitted=True)
+        return result
+
+    def seal(self):
+        try:
+            self.recount_retained_graph()
+            if self.normal_evidence_refused:
+                raise ResourceLimitError
+            result = self.envelope()
+            # Retain only metadata references; never copy or rescan record arrays.
+            metadata = dict(result)
+            metadata["domains"] = {
+                name: dict(domain, records=[]) for name, domain in self.domains.items()
+                if name != DEFINITION_DOMAIN
+            }
+            if len(self.domains) > 32:
+                raise ResourceLimitError
+            commas = sum(max(0, len(domain["records"]) - 1) for name, domain in self.domains.items()
+                         if name != DEFINITION_DOMAIN)
+            definition_size = 0
+            if DEFINITION_DOMAIN in self.domains:
+                definition_size = canonical_size(
+                    self.domains[DEFINITION_DOMAIN], RESOURCE_PROFILE["definition_domain_json_bytes"]
+                )
+                # Account its property key/framing here; its entire value is exclusive.
+                metadata["domains"][DEFINITION_DOMAIN] = None
+            metadata_size = canonical_size(metadata, RESOURCE_PROFILE["metadata_json_bytes"] + 4)
+            metadata_size += commas + 1 - (4 if definition_size else 0)
+            if metadata_size > RESOURCE_PROFILE["metadata_json_bytes"]:
+                raise ResourceLimitError
+            total = metadata_size + self.ordinary_record_json_bytes + definition_size
+            if total > RESOURCE_PROFILE["normal_json_bytes"]:
+                raise ResourceLimitError
+            staged = stage_json(result, RESOURCE_PROFILE["normal_json_bytes"])
+            if staged.seek(0, io.SEEK_END) != total:
+                raise ResourceLimitError
+            staged.seek(0)
+            return staged
+        except Exception:  # Fixed failure variant, never exception/payload text.
+            self.stop_retention()
+            self.normal_evidence_refused = True
+            return stage_json(self.envelope(failure=True), RESOURCE_PROFILE["failure_json_bytes"])
+
+    def emit(self, stream):
+        staged = self.seal()
+        # Past this boundary any exception is delivery failure. Never append JSON.
+        with staged:
+            while block := staged.read(65536):
+                offset = 0
+                while offset < len(block):
+                    written = stream.write(block[offset:])
+                    if type(written) is not int or written <= 0 or written > len(block) - offset:
+                        raise OSError("discovery delivery failed")
+                    offset += written
+            stream.flush()
+
     def collect(self):
         self.systemd()
         self.processes()
@@ -2090,21 +2457,7 @@ def main():
     else:
         discovery.gap("collector", "precondition_refused")
     discovery.interrupted("collector")
-    result = {
-        "schema": "AcademyAuthorityDiscovery.v1",
-        "role": args.role,
-        "host": HOSTS[args.role],
-        "coverage_complete": False,
-        "campaign_authority_claimed": False,
-        "classification_complete": False,
-        "purpose": "readonly_discovery_facts_only",
-        "domains": discovery.domains,
-        "commands_attempted": discovery.commands,
-        "files_attempted": discovery.files,
-        "child_lifecycle": discovery.child_metadata,
-        "signal_interrupted": discovery.pending_signal is not None,
-    }
-    sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+    discovery.emit(sys.stdout.buffer)
 
 
 if __name__ == "__main__":

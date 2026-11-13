@@ -50,3 +50,17 @@ limits do not establish complete acquisition, activation or authority coverage;
 template definitions, remaining relations and the other domain adapters still
 require implementation and qualification. Other command, file and deadline
 limits remain separate.
+
+Report v2 adds an exact 256 MiB captured-payload budget across command stdout,
+file and proc reads, and sized link reads, including rejected bytes and declared
+overflow probes. This measures captured payload, not filesystem metadata I/O or
+process memory. Retention admission bounds each record to 2 MiB and ordinary
+record JSON to 46 MiB. A separate 16 MiB reserve belongs exclusively to template
+definition evidence; metadata and framing have 1 MiB, for a 63 MiB normal report.
+Derived listing-row projections retain their historical JSON encoding.
+
+The complete report is sealed before delivery. Encoding or retention failures
+can produce a distinct bounded failure envelope with no domain evidence;
+delivery failures never append a second document. Historical v1 reports retain
+their closed schema. Consumers must distinguish normal v2 reports from failure
+envelopes; false authority flags alone do not establish successful collection.
