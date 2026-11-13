@@ -14,6 +14,12 @@ Tests run only in hosted CI. Use static inspection and linting during local
 preparation. The test configuration excludes the application's root fixtures and
 plugins, and the default test boundary refuses network and process creation.
 
+The stdin-delivery regression has one explicit exception: a closed adapter runs
+a fixed, isolated Python child in hosted CI. It checks retained file input across
+a deliberate wait timeout. Other process and network calls remain denied. Its
+test subject contains stream functions without operational host configuration;
+this qualification does not establish private campaign or live host readiness.
+
 The discovery collector retains hash-only systemd relationship endpoints and
 separate final installed/loaded inventories. Matching reads describe limited
 observational stability; they do not establish sender classification, an
