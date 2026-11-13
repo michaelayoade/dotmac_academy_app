@@ -1,142 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:dotmac:AcademyAuthorityDiscovery.v1",
-  "title": "AcademyAuthorityDiscovery.v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema",
-    "role",
-    "host",
-    "coverage_complete",
-    "campaign_authority_claimed",
-    "classification_complete",
-    "purpose",
-    "domains",
-    "commands_attempted",
-    "files_attempted",
-    "child_lifecycle",
-    "signal_interrupted"
-  ],
-  "properties": {
-    "schema": {
-      "const": "AcademyAuthorityDiscovery.v1"
-    },
-    "role": {
-      "enum": [
-        "web",
-        "lab"
-      ]
-    },
-    "host": {
-      "enum": [
-        "vmi2490731",
-        "academy-labs"
-      ]
-    },
-    "coverage_complete": {
-      "const": false
-    },
-    "campaign_authority_claimed": {
-      "const": false
-    },
-    "classification_complete": {
-      "const": false
-    },
-    "purpose": {
-      "const": "readonly_discovery_facts_only"
-    },
-    "domains": {
-      "type": "object",
-      "maxProperties": 32,
-      "propertyNames": {
-        "pattern": "^[a-z_0-9]+$"
-      },
-      "additionalProperties": {
-        "$ref": "#/$defs/domain"
-      },
-      "properties": {
-        "systemd_unit_graph": {
-          "$ref": "#/$defs/graph_domain"
-        },
-        "systemd_installed_final": {
-          "$ref": "#/$defs/graph_diagnostic_domain"
-        },
-        "systemd_loaded_final": {
-          "$ref": "#/$defs/graph_diagnostic_domain"
-        }
-      }
-    },
-    "commands_attempted": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 73732
-    },
-    "files_attempted": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 16384
-    },
-    "signal_interrupted": {
-      "type": "boolean"
-    },
-    "child_lifecycle": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "spawned",
-        "reaped",
-        "group_cleanup_confirmed",
-        "group_cleanup_unconfirmed",
-        "termination_requests"
-      ],
-      "properties": {
-        "spawned": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "reaped": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "group_cleanup_confirmed": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "group_cleanup_unconfirmed": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "termination_requests": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
-    }
-  },
-  "allOf": [
+  "$id": "urn:dotmac:AcademyAuthorityDiscovery",
+  "title": "Academy authority discovery historical, guarded, and failure envelopes",
+  "oneOf": [
     {
-      "if": {
-        "properties": {
-          "role": {
-            "const": "web"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "host": {
-            "const": "vmi2490731"
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "host": {
-            "const": "academy-labs"
-          }
-        }
-      }
+      "$ref": "#/$defs/legacy_v1"
+    },
+    {
+      "$ref": "#/$defs/normal_v2"
+    },
+    {
+      "$ref": "#/$defs/failure_v2"
     }
   ],
   "$defs": {
@@ -2918,6 +2792,1299 @@
           }
         }
       }
+    },
+    "resource_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "captured_payload_limit",
+              "observation_retention_limit"
+            ]
+          },
+          "maxItems": 91
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    },
+    "resource_graph_domain_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 107,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "graph_endpoint_budget",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint",
+              "enumeration_membership_changed",
+              "captured_payload_limit",
+              "observation_retention_limit"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/graph_record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    },
+    "resource_graph_domain_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped",
+        "endpoint_profile",
+        "endpoint_profile_sha256",
+        "endpoint_accounting"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 111,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint",
+              "enumeration_membership_changed",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_unit_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget",
+              "captured_payload_limit",
+              "observation_retention_limit"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/graph_record_v2"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        },
+        "endpoint_profile": {
+          "$ref": "#/$defs/endpoint_profile"
+        },
+        "endpoint_profile_sha256": {
+          "const": "c2a45f0a7fc94fe070b58ede0fe0e4bb2a1c634d1b79fef742b06349e8576753"
+        },
+        "endpoint_accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "initial",
+            "repeated",
+            "total"
+          ],
+          "properties": {
+            "initial": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            },
+            "repeated": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            },
+            "total": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 131072,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 131072,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "resource_graph_diagnostic_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 92,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "graph_work_interrupted_or_deadline",
+              "captured_payload_limit",
+              "observation_retention_limit"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    },
+    "resource_graph_domain": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/resource_graph_domain_v1"
+        },
+        {
+          "$ref": "#/$defs/resource_graph_domain_v2"
+        }
+      ]
+    },
+    "legacy_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "role",
+        "host",
+        "coverage_complete",
+        "campaign_authority_claimed",
+        "classification_complete",
+        "purpose",
+        "domains",
+        "commands_attempted",
+        "files_attempted",
+        "child_lifecycle",
+        "signal_interrupted"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyAuthorityDiscovery.v1"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "host": {
+          "enum": [
+            "vmi2490731",
+            "academy-labs"
+          ]
+        },
+        "coverage_complete": {
+          "const": false
+        },
+        "campaign_authority_claimed": {
+          "const": false
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "purpose": {
+          "const": "readonly_discovery_facts_only"
+        },
+        "domains": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[a-z_0-9]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/domain"
+          },
+          "properties": {
+            "systemd_unit_graph": {
+              "$ref": "#/$defs/graph_domain"
+            },
+            "systemd_installed_final": {
+              "$ref": "#/$defs/graph_diagnostic_domain"
+            },
+            "systemd_loaded_final": {
+              "$ref": "#/$defs/graph_diagnostic_domain"
+            }
+          }
+        },
+        "commands_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 73732
+        },
+        "files_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "signal_interrupted": {
+          "type": "boolean"
+        },
+        "child_lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spawned",
+            "reaped",
+            "group_cleanup_confirmed",
+            "group_cleanup_unconfirmed",
+            "termination_requests"
+          ],
+          "properties": {
+            "spawned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reaped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_confirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_unconfirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "termination_requests": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "host": {
+                "const": "vmi2490731"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "host": {
+                "const": "academy-labs"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "normal_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "role",
+        "host",
+        "coverage_complete",
+        "campaign_authority_claimed",
+        "classification_complete",
+        "purpose",
+        "domains",
+        "commands_attempted",
+        "files_attempted",
+        "child_lifecycle",
+        "signal_interrupted",
+        "resource_profile",
+        "resource_profile_sha256",
+        "resource_accounting"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyAuthorityDiscovery.v2"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "host": {
+          "enum": [
+            "vmi2490731",
+            "academy-labs"
+          ]
+        },
+        "coverage_complete": {
+          "const": false
+        },
+        "campaign_authority_claimed": {
+          "const": false
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "purpose": {
+          "const": "readonly_discovery_facts_only"
+        },
+        "domains": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[a-z_0-9]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/resource_domain"
+          },
+          "properties": {
+            "systemd_unit_graph": {
+              "$ref": "#/$defs/resource_graph_domain"
+            },
+            "systemd_installed_final": {
+              "$ref": "#/$defs/resource_graph_diagnostic_domain"
+            },
+            "systemd_loaded_final": {
+              "$ref": "#/$defs/resource_graph_diagnostic_domain"
+            }
+          }
+        },
+        "commands_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 73732
+        },
+        "files_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "signal_interrupted": {
+          "type": "boolean"
+        },
+        "child_lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spawned",
+            "reaped",
+            "group_cleanup_confirmed",
+            "group_cleanup_unconfirmed",
+            "termination_requests"
+          ],
+          "properties": {
+            "spawned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reaped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_confirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_unconfirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "termination_requests": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "resource_profile": {
+          "const": {
+            "schema": "AcademyDiscoveryResourceProfile.v1",
+            "captured_payload_bytes": 268435456,
+            "record_json_bytes": 2097152,
+            "ordinary_record_json_bytes": 48234496,
+            "definition_domain_json_bytes": 16777216,
+            "metadata_json_bytes": 1048576,
+            "normal_json_bytes": 66060288,
+            "failure_json_bytes": 1048576,
+            "overflow_probe_bytes": 1,
+            "readlink_bytes": 65536,
+            "json_depth": 32,
+            "json_container_entries": 262144,
+            "json_nodes": 4000000,
+            "json_string_characters": 2097152,
+            "json_key_characters": 256,
+            "json_integer_bits": 128
+          }
+        },
+        "resource_profile_sha256": {
+          "const": "275267bf47015b070b7f2e6df00fa88ec8bb2ccbdf7f07ba1a651d14a82c8136"
+        },
+        "resource_accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "captured_payload_bytes",
+            "resource_stopped",
+            "observation_retention_incomplete",
+            "retained_ordinary_record_json_bytes",
+            "resource_stop_reason"
+          ],
+          "properties": {
+            "captured_payload_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 268435456
+            },
+            "resource_stopped": {
+              "type": "boolean"
+            },
+            "observation_retention_incomplete": {
+              "type": "boolean"
+            },
+            "retained_ordinary_record_json_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 48234496
+            },
+            "resource_stop_reason": {
+              "enum": [
+                null,
+                "captured_payload_limit",
+                "observation_retention_limit"
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "host": {
+                "const": "vmi2490731"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "host": {
+                "const": "academy-labs"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "failure_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "role",
+        "host",
+        "coverage_complete",
+        "campaign_authority_claimed",
+        "classification_complete",
+        "purpose",
+        "domains",
+        "commands_attempted",
+        "files_attempted",
+        "child_lifecycle",
+        "signal_interrupted",
+        "resource_profile",
+        "resource_profile_sha256",
+        "resource_accounting",
+        "reason",
+        "normal_evidence_not_emitted"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyAuthorityDiscoveryFailure.v2"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "host": {
+          "enum": [
+            "vmi2490731",
+            "academy-labs"
+          ]
+        },
+        "coverage_complete": {
+          "const": false
+        },
+        "campaign_authority_claimed": {
+          "const": false
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "purpose": {
+          "const": "readonly_discovery_facts_only"
+        },
+        "domains": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        },
+        "commands_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 73732
+        },
+        "files_attempted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "signal_interrupted": {
+          "type": "boolean"
+        },
+        "child_lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spawned",
+            "reaped",
+            "group_cleanup_confirmed",
+            "group_cleanup_unconfirmed",
+            "termination_requests"
+          ],
+          "properties": {
+            "spawned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reaped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_confirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group_cleanup_unconfirmed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "termination_requests": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "resource_profile": {
+          "const": {
+            "schema": "AcademyDiscoveryResourceProfile.v1",
+            "captured_payload_bytes": 268435456,
+            "record_json_bytes": 2097152,
+            "ordinary_record_json_bytes": 48234496,
+            "definition_domain_json_bytes": 16777216,
+            "metadata_json_bytes": 1048576,
+            "normal_json_bytes": 66060288,
+            "failure_json_bytes": 1048576,
+            "overflow_probe_bytes": 1,
+            "readlink_bytes": 65536,
+            "json_depth": 32,
+            "json_container_entries": 262144,
+            "json_nodes": 4000000,
+            "json_string_characters": 2097152,
+            "json_key_characters": 256,
+            "json_integer_bits": 128
+          }
+        },
+        "resource_profile_sha256": {
+          "const": "275267bf47015b070b7f2e6df00fa88ec8bb2ccbdf7f07ba1a651d14a82c8136"
+        },
+        "resource_accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "captured_payload_bytes",
+            "resource_stopped",
+            "observation_retention_incomplete",
+            "retained_ordinary_record_json_bytes",
+            "resource_stop_reason"
+          ],
+          "properties": {
+            "captured_payload_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 268435456
+            },
+            "resource_stopped": {
+              "type": "boolean"
+            },
+            "observation_retention_incomplete": {
+              "type": "boolean"
+            },
+            "retained_ordinary_record_json_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 48234496
+            },
+            "resource_stop_reason": {
+              "enum": [
+                null,
+                "captured_payload_limit",
+                "observation_retention_limit"
+              ]
+            }
+          }
+        },
+        "reason": {
+          "const": "normal_evidence_resource_or_encoding_refusal"
+        },
+        "normal_evidence_not_emitted": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "host": {
+                "const": "vmi2490731"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "host": {
+                "const": "academy-labs"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }
