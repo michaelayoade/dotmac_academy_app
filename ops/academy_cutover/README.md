@@ -50,3 +50,16 @@ limits do not establish complete acquisition, activation or authority coverage;
 template definitions, remaining relations and the other domain adapters still
 require implementation and qualification. Other command, file and deadline
 limits remain separate.
+
+Template definitions use the manager's ordered search paths and an explicit root
+profile. The collector resolves effective fragments, aliases, masks, drop-ins and
+dependency directories, then reads only selected unit sources. Two passes compare
+source identities, hashes and manager state. Referenced credentials, environment
+files and executable bodies are not read; unprofiled linked targets remain
+unresolved. Abstract instance-dependent relations remain symbolic.
+
+The definition domain separates complete selected-source acquisition from
+activation semantics. It never supplies a sender classification or authority
+reference. Its own work, file, body, relation and encoded-evidence limits remain
+distinct from the collector's cumulative resource guards. Both must be integrated
+and qualified in the campaign packet before host use.

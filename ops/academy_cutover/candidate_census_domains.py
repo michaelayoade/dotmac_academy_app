@@ -25,7 +25,7 @@ DOMAINS = (
     "external mail issuers/outbox consumers",
 )
 PROCESS_DOMAIN = DOMAINS[2]
-DISCOVERY_SHA256 = "21a07670c9a55b070191eaacb28519e6a358a0c004f0ae62ab76519b61bc3cd7"
+DISCOVERY_SHA256 = "3ee6bfecafbb1d39d06adeab4c10b1fff23cc8fdcdbc0ee9b9074fbad104b9eb"
 NAMESPACES = ("pid", "mnt", "user", "net")
 BUCKETS = ("supported", "legacy", "manual", "external")
 PROOF_FIELDS = (
