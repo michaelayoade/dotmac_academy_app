@@ -65,6 +65,13 @@ delivery failures never append a second document. Historical v1 reports retain
 their closed schema. Consumers must distinguish normal v2 reports from failure
 envelopes; false authority flags alone do not establish successful collection.
 
+Runtime graph facts v3 bind a v255 relation catalogue covering the manager's
+exported unit-name relationships and raw scalar `Following`. The catalogue
+distinguishes start, event, ordering, precondition, propagation and membership
+relations, including symmetric namespace joins. Path-valued properties and
+conditional activation defaults remain explicit unresolved requirements rather
+than fabricated unit endpoints. Endpoint and report budgets stay unchanged.
+
 Template definitions use the manager's ordered search paths and an explicit root
 profile. The collector resolves effective fragments, aliases, masks, drop-ins and
 dependency directories, then reads only selected unit sources. Two passes compare

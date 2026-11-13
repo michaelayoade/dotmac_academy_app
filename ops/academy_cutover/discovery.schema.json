@@ -3550,6 +3550,9 @@
         },
         {
           "$ref": "#/$defs/resource_graph_domain_v2"
+        },
+        {
+          "$ref": "#/$defs/resource_graph_domain_v3"
         }
       ]
     },
@@ -5569,6 +5572,1528 @@
         },
         "definition_accounting": {
           "$ref": "#/$defs/definition_accounting"
+        }
+      }
+    },
+    "graph_field_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection",
+        "endpoint_sha256",
+        "valid",
+        "endpoint_count",
+        "retained_endpoint_count",
+        "unparsed_tail"
+      ],
+      "properties": {
+        "projection": {
+          "$ref": "#/$defs/projection"
+        },
+        "endpoint_sha256": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/hash"
+          }
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "endpoint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096,
+          "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+        },
+        "retained_endpoint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096,
+          "description": "Hashes retained in this result; invalid fields retain zero hashes."
+        },
+        "unparsed_tail": {
+          "type": "boolean",
+          "description": "Raw bytes remain unparsed. The exact performed count only lower-bounds potentially required work; no valid endpoint is asserted in the tail."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "valid": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "endpoint_sha256": {
+                "maxItems": 0
+              },
+              "retained_endpoint_count": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "graph_read_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fields",
+        "gaps",
+        "endpoint_count",
+        "original_output",
+        "retained_endpoint_count",
+        "unparsed_tail",
+        "endpoint_profile_sha256",
+        "phase",
+        "runtime_relation_catalogue_sha256"
+      ],
+      "properties": {
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "Id",
+            "Names",
+            "Triggers",
+            "TriggeredBy",
+            "Requires",
+            "Wants",
+            "Before",
+            "After",
+            "Requisite",
+            "BindsTo",
+            "PartOf",
+            "Upholds",
+            "RequiredBy",
+            "RequisiteOf",
+            "WantedBy",
+            "BoundBy",
+            "UpheldBy",
+            "ConsistsOf",
+            "Conflicts",
+            "ConflictedBy",
+            "OnSuccess",
+            "OnSuccessOf",
+            "OnFailure",
+            "OnFailureOf",
+            "PropagatesReloadTo",
+            "ReloadPropagatedFrom",
+            "PropagatesStopTo",
+            "StopPropagatedFrom",
+            "JoinsNamespaceOf",
+            "SliceOf",
+            "Following"
+          ],
+          "properties": {
+            "Id": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "projection",
+                    "endpoint_sha256",
+                    "valid",
+                    "endpoint_count",
+                    "retained_endpoint_count",
+                    "unparsed_tail"
+                  ],
+                  "properties": {
+                    "projection": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "endpoint_sha256": {
+                      "type": "array",
+                      "maxItems": 1,
+                      "items": {
+                        "$ref": "#/$defs/hash"
+                      }
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4096,
+                      "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                    },
+                    "retained_endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1,
+                      "description": "Hashes retained in this result; invalid fields retain zero hashes."
+                    },
+                    "unparsed_tail": {
+                      "type": "boolean",
+                      "description": "Raw bytes remain unparsed. The exact performed count only lower-bounds potentially required work; no valid endpoint is asserted in the tail."
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "valid": {
+                            "const": false
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "endpoint_sha256": {
+                            "maxItems": 0
+                          },
+                          "retained_endpoint_count": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "valid": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "endpoint_sha256": {
+                            "minItems": 1
+                          },
+                          "retained_endpoint_count": {
+                            "const": 1
+                          },
+                          "endpoint_count": {
+                            "const": 1
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Names": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Triggers": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "TriggeredBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Requires": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Wants": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "After": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Requisite": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "BindsTo": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "PartOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Upholds": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "RequiredBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "RequisiteOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "WantedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "BoundBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "UpheldBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ConsistsOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Conflicts": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ConflictedBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "OnSuccess": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "OnSuccessOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "OnFailure": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "OnFailureOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "PropagatesReloadTo": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ReloadPropagatedFrom": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "PropagatesStopTo": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "StopPropagatedFrom": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "JoinsNamespaceOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "SliceOf": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field_v3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Following": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "projection",
+                    "endpoint_sha256",
+                    "valid",
+                    "endpoint_count",
+                    "retained_endpoint_count",
+                    "unparsed_tail"
+                  ],
+                  "properties": {
+                    "projection": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "endpoint_sha256": {
+                      "type": "array",
+                      "maxItems": 1,
+                      "items": {
+                        "$ref": "#/$defs/hash"
+                      }
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4096,
+                      "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                    },
+                    "retained_endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1,
+                      "description": "Hashes retained in this result; invalid fields retain zero hashes."
+                    },
+                    "unparsed_tail": {
+                      "type": "boolean",
+                      "description": "Raw bytes remain unparsed. The exact performed count only lower-bounds potentially required work; no valid endpoint is asserted in the tail."
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "valid": {
+                            "const": false
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "endpoint_sha256": {
+                            "maxItems": 0
+                          },
+                          "retained_endpoint_count": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "valid": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "then": {
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "endpoint_count": {
+                                "const": 0
+                              },
+                              "retained_endpoint_count": {
+                                "const": 0
+                              },
+                              "endpoint_sha256": {
+                                "maxItems": 0
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "endpoint_count": {
+                                "const": 1
+                              },
+                              "retained_endpoint_count": {
+                                "const": 1
+                              },
+                              "endpoint_sha256": {
+                                "minItems": 1,
+                                "maxItems": 1
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Unit": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "projection",
+                    "endpoint_sha256",
+                    "valid",
+                    "endpoint_count",
+                    "retained_endpoint_count",
+                    "unparsed_tail"
+                  ],
+                  "properties": {
+                    "projection": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "endpoint_sha256": {
+                      "type": "array",
+                      "maxItems": 1,
+                      "items": {
+                        "$ref": "#/$defs/hash"
+                      }
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4096,
+                      "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                    },
+                    "retained_endpoint_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1,
+                      "description": "Hashes retained in this result; invalid fields retain zero hashes."
+                    },
+                    "unparsed_tail": {
+                      "type": "boolean",
+                      "description": "Raw bytes remain unparsed. The exact performed count only lower-bounds potentially required work; no valid endpoint is asserted in the tail."
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "valid": {
+                            "const": false
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "endpoint_sha256": {
+                            "maxItems": 0
+                          },
+                          "retained_endpoint_count": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 14,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_unit_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget"
+            ]
+          }
+        },
+        "endpoint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192,
+          "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+        },
+        "original_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/projection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retained_endpoint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192,
+          "description": "Hashes retained in this result; invalid fields retain zero hashes."
+        },
+        "unparsed_tail": {
+          "type": "boolean",
+          "description": "Raw bytes remain unparsed. The exact performed count only lower-bounds potentially required work; no valid endpoint is asserted in the tail."
+        },
+        "endpoint_profile_sha256": {
+          "const": "c2a45f0a7fc94fe070b58ede0fe0e4bb2a1c634d1b79fef742b06349e8576753"
+        },
+        "phase": {
+          "enum": [
+            "initial",
+            "repeated"
+          ]
+        },
+        "runtime_relation_catalogue_sha256": {
+          "const": "0e2b40165f68b647b1f181ddc39329f264fa3021ba5f1e7da727b3e0efb5f846"
+        }
+      }
+    },
+    "graph_facts_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "requested_identity_sha256",
+        "name_shape",
+        "membership_before",
+        "membership_after",
+        "initial",
+        "repeated",
+        "graph_fields_unchanged",
+        "unresolved_endpoint_sha256",
+        "gaps",
+        "classification",
+        "authority_refs",
+        "endpoint_profile_sha256",
+        "runtime_relation_catalogue_sha256",
+        "activation_complete_claimed"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademySystemdUnitGraphFacts.v3"
+        },
+        "requested_identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "name_shape": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "template_name_sha256"
+          ],
+          "properties": {
+            "shape": {
+              "enum": [
+                "plain",
+                "template",
+                "instance",
+                "unsupported"
+              ]
+            },
+            "template_name_sha256": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/hash"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "membership_before": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed",
+            "loaded"
+          ],
+          "properties": {
+            "installed": {
+              "type": "boolean"
+            },
+            "loaded": {
+              "type": "boolean"
+            }
+          }
+        },
+        "membership_after": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed",
+            "loaded"
+          ],
+          "properties": {
+            "installed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "loaded": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        },
+        "initial": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/graph_read_v3"
+            },
+            {
+              "properties": {
+                "phase": {
+                  "const": "initial"
+                }
+              }
+            }
+          ]
+        },
+        "repeated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/graph_read_v3"
+            },
+            {
+              "properties": {
+                "phase": {
+                  "const": "repeated"
+                }
+              }
+            }
+          ]
+        },
+        "graph_fields_unchanged": {
+          "type": "boolean"
+        },
+        "unresolved_endpoint_sha256": {
+          "anyOf": [
+            {
+              "type": "array",
+              "maxItems": 16384,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/hash"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 19,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_unit_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget"
+            ]
+          }
+        },
+        "classification": {
+          "const": "unknown"
+        },
+        "authority_refs": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "endpoint_profile_sha256": {
+          "const": "c2a45f0a7fc94fe070b58ede0fe0e4bb2a1c634d1b79fef742b06349e8576753"
+        },
+        "runtime_relation_catalogue_sha256": {
+          "const": "0e2b40165f68b647b1f181ddc39329f264fa3021ba5f1e7da727b3e0efb5f846"
+        },
+        "activation_complete_claimed": {
+          "const": false
+        }
+      }
+    },
+    "graph_record_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id",
+        "identity",
+        "identity_sha256",
+        "unknown_identity",
+        "relevance",
+        "facts"
+      ],
+      "properties": {
+        "authority_id": {
+          "$ref": "#/$defs/hash"
+        },
+        "identity": {
+          "enum": [
+            null,
+            "academy-web.service",
+            "academy-labs.service",
+            "academy-v2-email-outbox.service",
+            "academy-v2-email-outbox.timer",
+            "academy-v2-email-delivery.service",
+            "academy-v2-email-delivery.timer",
+            "academy-v2-lab-reconcile.service",
+            "academy-v2-lab-reconcile.timer",
+            "academy-v2-lab-cleanup.service",
+            "academy-v2-lab-cleanup.timer",
+            "academy-v2-lab-expiry.service",
+            "academy-v2-lab-expiry.timer",
+            "academy-v2-lab-pool.service",
+            "academy-v2-lab-pool.timer",
+            "academy-v2-lab-idle.service",
+            "academy-v2-lab-idle.timer"
+          ]
+        },
+        "identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "unknown_identity": {
+          "type": "boolean"
+        },
+        "relevance": {
+          "const": "unresolved"
+        },
+        "facts": {
+          "$ref": "#/$defs/graph_facts_v3"
+        }
+      }
+    },
+    "resource_graph_domain_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped",
+        "endpoint_profile",
+        "endpoint_profile_sha256",
+        "endpoint_accounting",
+        "runtime_relation_catalogue",
+        "runtime_relation_catalogue_sha256"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 111,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint",
+              "enumeration_membership_changed",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_unit_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget",
+              "captured_payload_limit",
+              "observation_retention_limit"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/graph_record_v3"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        },
+        "endpoint_profile": {
+          "$ref": "#/$defs/endpoint_profile"
+        },
+        "endpoint_profile_sha256": {
+          "const": "c2a45f0a7fc94fe070b58ede0fe0e4bb2a1c634d1b79fef742b06349e8576753"
+        },
+        "endpoint_accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "initial",
+            "repeated",
+            "total"
+          ],
+          "properties": {
+            "initial": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            },
+            "repeated": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            },
+            "total": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_count",
+                "retained_endpoint_count",
+                "unparsed_tail"
+              ],
+              "properties": {
+                "endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 131072,
+                  "description": "Exact performed decode attempts, including malformed values and duplicates; never counts undecoded overflow."
+                },
+                "retained_endpoint_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 131072,
+                  "description": "Sum of hashes retained by parser results in this pass or total."
+                },
+                "unparsed_tail": {
+                  "type": "boolean",
+                  "description": "At least one observation had unparsed raw bytes; this never asserts valid endpoints in that tail."
+                }
+              }
+            }
+          }
+        },
+        "runtime_relation_catalogue": {
+          "const": {
+            "schema": "AcademySystemdRuntimeRelationCatalogue.v1",
+            "source_version": "systemd.v255",
+            "scope": "runtime_unit_endpoint_acquisition_only",
+            "activation_complete_claimed": false,
+            "sources": [
+              "https://github.com/systemd/systemd/blob/v255/src/core/dbus-unit.c",
+              "https://github.com/systemd/systemd/blob/v255/src/basic/unit-def.h",
+              "https://github.com/systemd/systemd/blob/v255/src/core/unit-dependency-atom.c",
+              "https://github.com/systemd/systemd/blob/v255/src/core/unit-dependency-atom.h",
+              "https://github.com/systemd/systemd/blob/v255/src/core/unit.c#L2901-L2932"
+            ],
+            "properties": {
+              "Id": {
+                "signature": "s",
+                "interface": "Unit",
+                "direction": "self",
+                "inverse": null,
+                "category": "identity"
+              },
+              "Names": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "self_aliases",
+                "inverse": null,
+                "category": "identity"
+              },
+              "Triggers": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "TriggeredBy",
+                "category": "event_activation"
+              },
+              "TriggeredBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Triggers",
+                "category": "event_activation"
+              },
+              "Requires": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "RequiredBy",
+                "category": "start_pull"
+              },
+              "Wants": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "WantedBy",
+                "category": "start_pull"
+              },
+              "Before": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "After",
+                "category": "ordering"
+              },
+              "After": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Before",
+                "category": "ordering"
+              },
+              "Requisite": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "RequisiteOf",
+                "category": "precondition"
+              },
+              "BindsTo": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "BoundBy",
+                "category": "start_pull_and_liveness"
+              },
+              "PartOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "ConsistsOf",
+                "category": "stop_restart_propagation"
+              },
+              "Upholds": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "UpheldBy",
+                "category": "continuous_start"
+              },
+              "RequiredBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Requires",
+                "category": "start_pull"
+              },
+              "RequisiteOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Requisite",
+                "category": "precondition"
+              },
+              "WantedBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Wants",
+                "category": "start_pull"
+              },
+              "BoundBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "BindsTo",
+                "category": "start_pull_and_liveness"
+              },
+              "UpheldBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Upholds",
+                "category": "continuous_start"
+              },
+              "ConsistsOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "PartOf",
+                "category": "stop_restart_propagation"
+              },
+              "Conflicts": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "ConflictedBy",
+                "category": "stop_conflict"
+              },
+              "ConflictedBy": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "Conflicts",
+                "category": "stop_conflict"
+              },
+              "OnSuccess": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "OnSuccessOf",
+                "category": "event_activation"
+              },
+              "OnSuccessOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "OnSuccess",
+                "category": "event_activation"
+              },
+              "OnFailure": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "OnFailureOf",
+                "category": "event_activation"
+              },
+              "OnFailureOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "OnFailure",
+                "category": "event_activation"
+              },
+              "PropagatesReloadTo": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "ReloadPropagatedFrom",
+                "category": "reload_propagation"
+              },
+              "ReloadPropagatedFrom": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "PropagatesReloadTo",
+                "category": "reload_propagation"
+              },
+              "PropagatesStopTo": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "forward",
+                "inverse": "StopPropagatedFrom",
+                "category": "stop_propagation"
+              },
+              "StopPropagatedFrom": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "inverse",
+                "inverse": "PropagatesStopTo",
+                "category": "stop_propagation"
+              },
+              "JoinsNamespaceOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "symmetric",
+                "inverse": "JoinsNamespaceOf",
+                "category": "namespace_membership"
+              },
+              "SliceOf": {
+                "signature": "as",
+                "interface": "Unit",
+                "direction": "contains_endpoint",
+                "inverse": null,
+                "category": "slice_membership",
+                "internal_inverse": "UNIT_IN_SLICE",
+                "internal_inverse_exported": false
+              },
+              "Following": {
+                "signature": "s",
+                "interface": "Unit",
+                "direction": "follows_endpoint",
+                "inverse": null,
+                "category": "identity"
+              },
+              "Unit": {
+                "signature": "s",
+                "interface": "Timer_or_Path",
+                "direction": "activates_endpoint",
+                "inverse": null,
+                "category": "event_activation"
+              }
+            },
+            "unsupported_path_requirements": {
+              "Unit.RequiresMountsFor": {
+                "signature": "as",
+                "reason": "paths_not_unit_endpoints"
+              },
+              "Path.Paths": {
+                "signature": "a(ss)",
+                "reason": "paths_not_unit_endpoints"
+              }
+            },
+            "unresolved_activation_requirements": [
+              "socket_accept_service_and_instances",
+              "timer_path_unit_defaults",
+              "automount_mount_defaults",
+              "type_specific_implicit_dependencies",
+              "activation_source_cause_and_control_authority"
+            ],
+            "default_target_inference": "forbidden",
+            "inverse_scope": "exported_unit_properties"
+          }
+        },
+        "runtime_relation_catalogue_sha256": {
+          "const": "0e2b40165f68b647b1f181ddc39329f264fa3021ba5f1e7da727b3e0efb5f846"
         }
       }
     }

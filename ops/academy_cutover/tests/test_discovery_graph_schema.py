@@ -22,20 +22,7 @@ def validator(schema):
 
 
 def envelope(discovery):
-    return {
-        "schema": "AcademyAuthorityDiscovery.v1",
-        "role": "web",
-        "host": discovery.host,
-        "coverage_complete": False,
-        "campaign_authority_claimed": False,
-        "classification_complete": False,
-        "purpose": "readonly_discovery_facts_only",
-        "domains": discovery.domains,
-        "commands_attempted": discovery.commands,
-        "files_attempted": discovery.files,
-        "child_lifecycle": discovery.child_metadata,
-        "signal_interrupted": discovery.pending_signal is not None,
-    }
+    return json.loads(discovery.seal().read())
 
 
 @pytest.fixture
@@ -171,7 +158,7 @@ def test_graph_facts_cannot_bypass_explicit_domain(validator, observed):
 def test_explicit_endpoint_profile_is_exact_and_bound_to_both_observations(validator, observed):
     domain = observed["domains"]["systemd_unit_graph"]
     assert domain["endpoint_profile"] == D.SYSTEMD_ENDPOINT_PROFILE
-    assert facts(observed)["schema"] == "AcademySystemdUnitGraphFacts.v2"
+    assert facts(observed)["schema"] == "AcademySystemdUnitGraphFacts.v3"
     assert facts(observed)["endpoint_profile_sha256"] == domain["endpoint_profile_sha256"]
     for phase in ("initial", "repeated"):
         read = facts(observed)[phase]
@@ -239,13 +226,17 @@ def test_resource_refusal_schema_matches_actual_partial_collector(validator):
 
 
 def historical_v1_report(observed):
-    """Synthetic frozen v1 shape; never reinterpret a collected v2 observation."""
+    """Synthetic frozen v1 shape, retained under its original legacy envelope."""
     report = copy.deepcopy(observed)
+    report["schema"] = "AcademyAuthorityDiscovery.v1"
+    for key in ("resource_profile", "resource_profile_sha256", "resource_accounting"):
+        report.pop(key)
     domain = report["domains"]["systemd_unit_graph"]
-    for key in ("endpoint_profile", "endpoint_profile_sha256", "endpoint_accounting"):
+    for key in ("endpoint_profile", "endpoint_profile_sha256", "endpoint_accounting",
+                "runtime_relation_catalogue", "runtime_relation_catalogue_sha256"):
         domain.pop(key)
     fields = {}
-    for field in D.GRAPH_PROPERTIES:
+    for field in ("Id", "Names", "Triggers", "TriggeredBy", "Requires", "Wants", "Before", "After"):
         value = b"a.service" if field in ("Id", "Names") else b""
         fields[field] = {
             "projection": D.projection(value), "endpoint_sha256": [D.digest(value)] if value else [], "valid": True,
