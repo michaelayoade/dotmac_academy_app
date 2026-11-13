@@ -1,0 +1,517 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "census-transport.schema.json",
+  "title": "Academy closed current observation leaf transport",
+  "description": "Source protocol, not a provisioned authentication profile or authority. No full census, recursive producer verifier, command/provider injection, keys or trust installation. Caller and peer validate current phase authority before/after physical reconstruction. Runtime enforces hashes, custody, clock relations, operation-specific facts, one-use challenge and child cleanup beyond JSON shape. Frozen profile v2 has no future artifact hash cycle: source -> receipt -> bundle -> seed index -> bootstrap -> nonce -> live response. Same loaded module registry is required.",
+  "$defs": {
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "phase",
+        "manifest",
+        "approval"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "execution",
+            "promotion"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "manifest": {
+          "$ref": "#/$defs/reference"
+        },
+        "approval": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate",
+        "tree",
+        "attempt",
+        "authority_scope_sha256",
+        "producer_sha256",
+        "transport_sha256",
+        "execution_manifest_sha256",
+        "execution_approval_sha256",
+        "active_authority",
+        "role",
+        "hostname",
+        "operation",
+        "original_source",
+        "gate_epoch",
+        "original_stop_ref",
+        "peer_inputs",
+        "peer_evidence_index"
+      ],
+      "properties": {
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "authority_scope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "producer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "transport_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "active_authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "operation": {
+          "enum": [
+            "gate-web",
+            "stopped-web",
+            "stopped-lab"
+          ]
+        },
+        "original_source": {
+          "$ref": "#/$defs/reference"
+        },
+        "gate_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "original_stop_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "peer_inputs": {
+          "$ref": "#/$defs/reference"
+        },
+        "peer_evidence_index": {
+          "$ref": "#/$defs/reference"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "gate-web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "const": "web"
+              },
+              "original_stop_ref": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "stopped-web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "const": "web"
+              },
+              "original_stop_ref": {
+                "$ref": "#/$defs/reference"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "stopped-lab"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "const": "lab"
+              },
+              "original_stop_ref": {
+                "$ref": "#/$defs/reference"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "nonce",
+        "issued_unix",
+        "expires_unix",
+        "binding"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusCurrentRequest.v1"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "issued_unix": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expires_unix": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "description": "Runtime: locally minted 32-byte nonce; issued<=now<expires<=issued+30; response completed<expires; expiration capped by current phase approval. peer_inputs and peer_evidence_index hashes are read from actual protected mirrored bytes AFTER captured source/receipt/bundle/seed-index/bootstrap exist. Current peer inputs path/raw SHA must equal actual CLI bootstrap."
+    },
+    "gateFacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hold_id",
+        "owner_record_sha256",
+        "gate_approval_sha256",
+        "supervisor_pid",
+        "supervisor_start_ticks",
+        "lock_inode",
+        "lock_kernel_row",
+        "state_sha256"
+      ],
+      "properties": {
+        "hold_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "supervisor_pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supervisor_start_ticks": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "lock_inode": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "lock_kernel_row": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "state_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "stoppedFacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "units",
+        "application_pids",
+        "preserved"
+      ],
+      "properties": {
+        "units": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 100,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "MainPID",
+              "ActiveState",
+              "SubState"
+            ],
+            "properties": {
+              "MainPID": {
+                "const": "0"
+              },
+              "ActiveState": {
+                "const": "inactive"
+              },
+              "SubState": {
+                "const": "dead"
+              }
+            }
+          }
+        },
+        "application_pids": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "preserved": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 10
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "request",
+        "observed_unix_started",
+        "observed_unix_finished",
+        "facts"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusCurrentLeaf.v1"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "observed_unix_started": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observed_unix_finished": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "facts": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/gateFacts"
+            },
+            {
+              "$ref": "#/$defs/stoppedFacts"
+            }
+          ]
+        }
+      },
+      "description": "Exact challenge echo and full observation interval inside request; gate web invokes fixed producer._gate; stopped invokes C.stopped+C.preserved only. Runtime compares exact reconstructed archived facts."
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "caller_hostname",
+        "role",
+        "hostname",
+        "endpoint",
+        "port",
+        "user",
+        "identity",
+        "known_hosts",
+        "peer_producer",
+        "peer_packet_root",
+        "local_packet_root"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusTransportProfile.v2"
+        },
+        "caller_hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "user": {
+          "enum": [
+            "root",
+            "dotmac"
+          ]
+        },
+        "identity": {
+          "$ref": "#/$defs/reference"
+        },
+        "known_hosts": {
+          "$ref": "#/$defs/reference"
+        },
+        "peer_producer": {
+          "$ref": "#/$defs/reference"
+        },
+        "peer_packet_root": {
+          "type": "string",
+          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+        },
+        "local_packet_root": {
+          "type": "string",
+          "pattern": "^/root/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+        }
+      },
+      "description": "Existing approved static v2 profile only: credentials, endpoint, opposite-role caller+target host identities, pinned known peer producer code and protected packet root directories. NO future bootstrap/source/index hashes or refs. Reject v1 and extra fields. Runtime caller must be actual OTHER manifest role host; workstation is unsupported. Static validation does not require actual caller or open credentials. All actual files anchored root-private single-link regular0600; no auth/trust provisioning."
+    },
+    "manifestProfiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "web",
+        "lab"
+      ],
+      "properties": {
+        "web": {
+          "$ref": "#/$defs/reference"
+        },
+        "lab": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "intent",
+        "request",
+        "response",
+        "cleanup_confirmed"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusTransportEvidence.v1"
+        },
+        "intent": {
+          "$ref": "#/$defs/reference"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "response": {
+          "$ref": "#/$defs/response"
+        },
+        "cleanup_confirmed": {
+          "const": true
+        }
+      },
+      "description": "Audit artifact only unless same-process successful live nonce registry agrees. Exclusive intent consumption prevents replay. Durable intent precedes SSH and survives failure. Cleanup uncertainty refuses, is retained, and never retries. Confirmed local SSH cleanup does not prove remote cleanup. Any failure/timeout/uncertainty retains intent, refuses, and never auto-retries."
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/profile"
+    },
+    {
+      "$ref": "#/$defs/evidence"
+    }
+  ]
+}
