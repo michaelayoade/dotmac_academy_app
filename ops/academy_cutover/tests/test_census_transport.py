@@ -453,62 +453,204 @@ class Protocol(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "transport_evidence"):
                 T.verify_current(common, {}, Mock(), {}, reference(), value)
 
-    def test_stopped_peer_does_not_call_gate_or_receipt_lookup(self):
-        req = request("stopped-lab")
-        b = req["binding"]
-        source = {name: b[name] for name in ("candidate", "tree", "attempt", "role", "hostname", "producer_sha256")}
-        source.update(schema="AcademyLocalCensusSource.v1", adapter="stopped")
-        source["facts"] = {
-            "quiesce_receipt_sha256": HASH,
-            "gate_epoch": HASH,
-            "units": {"x": "inactive"},
-            "application_pids": [],
-            "preserved": {"route": HASH},
-        }
-        m = {
-            "candidate": b["candidate"],
-            "tree": b["tree"],
-            "roles": {"lab": {"hostname": b["hostname"]}},
-            "helpers": {"external_census": HASH, "census_transport": HASH},
-            "self_sha256": HASH,
-        }
-        evidence = Mock(a={"attempt": b["attempt"]}, manifest_hash=HASH, approval_hash=HASH, sha256=HASH)
-        common = Mock()
-        common.decode.side_effect = [
-            source,
-            {"common": {"path": str(Path(T.__file__).absolute().with_name("candidate_execute.py")), "sha256": HASH}},
-        ]
-        common.stopped.return_value = {"units": {"x": "inactive"}, "matching_application_pids": []}
-        common.preserved.return_value = {"route": HASH}
-        producer = Mock()
-        producer.load_scope.return_value = ({}, HASH)
-        with (
-            patch.object(T, "_trusted", return_value=producer),
-            patch.object(T, "_authority"),
-            patch.object(T, "_validate_bootstrap"),
-            patch.object(T, "_seed_index"),
-            patch.object(T, "_pin", return_value=b"{}"),
-            patch.object(T.socket, "gethostname", return_value=b["hostname"]),
-            patch.object(T.time, "time", return_value=105),
+
+class Receiver(unittest.TestCase):
+    """Exercise actual receiver guards and pinning against a synthetic file map."""
+
+    def setUp(self):
+        self.fixture("stopped-lab")
+        for target, value in (
+            ("__file__", "/root/peer-source/candidate_census_transport.py"),
+            ("_trusted", Mock(side_effect=lambda *_: self.producer)),
         ):
-            result = T.observe_local_leaf(common, m, evidence, req)
-            evidence.sha256 = "f" * 64
-            common.decode.side_effect = [
-                source,
-                {
-                    "common": {
-                        "path": str(Path(T.__file__).absolute().with_name("candidate_execute.py")),
-                        "sha256": HASH,
-                    }
-                },
-            ]
-            with self.assertRaisesRegex(ValueError, "actual_peer_E_index_hash"):
-                T.observe_local_leaf(common, m, evidence, req)
-        self.assertEqual(result["facts"]["application_pids"], [])
-        producer._gate.assert_not_called()
-        evidence.phase.assert_not_called()
-        evidence.get.assert_not_called()
-        common.stopped.assert_called_once_with("lab", m)
+            patcher = patch.object(T, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(T.socket, "gethostname", side_effect=lambda: self.req["binding"]["hostname"])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(T.time, "time", return_value=105)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def fixture(self, operation):
+        self.req = request(operation)
+        b = self.req["binding"]
+        self.files, self.reads = {}, []
+        self.source = {name: b[name] for name in (
+            "candidate", "tree", "attempt", "role", "hostname", "producer_sha256",
+        )}
+        self.facts = {"units": {"x": "inactive"}, "application_pids": [], "preserved": {"route": HASH}}
+        if operation == "gate-web":
+            self.facts = dict.fromkeys((
+                "hold_id", "owner_record_sha256", "gate_approval_sha256", "state_sha256",
+            ), HASH)
+            self.facts.update(
+                supervisor_pid=12, supervisor_start_ticks="345", lock_inode=[1, 2], lock_kernel_row="test"
+            )
+        self.source.update(
+            schema="AcademyLocalCensusSource.v1", adapter=operation.split("-")[0],
+            facts=dict(self.facts, gate_epoch=HASH, quiesce_receipt_sha256=HASH),
+        )
+        b["original_source"] = self.store("/root/peer-packet/raw-" + operation + ".json", self.source)
+        self.index = {"entries": {}}
+        b["peer_evidence_index"] = self.store("/root/peer-packet/seed-index.json", self.index)
+        self.bootstrap = {
+            "schema": "AcademyCensusInputs.v1", "kind": "execution", "phase": "quiesce",
+            "common": {"path": "/root/peer-source/candidate_execute.py", "sha256": HASH},
+            "manifest": b["active_authority"]["manifest"], "approval": b["active_authority"]["approval"],
+            "evidence_index": b["peer_evidence_index"]["path"], "role": b["role"],
+            "output": "/root/peer-packet/output", "observation": operation.split("-")[0],
+        }
+        b["peer_inputs"] = self.store("/root/peer-packet/current-" + operation + "-inputs.json", self.bootstrap)
+        self.profile = profile()
+        self.profile.update(
+            role=b["role"], hostname=b["hostname"], user="root" if b["role"] == "web" else "dotmac",
+            caller_hostname="synthetic-lab" if b["role"] == "web" else "synthetic-web",
+            peer_producer={"path": "/root/peer-source/candidate_external_census.py", "sha256": HASH},
+        )
+        self.profile_ref = self.store("/root/peer-config/profile.json", self.profile)
+        self.m = {
+            "candidate": b["candidate"], "tree": b["tree"], "self_sha256": HASH,
+            "roles": {role: {"hostname": "synthetic-" + role} for role in ("web", "lab")},
+            "helpers": {"external_census": HASH, "census_transport": HASH},
+            "census_transport": {b["role"]: self.profile_ref},
+        }
+        self.evidence = Mock(
+            m=self.m, active_authority=b["active_authority"], a={"attempt": b["attempt"]},
+            manifest_hash=HASH, approval_hash=HASH, sha256=b["peer_evidence_index"]["sha256"],
+        )
+        self.common = Mock()
+        self.common.decode.side_effect = json.loads
+        self.common.read_bytes.side_effect = self.read_file
+        self.common.stopped.return_value = {"units": {"x": "inactive"}, "matching_application_pids": []}
+        self.common.preserved.return_value = {"route": HASH}
+        self.producer = Mock()
+        self.producer.load_scope.return_value = ({}, HASH)
+        self.producer._gate.return_value = self.facts
+
+    def store(self, path, value):
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        self.files[path] = raw
+        return {"path": path, "sha256": hashlib.sha256(raw).hexdigest()}
+
+    def read_file(self, path, **kwargs):
+        self.reads.append(str(path))
+        self.assertEqual(kwargs, {"limit": T.MAX_BYTES, "private": True, "root_file": True, "mode": 0o600})
+        if str(path) not in self.files:
+            raise AssertionError("unexpected read outside synthetic approved files")
+        return self.files[str(path)]
+
+    def observe(self):
+        return T.observe_local_leaf(self.common, self.m, self.evidence, self.req)
+
+    def assert_not_observed(self):
+        self.common.write_new.assert_not_called()
+        self.common.stopped.assert_not_called()
+        self.producer._gate.assert_not_called()
+
+    def test_each_fixed_leaf_accepts_actual_profile_bootstrap_and_index_guards(self):
+        for operation in T.OPERATIONS:
+            with self.subTest(operation=operation):
+                self.fixture(operation)
+                result = self.observe()
+                self.assertEqual(result["facts"], self.facts)
+                self.assertEqual(self.reads[:4], [
+                    self.profile_ref["path"], self.req["binding"]["peer_inputs"]["path"],
+                    self.req["binding"]["peer_evidence_index"]["path"], self.req["binding"]["original_source"]["path"],
+                ])
+                self.common.write_new.assert_called_once()
+                self.assertEqual(self.producer._authority.call_count, 2)
+                self.evidence.phase.assert_not_called()
+                self.evidence.get.assert_not_called()
+                self.assertFalse(any(path.startswith("/root/local-packet/") for path in self.reads))
+                for name in ("identity", "known_hosts"):
+                    self.assertNotIn(self.profile[name]["path"], self.reads)
+                if operation == "gate-web":
+                    self.common.stopped.assert_not_called()
+                else:
+                    self.producer._gate.assert_not_called()
+                    self.common.stopped.assert_called_once_with(self.req["binding"]["role"], self.m)
+
+    def test_unrelated_original_path_rejects_before_read_for_known_or_wrong_hash(self):
+        path = "/root/unrelated-public-test-file"
+        ref = self.store(path, {"synthetic": True})
+        for sha in (ref["sha256"], "f" * 64):
+            with self.subTest(sha=sha):
+                self.req["binding"]["original_source"] = dict(ref, sha256=sha)
+                with self.assertRaisesRegex(ValueError, "fixed_receiver_original_source_path"):
+                    self.observe()
+                self.assertNotIn(path, self.reads)
+                self.assert_not_observed()
+
+    def test_other_operation_original_path_rejects_before_read(self):
+        path = "/root/peer-packet/raw-gate-web.json"
+        self.req["binding"]["original_source"] = self.store(path, self.source)
+        with self.assertRaisesRegex(ValueError, "fixed_receiver_original_source_path"):
+            self.observe()
+        self.assertNotIn(path, self.reads)
+        self.assert_not_observed()
+
+    def test_bootstrap_outside_or_other_operation_rejects_before_selected_reads(self):
+        for path in ("/root/unrelated-inputs.json", "/root/peer-packet/current-gate-web-inputs.json"):
+            with self.subTest(path=path):
+                self.req["binding"]["peer_inputs"] = self.store(path, self.bootstrap)
+                with self.assertRaisesRegex(ValueError, "fixed_receiver_bootstrap_path"):
+                    self.observe()
+                self.assertNotIn(path, self.reads)
+                self.assertNotIn(self.req["binding"]["original_source"]["path"], self.reads)
+                self.assert_not_observed()
+
+    def test_seed_index_outside_packet_or_prefix_collision_rejects_before_read(self):
+        for path in ("/root/unrelated-index.json", "/root/peer-packet-suffix/index.json", "/root/peer-packet"):
+            with self.subTest(path=path):
+                self.req["binding"]["peer_evidence_index"] = self.store(path, self.index)
+                with self.assertRaisesRegex(ValueError, "peer_packet_containment|mirror_relative_path"):
+                    self.observe()
+                self.assertNotIn(path, self.reads)
+                self.assertNotIn(self.req["binding"]["original_source"]["path"], self.reads)
+                self.assert_not_observed()
+
+    def test_profile_producer_must_be_actual_fixed_sibling_before_request_reads(self):
+        self.profile["peer_producer"]["path"] = "/root/other-code/candidate_external_census.py"
+        self.profile_ref.update(self.store(self.profile_ref["path"], self.profile))
+        with self.assertRaisesRegex(ValueError, "actual_peer_profile_producer"):
+            self.observe()
+        self.assertEqual(self.reads, [self.profile_ref["path"]])
+        self.assert_not_observed()
+
+    def test_bootstrap_index_mismatch_refuses_before_reading_selected_index_or_original(self):
+        self.req["binding"]["peer_evidence_index"] = self.store("/root/peer-packet/other-index.json", self.index)
+        with self.assertRaisesRegex(ValueError, "bootstrap_seed_index_path"):
+            self.observe()
+        self.assertNotIn(self.req["binding"]["peer_evidence_index"]["path"], self.reads)
+        self.assertNotIn(self.req["binding"]["original_source"]["path"], self.reads)
+        self.assert_not_observed()
+
+    def test_actual_evidence_index_mismatch_refuses_before_original_read(self):
+        self.evidence.sha256 = "f" * 64
+        with self.assertRaisesRegex(ValueError, "actual_peer_E_index_hash"):
+            self.observe()
+        self.assertNotIn(self.req["binding"]["original_source"]["path"], self.reads)
+        self.assert_not_observed()
+
+    def test_current_scope_mismatch_refuses_before_request_selected_reads(self):
+        self.producer.load_scope.return_value = ({}, "f" * 64)
+        with self.assertRaisesRegex(ValueError, "peer_current_binding"):
+            self.observe()
+        self.assertEqual(self.reads, [self.profile_ref["path"]])
+        self.assert_not_observed()
+
+    def test_seed_future_leaf_exclusions_remain_before_original_source_read(self):
+        self.index["entries"]["gate-web"] = {"path": "/root/peer-packet/raw-gate-web.json"}
+        self.req["binding"]["peer_evidence_index"].update(self.store(
+            self.req["binding"]["peer_evidence_index"]["path"], self.index,
+        ))
+        self.evidence.sha256 = self.req["binding"]["peer_evidence_index"]["sha256"]
+        with self.assertRaisesRegex(ValueError, "seed_index_no_leaf_recursion"):
+            self.observe()
+        self.assertNotIn(self.req["binding"]["original_source"]["path"], self.reads)
+        self.assert_not_observed()
 
 
 class Lifecycle(unittest.TestCase):

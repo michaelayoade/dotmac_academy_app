@@ -643,9 +643,19 @@ def observe_local_leaf(C, m, evidence, protected_request):
         and binding["transport_sha256"] == m["helpers"]["census_transport"],
         "actual_peer_sources",
     )
-    source = C.decode(_pin(C, binding["original_source"]))
-    for name in ("candidate", "tree", "attempt", "role", "hostname", "producer_sha256"):
-        _require(source[name] == binding[name], "peer_original_binding")
+    profile_ref = m.get("census_transport", {}).get(role)
+    _require(profile_ref is not None, "approved_existing_profile_required")
+    profile = _profile(C, m, role, profile_ref, runtime=False, credentials=False)
+    _require(
+        profile["peer_producer"]["path"] == str(Path(__file__).absolute().with_name("candidate_external_census.py")),
+        "actual_peer_profile_producer",
+    )
+    original_path, _ = _derived(profile, operation, "raw-" + operation + ".json")
+    bootstrap_path, _ = _derived(profile, operation, "current-" + operation + "-inputs.json")
+    _require(binding["original_source"]["path"] == original_path, "fixed_receiver_original_source_path")
+    _require(binding["peer_inputs"]["path"] == bootstrap_path, "fixed_receiver_bootstrap_path")
+    # Validate containment without reading any coordinator-side mirror.
+    _mirror(profile, binding["peer_evidence_index"]["path"])
     _require(
         binding["candidate"] == m["candidate"]
         and binding["tree"] == m["tree"]
@@ -655,15 +665,6 @@ def observe_local_leaf(C, m, evidence, protected_request):
         and binding["execution_approval_sha256"] == evidence.approval_hash,
         "peer_current_binding",
     )
-    _require(
-        binding["gate_epoch"] == source["facts"].get("hold_id", source["facts"].get("gate_epoch")),
-        "peer_original_epoch",
-    )
-    if operation != "gate-web":
-        _require(
-            binding["original_stop_ref"]["sha256"] == source["facts"]["quiesce_receipt_sha256"],
-            "peer_original_stop_join",
-        )
     bootstrap = C.decode(_pin(C, binding["peer_inputs"]))
     _validate_bootstrap(C, m, bootstrap, binding, binding["peer_inputs"]["path"])
     _require(
@@ -674,6 +675,20 @@ def observe_local_leaf(C, m, evidence, protected_request):
     index_raw = _pin(C, binding["peer_evidence_index"])
     _seed_index(C, index_raw)
     _require(evidence.sha256 == binding["peer_evidence_index"]["sha256"], "actual_peer_E_index_hash")
+    # Only after protected profile/bootstrap/index and current authority joins
+    # may this request's fixed original leaf be read, even for a wrong hash.
+    source = C.decode(_pin(C, binding["original_source"]))
+    for name in ("candidate", "tree", "attempt", "role", "hostname", "producer_sha256"):
+        _require(source[name] == binding[name], "peer_original_binding")
+    _require(
+        binding["gate_epoch"] == source["facts"].get("hold_id", source["facts"].get("gate_epoch")),
+        "peer_original_epoch",
+    )
+    if operation != "gate-web":
+        _require(
+            binding["original_stop_ref"]["sha256"] == source["facts"]["quiesce_receipt_sha256"],
+            "peer_original_stop_join",
+        )
     # Replay reservation is root-private, exclusive and retained on every failure.
     C.write_new(
         str(
