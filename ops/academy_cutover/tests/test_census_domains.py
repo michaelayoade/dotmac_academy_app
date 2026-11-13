@@ -1,4 +1,4 @@
-# ruff: noqa: S101
+# ruff: noqa: S101 -- assertions qualify synthetic census behavior.
 """Hosted-only synthetic domain refusals; no host discovery or credentials."""
 
 import copy
@@ -44,10 +44,38 @@ class Common:
         return Path(path).read_bytes()
 
 
+    @staticmethod
+    def services(role):
+        return (["academy-v2-web"] + ["academy-v2-" + name for name in (
+            "admin-report", "email-digest", "email-outbox", "erp-training-sync", "hr-report",
+            "learner-digest", "reminders",
+        )]) if role == "web" else ["academy-v2-lab-worker"]
+
+    @staticmethod
+    def old_unit_inventory(unit, manifest, role):
+        del manifest
+        return inactive_inventory(unit, role)
+
+    @staticmethod
+    def baseline_runtime(manifest, role):
+        return manifest["roles"][role]["runtime_baseline"]
+
+
+def inactive_inventory(unit, role):
+    return {"unit_state": {"MainPID": "0", "ActiveState": "inactive", "SubState": "dead"},
+            "start_ticks": None, "argv_sha256": None, "gate_awareness": "legacy_gate_unaware",
+            "planned_action": "stop_primary" if unit == Common.services(role)[0] else "drain_only"}
+
+
+def inactive_owners(role):
+    return {unit: {"inventory": inactive_inventory(unit, role), "namespaces": {}, "uid": None,
+                   "cwd_sha256": None, "exe_sha256": None} for unit in Common.services(role)}
+
+
 @pytest.fixture
 def intrinsic():
     sources = []
-    for name in ("candidate_census_domains.py", "candidate_authority_discovery.py"):
+    for name in ("candidate_census_domains.py", "candidate_authority_discovery.py", "candidate_execute.py"):
         path = Path(D.__file__).with_name(name)
         sources.append({"path": str(path), "sha256": Common.digest(path.read_bytes())})
     facts = {
@@ -69,12 +97,12 @@ def intrinsic():
     }
     identifier = D._identity(Common, "web", "synthetic-web", 23, "456", namespaces)
     item = {
-        "object_id": identifier, "authority_id": identifier, "pid": 23,
+        "object_id": identifier, "authority_refs": [], "pid": 23,
         "starttime_ticks": "456", "namespaces": namespaces, "facts": facts,
         "classification": "non_sender", "non_sender_reason": "stable_pf_kthread",
     }
     proof = {
-        "schema": "AcademyCensusDomainObservation.v1", "candidate": "a" * 40, "tree": "b" * 40,
+        "schema": "AcademyCensusDomainObservation.v2", "candidate": "a" * 40, "tree": "b" * 40,
         "role": "web", "hostname": "synthetic-web", "domain": D.PROCESS_DOMAIN, "sources": sources,
         "observed_unix_started": 100, "observed_unix_finished": 101,
         "enumerated_object_ids": [identifier], "objects": [item],
@@ -84,6 +112,7 @@ def intrinsic():
                                   "authority_id": Common.digest(b"synthetic-web\0processes\0" + b"23:456"),
                                   "identity": None, "identity_sha256": Common.digest(b"23:456"),
                                   "unknown_identity": True, "relevance": "unresolved"}]},
+        "owners_before": inactive_owners("web"), "owners_after": inactive_owners("web"),
         "unresolved_gaps": [], "coverage_complete": True,
     }
     scope = {
@@ -96,7 +125,7 @@ def intrinsic():
 
 def test_positive_intrinsic_proof_passes_only_pure_validation(intrinsic):
     scope, proof = intrinsic
-    assert D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof) == set(proof["enumerated_object_ids"])
+    assert D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof) == set()
 
 
 def test_userspace_marker_absence_is_unknown(intrinsic):
@@ -184,7 +213,7 @@ def test_production_host_guard_precedes_source_execution(monkeypatch):
 def test_reducer_cannot_upgrade_authored_other_domains(intrinsic, monkeypatch):
     scope, proof = intrinsic
     # Even a trusted pure-validator result cannot supply seven missing collectors.
-    monkeypatch.setattr(D, "validate_domain_proof", lambda *args: set())
+    monkeypatch.setattr(D, "validate_domain_proof", lambda *args, **kwargs: set())
     authored = {domain: {role: {"coverage_complete": True} for role in ("web", "lab")} for domain in D.DOMAINS}
     authored[D.PROCESS_DOMAIN]["web"] = proof
     with pytest.raises(ValueError, match="adapter_unimplemented"):
@@ -236,8 +265,10 @@ class SyntheticProc:
             inode += 1
         return self.meta(2, inode, stat.S_IFREG | 0o444)
 
-    def readlink(self, path, *, dir_fd):
+    def readlink(self, path, *, dir_fd=None):
         del dir_fd
+        if isinstance(path, Path):
+            return {"cwd": "/synthetic/legacy/source", "exe": "/synthetic/python"}[path.name]
         self.link_reads[path] = self.link_reads.get(path, 0) + 1
         inode = D.NAMESPACES.index(path) + 20
         if self.fault == "postbatch_namespace_change" and self.link_reads[path] > 1:
@@ -255,6 +286,7 @@ class SyntheticProc:
         return SimpleNamespace(
             open=self.open, fstat=self.fstat, stat=self.stat, readlink=self.readlink, close=self.close,
             O_RDONLY=os.O_RDONLY, O_DIRECTORY=os.O_DIRECTORY, O_NOFOLLOW=os.O_NOFOLLOW, geteuid=lambda: 0,
+            fsencode=os.fsencode,
         )
 
 
@@ -333,7 +365,12 @@ def simulated_collector(intrinsic, monkeypatch):
     monkeypatch.setattr(D, "os", proc.syscall_module())
     monkeypatch.setattr(D, "socket", SimpleNamespace(gethostname=lambda: "synthetic-web"))
     manifest = {"candidate": scope["candidate"], "tree": scope["tree"],
-                "roles": {"web": {"hostname": "synthetic-web"}}}
+                "self_sha256": proof["sources"][2]["sha256"],
+                "helpers": {"census_domains": proof["sources"][0]["sha256"],
+                            "census_discovery": proof["sources"][1]["sha256"]},
+                "roles": {"web": {"hostname": "synthetic-web", "uid": 1000,
+                                  "runtime_baseline": {"units": {unit: {"source": "/synthetic/legacy/source"}
+                                                                 for unit in Common.services("web")}}}}}
     return scope, manifest, proof, proc, discovery
 
 
@@ -345,7 +382,7 @@ def test_actual_observer_assembly_with_synthetic_protected_boundary(simulated_co
     assert observation["unresolved_gaps"] == []
     assert set(observation["objects"][0]["namespaces"]) == set(D.NAMESPACES)
     assert observation["objects"][0]["non_sender_reason"] == "stable_pf_kthread"
-    assert D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation)
+    assert D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation) == set()
     assert sorted(proc.closed) == sorted(descriptor for descriptor, _ in proc.opened)
 
 
@@ -419,3 +456,273 @@ def test_role_reducer_requires_exact_eight_domains(intrinsic):
     proofs[D.PROCESS_DOMAIN] = proof
     with pytest.raises(ValueError, match="adapter_unimplemented"):
         D.require_complete_role_scope(Common, scope, "web", proofs)
+
+
+@pytest.fixture
+def legacy_collector(simulated_collector, monkeypatch):
+    scope, manifest, proof, proc, discovery = simulated_collector
+    facts = discovery.snapshot["records"][0]["facts"]
+    facts.update(uid=1000, stat_flags_before=0, stat_flags_after=0,
+                 process_representation="userspace_or_transition", not_applicable_process_fields=[],
+                 uids_real_effective_saved_filesystem=[1000] * 4)
+    for field, raw in (("cwd", b"/synthetic/legacy/source"), ("exe", b"/synthetic/python"),
+                       ("argv", b"/synthetic/venv/bin/python\0-m\0app.cli\0")):
+        facts[field] = {"sha256": Common.digest(raw), "bytes": len(raw),
+                        "known_academy_root_indicator": False, "known_job_indicator": False}
+    original_stat = Path.stat
+
+    def proc_stat(path, *args, **kwargs):
+        if path == Path("/proc/23"):
+            return SimpleNamespace(st_uid=1000)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", proc_stat)
+    monkeypatch.setattr(Common, "proc_bytes", staticmethod(lambda path: (
+        facts["starttime_ticks"] + "|0|S").encode()), raising=False)
+    inventory = {"unit_state": {"MainPID": "23", "ActiveState": "active", "SubState": "running"},
+                 "start_ticks": "456", "argv_sha256": facts["argv"]["sha256"],
+                 "gate_awareness": "legacy_gate_unaware", "planned_action": "stop_primary"}
+    calls = []
+
+    def owner(unit, m, role):
+        assert m is manifest
+        calls.append(unit)
+        return copy.deepcopy(inventory if unit == Common.services(role)[0] else inactive_inventory(unit, role))
+
+    monkeypatch.setattr(Common, "old_unit_inventory", staticmethod(owner))
+    return scope, manifest, proof, proc, discovery, inventory, calls
+
+
+def test_actual_fixed_legacy_owner_assembly_and_pure_reconstruction(legacy_collector):
+    scope, manifest, _, proc, _, _, calls = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    item = observation["objects"][0]
+    authority = D.authority_id(Common, "web", "synthetic-web", "academy-v2-web")
+    assert calls == Common.services("web") * 2
+    assert item["classification"] == "legacy_sender"
+    assert item["authority_refs"] == [authority]
+    assert authority != item["object_id"]
+    assert observation["coverage_complete"] is True
+    assert D.validate_domain_proof(
+        Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest,
+    ) == {authority}
+    with pytest.raises(ValueError, match="owner_manifest_required"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation)
+    assert sorted(proc.closed) == sorted(descriptor for descriptor, _ in proc.opened)
+
+
+def test_stable_authority_recipe_survives_restart_without_candidate_or_pid(legacy_collector):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    original = D.observe_processes(Common, manifest, "web")
+    restarted = copy.deepcopy(original)
+    item = restarted["objects"][0]
+    item["pid"] = item["facts"]["pid"] = 24
+    item["starttime_ticks"] = item["facts"]["starttime_ticks"] = "999"
+    item["object_id"] = D._identity(Common, "web", "synthetic-web", 24, "999", item["namespaces"])
+    restarted["enumerated_object_ids"] = [item["object_id"]]
+    row = restarted["snapshot"]["records"][0]
+    row.update(facts=copy.deepcopy(item["facts"]),
+               authority_id=Common.digest(b"synthetic-web\0processes\0" + b"24:999"),
+               identity_sha256=Common.digest(b"24:999"))
+    for field in ("owners_before", "owners_after"):
+        restarted[field]["academy-v2-web"]["inventory"].update(start_ticks="999")
+        restarted[field]["academy-v2-web"]["inventory"]["unit_state"]["MainPID"] = "24"
+    refs = D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, restarted, manifest=manifest)
+    assert refs == set(original["objects"][0]["authority_refs"])
+    assert item["object_id"] != original["objects"][0]["object_id"]
+    assert item["authority_refs"] == original["objects"][0]["authority_refs"]
+    assert next(iter(refs)) == Common.digest(Common.canonical({
+        "schema": "AcademyLegacyUnitAuthority.v1", "hostname": "synthetic-web", "role": "web",
+        "unit": "academy-v2-web",
+    }))
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda o: o["inventory"]["unit_state"].update(MainPID="24"),
+    lambda o: o["inventory"].update(start_ticks="457"),
+    lambda o: o["inventory"].update(argv_sha256="0" * 64),
+    lambda o: o.update(uid=1001),
+    lambda o: o.update(cwd_sha256="0" * 64),
+    lambda o: o.update(exe_sha256="0" * 64),
+    lambda o: o["namespaces"]["net"].update(target="net:[999]"),
+])
+def test_forged_owner_join_never_establishes_userspace_authority(legacy_collector, mutation):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    for field in ("owners_before", "owners_after"):
+        mutation(observation[field]["academy-v2-web"])
+    observation["coverage_complete"] = True
+    with pytest.raises(ValueError, match=r"owner_baseline_join|positive_classification|ns_inode"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
+
+
+def test_owner_change_after_whole_snapshot_refuses_live_collection(legacy_collector, monkeypatch):
+    _, manifest, _, _, _, inventory, _ = legacy_collector
+    count = 0
+
+    def changed(unit, m, role):
+        nonlocal count
+        del m
+        if unit == "academy-v2-web":
+            count += 1
+            value = copy.deepcopy(inventory)
+            if count == 2:
+                value["unit_state"]["SubState"] = "exited"
+            return value
+        return inactive_inventory(unit, role)
+
+    monkeypatch.setattr(Common, "old_unit_inventory", staticmethod(changed))
+    observation = D.observe_processes(Common, manifest, "web")
+    assert observation["objects"][0]["classification"] == "unknown"
+    assert observation["objects"][0]["authority_refs"] == []
+    assert observation["coverage_complete"] is False
+    assert "legacy_owner_changed_or_unproved" in observation["unresolved_gaps"]
+
+
+def test_duplicate_unit_mainpid_is_ambiguous_and_never_multi_authority(legacy_collector, monkeypatch):
+    _, manifest, _, _, _, inventory, _ = legacy_collector
+
+    def duplicated(unit, m, role):
+        del m
+        if unit in ("academy-v2-web", "academy-v2-email-outbox"):
+            value = copy.deepcopy(inventory)
+            value["planned_action"] = "stop_primary" if unit == "academy-v2-web" else "drain_only"
+            return value
+        return inactive_inventory(unit, role)
+
+    monkeypatch.setattr(Common, "old_unit_inventory", staticmethod(duplicated))
+    observation = D.observe_processes(Common, manifest, "web")
+    assert observation["objects"][0]["authority_refs"] == []
+    assert observation["coverage_complete"] is False
+    assert "legacy_owner_duplicate_pid" in observation["unresolved_gaps"]
+
+
+def test_child_does_not_inherit_legacy_mainpid_authority(legacy_collector):
+    _, manifest, _, _, discovery, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    facts = copy.deepcopy(discovery.snapshot["records"][0]["facts"])
+    facts["pid"] = 24
+    assert D._owner_refs(Common, "web", "synthetic-web", facts, observation["objects"][0]["namespaces"],
+                         observation["owners_before"], observation["owners_after"]) == []
+
+
+def test_unknown_process_refused_despite_authored_complete_flag(simulated_collector):
+    scope, manifest, _, _, discovery = simulated_collector
+    discovery.snapshot["records"][0]["facts"].update(
+        stat_flags_before=0, stat_flags_after=0, process_representation="userspace_or_transition")
+    observation = D.observe_processes(Common, manifest, "web")
+    observation.update(coverage_complete=True, unresolved_gaps=[])
+    with pytest.raises(ValueError, match="unresolved_objects_or_gaps"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation)
+
+
+def test_intrinsic_non_senders_never_get_frozen_sender_membership(intrinsic):
+    scope, proof = intrinsic
+    assert proof["objects"][0]["authority_refs"] == []
+    proof["objects"][0]["authority_refs"] = ["f" * 64]
+    with pytest.raises(ValueError, match="positive_classification"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda m: m.update(candidate="0" * 40),
+    lambda m: m.update(tree="0" * 40),
+    lambda m: m.update(self_sha256="0" * 64),
+    lambda m: m["roles"]["web"].update(hostname="wrong-host"),
+])
+def test_userspace_manifest_source_and_scope_identity_required(legacy_collector, mutation):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    mutation(manifest)
+    with pytest.raises(ValueError, match="owner_manifest_source_identity"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
+
+
+def test_reducers_refuse_missing_frozen_legacy_membership_before_missing_adapters(legacy_collector):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    proofs = dict.fromkeys(D.DOMAINS)
+    proofs[D.PROCESS_DOMAIN] = observation
+    with pytest.raises(ValueError, match="legacy_membership_missing"):
+        D.require_complete_role_scope(Common, scope, "web", proofs, manifest=manifest)
+    authority = observation["objects"][0]["authority_refs"][0]
+    scope["authority_membership"]["web"]["legacy"] = [authority]
+    with pytest.raises(ValueError, match="adapter_unimplemented"):
+        D.require_complete_role_scope(Common, scope, "web", proofs, manifest=manifest)
+
+
+def test_actual_fixed_executor_source_drift_refuses(intrinsic, monkeypatch):
+    scope, proof = intrinsic
+    read = Common.read_bytes
+
+    def altered(path, **kwargs):
+        return b"source drift" if Path(path).name == "candidate_execute.py" else read(path, **kwargs)
+
+    monkeypatch.setattr(Common, "read_bytes", staticmethod(altered))
+    with pytest.raises(ValueError, match="actual_source_hash"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof)
+
+
+@pytest.mark.parametrize("field,value,reason", [
+    ("pid", True, "fact_pid"), ("pid", "23", "fact_pid"),
+    ("starttime_ticks", 456, "fact_starttime"), ("starttime_ticks", True, "fact_starttime"),
+])
+def test_process_fact_identity_types_are_strict(intrinsic, field, value, reason):
+    scope, proof = intrinsic
+    proof["objects"][0]["facts"][field] = value
+    with pytest.raises(ValueError, match=reason):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof)
+
+
+def test_namespace_boolean_inode_is_not_an_integer(intrinsic):
+    scope, proof = intrinsic
+    proof["objects"][0]["namespaces"]["net"]["namespace"][1] = True
+    with pytest.raises(ValueError, match="namespace_metadata"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, proof)
+
+
+def test_changed_owner_proof_refuses_even_with_authored_complete(legacy_collector):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    observation["owners_after"]["academy-v2-web"]["inventory"]["unit_state"]["SubState"] = "exited"
+    observation["coverage_complete"] = True
+    with pytest.raises(ValueError, match="owner_changed"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
+
+
+def test_snapshot_object_join_is_independently_reconstructed(legacy_collector):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    observation["snapshot"]["records"][0]["facts"]["argv"]["sha256"] = "0" * 64
+    # Decouple object facts to model a forged snapshot-only replacement.
+    observation["objects"][0]["facts"] = copy.deepcopy(observation["objects"][0]["facts"])
+    observation["objects"][0]["facts"]["argv"]["sha256"] = (
+        observation["owners_before"]["academy-v2-web"]["inventory"]["argv_sha256"])
+    with pytest.raises(ValueError, match="snapshot_object_join"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
+
+
+def test_owner_read_failure_never_claims_complete(legacy_collector, monkeypatch):
+    _, manifest, _, _, _, _, _ = legacy_collector
+
+    def denied(*args):
+        del args
+        raise PermissionError
+
+    monkeypatch.setattr(Common, "old_unit_inventory", staticmethod(denied))
+    observation = D.observe_processes(Common, manifest, "web")
+    assert all(owner is None for owner in observation["owners_before"].values())
+    assert observation["objects"][0]["classification"] == "unknown"
+    assert observation["objects"][0]["authority_refs"] == []
+    assert observation["coverage_complete"] is False
+    assert "legacy_owner_changed_or_unproved" in observation["unresolved_gaps"]
+
+
+@pytest.mark.parametrize("field", ["owners_before", "owners_after"])
+def test_owner_namespace_metadata_bool_cannot_equal_valid_object_inode(legacy_collector, field):
+    scope, manifest, _, _, _, _, _ = legacy_collector
+    observation = D.observe_processes(Common, manifest, "web")
+    # Python bool/int equality must not hide a changed owner observation.
+    observation[field]["academy-v2-web"]["namespaces"]["pid"]["link"][0] = True
+    with pytest.raises(ValueError, match=r"namespace_metadata|owner_changed"):
+        D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
