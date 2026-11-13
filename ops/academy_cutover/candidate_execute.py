@@ -1,6 +1,7 @@
 """Host-local successor executor. Technical source only; preparation never executes it.
 
-Trusted Linux system Python -I -S, root, one coordinator. No SSH, installation,
+Trusted Linux system Python -I -S, root, one coordinator. Peer observations use
+only the fixed approved transport. No installation, authentication provisioning,
 approval creation, restore or deletion. Every started phase has an O_EXCL durable
 intent; failure preserves it and all partial state. Migration never auto-replays.
 Promotion, stop-new and resume are deliberately unsupported pending independent
@@ -85,6 +86,7 @@ PROCESS_GROUPS = []
 SPAWNING = PENDING_INTERRUPT = False
 INTERRUPTS = (signal.SIGINT, signal.SIGTERM)
 EXECUTION_LOCK_FD = None
+_CENSUS_HELPER_MODULES = {}
 
 
 def require(ok, reason="guard_refused"):
@@ -251,6 +253,42 @@ def census_scope(m):
     return scope, scope_hash
 
 
+def census_transport_module(m):
+    """Load one actual fixed transport instance; its nonce registry is process-local."""
+    path = Path(__file__).absolute().with_name("candidate_census_transport.py")
+    expected = hexvalue(m["helpers"]["census_transport"])
+    raw = read_bytes(path, limit=2_000_000, private=True, root_file=True, mode=0o600)
+    require(digest(raw) == expected, "census_transport_actual_source")
+    key = (str(path), expected)
+    if key not in _CENSUS_HELPER_MODULES:
+        module = types.ModuleType("academy_reviewed_census_transport")
+        module.__file__ = str(path)
+        exec(compile(raw, str(path), "exec"), module.__dict__)  # noqa: S102 -- fixed protected source
+        for name in ("validate_profile", "archived_source_ref", "request_current", "verify_current", "observe_local_leaf"):
+            require(callable(getattr(module, name, None)), "census_transport_required_api")
+        _CENSUS_HELPER_MODULES[key] = module
+    return _CENSUS_HELPER_MODULES[key]
+
+
+def census_domain_module(m):
+    """Load the fixed process/domain implementation without application imports."""
+    path = Path(__file__).absolute().with_name("candidate_census_domains.py")
+    raw = read_bytes(path, limit=2_000_000, private=True, root_file=True, mode=0o600)
+    require(digest(raw) == hexvalue(m["helpers"]["census_domains"]), "census_domain_actual_source")
+    module = types.ModuleType("academy_reviewed_census_domains")
+    module.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), module.__dict__)  # noqa: S102 -- fixed protected source
+    for name in ("collect_role", "require_complete_role_scope", "require_complete_scope"):
+        require(callable(getattr(module, name, None)), "census_domain_required_api")
+    discovery = path.with_name("candidate_authority_discovery.py")
+    raw = read_bytes(discovery, limit=2_000_000, private=True, root_file=True, mode=0o600)
+    require(
+        digest(raw) == hexvalue(m["helpers"]["census_discovery"]) == module.DISCOVERY_SHA256,
+        "census_approved_discovery_actual_source",
+    )
+    return module
+
+
 def maintenance_module(m):
     exact(m["maintenance"], ("path", "sha256"))
     hexvalue(m["maintenance"]["sha256"])
@@ -381,7 +419,9 @@ def host_execution_lock():
     """Hold a stable per-host lease across all common and promotion phases."""
     global EXECUTION_LOCK_FD
     require(EXECUTION_LOCK_FD is None, "execution_lease_already_acquired")
-    parent = directory_fd("/root", root_only=True, private=True)
+    # The protected root-owned directory may allow traversal (for example0701).
+    # The lease itself must still be a root-owned, single-link0600 regular file.
+    parent = directory_fd("/root", root_only=True)
     fd = None
     try:
         fd = os.open(
@@ -991,9 +1031,10 @@ def validate_manifest(m, role):
             "freeze",
             "gate_plan_sha256",
             "maintenance",
+            "census_transport",
         ),
     )
-    require(m["schema"] == "AcademyExecutionInputs.v6", "manifest_schema")
+    require(m["schema"] == "AcademyExecutionInputs.v7", "manifest_schema")
     for k in ("candidate", "tree"):
         hexvalue(m[k], 40)
     require(
@@ -1074,6 +1115,9 @@ def validate_manifest(m, role):
             "mail_hold_operator.py",
             "external_census",
             "maintenance",
+            "census_domains",
+            "census_discovery",
+            "census_transport",
         ),
     )
     maintenance_module(m).validate_component(common_api(), m)
@@ -1083,6 +1127,13 @@ def validate_manifest(m, role):
             hexvalue(value)
     _, scope_hash = census_scope(m)
     require(scope_hash == frozen["authority_scope"]["sha256"], "frozen_authority_scope_binding")
+    census_domain_module(m)
+    exact(m["census_transport"], HOSTS)
+    transport = census_transport_module(m)
+    for peer_role in HOSTS:
+        # Static profile validation never opens credentials or assumes this host
+        # is the remote caller. Runtime selection verifies the actual other host.
+        transport.validate_profile(common_api(), m, peer_role, m["census_transport"][peer_role])
     for field in ("db_source_pins", "migration_source_pins", "idle_source_pins"):
         require(type(m[field]) is dict and bool(m[field]), "source_pin_map")
         for rel, value in m[field].items():

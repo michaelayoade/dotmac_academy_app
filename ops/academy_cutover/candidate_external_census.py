@@ -1,14 +1,14 @@
 """Root-private source census preparation; no application imports or DB connections.
 
-Only local supported-gate and selected stopped-unit observations are implemented.
-They are NOT a full sender census. Every eight-domain census and remote observation
-adapter remains explicitly unavailable; no caller-provided observed dictionary is
-accepted. Source bundles never create authority or refresh historical facts.
+Supported-gate and selected stopped-unit observations have current local or fixed
+peer-leaf verification. They are NOT a full sender census. Eight-domain adapters
+remain unavailable. Source bundles never create authority or refresh history.
 """
 
 import os
 import socket
 import time
+import types
 from pathlib import Path
 
 DOMAINS = (
@@ -41,6 +41,27 @@ BUNDLE_FIELDS = (
     "gate_epoch",
     "sources",
 )
+_TRANSPORT_CACHE = {}
+
+
+def _transport(C, m):
+    """One pinned instance retains the locally issued nonce registry."""
+    path = Path(__file__).with_name("candidate_census_transport.py")
+    raw = _pin(C, {"path": str(path), "sha256": m["helpers"]["census_transport"]})
+    key = (str(path), C.digest(raw))
+    if key not in _TRANSPORT_CACHE:
+        module = types.ModuleType("academy_fixed_census_transport")
+        module.__file__ = str(path)
+        exec(compile(raw, str(path), "exec"), module.__dict__)  # noqa: S102 -- fixed protected pinned sibling
+        _TRANSPORT_CACHE.clear()
+        _TRANSPORT_CACHE[key] = module
+    return _TRANSPORT_CACHE[key]
+
+
+def _verifier_role(C, m):
+    roles = [role for role in ("web", "lab") if socket.gethostname() == m["roles"][role]["hostname"]]
+    C.require(os.geteuid() == 0 and len(roles) == 1, "census_actual_verifier_host")
+    return roles[0]
 
 
 def _pin(C, ref):
@@ -384,7 +405,8 @@ def verify_receipt_sources(C, m, evidence, name, receipt, receipt_sha256, fresh)
     """Shared public-get verifier; private raw reads prevent receipt recursion.
 
     Protected custody alone does not turn authored JSON into current observations:
-    implemented adapters must reproduce facts locally. Remote facts are refused.
+    implemented adapters reproduce facts locally or through a nonce-bound peer
+    leaf. Archived mirror bytes alone never establish current observation.
     """
     C.require(
         name
@@ -479,9 +501,19 @@ def verify_receipt_sources(C, m, evidence, name, receipt, receipt_sha256, fresh)
         C.stamp(finished)
     if name.startswith(("pre-quiescence-", "exclusion-")):
         _gap(C)
-    _local(C, m, role)
+    verifier_role = _verifier_role(C, m)
+    peer = verifier_role != role
+    if not peer:
+        _local(C, m, role)
     C.exact(bundle["sources"], ("local_observation",))
-    source = _json(C, bundle["sources"]["local_observation"])
+    original_ref = bundle["sources"]["local_observation"]
+    source_ref = original_ref
+    if peer:
+        transport = _transport(C, m)
+        profile_ref = m.get("census_transport", {}).get(role)
+        C.require(profile_ref is not None, "census_approved_peer_profile_required")
+        source_ref = transport.archived_source_ref(C, m, role, name, original_ref, profile_ref)
+    source = _json(C, source_ref)
     C.exact(
         source,
         (
@@ -514,8 +546,45 @@ def verify_receipt_sources(C, m, evidence, name, receipt, receipt_sha256, fresh)
     ):
         C.require(source[field] == bundle[field], "census_underlying_source_identity")
     facts = source["facts"]
+    C.exact(
+        facts,
+        (
+            "hold_id", "owner_record_sha256", "gate_approval_sha256", "supervisor_pid",
+            "supervisor_start_ticks", "lock_inode", "lock_kernel_row", "state_sha256",
+        ) if name == "gate-web" else (
+            "units", "application_pids", "preserved", "quiesce_receipt_sha256", "stop_completed_unix", "gate_epoch",
+        ),
+    )
+    if peer:
+        if name == "gate-web":
+            C.require(bundle["gate_epoch"] == facts["hold_id"], "census_actual_gate_epoch")
+        else:
+            prior = evidence.phase("quiesce-" + role, role, "quiesce", fresh=False)
+            C.require(
+                facts["quiesce_receipt_sha256"] == evidence.used["quiesce-" + role]["sha256"]
+                and facts["stop_completed_unix"] == prior["observations"]["stop_completed_unix"]
+                and facts["gate_epoch"] == prior["observations"]["gate"]["hold_id"]
+                and started >= facts["stop_completed_unix"],
+                "census_peer_original_stop_join",
+            )
+            # The physical verifier role selects local web hold validation or
+            # lab's gate-web proof DAG. Never impersonate a remote observer.
+            gate = C.gate_ready(evidence, m, evidence.a, verifier_role)
+            C.require(
+                bundle["gate_epoch"] == facts["gate_epoch"] == gate["hold_id"], "census_peer_current_gate_epoch"
+            )
+        # A transport exception deliberately propagates to the coordinator's
+        # durable failure/manual-hold path. No retry or gate renewal is safe.
+        result = transport.request_current(
+            C, m, evidence, role, name, original_ref, evidence.active_authority, profile_ref,
+            output=Path(source_ref["path"]).parent,
+        )
+        live = transport.verify_current(C, m, evidence, result["request"]["binding"], source_ref, result)
+        leaf = facts if name == "gate-web" else {k: facts[k] for k in ("units", "application_pids", "preserved")}
+        C.require(live == leaf, "census_peer_live_source_drift")
     if name == "gate-web":
-        C.require(facts == _gate(C, m, evidence, role), "census_actual_gate_source_drift")
+        if not peer:
+            C.require(facts == _gate(C, m, evidence, role), "census_actual_gate_source_drift")
         C.require(bundle["gate_epoch"] == facts["hold_id"], "census_actual_gate_epoch")
         expected = {
             "schema": "AcademyRootGateObservation.v1",
@@ -528,7 +597,8 @@ def verify_receipt_sources(C, m, evidence, name, receipt, receipt_sha256, fresh)
         }
     else:
         C.require(bundle["gate_epoch"] == facts["gate_epoch"], "census_stopped_gate_epoch_binding")
-        C.require(facts == _stopped(C, m, evidence, role), "census_actual_stopped_source_drift")
+        if not peer:
+            C.require(facts == _stopped(C, m, evidence, role), "census_actual_stopped_source_drift")
         C.require(started >= facts["stop_completed_unix"], "census_source_predates_original_stop")
         expected = {
             "schema": "AcademyRootStoppedObservation.v1",
@@ -544,6 +614,36 @@ def verify_receipt_sources(C, m, evidence, name, receipt, receipt_sha256, fresh)
     return bundle
 
 
+def _current_request(ctx, inputs, inputs_path, raw_inputs, stream):
+    """Closed peer CLI branch, after protected bootstrap, before dispatch."""
+    C, m, evidence, role, *_ = _context(ctx)
+    transport = _transport(C, m)
+    raw = stream.read(16_385)
+    C.require(len(raw) <= 16_384, "census_current_request_bound")
+    request = C.decode(raw)
+    binding = transport._request(request)
+    path = Path(inputs_path)
+    C.require(path.is_absolute() and ".." not in path.parts, "census_current_actual_inputs_path")
+    C.require(
+        binding["peer_inputs"] == {"path": str(path), "sha256": C.digest(raw_inputs)},
+        "census_current_actual_inputs_binding",
+    )
+    C.require(
+        inputs["evidence_index"] == binding["peer_evidence_index"]["path"]
+        and evidence.sha256 == binding["peer_evidence_index"]["sha256"],
+        "census_current_actual_index_binding",
+    )
+    C.require(
+        inputs["role"] == role == binding["role"]
+        and inputs["observation"] in ("gate", "stopped")
+        and inputs["observation"] == binding["operation"].split("-")[0]
+        and {k: inputs[k] for k in ("kind", "phase", "manifest", "approval")} == binding["active_authority"]
+        == evidence.active_authority,
+        "census_current_actual_bootstrap_authority",
+    )
+    return transport.observe_local_leaf(C, m, evidence, request)
+
+
 def main():
     """Standalone closed bootstrap; reads no credentials and grants no authority.
 
@@ -557,6 +657,7 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", required=True)
+    parser.add_argument("--current-request-stdin", action="store_true")
     args = parser.parse_args()
     import sys
 
@@ -707,6 +808,10 @@ def main():
         "active_authority": active,
         "output": inputs["output"],
     }
+    if args.current_request_stdin:
+        response = _current_request(ctx, inputs, args.inputs, raw_inputs, sys.stdin.buffer)
+        sys.stdout.buffer.write(C.canonical(response) + b"\n")
+        return
     if inputs["observation"] == "exclusion":
         # Caller cannot choose maintenance adoption state through this bootstrap.
         observe_exclusion(ctx, "fenced")

@@ -1,0 +1,3445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Academy kernel-only migration with existing OIDC; source preparation, not deployment ready",
+  "description": "The top level validates the frozen technical manifest. $defs contains separate strict approval, immutable freeze, future root evidence index, exclusion and stopped-observation contracts. Runtime also validates cross-field equality, real bytes, role, freshness and custody. Never fill hashes with example values. Inputs.v4 requires a role-bound closed runtime baseline and reviewed candidate_baseline.py helper hash. Historical v2/v3 manifests are rejected; previous D122 identifies recovery only. The fixed transition is [a0011_oidc_login_states] to [0031_rate_limit_buckets,a0011_oidc_login_states]; existing OIDC catalog observation does not claim past migration acceptance. Receipt.v2 and EvidenceIndex.v2 are mandatory. No runtime inputs or approval are created. Maintenance authority source-only binding: execution v5 requires pinned maintenance component and helper; promotion v4 and acceptance v3 reject old manifests. Actual observations/retained receipts and fresh current fences are required; no generated approval or placeholder runtime evidence. Sender census successor: execution v6, promotion v5, freeze v2 pins protected authority scope; v2 complete receipts require full current coverage, empty gaps, strict source bundles and genuine authority. Full eight-domain and remote adapters are presently unsupported and refuse; this schema creates no completed instance. Campaign census v7 requires fixed process/discovery/transport helper hashes and protected static v2 peer profile references. Profiles contain no future observations; live nonce requests bind dynamic source/bootstrap/seed-index bytes. Seven domain adapters remain unavailable and cannot create full coverage. No runtime instance or approval is created.",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "candidate": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "filePin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/root/[^\\u0000]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "unitHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "properties_sha256",
+        "unit_sha256"
+      ],
+      "properties": {
+        "properties_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "unitBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline",
+        "command_sha256"
+      ],
+      "properties": {
+        "baseline": {
+          "$ref": "#/$defs/unitHashes"
+        },
+        "command_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "helpers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_stage.py",
+        "candidate_db_readiness.py",
+        "candidate_lab_idle.py",
+        "candidate_migration_entry.py",
+        "mail_hold_operator.py",
+        "external_census",
+        "candidate_nginx.py",
+        "candidate_baseline.py",
+        "maintenance",
+        "census_domains",
+        "census_discovery",
+        "census_transport"
+      ],
+      "properties": {
+        "candidate_stage.py": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_db_readiness.py": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_lab_idle.py": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_migration_entry.py": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "mail_hold_operator.py": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "external_census": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate_nginx.py": {
+          "$ref": "#/$defs/hash"
+        },
+        "candidate_baseline.py": {
+          "$ref": "#/$defs/hash"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/filePin"
+        },
+        "census_domains": {
+          "$ref": "#/$defs/hash"
+        },
+        "census_discovery": {
+          "$ref": "#/$defs/hash"
+        },
+        "census_transport": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "webBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "units",
+        "accepted_venv_inventory_sha256",
+        "accepted_environment_sha256",
+        "primary_cmdline_sha256",
+        "route_policy_sha256",
+        "timers"
+      ],
+      "properties": {
+        "units": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "academy-v2-web",
+            "academy-v2-admin-report",
+            "academy-v2-email-digest",
+            "academy-v2-email-outbox",
+            "academy-v2-erp-training-sync",
+            "academy-v2-hr-report",
+            "academy-v2-learner-digest",
+            "academy-v2-reminders"
+          ],
+          "properties": {
+            "academy-v2-web": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-admin-report": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-email-digest": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-email-outbox": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-erp-training-sync": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-hr-report": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-learner-digest": {
+              "$ref": "#/$defs/unitBaseline"
+            },
+            "academy-v2-reminders": {
+              "$ref": "#/$defs/unitBaseline"
+            }
+          }
+        },
+        "accepted_venv_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accepted_environment_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "primary_cmdline_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "route_policy_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "timers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "academy-v2-admin-report.timer",
+            "academy-v2-email-digest.timer",
+            "academy-v2-email-outbox.timer",
+            "academy-v2-erp-training-sync.timer",
+            "academy-v2-hr-report.timer",
+            "academy-v2-learner-digest.timer",
+            "academy-v2-reminders.timer"
+          ],
+          "properties": {
+            "academy-v2-admin-report.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-email-digest.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-email-outbox.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-erp-training-sync.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-hr-report.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-learner-digest.timer": {
+              "$ref": "#/$defs/unitHashes"
+            },
+            "academy-v2-reminders.timer": {
+              "$ref": "#/$defs/unitHashes"
+            }
+          }
+        }
+      }
+    },
+    "webRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostname",
+        "uid",
+        "baseline",
+        "staging_manifest_sha256",
+        "source_inventory_sha256",
+        "venv_inventory_sha256",
+        "environment_sha256",
+        "assets",
+        "python_sha256",
+        "pyproject_sha256",
+        "lock_sha256",
+        "bootstrap",
+        "required_main_distributions",
+        "reviewed_pth_import_sha256",
+        "retained_wheels",
+        "stage_cache_inventory_sha256",
+        "poetry_tool_inventory_sha256",
+        "runtime_baseline"
+      ],
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "baseline": {
+          "$ref": "#/$defs/webBaseline"
+        },
+        "staging_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "venv_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "environment_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "assets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "avatars": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "figures": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "python_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pyproject_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "lock_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pip": {
+              "type": "string"
+            },
+            "setuptools": {
+              "type": "string"
+            }
+          }
+        },
+        "required_main_distributions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "reviewed_pth_import_sha256": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[^/]+\\.pth$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "retained_wheels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "distribution",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "distribution": {
+                "enum": [
+                  "dotmac-kernel",
+                  "dotmac-auth-oidc"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/root/[^\\u0000]+$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "stage_cache_inventory_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "poetry_tool_inventory_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "runtime_baseline": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/runtimeBaseline"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "web"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "labBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "units",
+        "accepted_venv_inventory_sha256",
+        "accepted_environment_sha256",
+        "primary_cmdline_sha256",
+        "route_policy_sha256",
+        "nft_sha256"
+      ],
+      "properties": {
+        "units": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "academy-v2-lab-worker"
+          ],
+          "properties": {
+            "academy-v2-lab-worker": {
+              "$ref": "#/$defs/unitBaseline"
+            }
+          }
+        },
+        "accepted_venv_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accepted_environment_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "primary_cmdline_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "route_policy_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "nft_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "labRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostname",
+        "uid",
+        "baseline",
+        "staging_manifest_sha256",
+        "source_inventory_sha256",
+        "venv_inventory_sha256",
+        "environment_sha256",
+        "assets",
+        "python_sha256",
+        "pyproject_sha256",
+        "lock_sha256",
+        "bootstrap",
+        "required_main_distributions",
+        "reviewed_pth_import_sha256",
+        "retained_wheels",
+        "stage_cache_inventory_sha256",
+        "poetry_tool_inventory_sha256",
+        "runtime_baseline"
+      ],
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "baseline": {
+          "$ref": "#/$defs/labBaseline"
+        },
+        "staging_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "venv_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "environment_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "assets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "avatars": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "figures": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "python_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pyproject_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "lock_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pip": {
+              "type": "string"
+            },
+            "setuptools": {
+              "type": "string"
+            }
+          }
+        },
+        "required_main_distributions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "reviewed_pth_import_sha256": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[^/]+\\.pth$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "retained_wheels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "distribution",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "distribution": {
+                "enum": [
+                  "dotmac-kernel",
+                  "dotmac-auth-oidc"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/root/[^\\u0000]+$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "stage_cache_inventory_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "poetry_tool_inventory_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "runtime_baseline": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/runtimeBaseline"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "lab"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "source",
+        "venv",
+        "previous",
+        "recovery",
+        "retention",
+        "self_sha256",
+        "plan_sha256",
+        "helpers",
+        "roles",
+        "expected_before",
+        "db_source_pins",
+        "migration_source_pins",
+        "idle_source_pins",
+        "freeze",
+        "gate_plan_sha256",
+        "kernel_migration",
+        "maintenance",
+        "census_transport"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyExecutionInputs.v7"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^/srv/academy/releases/[0-9a-f]{40}$"
+        },
+        "venv": {
+          "type": "string",
+          "pattern": "^/srv/academy/venvs/[0-9a-f]{40}$"
+        },
+        "previous": {
+          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+        },
+        "recovery": {
+          "const": "fix_forward_v2_only"
+        },
+        "retention": {
+          "const": "until_explicit_deletion_approval"
+        },
+        "self_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "plan_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "helpers": {
+          "$ref": "#/$defs/helpers"
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "web",
+            "lab"
+          ],
+          "properties": {
+            "web": {
+              "$ref": "#/$defs/webRole"
+            },
+            "lab": {
+              "$ref": "#/$defs/labRole"
+            }
+          }
+        },
+        "expected_before": {
+          "const": [
+            "a0011_oidc_login_states"
+          ]
+        },
+        "db_source_pins": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "alembic/versions/a0011_oidc_login_states.py",
+            "alembic.ini",
+            "alembic/env.py",
+            "app/migration_graph.py",
+            "app/config.py"
+          ],
+          "properties": {
+            "alembic/versions/a0011_oidc_login_states.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "alembic.ini": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "alembic/env.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/migration_graph.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/config.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "migration_source_pins": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "alembic/versions/a0011_oidc_login_states.py",
+            "alembic.ini",
+            "alembic/env.py",
+            "app/migration_graph.py",
+            "app/config.py",
+            "app/migration_cli.py"
+          ],
+          "properties": {
+            "alembic/versions/a0011_oidc_login_states.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "alembic.ini": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "alembic/env.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/migration_graph.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/config.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/migration_cli.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "idle_source_pins": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "app/config.py",
+            "app/models/lab.py",
+            "app/services/lab_operations.py",
+            "app/services/lab_lifecycle.py",
+            "app/services/lab_jobs.py",
+            "pyproject.toml",
+            "poetry.lock"
+          ],
+          "properties": {
+            "app/config.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/models/lab.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/services/lab_operations.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/services/lab_lifecycle.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "app/services/lab_jobs.py": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "pyproject.toml": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "poetry.lock": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "freeze": {
+          "$ref": "#/$defs/filePin"
+        },
+        "gate_plan_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "kernel_migration": {
+          "$ref": "#/$defs/kernelMigration"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/filePin"
+        },
+        "census_transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "web",
+            "lab"
+          ],
+          "properties": {
+            "web": {
+              "$ref": "#/$defs/filePin"
+            },
+            "lab": {
+              "$ref": "#/$defs/filePin"
+            }
+          }
+        }
+      }
+    },
+    "freeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "ci_evidence_sha256",
+        "source_review_sha256",
+        "dependency_review_sha256",
+        "recovery_review_sha256",
+        "acceptance_harnesses_sha256",
+        "executor_independent_review_sha256",
+        "authority_scope"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyExecutionFreeze.v2"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "ci_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_review_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "dependency_review_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "recovery_review_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "acceptance_harnesses_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "executor_independent_review_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "authority_scope": {
+          "$ref": "#/$defs/filePin"
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "approval_id",
+        "attempt",
+        "approved_by",
+        "approval_record_sha256",
+        "approval_record_path",
+        "approved_unix",
+        "expires_unix",
+        "manifest_sha256",
+        "plan_sha256",
+        "executor_sha256",
+        "helpers",
+        "candidate",
+        "tree",
+        "source",
+        "venv",
+        "previous",
+        "recovery",
+        "retention",
+        "authorized_phases"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyExecutionApproval.v1"
+        },
+        "approval_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{8,100}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "approved_by": {
+          "const": "Michael"
+        },
+        "approval_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "approval_record_path": {
+          "type": "string",
+          "pattern": "^/root/[^\\u0000]+$"
+        },
+        "approved_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "plan_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "executor_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "helpers": {
+          "$ref": "#/$defs/helpers"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^/srv/academy/releases/[0-9a-f]{40}$"
+        },
+        "venv": {
+          "type": "string",
+          "pattern": "^/srv/academy/venvs/[0-9a-f]{40}$"
+        },
+        "previous": {
+          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+        },
+        "recovery": {
+          "const": "fix_forward_v2_only"
+        },
+        "retention": {
+          "const": "until_explicit_deletion_approval"
+        },
+        "authorized_phases": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "baseline",
+              "quiesce",
+              "db-before",
+              "migrate-kernel0031",
+              "db-after",
+              "promote",
+              "stop-new",
+              "resume"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "evidenceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "producer",
+        "producer_sha256",
+        "role",
+        "observed_unix"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/root/[^\\u0000]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "producer": {
+          "enum": [
+            "candidate_stage.py",
+            "candidate_db_readiness.py",
+            "candidate_lab_idle.py",
+            "candidate_migration_entry.py",
+            "mail_hold_operator.py",
+            "external_census",
+            "candidate_execute.py",
+            "candidate_maintenance.py"
+          ]
+        },
+        "producer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "observed_unix": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "evidenceIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "created_unix",
+        "entries"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyExecutionEvidenceIndex.v2"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "object",
+          "maxProperties": 80,
+          "propertyNames": {
+            "pattern": "^(?:[a-z][a-z0-9-]{1,80}|maintenance-lab-adopted_and_fenced)$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/evidenceEntry"
+          }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_sha256",
+        "fence_sha256",
+        "active_senders",
+        "unaccounted_authorities",
+        "fence_mechanism",
+        "state"
+      ],
+      "properties": {
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "fence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "active_senders": {
+          "const": 0
+        },
+        "unaccounted_authorities": {
+          "const": 0
+        },
+        "fence_mechanism": {
+          "enum": [
+            "gate_exclusive_lease",
+            "stopped_and_execution_fenced",
+            "external_issuer_fenced"
+          ]
+        },
+        "state": {
+          "const": "fenced"
+        }
+      }
+    },
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "hostname",
+        "observed_unix",
+        "authorities",
+        "process_census_sha256",
+        "session_census_sha256",
+        "fencing_receipt_sha256",
+        "hold_id",
+        "owner_record_sha256",
+        "gate_approval_sha256",
+        "observed_unix_started",
+        "quiesce_receipts",
+        "resolved_pre_quiescence_findings",
+        "maintenance_observation_sha256",
+        "authority_scope_sha256",
+        "coverage_complete",
+        "unresolved_coverage"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyRootSenderExclusion.v2"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "observed_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "authorities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "supported",
+            "legacy",
+            "manual",
+            "external"
+          ],
+          "properties": {
+            "supported": {
+              "$ref": "#/$defs/authority"
+            },
+            "legacy": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/authority"
+                },
+                {
+                  "$ref": "#/$defs/absentAuthority"
+                }
+              ]
+            },
+            "manual": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/authority"
+                },
+                {
+                  "$ref": "#/$defs/absentAuthority"
+                }
+              ]
+            },
+            "external": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/authority"
+                },
+                {
+                  "$ref": "#/$defs/absentAuthority"
+                }
+              ]
+            }
+          }
+        },
+        "process_census_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "session_census_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "fencing_receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hold_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "owner_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_unix_started": {
+          "type": "number",
+          "minimum": 0
+        },
+        "quiesce_receipts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "web",
+            "lab"
+          ],
+          "properties": {
+            "web": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "lab": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "resolved_pre_quiescence_findings": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/authorityResolutionEntry"
+          }
+        },
+        "maintenance_observation_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "authority_scope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "coverage_complete": {
+          "const": true
+        },
+        "unresolved_coverage": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "description": "STRICT full four-authority exclusion unchanged: all zero senders/unaccounted authorities and concrete fences mandatory. Additionally actual observation START must follow BOTH successful original stop completion times and receipt hashes. Every outside/unresolved pre-inventory finding from both hosts requires an actual post-stop bound proof, never a fabricated fence or presumed absence. Readiness-only quiescence cannot satisfy this schema."
+    },
+    "unitStopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "MainPID",
+        "ActiveState",
+        "SubState"
+      ],
+      "properties": {
+        "MainPID": {
+          "const": "0"
+        },
+        "ActiveState": {
+          "const": "inactive"
+        },
+        "SubState": {
+          "const": "dead"
+        }
+      }
+    },
+    "stoppedObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "hostname",
+        "observed_unix",
+        "quiesce_receipt_sha256",
+        "units",
+        "application_pids",
+        "process_census_sha256",
+        "preserved"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyRootStoppedObservation.v1"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "observed_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quiesce_receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "units": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-web",
+                "academy-v2-admin-report",
+                "academy-v2-email-digest",
+                "academy-v2-email-outbox",
+                "academy-v2-erp-training-sync",
+                "academy-v2-hr-report",
+                "academy-v2-learner-digest",
+                "academy-v2-reminders",
+                "academy-v2-admin-report.timer",
+                "academy-v2-email-digest.timer",
+                "academy-v2-email-outbox.timer",
+                "academy-v2-erp-training-sync.timer",
+                "academy-v2-hr-report.timer",
+                "academy-v2-learner-digest.timer",
+                "academy-v2-reminders.timer"
+              ],
+              "properties": {
+                "academy-v2-web": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-admin-report": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-email-digest": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-email-outbox": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-erp-training-sync": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-hr-report": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-learner-digest": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-reminders": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-admin-report.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-email-digest.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-email-outbox.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-erp-training-sync.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-hr-report.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-learner-digest.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                },
+                "academy-v2-reminders.timer": {
+                  "$ref": "#/$defs/unitStopped"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-lab-worker"
+              ],
+              "properties": {
+                "academy-v2-lab-worker": {
+                  "$ref": "#/$defs/unitStopped"
+                }
+              }
+            }
+          ]
+        },
+        "application_pids": {
+          "const": []
+        },
+        "process_census_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "preserved": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "route_policy_sha256"
+              ],
+              "properties": {
+                "route_policy_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "route_policy_sha256",
+                "nft_sha256",
+                "guard"
+              ],
+              "properties": {
+                "route_policy_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "nft_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "guard": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "ActiveState",
+                    "SubState",
+                    "Type",
+                    "Result",
+                    "ExecMainStatus",
+                    "MainPID"
+                  ],
+                  "properties": {
+                    "ActiveState": {
+                      "const": "active"
+                    },
+                    "SubState": {
+                      "const": "exited"
+                    },
+                    "Type": {
+                      "const": "oneshot"
+                    },
+                    "Result": {
+                      "const": "success"
+                    },
+                    "ExecMainStatus": {
+                      "const": "0"
+                    },
+                    "MainPID": {
+                      "const": "0"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "rootGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "hostname",
+        "observed_unix_started",
+        "hold_id",
+        "owner_record_sha256",
+        "gate_approval_sha256",
+        "supervisor_pid",
+        "supervisor_start_ticks",
+        "lock_inode",
+        "lock_kernel_row",
+        "state_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyRootGateObservation.v1"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "observed_unix_started": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hold_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "owner_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "supervisor_pid": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "supervisor_start_ticks": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "lock_inode": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "lock_kernel_row": {
+          "type": "string"
+        },
+        "state_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "readinessGateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hold_id",
+        "owner_record_sha256",
+        "gate_approval_sha256",
+        "supervisor_pid",
+        "supervisor_start_ticks",
+        "lock_inode"
+      ],
+      "properties": {
+        "hold_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "owner_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "supervisor_pid": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "supervisor_start_ticks": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "lock_inode": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "preQuiescenceUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_state",
+        "start_ticks",
+        "argv_sha256",
+        "gate_awareness",
+        "planned_action"
+      ],
+      "properties": {
+        "unit_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "MainPID",
+            "ActiveState",
+            "SubState"
+          ],
+          "properties": {
+            "MainPID": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "ActiveState": {
+              "type": "string"
+            },
+            "SubState": {
+              "type": "string"
+            }
+          }
+        },
+        "start_ticks": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]+$"
+        },
+        "argv_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate_awareness": {
+          "enum": [
+            "timer_only",
+            "legacy_gate_unaware"
+          ]
+        },
+        "planned_action": {
+          "enum": [
+            "stop_timer",
+            "drain_only",
+            "stop_primary"
+          ]
+        }
+      }
+    },
+    "authorityFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id_sha256",
+        "evidence_sha256",
+        "observed_state",
+        "disposition"
+      ],
+      "properties": {
+        "authority_id_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_state": {
+          "enum": [
+            "active",
+            "inactive",
+            "unknown"
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "observed_only",
+            "not_authorized_to_stop",
+            "requires_post_stop_exclusion"
+          ]
+        }
+      }
+    },
+    "preQuiescenceInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "hostname",
+        "role",
+        "execution_approval_sha256",
+        "execution_manifest_sha256",
+        "baseline_receipt_sha256",
+        "observed_unix_started",
+        "process_inventory_sha256",
+        "session_inventory_sha256",
+        "authority_inventory_sha256",
+        "gate",
+        "authorized_stop_targets",
+        "units",
+        "authority_findings",
+        "unresolved_coverage",
+        "authority_scope_sha256",
+        "coverage_complete"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyPreQuiescenceInventory.v2"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "execution_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "baseline_receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_unix_started": {
+          "type": "number",
+          "minimum": 0
+        },
+        "process_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "session_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "authority_inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "gate": {
+          "$ref": "#/$defs/readinessGateBinding"
+        },
+        "authorized_stop_targets": {
+          "oneOf": [
+            {
+              "const": [
+                "academy-v2-admin-report.timer",
+                "academy-v2-email-digest.timer",
+                "academy-v2-email-outbox.timer",
+                "academy-v2-erp-training-sync.timer",
+                "academy-v2-hr-report.timer",
+                "academy-v2-learner-digest.timer",
+                "academy-v2-reminders.timer",
+                "academy-v2-web"
+              ]
+            },
+            {
+              "const": [
+                "academy-v2-lab-worker"
+              ]
+            }
+          ]
+        },
+        "units": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-web",
+                "academy-v2-admin-report",
+                "academy-v2-email-digest",
+                "academy-v2-email-outbox",
+                "academy-v2-erp-training-sync",
+                "academy-v2-hr-report",
+                "academy-v2-learner-digest",
+                "academy-v2-reminders",
+                "academy-v2-admin-report.timer",
+                "academy-v2-email-digest.timer",
+                "academy-v2-email-outbox.timer",
+                "academy-v2-erp-training-sync.timer",
+                "academy-v2-hr-report.timer",
+                "academy-v2-learner-digest.timer",
+                "academy-v2-reminders.timer"
+              ],
+              "properties": {
+                "academy-v2-web": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-admin-report": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-email-digest": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-email-outbox": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-erp-training-sync": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-hr-report": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-learner-digest": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-reminders": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-admin-report.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-email-digest.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-email-outbox.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-erp-training-sync.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-hr-report.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-learner-digest.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                },
+                "academy-v2-reminders.timer": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-lab-worker"
+              ],
+              "properties": {
+                "academy-v2-lab-worker": {
+                  "$ref": "#/$defs/preQuiescenceUnit"
+                }
+              }
+            }
+          ]
+        },
+        "authority_findings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "legacy",
+            "manual",
+            "external"
+          ],
+          "properties": {
+            "legacy": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/authorityFinding"
+              }
+            },
+            "manual": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/authorityFinding"
+              }
+            },
+            "external": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/authorityFinding"
+              }
+            }
+          }
+        },
+        "unresolved_coverage": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "authority_scope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "coverage_complete": {
+          "const": true
+        }
+      },
+      "description": "Truthful root-custody observation, not global exclusion or ready=true. Observed pre-candidate web and CLI units ignore new mailgate. Enumerate actual active PID/startticks and pending fixed stop/drain actions; outside findings/coverage may be active or unknown. No authority to stop extra actors. Runtime compares actual initial unit/PID observations to this receipt and original baseline; strict post-both-stop exclusion requires concrete resolution of every finding."
+    },
+    "authorityResolutionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_evidence_sha256",
+        "resolution",
+        "fence_mechanism",
+        "observed_unix_started",
+        "proof_path",
+        "proof_sha256"
+      ],
+      "properties": {
+        "finding_evidence_sha256": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "resolution": {
+          "enum": [
+            "proven_fenced",
+            "proven_non_sender"
+          ]
+        },
+        "fence_mechanism": {
+          "enum": [
+            "gate_exclusive_lease",
+            "stopped_and_execution_fenced",
+            "external_issuer_fenced",
+            "not_a_sender"
+          ]
+        },
+        "observed_unix_started": {
+          "type": "number",
+          "minimum": 0
+        },
+        "proof_path": {
+          "type": "string",
+          "pattern": "^/root/"
+        },
+        "proof_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "authorityResolutionProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "attempt",
+        "authority_id_sha256",
+        "finding_evidence_sha256",
+        "resolution",
+        "fence_mechanism",
+        "observed_unix_started",
+        "process_or_provider_evidence_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademySenderAuthorityResolution.v1"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "authority_id_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "finding_evidence_sha256": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "resolution": {
+          "enum": [
+            "proven_fenced",
+            "proven_non_sender"
+          ]
+        },
+        "fence_mechanism": {
+          "enum": [
+            "gate_exclusive_lease",
+            "stopped_and_execution_fenced",
+            "external_issuer_fenced",
+            "not_a_sender"
+          ]
+        },
+        "observed_unix_started": {
+          "type": "number",
+          "minimum": 0
+        },
+        "process_or_provider_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "preStopLabIdleObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_sha256",
+        "helper_sha256",
+        "stdout_sha256",
+        "launch_started_unix",
+        "report"
+      ],
+      "properties": {
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "helper_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "stdout_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "launch_started_unix": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "report": {
+          "type": "object",
+          "required": [
+            "schema",
+            "observer",
+            "ok",
+            "mode",
+            "require_zero",
+            "database_idle",
+            "host_process_quiescence_proven",
+            "receipt_custody_or_freshness_proven",
+            "unmet_predicates"
+          ],
+          "properties": {
+            "schema": {
+              "const": 1
+            },
+            "observer": {
+              "const": "academy_lab_idle"
+            },
+            "ok": {
+              "const": true
+            },
+            "mode": {
+              "const": "before"
+            },
+            "require_zero": {
+              "const": true
+            },
+            "database_idle": {
+              "const": true
+            },
+            "host_process_quiescence_proven": {
+              "const": false
+            },
+            "receipt_custody_or_freshness_proven": {
+              "const": false
+            },
+            "unmet_predicates": {
+              "const": []
+            }
+          }
+        }
+      },
+      "description": "Actual fixed helper output retained as quiesce observations.pre_stop_lab_idle: web before any timer/primary downtime; lab immediately before old worker stop while it can still drain. Root verifies exact full before revisions, readonly app_admin/row_security-off/visibility and ALL-tenant queued/claimed0 plus present-or-unknown0. Not a host-quiescence or sender-exclusion claim. Nonzero refuses; runtime destruction/reaping forbidden."
+    },
+    "kernelMigration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution",
+        "version",
+        "relative_module_path",
+        "sha256"
+      ],
+      "properties": {
+        "distribution": {
+          "const": "dotmac-kernel"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+)+(?:a[0-9]+|b[0-9]+|rc[0-9]+)?$",
+          "description": "Real independently verified published exact version; no allocated/example/dev/local value."
+        },
+        "relative_module_path": {
+          "const": "dotmac_kernel/migrations/versions/20261109_0031_rate_limit_buckets.py"
+        },
+        "sha256": {
+          "const": "6abbbf72b7fefbc9c9a6ace62edbdc2edda6451967b2ab25216b9acc21dbdebd"
+        }
+      }
+    },
+    "runtimeBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "role",
+        "hostname",
+        "units",
+        "environment",
+        "uploads",
+        "nginx"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyRuntimeBaseline.v1"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "hostname": {
+          "enum": [
+            "vmi2490731",
+            "academy-labs"
+          ]
+        },
+        "units": {
+          "type": "object"
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "target",
+            "sha256",
+            "uid",
+            "gid",
+            "mode",
+            "link_target"
+          ],
+          "properties": {
+            "path": {
+              "enum": [
+                "/home/dotmac/projects/dotmac_academy_v2/.env",
+                "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env",
+                "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+              ]
+            },
+            "target": {
+              "enum": [
+                "/home/dotmac/projects/dotmac_academy_v2/.env",
+                "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env",
+                "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+              ]
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mode": {
+              "const": 384
+            },
+            "link_target": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                null,
+                "/home/dotmac/projects/dotmac_academy_v2/.env",
+                "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env",
+                "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+              ]
+            }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": null
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": null
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/dotmac_academy_v2/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/.env"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "target",
+                "sha256",
+                "uid",
+                "gid",
+                "mode",
+                "link_target"
+              ],
+              "properties": {
+                "path": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "target": {
+                  "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/.env"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mode": {
+                  "const": 384
+                },
+                "link_target": {
+                  "const": null
+                }
+              }
+            }
+          ]
+        },
+        "uploads": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "avatars": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "inventory_sha256"
+              ],
+              "properties": {
+                "target": {
+                  "enum": [
+                    "/home/dotmac/projects/dotmac_academy_v2/static/avatars",
+                    "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/static/avatars",
+                    "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/static/avatars"
+                  ]
+                },
+                "inventory_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "figures": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "inventory_sha256"
+              ],
+              "properties": {
+                "target": {
+                  "enum": [
+                    "/home/dotmac/projects/dotmac_academy_v2/static/figures",
+                    "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d/static/figures",
+                    "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46/static/figures"
+                  ]
+                },
+                "inventory_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "nginx": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "description": "Source-preparation descriptor only; no acceptance or command/environment authority. UID must additionally equal root or independently observed dotmac_uid in pure validator. Filesystem and Git facts require independent fresh consumer checks.",
+      "oneOf": [
+        {
+          "properties": {
+            "role": {
+              "const": "web"
+            },
+            "hostname": {
+              "const": "vmi2490731"
+            },
+            "units": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-web",
+                "academy-v2-admin-report",
+                "academy-v2-email-digest",
+                "academy-v2-email-outbox",
+                "academy-v2-erp-training-sync",
+                "academy-v2-hr-report",
+                "academy-v2-learner-digest",
+                "academy-v2-reminders"
+              ],
+              "properties": {
+                "academy-v2-web": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-admin-report": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-email-digest": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-email-outbox": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-erp-training-sync": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-hr-report": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-learner-digest": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "academy-v2-reminders": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "head",
+                        "tree",
+                        "source",
+                        "venv"
+                      ],
+                      "properties": {
+                        "head": {
+                          "const": "7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "tree": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "source": {
+                          "const": "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        },
+                        "venv": {
+                          "const": "/home/dotmac/.local/share/academy-v2-venvs/7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "nginx": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "static_root",
+                "site_sha256"
+              ],
+              "properties": {
+                "static_root": {
+                  "enum": [
+                    "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d",
+                    "/home/dotmac/projects/academy-v2-release-7ef72b3d1c23a5bf4d3268a6cf21a3d46673db46"
+                  ]
+                },
+                "site_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "lab"
+            },
+            "hostname": {
+              "const": "academy-labs"
+            },
+            "units": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "academy-v2-lab-worker"
+              ],
+              "properties": {
+                "academy-v2-lab-worker": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "head",
+                    "tree",
+                    "source",
+                    "venv"
+                  ],
+                  "properties": {
+                    "head": {
+                      "const": "d12260b6996b18b27e04a784042f764bd583952d"
+                    },
+                    "tree": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "source": {
+                      "const": "/home/dotmac/projects/academy-v2-csp-stage-d12260b6996b18b27e04a784042f764bd583952d"
+                    },
+                    "venv": {
+                      "const": "/home/dotmac/.local/share/academy-v2-venvs/d12260b6996b18b27e04a784042f764bd583952d"
+                    }
+                  }
+                }
+              }
+            },
+            "nginx": {
+              "const": null
+            }
+          }
+        }
+      ]
+    },
+    "absentAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "inventory_sha256",
+        "active_senders",
+        "unaccounted_authorities",
+        "absence_proof"
+      ],
+      "properties": {
+        "state": {
+          "const": "absent"
+        },
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "active_senders": {
+          "const": 0
+        },
+        "unaccounted_authorities": {
+          "const": 0
+        },
+        "absence_proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/[^\\u0000\\r\\n]+$",
+              "maxLength": 4096
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "censusSourceBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "receipt_name",
+        "receipt_sha256",
+        "candidate",
+        "tree",
+        "attempt",
+        "role",
+        "hostname",
+        "producer_sha256",
+        "execution_manifest_sha256",
+        "execution_approval_sha256",
+        "authority_scope_sha256",
+        "active_authority",
+        "observed_unix_started",
+        "observed_unix_finished",
+        "gate_epoch",
+        "sources"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusSourceBundle.v1"
+        },
+        "receipt_name": {
+          "enum": [
+            "gate-web",
+            "stopped-web",
+            "stopped-lab",
+            "pre-quiescence-web",
+            "pre-quiescence-lab",
+            "exclusion-web",
+            "exclusion-lab"
+          ]
+        },
+        "receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "hostname": {
+          "enum": [
+            "vmi2490731",
+            "academy-labs"
+          ]
+        },
+        "producer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_approval_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "authority_scope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "active_authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "phase",
+            "manifest",
+            "approval"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "execution",
+                "promotion"
+              ]
+            },
+            "phase": {
+              "enum": [
+                "baseline",
+                "quiesce",
+                "db-before",
+                "migrate-kernel0031",
+                "db-after",
+                "promote",
+                "stop-new",
+                "resume"
+              ]
+            },
+            "manifest": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/[^\\u0000\\r\\n]+$",
+                  "maxLength": 4096
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "approval": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/[^\\u0000\\r\\n]+$",
+                  "maxLength": 4096
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "observed_unix_started": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_unix_finished": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gate_epoch": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "local_observation"
+          ],
+          "properties": {
+            "local_observation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/[^\\u0000\\r\\n]+$",
+                  "maxLength": 4096
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

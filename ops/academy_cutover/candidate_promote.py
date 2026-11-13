@@ -257,7 +257,7 @@ def validate_manifest(m, role):
             "nginx_activation",
         ),
     )
-    require(m["schema"] == "AcademyPromotionInputs.v5", "promotion_manifest_schema")
+    require(m["schema"] == "AcademyPromotionInputs.v6", "promotion_manifest_schema")
     for key in ("candidate", "tree"):
         hexvalue(m[key], 40)
     for key in ("self_sha256", "plan_sha256", "common_sha256", "execution_approval_sha256"):
