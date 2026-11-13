@@ -71,6 +71,135 @@ def test_endpoint_order_duplicates_and_original_projections():
     assert "unexpected_graph_key" in observe(raw, graph_only=True)["gaps"]
 
 
+@pytest.mark.parametrize("field", ["Names", "Triggers", "TriggeredBy", "Requires", "Wants", "Before", "After"])
+def test_native_backslash_identity_decodes_one_cli_layer_in_every_array(field):
+    native = rb"example\x2dnode.service"
+    rendered = b'"example\\\\x2dnode.service"'
+    value = b"a.service " + rendered + b" " + rendered
+    result = observe(graph("a.service", **{field: value.decode("ascii")}))
+    assert result["gaps"] == []
+    assert result["fields"][field] == {
+        "projection": D.projection(value),
+        "endpoint_sha256": [D.digest(b"a.service"), D.digest(native), D.digest(native)],
+        "valid": True,
+    }
+    assert D.digest(native) != D.digest(b"example-node.service")
+
+
+def test_native_quoted_names_join_enumeration_without_unknown_identity_disclosure():
+    native = r"example\x2dnode.service"
+    rendered = '"example\\\\x2dnode.service"'
+    discovery = SyntheticDiscovery((native,))
+    discovery.initial_raw = lambda name: graph(name, Names=rendered, After=rendered)
+    discovery.repeated_raw = discovery.initial_raw
+    discovery.systemd()
+    row = rows(discovery)[0]
+    facts = row["facts"]
+    assert row["identity_sha256"] == D.digest(native.encode())
+    assert row["identity"] is None and row["unknown_identity"]
+    assert facts["gaps"] == [] and facts["graph_fields_unchanged"]
+    assert facts["unresolved_endpoint_sha256"] == []
+    assert facts["classification"] == "unknown" and facts["authority_refs"] == []
+    assert native not in json.dumps(row)
+
+
+def test_scalar_id_and_conditional_unit_remain_raw_native_bytes():
+    native = r"example\x2dnode.service"
+    timer = r"example\x2dnode.timer"
+    result = observe(graph(timer, Names='"example\\\\x2dnode.timer"', Unit=native), timer)
+    assert result["gaps"] == []
+    for field, value in (("Id", timer), ("Unit", native)):
+        assert result["fields"][field] == {
+            "projection": D.projection(value.encode()),
+            "endpoint_sha256": [D.digest(value.encode())], "valid": True,
+        }
+    for field in ("Id", "Unit"):
+        result = observe(graph("a.timer", **{field: '"example\\\\x2dnode.service"'}), "a.timer")
+        assert not result["fields"][field]["valid"]
+        assert "unsupported_graph_value" in result["gaps"]
+
+
+@pytest.mark.parametrize("value", [
+    b'"a.service"', b"'a.service'", rb"example\x2dnode.service",
+    rb'"example\x2dnode.service"', rb'"example\nnode.service"',
+    rb'"example\qnode.service"', rb'"example\$node.service"',
+    rb'"example\`node.service"', rb'"example\"node.service"',
+    b'"example\\\\node.service', b'"example\\', b'""',
+    b'"example\\\\node".service', b'example"\\\\node.service"',
+    b'"example\\\\node.service""other.service"', b"$(other.service)",
+    b'"example\\\\node service"', b" a.service", b"a.service ", b"a.service  b.service",
+    b'"example\\\\node/invalid.service"', b'"example\\\\\xff.service"',
+])
+def test_array_rejects_noncanonical_quotes_escapes_concatenation_and_nonunits(value):
+    result = observe(graph("a.service").replace(b"After=\n", b"After=" + value + b"\n"))
+    item = result["fields"]["After"]
+    assert not item["valid"]
+    assert "unsupported_graph_value" in result["gaps"]
+    assert item["projection"] == D.projection(value)
+
+
+@pytest.mark.parametrize("size,valid", [(255, True), (256, False)])
+def test_native_array_token_length_bound_applies_after_cli_decoding(size, valid):
+    native = b"a" * (size - 1) + b"\\"
+    rendered = b'"' + native.replace(b"\\", b"\\\\") + b'"'
+    result = observe(graph("a.service", After=rendered.decode()))
+    assert result["fields"]["After"]["valid"] is valid
+    if valid:
+        assert result["fields"]["After"]["endpoint_sha256"] == [D.digest(native)]
+    else:
+        assert "unsupported_graph_value" in result["gaps"]
+
+
+def test_array_budget_bounds_token_allocation_and_preserves_whole_field_refusal(monkeypatch):
+    original = D.Discovery.systemctl_unit_array_tokens
+    attempts = []
+
+    def counted(value):
+        for token in original(value):
+            attempts.append(len(token))
+            yield token
+
+    monkeypatch.setattr(D.Discovery, "systemctl_unit_array_tokens", staticmethod(counted))
+    value = b" ".join([b'"example\\\\x2dnode.service"'] * 20000)
+    result = observe(graph("a.service", After=value.decode()), endpoint_budget=3)
+    assert attempts == [9, 23, 23]  # Names, then remaining+1 After tokens.
+    assert result["endpoint_count"] == 2
+    assert "graph_endpoint_budget" in result["gaps"]
+    assert result["fields"]["After"] == {
+        "projection": D.projection(value), "endpoint_sha256": [], "valid": False,
+    }
+
+
+def test_large_space_and_line_inputs_refuse_without_unbounded_token_splitting():
+    value = " " * D.MAX_BYTES
+    result = observe(graph("a.service", After=value), endpoint_budget=3)
+    assert result["endpoint_count"] == 3
+    assert "unsupported_graph_value" in result["gaps"]
+    assert not result["fields"]["After"]["valid"]
+    assert result["fields"]["After"]["projection"] == D.projection(value.encode())
+    raw = b"\n" * (D.MAX_ROWS + 1)
+    result = observe(raw)
+    assert result["gaps"] == ["graph_line_bound"] and result["endpoint_count"] == 0
+    assert result["original_output"] == D.projection(raw)
+
+
+def test_interruption_while_decoding_array_cannot_mark_prefix_valid():
+    checks = 0
+
+    def stopped():
+        nonlocal checks
+        checks += 1
+        return checks >= 3
+
+    result = D.Discovery.parse_unit_graph(
+        b"After=a.service b.service\n", ("After",), stopped=stopped
+    )
+    assert "graph_work_interrupted_or_deadline" in result["gaps"]
+    assert result["endpoint_count"] == 0
+    assert result["fields"]["After"]["endpoint_sha256"] == []
+    assert not result["fields"]["After"]["valid"]
+
+
 @pytest.mark.parametrize("suffix", [
     b"Id=other.service\n", b"After=a.service\tb.service\n", b"After=a.service  b.service\n",
     b"After=\xff.service\n", b"Id=\n", b"Id=a.service b.service\n", b"Names=bad/name\n",

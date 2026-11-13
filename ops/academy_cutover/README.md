@@ -20,3 +20,15 @@ observational stability; they do not establish sender classification, an
 operational fence, or a complete activation graph. Unknown objects remain
 unresolved. The process proof stays at v2, and the census reducers continue to
 refuse completion while the remaining domain adapters are unfinished.
+
+Relationship list parsing decodes one quoting layer emitted by systemctl for
+string arrays. Native unit-name escapes remain literal bytes: `\x2d` is not
+converted to `-`. The accepted list representation is an unquoted name without
+backslashes, or a complete double-quoted name with each native backslash doubled.
+Scalar `Id` and `Unit` properties remain unquoted native bytes. Malformed or
+noncanonical representations remain unresolved. Endpoint order, duplicates and
+original output projections are retained within the existing shared endpoint
+budget. Decoder lookahead is separately bounded per array field to the remaining
+endpoint allowance plus one token, each at most 255 native bytes; an oversized
+field remains invalid and retains no endpoint hashes. This parser correction does
+not resolve exhausted budgets or templates.

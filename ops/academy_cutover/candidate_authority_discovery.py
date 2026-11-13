@@ -690,6 +690,53 @@ class Discovery:
         return GRAPH_PROPERTIES + (("Unit",) if name.endswith((".timer", ".path")) else ())
 
     @staticmethod
+    def systemctl_unit_array_tokens(value):
+        """Decode only the v255 shell_maybe_quote(unit, 0) image for UNIT.
+
+        bus-print-properties.c prints scalar strings raw and space-joins quoted
+        array elements. Within our approved UNIT alphabet, only backslash needs
+        quoting: the entire token is double-quoted and each backslash doubled.
+        This is one CLI layer, never decoding native unit escapes such as \\x2d.
+        Reject other shell syntax, unnecessary quotes, and noncanonical spacing.
+        Yield an empty (invalid) token on refusal; never allocate a large token.
+        https://github.com/systemd/systemd/blob/v255/src/basic/escape.c#L474
+        https://github.com/systemd/systemd/blob/v255/src/basic/escape.h#L11
+        """
+        cursor = 0
+        while cursor < len(value):
+            quoted = value[cursor] == 34
+            cursor += quoted
+            token = bytearray()
+            closed = not quoted
+            while cursor < len(value):
+                char = value[cursor]
+                if quoted and char == 34:
+                    cursor += 1
+                    closed = True
+                    break
+                if not quoted and char == 32:
+                    break
+                if len(token) >= 255 or char == 34:
+                    yield b""
+                    return
+                if char == 92:
+                    if not quoted or value[cursor:cursor + 2] != b"\\\\":
+                        yield b""
+                        return
+                    cursor += 1
+                token.append(char)
+                cursor += 1
+            if (not closed or not token or (quoted and 92 not in token)
+                    or (cursor < len(value) and value[cursor] != 32)):
+                yield b""
+                return
+            yield bytes(token)
+            if cursor < len(value):
+                cursor += 1
+                if cursor == len(value):
+                    yield b""
+
+    @staticmethod
     def parse_unit_graph(raw, fields, *, graph_only=False, endpoint_budget=MAX_ROWS, stopped=None):
         """Pure, bounded graph extraction; retain hashes even for invalid fields."""
         result = {field: None for field in fields}
@@ -705,7 +752,11 @@ class Discovery:
             gaps.append("graph_byte_bound")
             return output
         seen = set()
-        lines = raw.split(b"\n")
+        # Bound allocations before splitting adversarial output into lines.
+        if raw.count(b"\n") > MAX_ROWS:
+            gaps.append("graph_line_bound")
+            return output
+        lines = raw.split(b"\n", MAX_ROWS)
         if lines[-1:] == [b""]:
             lines.pop()
         if len(lines) > MAX_ROWS:
@@ -730,7 +781,26 @@ class Discovery:
             seen.add(field)
             item = {"projection": projection(value), "endpoint_sha256": [], "valid": False}
             result[field] = item
-            tokens = value.split(b" ") if value else []
+            if field in ("Id", "Unit"):
+                # Scalars are printed raw; no CLI quoting or unit unescaping.
+                tokens = [value] if value else []
+                if b" " in value:
+                    gaps.append("unsupported_graph_value")
+                    continue
+            else:
+                tokens = []
+                interrupted = False
+                for token in Discovery.systemctl_unit_array_tokens(value):
+                    if stopped is not None and stopped():
+                        gaps.append("graph_work_interrupted_or_deadline")
+                        interrupted = True
+                        break
+                    tokens.append(token)
+                    # At most remaining+1 short tokens, including malformed ones.
+                    if not token or len(tokens) > endpoint_budget - output["endpoint_count"]:
+                        break
+                if interrupted:
+                    continue
             if len(tokens) > endpoint_budget - output["endpoint_count"]:
                 gaps.append("graph_endpoint_budget")
                 continue
@@ -745,7 +815,7 @@ class Discovery:
                     break
                 # Charge attempted endpoints too: malformed input cannot bypass the work bound.
                 output["endpoint_count"] += 1
-                if not token.isascii() or not UNIT.fullmatch(token.decode("ascii")):
+                if len(token) > 255 or not token.isascii() or not UNIT.fullmatch(token.decode("ascii")):
                     gaps.append("unsupported_graph_value")
                     valid = False
                     break
