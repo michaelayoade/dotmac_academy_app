@@ -90,8 +90,8 @@ def test_native_quoted_names_join_enumeration_without_unknown_identity_disclosur
     native = r"example\x2dnode.service"
     rendered = '"example\\\\x2dnode.service"'
     discovery = SyntheticDiscovery((native,))
-    discovery.initial_raw = lambda name: graph(name, Names=rendered, After=rendered)
-    discovery.repeated_raw = discovery.initial_raw
+    discovery.repeated_raw = lambda name: graph(name, Names=rendered, After=rendered)
+    discovery.initial_raw = lambda name: discovery.repeated_raw(name) + b"EnvironmentFiles=\nExecStart=\n"
     discovery.systemd()
     row = rows(discovery)[0]
     facts = row["facts"]
