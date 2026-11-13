@@ -304,6 +304,96 @@ def test_forgot_privacy_reset_token_spend_and_subsequent_login(current_account):
     _run(a, _RESET)
 
 
+_REMINDER_REFUSAL = r"""
+from unittest.mock import patch
+
+from app.models.reminder import ReminderLog
+
+login(os.environ["JOURNEY_EMAIL"], "chosen-password9")
+# Refresh the session-bound CSRF cookie before taking the product snapshots.
+missing_csrf = os.environ["JOURNEY_MISSING_CSRF"] == "true"
+# The CSRF case first proves this admin can reach the reminder history.
+csrf_get("/admin/reminders" if missing_csrf else "/account")
+log_id = UUID(os.environ["JOURNEY_REMINDER"])
+path = f"/admin/reminders/{log_id}/resend"
+
+def snapshot(model):
+    with inspect_db() as db:
+        return [dict(row) for row in db.execute(
+            select(model.__table__).where(model.tenant_id == tid).order_by(model.id)
+        ).mappings()]
+
+before_logs = snapshot(ReminderLog)
+before_outbox = snapshot(EmailOutbox)
+before_audits = rows(AuditEvent, action="reminder.resend")
+assert len(before_logs) == len(before_outbox) == 1
+assert before_logs[0]["id"] == log_id
+assert before_logs[0]["outbox_key"] == before_outbox[0]["idempotency_key"]
+assert before_audits == []
+# Guard the worker and transport seams without replacing any request security.
+with patch("app.services.email_outbox.deliver_pending") as worker, \
+     patch("app.services.email_outbox.send_email_detailed") as outbox_provider, \
+     patch("app.services.email.send_email_detailed") as provider, \
+     patch("smtplib.SMTP") as smtp:
+    if missing_csrf:
+        denied = client.post(path, data={}, headers={"Origin": origin})
+    else:
+        denied = post(path)
+    assert denied.status_code == 403, (denied.status_code, denied.text)
+    worker.assert_not_called()
+    outbox_provider.assert_not_called()
+    provider.assert_not_called()
+    smtp.assert_not_called()
+assert snapshot(ReminderLog) == before_logs
+assert snapshot(EmailOutbox) == before_outbox
+# A security refusal audit may be legitimate; a product resend audit is not.
+assert rows(AuditEvent, action="reminder.resend") == []
+"""
+
+
+def _reminder_refusal(a, *, role, missing_csrf):
+    from datetime import UTC, datetime
+
+    from app.models.email_outbox import EmailOutbox
+    from app.models.reminder import ReminderLog
+
+    grant_std(a.admin, tenant_id=a.tid, party_id=a.pid, role=role)
+    key = f"reminder:http-refusal:{uuid4()}"
+    log = ReminderLog(
+        tenant_id=a.tid,
+        person_id=a.pid,
+        event_kind="graded",
+        occurrence_key=f"http-refusal:{uuid4()}",
+        title="HTTP refusal reminder",
+        link="/progress",
+        status="sent",
+        sent_at=datetime.now(UTC),
+        outbox_key=key,
+    )
+    outbox = EmailOutbox(
+        tenant_id=a.tid,
+        idempotency_key=key,
+        kind="reminder_graded",
+        recipient=a.email,
+        subject="HTTP refusal reminder",
+        html_body="<p>Existing reminder</p>",
+        status="failed",
+        attempts=8,
+        last_error="fixture_failure",
+    )
+    a.admin.add_all([log, outbox])
+    a.admin.commit()
+    _run(a, _REMINDER_REFUSAL, JOURNEY_REMINDER=log.id, JOURNEY_MISSING_CSRF=str(missing_csrf).lower())
+
+
+def test_admin_reminder_resend_missing_csrf_preserves_product_state(current_account):
+    _reminder_refusal(current_account, role="admin", missing_csrf=True)
+
+
+def test_student_reminder_resend_valid_csrf_preserves_product_state(current_account):
+    _reminder_refusal(current_account, role="student", missing_csrf=False)
+
+
 _LABS = r"""
 activity = os.environ["JOURNEY_ACTIVITY"]
 foreign = os.environ["JOURNEY_FOREIGN_INSTANCE"]
