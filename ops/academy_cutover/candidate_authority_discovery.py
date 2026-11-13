@@ -69,6 +69,7 @@ COMMON_PROPERTIES = (
     "Job",
     "JobTimeoutUSec",
 )
+GRAPH_PROPERTIES = ("Id", "Names", "Triggers", "TriggeredBy", "Requires", "Wants", "Before", "After")
 EXEC_CONTEXT_PROPERTIES = ("User", "WorkingDirectory", "EnvironmentFiles")
 SERVICE_PROPERTIES = ("ExecStart",)
 RETRY_PROPERTIES = frozenset(("EnvironmentFiles", "ExecStart", "TimersMonotonic", "TimersCalendar"))
@@ -684,6 +685,199 @@ class Discovery:
         if set(fields) - props.keys():
             self.gap(domain, "typed_empty_unresolved")
 
+    @staticmethod
+    def graph_properties(name):
+        return GRAPH_PROPERTIES + (("Unit",) if name.endswith((".timer", ".path")) else ())
+
+    @staticmethod
+    def parse_unit_graph(raw, fields, *, graph_only=False, endpoint_budget=MAX_ROWS, stopped=None):
+        """Pure, bounded graph extraction; retain hashes even for invalid fields."""
+        result = {field: None for field in fields}
+        gaps = []
+        output = {
+            "fields": result, "gaps": gaps, "endpoint_count": 0,
+            "original_output": projection(raw) if raw is not None else None,
+        }
+        if raw is None:
+            gaps.append("observation_unavailable")
+            return output
+        if len(raw) > MAX_COMMAND_BYTES:
+            gaps.append("graph_byte_bound")
+            return output
+        seen = set()
+        lines = raw.split(b"\n")
+        if lines[-1:] == [b""]:
+            lines.pop()
+        if len(lines) > MAX_ROWS:
+            gaps.append("graph_line_bound")
+            return output
+        for line in lines:
+            if stopped is not None and stopped():
+                gaps.append("graph_work_interrupted_or_deadline")
+                break
+            key, equals, value = line.partition(b"=")
+            if not equals:
+                gaps.append("line_missing_equals")
+                continue
+            field = key.decode("ascii", errors="replace")
+            if field not in result:
+                if graph_only:
+                    gaps.append("unexpected_graph_key")
+                continue
+            if field in seen:
+                gaps.append("duplicate_graph_key")
+                continue
+            seen.add(field)
+            item = {"projection": projection(value), "endpoint_sha256": [], "valid": False}
+            result[field] = item
+            tokens = value.split(b" ") if value else []
+            if len(tokens) > endpoint_budget - output["endpoint_count"]:
+                gaps.append("graph_endpoint_budget")
+                continue
+            if (field == "Id" and len(tokens) != 1) or (field == "Unit" and len(tokens) > 1):
+                gaps.append("unsupported_graph_value")
+                continue
+            valid = True
+            for token in tokens:
+                if stopped is not None and stopped():
+                    gaps.append("graph_work_interrupted_or_deadline")
+                    valid = False
+                    break
+                # Charge attempted endpoints too: malformed input cannot bypass the work bound.
+                output["endpoint_count"] += 1
+                if not token.isascii() or not UNIT.fullmatch(token.decode("ascii")):
+                    gaps.append("unsupported_graph_value")
+                    valid = False
+                    break
+                item["endpoint_sha256"].append(digest(token))
+            item["valid"] = valid
+        if set(fields) - seen:
+            gaps.append("missing_graph_fields")
+        output["gaps"] = sorted(set(gaps))
+        return output
+
+    def collect_unit_graph(self, raw, fields, *, graph_only=False):
+        result = self.parse_unit_graph(
+            raw, fields, graph_only=graph_only, endpoint_budget=self.graph_endpoint_remaining,
+            stopped=lambda: self.interrupted("systemd_unit_graph") or time.monotonic() >= self.deadline,
+        )
+        self.graph_endpoint_remaining -= result["endpoint_count"]
+        return result
+
+    def retain_unit_graph(self, name, installed, loaded, initial):
+        """Retain each captured read before any later host operation can fail."""
+        facts = {
+            "schema": "AcademySystemdUnitGraphFacts.v1",
+            "requested_identity_sha256": digest(name.encode()),
+            "name_shape": self.unit_name_shape(name),
+            "membership_before": {"installed": name in installed, "loaded": name in loaded},
+            "membership_after": {"installed": None, "loaded": None},
+            "initial": initial,
+            "repeated": self.parse_unit_graph(None, self.graph_properties(name)),
+            "graph_fields_unchanged": False,
+            "unresolved_endpoint_sha256": None,
+            "gaps": ["graph_finalization_unavailable", "enumeration_boundary_unavailable"],
+            "classification": "unknown",
+            "authority_refs": [],
+        }
+        if self.record("systemd_unit_graph", name, facts):
+            self.domain("systemd_unit_graph")["complete"] -= 1
+            return facts
+        return None
+
+    def graph_stopped(self):
+        return self.interrupted("systemd_unit_graph") or time.monotonic() >= self.deadline
+
+    def finish_unit_graph(self, installed, loaded, observations):
+        domain = "systemd_unit_graph"
+        target = self.domain(domain)
+        final_installed = set()
+        final_loaded = set()
+        for command, key, diagnostic in (
+            ("list-unit-files", "unit_file", "systemd_installed_final"),
+            ("list-units", "unit", "systemd_loaded_final"),
+        ):
+            self.domain(diagnostic)
+            if self.graph_stopped():
+                self.gap(diagnostic, "graph_work_interrupted_or_deadline")
+                continue
+            names = self.listing(command, key, diagnostic)
+            if key == "unit_file":
+                final_installed = names
+            else:
+                final_loaded = names
+        installed_ok = self.domain("systemd_installed_final")["enumeration_complete"]
+        loaded_ok = self.domain("systemd_loaded_final")["enumeration_complete"]
+        initial_ok = all(self.domain(name)["enumeration_complete"] for name in (
+            "systemd_installed", "systemd_loaded"
+        ))
+        target["enumeration_complete"] = initial_ok and installed_ok and loaded_ok
+        if not target["enumeration_complete"]:
+            self.gap(domain, "enumeration_boundary_unavailable")
+        if (installed_ok and installed != final_installed) or (loaded_ok and loaded != final_loaded):
+            self.gap(domain, "enumeration_membership_changed", raced=True)
+        names = sorted(installed | loaded | final_installed | final_loaded)
+        target["enumerated"] = len(names)
+        target["skipped"] = max(0, len(names) - target["inspected"])
+        endpoints = set()
+        for name in names:
+            if self.graph_stopped():
+                self.gap(domain, "graph_work_interrupted_or_deadline")
+                self.gap(domain, "graph_finalization_unavailable")
+                return
+            endpoints.add(digest(name.encode()))
+        if len(names) > MAX_ROWS:
+            self.gap(domain, "union_units_truncated")
+        for name in names:
+            if self.graph_stopped():
+                self.gap(domain, "graph_work_interrupted_or_deadline")
+                self.gap(domain, "graph_finalization_unavailable")
+                break
+            facts = observations.get(name)
+            if facts is None:
+                if len(target["records"]) >= MAX_ROWS:
+                    continue
+                unavailable = self.parse_unit_graph(None, self.graph_properties(name))
+                facts = self.retain_unit_graph(name, installed, loaded, unavailable)
+                if facts is None:
+                    continue
+                target["skipped"] -= 1
+            initial, repeated = facts["initial"], facts["repeated"]
+            gaps = set(initial["gaps"] + repeated["gaps"])
+            unchanged = not gaps and initial["fields"] == repeated["fields"]
+            if not unchanged:
+                gaps.add("graph_fields_changed_or_unavailable")
+            after = {
+                "installed": name in final_installed if installed_ok else None,
+                "loaded": name in final_loaded if loaded_ok else None,
+            }
+            if facts["membership_before"] != after:
+                gaps.add("membership_changed_or_unavailable")
+            if not target["enumeration_complete"]:
+                gaps.add("enumeration_boundary_unavailable")
+            unresolved = set()
+            for observation in (initial, repeated):
+                for item in observation["fields"].values():
+                    if item is None:
+                        continue
+                    for endpoint in item["endpoint_sha256"]:
+                        if self.graph_stopped():
+                            self.gap(domain, "graph_work_interrupted_or_deadline")
+                            self.gap(domain, "graph_finalization_unavailable")
+                            return
+                        if endpoint not in endpoints:
+                            unresolved.add(endpoint)
+            if unresolved:
+                gaps.add("unresolved_graph_endpoint")
+            facts.update(
+                membership_after=after, graph_fields_unchanged=unchanged,
+                unresolved_endpoint_sha256=sorted(unresolved), gaps=sorted(gaps),
+            )
+            for reason in sorted(gaps):
+                self.gap(domain, reason)
+            if not gaps:
+                target["complete"] += 1
+
     def systemd(self):
         installed = self.listing("list-unit-files", "unit_file", "systemd_installed")
         loaded = self.listing("list-units", "unit", "systemd_loaded")
@@ -693,13 +887,19 @@ class Discovery:
         self.listing("list-jobs", "unit", "systemd_jobs")
         domain = "systemd_unit_properties"
         enumerated = installed | loaded
+        graph_observations = {}
+        # One aggregate storage/work allowance across every initial and repeated read.
+        self.graph_endpoint_remaining = MAX_ROWS
         names = sorted(enumerated)
         self.domain(domain)["enumerated"] = len(names)
+        self.domain("systemd_unit_graph")["enumerated"] = len(names)
         if len(names) > MAX_ROWS:
             self.gap(domain, "union_units_truncated")
             self.domain(domain)["skipped"] += len(names) - MAX_ROWS
         for index, name in enumerate(names[:MAX_ROWS]):
-            if self.interrupted(domain):
+            if self.interrupted(domain) or time.monotonic() >= self.deadline:
+                if self.pending_signal is None:
+                    self.gap(domain, "command_or_time_limit")
                 self.domain(domain)["skipped"] += min(len(names), MAX_ROWS) - index
                 break
             applicable = COMMON_PROPERTIES
@@ -716,6 +916,19 @@ class Discovery:
                 ["show", "--all", "--property=" + ",".join(applicable), "--", name],
                 domain,
             )
+            graph_fields = self.graph_properties(name)
+            initial_graph = self.collect_unit_graph(raw, graph_fields)
+            graph_facts = self.retain_unit_graph(name, installed, loaded, initial_graph)
+            if graph_facts is not None:
+                graph_observations[name] = graph_facts
+            if not self.graph_stopped():
+                repeated_raw = self.run(
+                    ["show", "--all", "--property=" + ",".join(graph_fields), "--", name],
+                    "systemd_unit_graph",
+                )
+                repeated_graph = self.collect_unit_graph(repeated_raw, graph_fields, graph_only=True)
+                if graph_facts is not None:
+                    graph_facts["repeated"] = repeated_graph
             canonical = None
             facts = {
                 "name_shape": self.unit_name_shape(name),
@@ -831,6 +1044,7 @@ class Discovery:
             self.domain("systemd_installed")["enumeration_complete"]
             and self.domain("systemd_loaded")["enumeration_complete"]
         )
+        self.finish_unit_graph(installed, loaded, graph_observations)
 
     @staticmethod
     def file_identity(meta):

@@ -1,0 +1,2125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dotmac:AcademyAuthorityDiscovery.v1",
+  "title": "AcademyAuthorityDiscovery.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "role",
+    "host",
+    "coverage_complete",
+    "campaign_authority_claimed",
+    "classification_complete",
+    "purpose",
+    "domains",
+    "commands_attempted",
+    "files_attempted",
+    "child_lifecycle",
+    "signal_interrupted"
+  ],
+  "properties": {
+    "schema": {
+      "const": "AcademyAuthorityDiscovery.v1"
+    },
+    "role": {
+      "enum": [
+        "web",
+        "lab"
+      ]
+    },
+    "host": {
+      "enum": [
+        "vmi2490731",
+        "academy-labs"
+      ]
+    },
+    "coverage_complete": {
+      "const": false
+    },
+    "campaign_authority_claimed": {
+      "const": false
+    },
+    "classification_complete": {
+      "const": false
+    },
+    "purpose": {
+      "const": "readonly_discovery_facts_only"
+    },
+    "domains": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z_0-9]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/domain"
+      },
+      "properties": {
+        "systemd_unit_graph": {
+          "$ref": "#/$defs/graph_domain"
+        },
+        "systemd_installed_final": {
+          "$ref": "#/$defs/graph_diagnostic_domain"
+        },
+        "systemd_loaded_final": {
+          "$ref": "#/$defs/graph_diagnostic_domain"
+        }
+      }
+    },
+    "commands_attempted": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 73732
+    },
+    "files_attempted": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16384
+    },
+    "signal_interrupted": {
+      "type": "boolean"
+    },
+    "child_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spawned",
+        "reaped",
+        "group_cleanup_confirmed",
+        "group_cleanup_unconfirmed",
+        "termination_requests"
+      ],
+      "properties": {
+        "spawned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reaped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "group_cleanup_confirmed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "group_cleanup_unconfirmed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "termination_requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "web"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "host": {
+            "const": "vmi2490731"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "host": {
+            "const": "academy-labs"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes",
+        "known_academy_root_indicator",
+        "known_job_indicator"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "known_academy_root_indicator": {
+          "type": "boolean"
+        },
+        "known_job_indicator": {
+          "type": "boolean"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id",
+        "identity",
+        "identity_sha256",
+        "unknown_identity",
+        "relevance",
+        "facts"
+      ],
+      "properties": {
+        "authority_id": {
+          "$ref": "#/$defs/hash"
+        },
+        "identity": {
+          "enum": [
+            null,
+            "academy-web.service",
+            "academy-labs.service",
+            "academy-v2-email-outbox.service",
+            "academy-v2-email-outbox.timer",
+            "academy-v2-email-delivery.service",
+            "academy-v2-email-delivery.timer",
+            "academy-v2-lab-reconcile.service",
+            "academy-v2-lab-reconcile.timer",
+            "academy-v2-lab-cleanup.service",
+            "academy-v2-lab-cleanup.timer",
+            "academy-v2-lab-expiry.service",
+            "academy-v2-lab-expiry.timer",
+            "academy-v2-lab-pool.service",
+            "academy-v2-lab-pool.timer",
+            "academy-v2-lab-idle.service",
+            "academy-v2-lab-idle.timer"
+          ]
+        },
+        "identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "unknown_identity": {
+          "type": "boolean"
+        },
+        "relevance": {
+          "const": "unresolved"
+        },
+        "facts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "row_projection": {
+              "$ref": "#/$defs/projection"
+            },
+            "argv": {
+              "$ref": "#/$defs/projection"
+            },
+            "cgroup": {
+              "$ref": "#/$defs/projection"
+            },
+            "exe": {
+              "$ref": "#/$defs/projection"
+            },
+            "cwd": {
+              "$ref": "#/$defs/projection"
+            },
+            "home": {
+              "$ref": "#/$defs/projection"
+            },
+            "shell": {
+              "$ref": "#/$defs/projection"
+            },
+            "content": {
+              "$ref": "#/$defs/projection"
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mtime_ns": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "starttime_ticks": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "uids_real_effective_saved_filesystem": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "manager_collected": {
+              "const": false
+            },
+            "manager_availability_proven": {
+              "const": false
+            },
+            "system_user_manager_loaded": {
+              "type": "boolean"
+            },
+            "properties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "Id": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Names": {
+                  "$ref": "#/$defs/projection"
+                },
+                "LoadState": {
+                  "$ref": "#/$defs/projection"
+                },
+                "ActiveState": {
+                  "$ref": "#/$defs/projection"
+                },
+                "SubState": {
+                  "$ref": "#/$defs/projection"
+                },
+                "User": {
+                  "$ref": "#/$defs/projection"
+                },
+                "WorkingDirectory": {
+                  "$ref": "#/$defs/projection"
+                },
+                "FragmentPath": {
+                  "$ref": "#/$defs/projection"
+                },
+                "DropInPaths": {
+                  "$ref": "#/$defs/projection"
+                },
+                "EnvironmentFiles": {
+                  "$ref": "#/$defs/repeated_aggregate_projection"
+                },
+                "ExecStart": {
+                  "$ref": "#/$defs/repeated_aggregate_projection"
+                },
+                "Triggers": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TriggeredBy": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Requires": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Wants": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Before": {
+                  "$ref": "#/$defs/projection"
+                },
+                "After": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Job": {
+                  "$ref": "#/$defs/projection"
+                },
+                "JobTimeoutUSec": {
+                  "$ref": "#/$defs/projection"
+                },
+                "NextElapseUSecRealtime": {
+                  "$ref": "#/$defs/projection"
+                },
+                "NextElapseUSecMonotonic": {
+                  "$ref": "#/$defs/projection"
+                },
+                "LastTriggerUSec": {
+                  "$ref": "#/$defs/projection"
+                },
+                "Unit": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TimersCalendar": {
+                  "$ref": "#/$defs/repeated_aggregate_projection"
+                },
+                "TimersMonotonic": {
+                  "$ref": "#/$defs/repeated_aggregate_projection"
+                }
+              }
+            },
+            "missing_properties": {
+              "type": "array",
+              "maxItems": 25,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "ActiveState",
+                  "After",
+                  "Before",
+                  "DropInPaths",
+                  "EnvironmentFiles",
+                  "ExecStart",
+                  "FragmentPath",
+                  "Id",
+                  "Job",
+                  "JobTimeoutUSec",
+                  "LastTriggerUSec",
+                  "LoadState",
+                  "Names",
+                  "NextElapseUSecMonotonic",
+                  "NextElapseUSecRealtime",
+                  "Requires",
+                  "SubState",
+                  "TimersCalendar",
+                  "TimersMonotonic",
+                  "TriggeredBy",
+                  "Triggers",
+                  "Unit",
+                  "User",
+                  "Wants",
+                  "WorkingDirectory"
+                ]
+              }
+            },
+            "body_collected": {
+              "type": "boolean"
+            },
+            "scheduler_definition_supported": {
+              "type": "boolean"
+            },
+            "not_applicable_properties": {
+              "type": "array",
+              "maxItems": 25,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "ActiveState",
+                  "After",
+                  "Before",
+                  "DropInPaths",
+                  "EnvironmentFiles",
+                  "ExecStart",
+                  "FragmentPath",
+                  "Id",
+                  "Job",
+                  "JobTimeoutUSec",
+                  "LastTriggerUSec",
+                  "LoadState",
+                  "Names",
+                  "NextElapseUSecMonotonic",
+                  "NextElapseUSecRealtime",
+                  "Requires",
+                  "SubState",
+                  "TimersCalendar",
+                  "TimersMonotonic",
+                  "TriggeredBy",
+                  "Triggers",
+                  "Unit",
+                  "User",
+                  "Wants",
+                  "WorkingDirectory"
+                ]
+              }
+            },
+            "stat_flags_before": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "stat_flags_after": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "stat_state_before": {
+              "enum": [
+                "R",
+                "S",
+                "D",
+                "Z",
+                "T",
+                "t",
+                "X",
+                "x",
+                "K",
+                "W",
+                "P",
+                "I"
+              ]
+            },
+            "stat_state_after": {
+              "enum": [
+                "R",
+                "S",
+                "D",
+                "Z",
+                "T",
+                "t",
+                "X",
+                "x",
+                "K",
+                "W",
+                "P",
+                "I"
+              ]
+            },
+            "process_representation": {
+              "enum": [
+                "kernel_thread",
+                "stable_zombie",
+                "userspace_or_transition"
+              ]
+            },
+            "not_applicable_process_fields": {
+              "type": "array",
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "exe",
+                  "cwd"
+                ]
+              }
+            },
+            "missing_path": {
+              "const": true
+            },
+            "property_original_output": {
+              "$ref": "#/$defs/projection"
+            },
+            "property_retry_output": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "$ref": "#/$defs/projection"
+                },
+                "ExecStart": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TimersMonotonic": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TimersCalendar": {
+                  "$ref": "#/$defs/projection"
+                }
+              }
+            },
+            "property_retry_failure": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "omitted_or_unsupported_property_format"
+                  ]
+                },
+                "ExecStart": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "omitted_or_unsupported_property_format"
+                  ]
+                },
+                "TimersMonotonic": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "omitted_or_unsupported_property_format"
+                  ]
+                },
+                "TimersCalendar": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "omitted_or_unsupported_property_format"
+                  ]
+                }
+              }
+            },
+            "command_failure_class": {
+              "enum": [
+                "command_failed_or_unavailable",
+                "unsupported_property_format"
+              ]
+            },
+            "absence_at_observation": {
+              "const": true
+            },
+            "missing_process_fields": {
+              "type": "array",
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "argv",
+                  "cgroup",
+                  "uids_real_effective_saved_filesystem",
+                  "exe",
+                  "cwd"
+                ]
+              }
+            },
+            "procfs_mount_verified": {
+              "const": true
+            },
+            "procfs_root_owned_fields": {
+              "type": "array",
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "stat",
+                  "status",
+                  "cmdline",
+                  "cgroup"
+                ]
+              }
+            },
+            "typed_unit_id_before_output": {
+              "$ref": "#/$defs/projection"
+            },
+            "typed_unit_id_after_output": {
+              "$ref": "#/$defs/projection"
+            },
+            "typed_unit_id_before_matches": {
+              "type": "boolean"
+            },
+            "typed_unit_id_after_matches": {
+              "type": "boolean"
+            },
+            "typed_getter_output": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "$ref": "#/$defs/projection"
+                },
+                "ExecStart": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TimersMonotonic": {
+                  "$ref": "#/$defs/projection"
+                },
+                "TimersCalendar": {
+                  "$ref": "#/$defs/projection"
+                }
+              }
+            },
+            "typed_getter_failure": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "nonempty_or_wrong_signature"
+                  ]
+                },
+                "ExecStart": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "nonempty_or_wrong_signature"
+                  ]
+                },
+                "TimersMonotonic": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "nonempty_or_wrong_signature"
+                  ]
+                },
+                "TimersCalendar": {
+                  "enum": [
+                    "command_failed_or_unavailable",
+                    "nonempty_or_wrong_signature"
+                  ]
+                }
+              }
+            },
+            "typed_empty_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "unit_id_before_matches",
+                    "unit_id_after_matches",
+                    "getter_output",
+                    "unit_id_before_output",
+                    "unit_id_after_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sb)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "unit_id_before_matches": {
+                      "const": true
+                    },
+                    "unit_id_after_matches": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_before_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_after_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "ExecStart": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "unit_id_before_matches",
+                    "unit_id_after_matches",
+                    "getter_output",
+                    "unit_id_before_output",
+                    "unit_id_after_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sasbttttuii)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "unit_id_before_matches": {
+                      "const": true
+                    },
+                    "unit_id_after_matches": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_before_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_after_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "TimersMonotonic": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "unit_id_before_matches",
+                    "unit_id_after_matches",
+                    "getter_output",
+                    "unit_id_before_output",
+                    "unit_id_after_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(stt)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "unit_id_before_matches": {
+                      "const": true
+                    },
+                    "unit_id_after_matches": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_before_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_after_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "TimersCalendar": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "unit_id_before_matches",
+                    "unit_id_after_matches",
+                    "getter_output",
+                    "unit_id_before_output",
+                    "unit_id_after_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sst)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "unit_id_before_matches": {
+                      "const": true
+                    },
+                    "unit_id_after_matches": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_before_output": {
+                      "$ref": "#/$defs/projection"
+                    },
+                    "unit_id_after_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                }
+              }
+            },
+            "name_shape": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "shape",
+                "template_name_sha256"
+              ],
+              "properties": {
+                "shape": {
+                  "enum": [
+                    "plain",
+                    "template",
+                    "instance",
+                    "unsupported"
+                  ]
+                },
+                "template_name_sha256": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/hash"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "typed_alias_binding": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "canonical_identity_sha256",
+                "canonical_enumerated",
+                "before_id_matches_canonical",
+                "after_id_matches_canonical",
+                "before_names_bind_requested_and_canonical",
+                "after_names_bind_requested_and_canonical",
+                "names_set_stable"
+              ],
+              "properties": {
+                "canonical_identity_sha256": {
+                  "$ref": "#/$defs/hash"
+                },
+                "canonical_enumerated": {
+                  "type": "boolean"
+                },
+                "before_id_matches_canonical": {
+                  "type": "boolean"
+                },
+                "after_id_matches_canonical": {
+                  "type": "boolean"
+                },
+                "before_names_bind_requested_and_canonical": {
+                  "type": "boolean"
+                },
+                "after_names_bind_requested_and_canonical": {
+                  "type": "boolean"
+                },
+                "names_set_stable": {
+                  "type": "boolean"
+                },
+                "before_id_output": {
+                  "$ref": "#/$defs/projection"
+                },
+                "before_names_output": {
+                  "$ref": "#/$defs/projection"
+                },
+                "after_id_output": {
+                  "$ref": "#/$defs/projection"
+                },
+                "after_names_output": {
+                  "$ref": "#/$defs/projection"
+                }
+              }
+            },
+            "typed_alias_empty_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "EnvironmentFiles": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "alias_binding_confirmed",
+                    "getter_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sb)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "alias_binding_confirmed": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "ExecStart": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "alias_binding_confirmed",
+                    "getter_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sasbttttuii)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "alias_binding_confirmed": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "TimersMonotonic": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "alias_binding_confirmed",
+                    "getter_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(stt)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "alias_binding_confirmed": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                },
+                "TimersCalendar": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "signature",
+                    "typed_empty_confirmed",
+                    "alias_binding_confirmed",
+                    "getter_output"
+                  ],
+                  "properties": {
+                    "signature": {
+                      "const": "a(sst)"
+                    },
+                    "typed_empty_confirmed": {
+                      "const": true
+                    },
+                    "alias_binding_confirmed": {
+                      "const": true
+                    },
+                    "getter_output": {
+                      "$ref": "#/$defs/projection"
+                    }
+                  }
+                }
+              }
+            },
+            "unit_file_installed": {
+              "type": "boolean"
+            },
+            "system_unit_loaded": {
+              "type": "boolean"
+            },
+            "user_manager_bus_queried": {
+              "const": false
+            },
+            "account_enumeration_proven": {
+              "const": false
+            },
+            "nss_database": {
+              "enum": [
+                "passwd",
+                "group"
+              ]
+            },
+            "nss_parse_supported": {
+              "type": "boolean"
+            },
+            "nss_line_sha256": {
+              "type": "array",
+              "maxItems": 8192,
+              "items": {
+                "$ref": "#/$defs/hash"
+              }
+            },
+            "nss_providers": {
+              "type": "array",
+              "maxItems": 8192,
+              "items": {
+                "$ref": "#/$defs/nss_provider"
+              }
+            },
+            "property_parse_failure_class": {
+              "enum": [
+                "line_missing_equals",
+                "non_ascii_key",
+                "unknown_key",
+                "duplicate_key",
+                "parser_work_interrupted_or_deadline",
+                "repeated_occurrence_limit"
+              ]
+            },
+            "property_parse_failure_key_sha256": {
+              "$ref": "#/$defs/hash"
+            },
+            "nss_source": {
+              "$ref": "#/$defs/nss_source"
+            },
+            "repeated_property_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "EnvironmentFiles": {
+                  "$ref": "#/$defs/repeated_property"
+                },
+                "ExecStart": {
+                  "$ref": "#/$defs/repeated_property"
+                },
+                "TimersMonotonic": {
+                  "$ref": "#/$defs/repeated_property"
+                },
+                "TimersCalendar": {
+                  "$ref": "#/$defs/repeated_property"
+                }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "typed_alias_empty_evidence"
+                ],
+                "properties": {
+                  "typed_alias_empty_evidence": {
+                    "minProperties": 1
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "typed_alias_binding",
+                  "typed_unit_id_before_matches",
+                  "typed_unit_id_after_matches"
+                ],
+                "properties": {
+                  "typed_alias_binding": {
+                    "required": [
+                      "canonical_identity_sha256",
+                      "canonical_enumerated",
+                      "before_id_matches_canonical",
+                      "after_id_matches_canonical",
+                      "before_names_bind_requested_and_canonical",
+                      "after_names_bind_requested_and_canonical",
+                      "names_set_stable",
+                      "before_id_output",
+                      "before_names_output",
+                      "after_id_output",
+                      "after_names_output"
+                    ],
+                    "properties": {
+                      "canonical_enumerated": {
+                        "const": true
+                      },
+                      "before_id_matches_canonical": {
+                        "const": true
+                      },
+                      "after_id_matches_canonical": {
+                        "const": true
+                      },
+                      "before_names_bind_requested_and_canonical": {
+                        "const": true
+                      },
+                      "after_names_bind_requested_and_canonical": {
+                        "const": true
+                      },
+                      "names_set_stable": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "typed_unit_id_before_matches": {
+                    "const": false
+                  },
+                  "typed_unit_id_after_matches": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    },
+    "nss_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "token_sha256",
+        "action_clause_sha256"
+      ],
+      "properties": {
+        "label": {
+          "enum": [
+            "files",
+            "systemd",
+            "compat",
+            "dns",
+            "nis",
+            "nisplus",
+            "ldap",
+            "sss",
+            "winbind",
+            "db",
+            "resolve",
+            "myhostname",
+            "mymachines",
+            "hesiod",
+            "unknown-token"
+          ]
+        },
+        "token_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "action_clause_sha256": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/hash"
+          }
+        }
+      }
+    },
+    "nss_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes",
+        "stat"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "stat": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dev",
+            "ino",
+            "uid",
+            "gid",
+            "mode",
+            "size",
+            "mtime_ns",
+            "ctime_ns"
+          ],
+          "properties": {
+            "dev": {
+              "type": "integer"
+            },
+            "ino": {
+              "type": "integer"
+            },
+            "uid": {
+              "const": 0
+            },
+            "gid": {
+              "type": "integer"
+            },
+            "mode": {
+              "type": "integer"
+            },
+            "size": {
+              "type": "integer"
+            },
+            "mtime_ns": {
+              "type": "integer"
+            },
+            "ctime_ns": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "repeated_property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "representation",
+        "count",
+        "ordered_occurrences",
+        "aggregate"
+      ],
+      "properties": {
+        "representation": {
+          "const": "AcademySystemctlRepeatedProperty.v1"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8192
+        },
+        "ordered_occurrences": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/projection"
+          }
+        },
+        "aggregate": {
+          "$ref": "#/$defs/repeated_aggregate_projection"
+        }
+      }
+    },
+    "repeated_aggregate_projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes",
+        "known_academy_root_indicator",
+        "known_job_indicator"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388672
+        },
+        "known_academy_root_indicator": {
+          "type": "boolean"
+        },
+        "known_job_indicator": {
+          "type": "boolean"
+        }
+      }
+    },
+    "graph_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection",
+        "endpoint_sha256",
+        "valid"
+      ],
+      "properties": {
+        "projection": {
+          "$ref": "#/$defs/projection"
+        },
+        "endpoint_sha256": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/hash"
+          }
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      }
+    },
+    "graph_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fields",
+        "gaps",
+        "endpoint_count",
+        "original_output"
+      ],
+      "properties": {
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "Id",
+            "Names",
+            "Triggers",
+            "TriggeredBy",
+            "Requires",
+            "Wants",
+            "Before",
+            "After"
+          ],
+          "properties": {
+            "Id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Names": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Triggers": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "TriggeredBy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Requires": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Wants": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "After": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "Unit": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/graph_field"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "graph_endpoint_budget",
+              "unsupported_graph_value",
+              "missing_graph_fields"
+            ]
+          }
+        },
+        "endpoint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "original_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/projection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "graph_facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "requested_identity_sha256",
+        "name_shape",
+        "membership_before",
+        "membership_after",
+        "initial",
+        "repeated",
+        "graph_fields_unchanged",
+        "unresolved_endpoint_sha256",
+        "gaps",
+        "classification",
+        "authority_refs"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademySystemdUnitGraphFacts.v1"
+        },
+        "requested_identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "name_shape": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "template_name_sha256"
+          ],
+          "properties": {
+            "shape": {
+              "enum": [
+                "plain",
+                "template",
+                "instance",
+                "unsupported"
+              ]
+            },
+            "template_name_sha256": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/hash"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "membership_before": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed",
+            "loaded"
+          ],
+          "properties": {
+            "installed": {
+              "type": "boolean"
+            },
+            "loaded": {
+              "type": "boolean"
+            }
+          }
+        },
+        "membership_after": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed",
+            "loaded"
+          ],
+          "properties": {
+            "installed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "loaded": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        },
+        "initial": {
+          "$ref": "#/$defs/graph_read"
+        },
+        "repeated": {
+          "$ref": "#/$defs/graph_read"
+        },
+        "graph_fields_unchanged": {
+          "type": "boolean"
+        },
+        "unresolved_endpoint_sha256": {
+          "anyOf": [
+            {
+              "type": "array",
+              "maxItems": 8192,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/hash"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 15,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "graph_endpoint_budget",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint"
+            ]
+          }
+        },
+        "classification": {
+          "const": "unknown"
+        },
+        "authority_refs": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "graph_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id",
+        "identity",
+        "identity_sha256",
+        "unknown_identity",
+        "relevance",
+        "facts"
+      ],
+      "properties": {
+        "authority_id": {
+          "$ref": "#/$defs/hash"
+        },
+        "identity": {
+          "enum": [
+            null,
+            "academy-web.service",
+            "academy-labs.service",
+            "academy-v2-email-outbox.service",
+            "academy-v2-email-outbox.timer",
+            "academy-v2-email-delivery.service",
+            "academy-v2-email-delivery.timer",
+            "academy-v2-lab-reconcile.service",
+            "academy-v2-lab-reconcile.timer",
+            "academy-v2-lab-cleanup.service",
+            "academy-v2-lab-cleanup.timer",
+            "academy-v2-lab-expiry.service",
+            "academy-v2-lab-expiry.timer",
+            "academy-v2-lab-pool.service",
+            "academy-v2-lab-pool.timer",
+            "academy-v2-lab-idle.service",
+            "academy-v2-lab-idle.timer"
+          ]
+        },
+        "identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "unknown_identity": {
+          "type": "boolean"
+        },
+        "relevance": {
+          "const": "unresolved"
+        },
+        "facts": {
+          "$ref": "#/$defs/graph_facts"
+        }
+      }
+    },
+    "graph_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 105,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "observation_unavailable",
+              "graph_byte_bound",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "line_missing_equals",
+              "unexpected_graph_key",
+              "duplicate_graph_key",
+              "graph_endpoint_budget",
+              "unsupported_graph_value",
+              "missing_graph_fields",
+              "graph_finalization_unavailable",
+              "enumeration_boundary_unavailable",
+              "graph_fields_changed_or_unavailable",
+              "membership_changed_or_unavailable",
+              "unresolved_graph_endpoint",
+              "enumeration_membership_changed"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/graph_record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    },
+    "graph_diagnostic_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 90,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "union_units_truncated",
+              "unsupported_account_format",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable",
+              "typed_alias_binding_unconfirmed",
+              "nss_file_unsafe_metadata",
+              "nss_continuation_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_syntax_or_clause_unsupported",
+              "user_manager_uid_representation_unresolved",
+              "unknown_provider_semantics_unresolved",
+              "nss_control_boundary_unsupported",
+              "nss_inline_comment_unsupported",
+              "graph_work_interrupted_or_deadline"
+            ]
+          }
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "empty_pending_jobs_snapshot": {
+          "const": true
+        }
+      }
+    }
+  }
+}

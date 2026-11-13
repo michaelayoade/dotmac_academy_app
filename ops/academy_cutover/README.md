@@ -13,3 +13,10 @@ application, database, SSH or private-fixture credentials.
 Tests run only in hosted CI. Use static inspection and linting during local
 preparation. The test configuration excludes the application's root fixtures and
 plugins, and the default test boundary refuses network and process creation.
+
+The discovery collector retains hash-only systemd relationship endpoints and
+separate final installed/loaded inventories. Matching reads describe limited
+observational stability; they do not establish sender classification, an
+operational fence, or a complete activation graph. Unknown objects remain
+unresolved. The process proof stays at v2, and the census reducers continue to
+refuse completion while the remaining domain adapters are unfinished.
