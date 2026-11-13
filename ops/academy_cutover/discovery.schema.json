@@ -3758,6 +3758,9 @@
             },
             "systemd_loaded_final": {
               "$ref": "#/$defs/resource_graph_diagnostic_domain"
+            },
+            "systemd_template_definitions": {
+              "$ref": "#/$defs/resource_definition_domain"
             }
           }
         },
@@ -4085,6 +4088,1489 @@
           }
         }
       ]
+    },
+    "definition_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped",
+        "definition_profile",
+        "definition_profile_sha256",
+        "manager_observations",
+        "path_observations",
+        "source_reads",
+        "relations",
+        "definition_accounting"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 160,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "definition_access_denied",
+              "definition_alias_cycle",
+              "definition_alias_dangling",
+              "definition_alias_hops_bound",
+              "definition_alias_order_ambiguous",
+              "definition_body_read_bound",
+              "definition_body_total_bound",
+              "definition_close_failed",
+              "definition_directory_entries_bound",
+              "definition_evidence_bound",
+              "definition_filesystem_unavailable",
+              "definition_filesystem_work_bound",
+              "definition_fragment_absent",
+              "definition_header_bound",
+              "definition_interrupted",
+              "definition_link_outside_profile",
+              "definition_link_value_unsupported",
+              "definition_linked_target_unprofiled",
+              "definition_linked_unit_unprofiled",
+              "definition_manager_changed",
+              "definition_manager_command_bound",
+              "definition_manager_observations_bound",
+              "definition_manager_observations_record_bound",
+              "definition_manager_value_unsupported",
+              "definition_map_names_bound",
+              "definition_mask_unverified",
+              "definition_non_directory",
+              "definition_parser_version_unsupported",
+              "definition_path_bytes_bound",
+              "definition_path_hops_bound",
+              "definition_path_observations_bound",
+              "definition_path_observations_record_bound",
+              "definition_relation_target_bound",
+              "definition_relation_total_bound",
+              "definition_relations_bound",
+              "definition_relations_record_bound",
+              "definition_second_pass_reservation_bound",
+              "definition_selected_nonregular",
+              "definition_selected_per_target_bound",
+              "definition_selected_source_missing",
+              "definition_selected_sources_changed",
+              "definition_selected_total_bound",
+              "definition_shared_file_bound",
+              "definition_snapshot_changed",
+              "definition_source_reads_bound",
+              "definition_source_reads_record_bound",
+              "definition_target_bound",
+              "definition_unit_name_unsupported",
+              "definition_unitpath_unsupported",
+              "definition_unsafe_metadata",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "duplicate_graph_key",
+              "enumeration_boundary_unavailable",
+              "enumeration_membership_changed",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "graph_byte_bound",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget",
+              "graph_endpoint_unit_budget",
+              "graph_fields_changed_or_unavailable",
+              "graph_finalization_unavailable",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "line_missing_equals",
+              "membership_changed_or_unavailable",
+              "missing_graph_fields",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "nss_continuation_unsupported",
+              "nss_control_boundary_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_file_unsafe_metadata",
+              "nss_inline_comment_unsupported",
+              "nss_syntax_or_clause_unsupported",
+              "observation_unavailable",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_alias_binding_unconfirmed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "unexpected_graph_key",
+              "union_units_truncated",
+              "unitpath_root_outside_profile",
+              "unknown_provider_semantics_unresolved",
+              "unresolved_graph_endpoint",
+              "unsupported_account_format",
+              "unsupported_graph_value",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_manager_uid_representation_unresolved",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/definition_record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "definition_profile": {
+          "$ref": "#/$defs/definition_profile"
+        },
+        "definition_profile_sha256": {
+          "const": "713859b6fdc5043a963a7463c0182a47ab0668416dc916019e0a88de7c6f60ab"
+        },
+        "manager_observations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/definition_manager_observation"
+          }
+        },
+        "path_observations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/definition_path_observation"
+          }
+        },
+        "source_reads": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/definition_source_read"
+          }
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 32768,
+          "items": {
+            "$ref": "#/$defs/definition_relation"
+          }
+        },
+        "definition_accounting": {
+          "$ref": "#/$defs/definition_accounting"
+        }
+      }
+    },
+    "definition_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id",
+        "identity",
+        "identity_sha256",
+        "unknown_identity",
+        "relevance",
+        "facts"
+      ],
+      "properties": {
+        "authority_id": {
+          "$ref": "#/$defs/hash"
+        },
+        "identity": {
+          "enum": [
+            null,
+            "academy-web.service",
+            "academy-labs.service",
+            "academy-v2-email-outbox.service",
+            "academy-v2-email-outbox.timer",
+            "academy-v2-email-delivery.service",
+            "academy-v2-email-delivery.timer",
+            "academy-v2-lab-reconcile.service",
+            "academy-v2-lab-reconcile.timer",
+            "academy-v2-lab-cleanup.service",
+            "academy-v2-lab-cleanup.timer",
+            "academy-v2-lab-expiry.service",
+            "academy-v2-lab-expiry.timer",
+            "academy-v2-lab-pool.service",
+            "academy-v2-lab-pool.timer",
+            "academy-v2-lab-idle.service",
+            "academy-v2-lab-idle.timer"
+          ]
+        },
+        "identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "unknown_identity": {
+          "type": "boolean"
+        },
+        "relevance": {
+          "const": "unresolved"
+        },
+        "facts": {
+          "$ref": "#/$defs/definition_facts"
+        }
+      }
+    },
+    "definition_source_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "path_reference",
+        "body_sha256",
+        "bytes",
+        "before_sha256",
+        "after_sha256",
+        "mask"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "initial",
+            "repeated"
+          ]
+        },
+        "path_reference": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144
+        },
+        "before_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "after_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "mask": {
+          "type": "boolean"
+        }
+      }
+    },
+    "definition_relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "directive",
+        "source",
+        "origin",
+        "kind",
+        "value_sha256"
+      ],
+      "properties": {
+        "directive": {
+          "enum": [
+            "After",
+            "Before",
+            "BindTo",
+            "BindsTo",
+            "Conflicts",
+            "ExecCondition",
+            "ExecReload",
+            "ExecStart",
+            "ExecStartPost",
+            "ExecStartPre",
+            "ExecStop",
+            "ExecStopPost",
+            "InstallIntent",
+            "JoinsNamespaceOf",
+            "OnFailure",
+            "OnSuccess",
+            "PartOf",
+            "Path.Unit",
+            "PropagateReloadFrom",
+            "PropagateReloadTo",
+            "PropagatesReloadTo",
+            "PropagatesStopTo",
+            "ReloadPropagatedFrom",
+            "Requires",
+            "RequiresOverridable",
+            "Requisite",
+            "RequisiteOverridable",
+            "Socket.Accept",
+            "Socket.Service",
+            "StopPropagatedFrom",
+            "Timer.Unit",
+            "Unsupported",
+            "Upholds",
+            "Wants"
+          ]
+        },
+        "source": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "origin": {
+          "enum": [
+            "assignment",
+            "dependency_directory"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "dependency",
+            "install_intent",
+            "projection",
+            "symbolic",
+            "syntax",
+            "unresolved",
+            "unsupported"
+          ]
+        },
+        "value_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "value_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144
+        },
+        "specifiers": {
+          "enum": [
+            "N",
+            "Ni",
+            "Nin",
+            "Nn",
+            "i",
+            "in",
+            "n"
+          ]
+        },
+        "symbolic_type": {
+          "enum": [
+            "implicit_instance",
+            "specifier"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "symbolic"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "symbolic_type"
+            ]
+          }
+        }
+      ]
+    },
+    "definition_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "parser_family",
+        "allowed_roots",
+        "allowed_linked_files",
+        "definition_targets",
+        "manager_roots",
+        "path_bytes",
+        "alias_hops",
+        "path_symlink_hops",
+        "map_names",
+        "selected_files_per_definition",
+        "selected_files_total",
+        "body_bytes_per_read",
+        "body_bytes_total",
+        "filesystem_work",
+        "manager_commands",
+        "manager_output_bytes",
+        "relation_attempts_per_definition",
+        "relation_attempts_total",
+        "evidence_bytes",
+        "path_records",
+        "path_record_bytes",
+        "source_read_records",
+        "source_read_record_bytes",
+        "relation_record_bytes",
+        "definition_header_bytes"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademySystemdDefinitionProfile.v1"
+        },
+        "parser_family": {
+          "const": 255
+        },
+        "allowed_roots": {
+          "const": [
+            "/etc/systemd/system.control",
+            "/run/systemd/system.control",
+            "/run/systemd/transient",
+            "/run/systemd/generator.early",
+            "/etc/systemd/system",
+            "/etc/systemd/system.attached",
+            "/run/systemd/system",
+            "/run/systemd/system.attached",
+            "/run/systemd/generator",
+            "/usr/local/lib/systemd/system",
+            "/usr/lib/systemd/system",
+            "/lib/systemd/system",
+            "/run/systemd/generator.late"
+          ]
+        },
+        "allowed_linked_files": {
+          "const": []
+        },
+        "definition_targets": {
+          "const": 128
+        },
+        "manager_roots": {
+          "const": 32
+        },
+        "path_bytes": {
+          "const": 4096
+        },
+        "alias_hops": {
+          "const": 8
+        },
+        "path_symlink_hops": {
+          "const": 32
+        },
+        "map_names": {
+          "const": 8192
+        },
+        "selected_files_per_definition": {
+          "const": 64
+        },
+        "selected_files_total": {
+          "const": 512
+        },
+        "body_bytes_per_read": {
+          "const": 262144
+        },
+        "body_bytes_total": {
+          "const": 33554432
+        },
+        "filesystem_work": {
+          "const": 12000
+        },
+        "manager_commands": {
+          "const": 4
+        },
+        "manager_output_bytes": {
+          "const": 131072
+        },
+        "relation_attempts_per_definition": {
+          "const": 1024
+        },
+        "relation_attempts_total": {
+          "const": 32768
+        },
+        "evidence_bytes": {
+          "const": 16777216
+        },
+        "path_records": {
+          "const": 4096
+        },
+        "path_record_bytes": {
+          "const": 768
+        },
+        "source_read_records": {
+          "const": 1024
+        },
+        "source_read_record_bytes": {
+          "const": 1024
+        },
+        "relation_record_bytes": {
+          "const": 256
+        },
+        "definition_header_bytes": {
+          "const": 8192
+        }
+      }
+    },
+    "definition_source_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path_reference",
+        "kind",
+        "mask",
+        "initial_read",
+        "repeated_read"
+      ],
+      "properties": {
+        "path_reference": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "kind": {
+          "enum": [
+            "dropin",
+            "fragment"
+          ]
+        },
+        "mask": {
+          "type": "boolean"
+        },
+        "initial_read": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1023
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repeated_read": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1023
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "definition_path_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "path_sha256",
+        "kind",
+        "metadata_sha256",
+        "target_sha256"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "initial",
+            "repeated"
+          ]
+        },
+        "path_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "kind": {
+          "enum": [
+            "absent",
+            "component_symlink",
+            "dangling_dependency_target",
+            "dependency_entry",
+            "dependency_mask",
+            "dependency_target",
+            "directory",
+            "ignored_incompatible_alias",
+            "selected_regular",
+            "selected_symlink",
+            "verified_null_mask"
+          ]
+        },
+        "metadata_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entries_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "compatibility": {
+          "enum": [
+            "matching",
+            "mismatched_warning",
+            "not_symlink"
+          ]
+        }
+      }
+    },
+    "definition_manager_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "property",
+        "output",
+        "typed_value_valid",
+        "value_count"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "initial",
+            "repeated"
+          ]
+        },
+        "property": {
+          "enum": [
+            "UnitPath",
+            "Version"
+          ]
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/projection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "typed_value_valid": {
+          "type": "boolean"
+        },
+        "value_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "definition_facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "source_kind",
+        "definition_profile",
+        "definition_profile_sha256",
+        "manager_before",
+        "manager_after",
+        "requested_identity_sha256",
+        "canonical_identity_sha256",
+        "aliases",
+        "mask",
+        "sources",
+        "relation_range",
+        "relation_attempts",
+        "unresolved_requirements",
+        "source_acquisition_complete",
+        "activation_semantics_complete",
+        "classification",
+        "authority_refs",
+        "fragment_kind",
+        "linked_target_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademySystemdTemplateDefinitionFacts.v1"
+        },
+        "source_kind": {
+          "const": "template_definition"
+        },
+        "definition_profile": {
+          "$ref": "#/$defs/definition_profile"
+        },
+        "definition_profile_sha256": {
+          "const": "713859b6fdc5043a963a7463c0182a47ab0668416dc916019e0a88de7c6f60ab"
+        },
+        "manager_before": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "uniqueItems": true
+        },
+        "manager_after": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "uniqueItems": true
+        },
+        "requested_identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "canonical_identity_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "ordered_sha256",
+            "identity_sha256"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8192
+            },
+            "ordered_sha256": {
+              "$ref": "#/$defs/hash"
+            },
+            "identity_sha256": {
+              "type": "array",
+              "maxItems": 8192,
+              "items": {
+                "$ref": "#/$defs/hash"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "mask": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/definition_source_reference"
+          }
+        },
+        "relation_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32768
+          }
+        },
+        "relation_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "unresolved_requirements": {
+          "type": "array",
+          "maxItems": 168,
+          "items": {
+            "enum": [
+              "activation_semantics_incomplete",
+              "all_entities_unresolved",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "definition_access_denied",
+              "definition_alias_cycle",
+              "definition_alias_dangling",
+              "definition_alias_hops_bound",
+              "definition_alias_order_ambiguous",
+              "definition_body_read_bound",
+              "definition_body_total_bound",
+              "definition_close_failed",
+              "definition_directory_entries_bound",
+              "definition_evidence_bound",
+              "definition_filesystem_unavailable",
+              "definition_filesystem_work_bound",
+              "definition_fragment_absent",
+              "definition_header_bound",
+              "definition_interrupted",
+              "definition_link_outside_profile",
+              "definition_link_value_unsupported",
+              "definition_linked_target_unprofiled",
+              "definition_linked_unit_unprofiled",
+              "definition_manager_changed",
+              "definition_manager_command_bound",
+              "definition_manager_observations_bound",
+              "definition_manager_observations_record_bound",
+              "definition_manager_value_unsupported",
+              "definition_map_names_bound",
+              "definition_mask_unverified",
+              "definition_non_directory",
+              "definition_parser_version_unsupported",
+              "definition_path_bytes_bound",
+              "definition_path_hops_bound",
+              "definition_path_observations_bound",
+              "definition_path_observations_record_bound",
+              "definition_relation_target_bound",
+              "definition_relation_total_bound",
+              "definition_relations_bound",
+              "definition_relations_record_bound",
+              "definition_relations_unavailable",
+              "definition_second_pass_reservation_bound",
+              "definition_selected_nonregular",
+              "definition_selected_per_target_bound",
+              "definition_selected_source_missing",
+              "definition_selected_sources_changed",
+              "definition_selected_total_bound",
+              "definition_shared_file_bound",
+              "definition_snapshot_changed",
+              "definition_source_reads_bound",
+              "definition_source_reads_record_bound",
+              "definition_syntax_unsupported",
+              "definition_target_bound",
+              "definition_unit_name_unsupported",
+              "definition_unitpath_unsupported",
+              "definition_unsafe_metadata",
+              "dependency_name_unsupported",
+              "directive_semantics_unresolved",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "duplicate_graph_key",
+              "enumeration_boundary_unavailable",
+              "enumeration_membership_changed",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "graph_byte_bound",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget",
+              "graph_endpoint_unit_budget",
+              "graph_fields_changed_or_unavailable",
+              "graph_finalization_unavailable",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "hash_only_relationships_require_review",
+              "install_intent_not_enabled_state",
+              "interrupted_signal",
+              "line_missing_equals",
+              "membership_changed_or_unavailable",
+              "missing_graph_fields",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "nss_continuation_unsupported",
+              "nss_control_boundary_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_file_unsafe_metadata",
+              "nss_inline_comment_unsupported",
+              "nss_syntax_or_clause_unsupported",
+              "observation_unavailable",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "specifier_unsupported",
+              "symbolic_binding_unresolved",
+              "typed_alias_binding_unconfirmed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "unexpected_graph_key",
+              "union_units_truncated",
+              "unitpath_root_outside_profile",
+              "unknown_provider_semantics_unresolved",
+              "unresolved_graph_endpoint",
+              "unsupported_account_format",
+              "unsupported_graph_value",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_manager_uid_representation_unresolved",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "source_acquisition_complete": {
+          "type": "boolean"
+        },
+        "activation_semantics_complete": {
+          "const": false
+        },
+        "classification": {
+          "const": "unknown"
+        },
+        "authority_refs": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "fragment_kind": {
+          "enum": [
+            null,
+            "regular",
+            "empty_mask",
+            "null_mask",
+            "linked_unit"
+          ]
+        },
+        "linked_target_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source_acquisition_complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "manager_before": {
+                "minItems": 2
+              },
+              "manager_after": {
+                "minItems": 2
+              },
+              "sources": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "definition_projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144
+        }
+      }
+    },
+    "definition_accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filesystem_work",
+        "body_bytes",
+        "manager_attempts",
+        "relation_attempts",
+        "encoded_bytes",
+        "unparsed_tail",
+        "selected_paths",
+        "distinct_bodies",
+        "reserved_second_pass_work",
+        "reserved_second_pass_bytes",
+        "reserved_second_pass_reads"
+      ],
+      "properties": {
+        "filesystem_work": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12000
+        },
+        "body_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "manager_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "relation_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "encoded_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15728640
+        },
+        "unparsed_tail": {
+          "type": "boolean"
+        },
+        "selected_paths": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 512
+        },
+        "distinct_bodies": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 512
+        },
+        "reserved_second_pass_work": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12000
+        },
+        "reserved_second_pass_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "reserved_second_pass_reads": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 512
+        }
+      }
+    },
+    "resource_definition_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enumerated",
+        "inspected",
+        "raced",
+        "complete",
+        "enumeration_complete",
+        "classification_complete",
+        "gaps",
+        "records",
+        "skipped",
+        "definition_profile",
+        "definition_profile_sha256",
+        "manager_observations",
+        "path_observations",
+        "source_reads",
+        "relations",
+        "definition_accounting"
+      ],
+      "properties": {
+        "enumerated": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "inspected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "raced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "enumeration_complete": {
+          "type": "boolean"
+        },
+        "classification_complete": {
+          "const": false
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 160,
+          "items": {
+            "enum": [
+              "all_entities_unresolved",
+              "captured_payload_limit",
+              "child_cleanup_unconfirmed",
+              "child_leader_ownership_unconfirmed",
+              "command_failed",
+              "command_or_time_limit",
+              "command_unavailable_timeout_or_bound",
+              "definition_access_denied",
+              "definition_alias_cycle",
+              "definition_alias_dangling",
+              "definition_alias_hops_bound",
+              "definition_alias_order_ambiguous",
+              "definition_body_read_bound",
+              "definition_body_total_bound",
+              "definition_close_failed",
+              "definition_directory_entries_bound",
+              "definition_evidence_bound",
+              "definition_filesystem_unavailable",
+              "definition_filesystem_work_bound",
+              "definition_fragment_absent",
+              "definition_header_bound",
+              "definition_interrupted",
+              "definition_link_outside_profile",
+              "definition_link_value_unsupported",
+              "definition_linked_target_unprofiled",
+              "definition_linked_unit_unprofiled",
+              "definition_manager_changed",
+              "definition_manager_command_bound",
+              "definition_manager_observations_bound",
+              "definition_manager_observations_record_bound",
+              "definition_manager_value_unsupported",
+              "definition_map_names_bound",
+              "definition_mask_unverified",
+              "definition_non_directory",
+              "definition_parser_version_unsupported",
+              "definition_path_bytes_bound",
+              "definition_path_hops_bound",
+              "definition_path_observations_bound",
+              "definition_path_observations_record_bound",
+              "definition_relation_target_bound",
+              "definition_relation_total_bound",
+              "definition_relations_bound",
+              "definition_relations_record_bound",
+              "definition_second_pass_reservation_bound",
+              "definition_selected_nonregular",
+              "definition_selected_per_target_bound",
+              "definition_selected_source_missing",
+              "definition_selected_sources_changed",
+              "definition_selected_total_bound",
+              "definition_shared_file_bound",
+              "definition_snapshot_changed",
+              "definition_source_reads_bound",
+              "definition_source_reads_record_bound",
+              "definition_target_bound",
+              "definition_unit_name_unsupported",
+              "definition_unitpath_unsupported",
+              "definition_unsafe_metadata",
+              "directory_access_denied",
+              "directory_denied_unsafe_or_absent",
+              "directory_enumeration_denied_or_bound",
+              "directory_missing_path",
+              "directory_unsafe_or_os_error",
+              "duplicate_graph_key",
+              "enumeration_boundary_unavailable",
+              "enumeration_membership_changed",
+              "file_access_denied",
+              "file_byte_bound",
+              "file_denied_raced_or_bound",
+              "file_missing_path",
+              "file_nonregular",
+              "file_or_time_limit",
+              "file_os_error",
+              "file_snapshot_changed",
+              "file_unreadable_or_bound",
+              "file_unsafe_owner",
+              "file_unsafe_symlink",
+              "fixed_scheduler_path_missing",
+              "fixed_scheduler_path_unreadable",
+              "graph_byte_bound",
+              "graph_endpoint_field_budget",
+              "graph_endpoint_initial_pass_budget",
+              "graph_endpoint_repeated_pass_budget",
+              "graph_endpoint_total_budget",
+              "graph_endpoint_unit_budget",
+              "graph_fields_changed_or_unavailable",
+              "graph_finalization_unavailable",
+              "graph_line_bound",
+              "graph_work_interrupted_or_deadline",
+              "hash_only_relationships_require_review",
+              "interrupted_signal",
+              "line_missing_equals",
+              "membership_changed_or_unavailable",
+              "missing_graph_fields",
+              "non_atomic_snapshot_no_exclusion",
+              "nonregular_entry_unresolved",
+              "not_collected_no_container_access",
+              "not_collected_no_database_access",
+              "nss_accounts_not_enumerated",
+              "nss_continuation_unsupported",
+              "nss_control_boundary_unsupported",
+              "nss_database_missing_unresolved",
+              "nss_duplicate_database_unresolved",
+              "nss_file_unsafe_metadata",
+              "nss_inline_comment_unsupported",
+              "nss_syntax_or_clause_unsupported",
+              "observation_retention_limit",
+              "observation_unavailable",
+              "operator_scope_unanswered",
+              "periodic_scripts_metadata_only",
+              "precondition_refused",
+              "prior_child_cleanup_unconfirmed",
+              "process_identity_raced",
+              "process_identity_unconfirmed",
+              "process_kind_changed",
+              "process_link_unavailable",
+              "process_path_missing_identity_unconfirmed",
+              "process_projection_incomplete",
+              "process_representation_changed",
+              "process_set_changed",
+              "process_status_uid_unsupported",
+              "process_unreadable_or_unsupported",
+              "process_vanished_denied_or_raced",
+              "procfs_access_denied",
+              "procfs_field_or_pid_rejected",
+              "procfs_file_byte_bound",
+              "procfs_final_mount_unproved",
+              "procfs_identity_or_permissions_unproved",
+              "procfs_mount_unproved",
+              "procfs_os_error",
+              "procfs_path_missing",
+              "procfs_snapshot_changed",
+              "procfs_uid_attribution_unresolved",
+              "property_omission_unresolved",
+              "property_retry_unresolved",
+              "row_limit",
+              "run_parts_not_executable",
+              "scheduler_account_filename_unresolved",
+              "scheduler_content_unavailable",
+              "scheduler_entry_raced_or_denied",
+              "scheduler_entry_unreadable",
+              "scheduler_name_rejected",
+              "scheduler_owner_or_mode_unresolved",
+              "scheduler_owner_unresolved",
+              "scheduler_path_missing",
+              "scheduler_set_changed",
+              "typed_alias_binding_unconfirmed",
+              "typed_empty_unresolved",
+              "typed_getter_request_rejected",
+              "typed_unit_identity_unconfirmed",
+              "unexpected_failure",
+              "unexpected_graph_key",
+              "union_units_truncated",
+              "unitpath_root_outside_profile",
+              "unknown_provider_semantics_unresolved",
+              "unresolved_graph_endpoint",
+              "unsupported_account_format",
+              "unsupported_graph_value",
+              "unsupported_or_bounded_format",
+              "unsupported_spool_metadata_only",
+              "user_manager_uid_representation_unresolved",
+              "user_managers_not_collected_no_sessions_launched",
+              "userspace_process_link_unavailable"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/definition_record"
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "definition_profile": {
+          "$ref": "#/$defs/definition_profile"
+        },
+        "definition_profile_sha256": {
+          "const": "713859b6fdc5043a963a7463c0182a47ab0668416dc916019e0a88de7c6f60ab"
+        },
+        "manager_observations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/definition_manager_observation"
+          }
+        },
+        "path_observations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/definition_path_observation"
+          }
+        },
+        "source_reads": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/definition_source_read"
+          }
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 32768,
+          "items": {
+            "$ref": "#/$defs/definition_relation"
+          }
+        },
+        "definition_accounting": {
+          "$ref": "#/$defs/definition_accounting"
+        }
+      }
     }
   }
 }

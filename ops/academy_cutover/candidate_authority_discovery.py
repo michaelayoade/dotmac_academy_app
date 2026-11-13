@@ -184,6 +184,42 @@ def stage_json(value, limit):
     return staged
 
 
+# Source proposal only: manager UnitPath never authorizes an additional root.
+SYSTEMD_DEFINITION_ROOTS = (
+    "/etc/systemd/system.control", "/run/systemd/system.control", "/run/systemd/transient",
+    "/run/systemd/generator.early", "/etc/systemd/system", "/etc/systemd/system.attached",
+    "/run/systemd/system", "/run/systemd/system.attached", "/run/systemd/generator",
+    "/usr/local/lib/systemd/system", "/usr/lib/systemd/system", "/lib/systemd/system",
+    "/run/systemd/generator.late",
+)
+SYSTEMD_DEFINITION_PROFILE = {
+    "schema": "AcademySystemdDefinitionProfile.v1", "parser_family": 255,
+    "allowed_roots": list(SYSTEMD_DEFINITION_ROOTS),
+    "allowed_linked_files": [],
+    "definition_targets": 128, "manager_roots": 32, "path_bytes": 4096,
+    # unit-file.c v255 FOLLOW_MAX is 8, independently of filesystem traversal.
+    # https://github.com/systemd/systemd/blob/v255/src/basic/unit-file.c#L140
+    "alias_hops": 8, "path_symlink_hops": 32, "map_names": 8192,
+    "selected_files_per_definition": 64, "selected_files_total": 512,
+    "body_bytes_per_read": 262144, "body_bytes_total": 33554432,
+    "filesystem_work": 12000, "manager_commands": 4, "manager_output_bytes": 131072,
+    "relation_attempts_per_definition": 1024, "relation_attempts_total": 32768,
+    "evidence_bytes": 16777216, "path_records": 4096, "path_record_bytes": 768,
+    "source_read_records": 1024, "source_read_record_bytes": 1024,
+    "relation_record_bytes": 256, "definition_header_bytes": 8192,
+}
+DEFINITION_UNIT_TYPES = frozenset((
+    "service", "socket", "target", "device", "mount", "automount", "swap", "timer", "path", "slice", "scope",
+))
+DEFINITION_DEPENDENCIES = frozenset((
+    "Requires", "Requisite", "Wants", "BindsTo", "BindTo", "Upholds", "Conflicts", "Before", "After",
+    "OnSuccess", "OnFailure", "RequiresOverridable", "RequisiteOverridable", "PropagatesReloadTo",
+    "PropagateReloadTo", "ReloadPropagatedFrom",
+    "PropagateReloadFrom", "PropagatesStopTo", "StopPropagatedFrom", "PartOf", "JoinsNamespaceOf",
+))
+DEFINITION_EXEC = frozenset((
+    "ExecCondition", "ExecStartPre", "ExecStart", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost",
+))
 MAX_FILES = 16384
 MAX_BYTES = 1048576
 MAX_COMMAND_BYTES = 8388608
@@ -256,6 +292,10 @@ JOB_TYPES = frozenset(
 
 class SnapshotChangedError(ValueError):
     """Observed anchored-file snapshot mismatch; never contains raw file data."""
+
+
+class DefinitionRefusedError(ValueError):
+    """Fixed diagnostic code only, never an observed path or body."""
 
 
 def digest(data):
@@ -383,9 +423,9 @@ class Discovery:
             self.resource_stopped = True
             self.resource_stop_reason = self.resource_stop_reason or "captured_payload_limit"
 
-    def read_payload(self, fd, requested, domain, *, end=None):
+    def read_payload(self, fd, requested, domain, *, end=None, reader=None):
         allowance = self.payload_allowance(requested, domain, end)
-        block = os.read(fd, allowance)
+        block = os.read(fd, allowance) if reader is None else reader(fd, allowance)
         self.charge_payload(len(block))
         if len(block) > allowance:  # Defensive against an invalid injected adapter.
             raise ResourceLimitError
@@ -395,29 +435,46 @@ class Discovery:
         """Anchored proc exe/cwd only. No unbounded Python readlink fallback."""
         if name not in ("exe", "cwd"):
             raise ResourceLimitError
-        request = self.payload_allowance(RESOURCE_PROFILE["readlink_bytes"], domain)
-        try:
-            if self._readlink_adapter is None:
-                import ctypes
+        return self.read_link_payload(directory, name, domain, RESOURCE_PROFILE["readlink_bytes"])
 
-                libc = ctypes.CDLL(None, use_errno=True)
-                adapter = libc.readlinkat
-                adapter.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t]
-                adapter.restype = ctypes.c_ssize_t
-                self._readlink_adapter = (ctypes, adapter, libc)
-            ctypes, adapter, _libc = self._readlink_adapter
-            buffer = ctypes.create_string_buffer(request)
-            # Initialization may take time: check the gate again immediately before I/O.
-            request = self.payload_allowance(request, domain)
-            count = adapter(directory, os.fsencode(name), buffer, request)
-            if count < 0:
-                raise OSError
-            self.charge_payload(count)
-            if count >= request:
+    def native_readlink_bytes(self, directory, name, request, domain):
+        """One sized native call; the caller charges and checks the returned bytes."""
+        if self._readlink_adapter is None:
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            adapter = libc.readlinkat
+            adapter.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t]
+            adapter.restype = ctypes.c_ssize_t
+            self._readlink_adapter = (ctypes, adapter, libc)
+        ctypes, adapter, _libc = self._readlink_adapter
+        buffer = ctypes.create_string_buffer(request)
+        # Loading and allocation precede this final stop/deadline check.
+        if self.payload_allowance(request, domain) != request:
+            raise ResourceLimitError
+        count = adapter(directory, os.fsencode(name), buffer, request)
+        if count < 0:
+            raise OSError
+        if count > request:
+            raise ResourceLimitError
+        return buffer.raw[:count]
+
+    def read_link_payload(self, directory, name, domain, maximum, *, reader=None,
+                          unavailable="userspace_process_link_unavailable"):
+        """Sized capture for a validated anchored leaf; no path traversal operand."""
+        leaf = os.fsencode(name)
+        if not leaf or len(leaf) > 255 or leaf in (b".", b"..") or b"/" in leaf or b"\x00" in leaf:
+            raise ResourceLimitError
+        request = self.payload_allowance(min(maximum, RESOURCE_PROFILE["readlink_bytes"]), domain)
+        try:
+            block = (self.native_readlink_bytes(directory, name, request, domain) if reader is None
+                     else reader(directory, name, request))
+            self.charge_payload(len(block))
+            if len(block) >= request:
                 raise ResourceLimitError
-            return buffer.raw[:count]
+            return block
         except (ImportError, AttributeError, OSError, TypeError, ResourceLimitError):
-            self.gap(domain, "userspace_process_link_unavailable")
+            self.gap(domain, unavailable)
             raise ResourceLimitError from None
 
     def stop_retention(self):
@@ -488,19 +545,27 @@ class Discovery:
         return True
 
     def run(self, args, domain, *, getter=False):
+        manager_request = False
         if getter:
             allowed = {
                 (BUS_INTERFACE_PREFIX + interface, field)
                 for field, (_signature, interfaces) in TYPED_PROPERTIES.items()
                 for interface in interfaces.values()
             } | {(BUS_INTERFACE_PREFIX + "Unit", field) for field in ("Id", "Names")}
-            if (
-                len(args) != 5 or args[:2] != [
-                    "get-property", "org.freedesktop.systemd1"
-                ]
-                or not BUS_OBJECT.fullmatch(args[2])
-                or (args[3], args[4]) not in allowed
-            ):
+            manager_request = (
+                domain == DEFINITION_DOMAIN and len(args) == 5
+                and args[:4] == ["get-property", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                                 "org.freedesktop.systemd1.Manager"]
+                and args[4] in ("UnitPath", "Version")
+            )
+            unit_request = (
+                len(args) == 5 and args[:2] == ["get-property", "org.freedesktop.systemd1"]
+                and BUS_OBJECT.fullmatch(args[2]) and (args[3], args[4]) in allowed
+            )
+            if manager_request and self.definition_state()["manager_pending"] != args[4]:
+                self.gap(domain, "typed_getter_request_rejected")
+                return None
+            if not (manager_request or unit_request):
                 self.gap(domain, "typed_getter_request_rejected")
                 return None
             command = [
@@ -527,6 +592,8 @@ class Discovery:
         output = bytearray()
         okay = True
         try:
+            # A child cannot be admitted without capacity to observe its output.
+            self.payload_allowance(1, domain)
             self.child_phase = "spawning"
             # Fixed read-only verbs; unit operands come from validated JSON enumeration.
             child = subprocess.Popen(  # noqa: S603
@@ -559,7 +626,8 @@ class Discovery:
                     if not block:
                         break
                     output.extend(block)
-                    if len(output) > MAX_COMMAND_BYTES:
+                    limit = SYSTEMD_DEFINITION_PROFILE["manager_output_bytes"] if manager_request else MAX_COMMAND_BYTES
+                    if len(output) > limit:
                         raise ValueError
             # Observe exit without releasing the leader PID/PGID reservation.
             while True:
@@ -1448,6 +1516,1250 @@ class Discovery:
             and self.domain("systemd_loaded")["enumeration_complete"]
         )
         self.finish_unit_graph(installed, loaded, graph_observations)
+
+    @staticmethod
+    def definition_profile_hash():
+        return digest(json.dumps(SYSTEMD_DEFINITION_PROFILE, sort_keys=True, separators=(",", ":")).encode("ascii"))
+
+    def definition_state(self):
+        if not hasattr(self, "_definition"):
+            self._definition = {
+                "work": 0, "reserved_work": 0, "body_bytes": 0, "reserved_bytes": 0,
+                "manager_attempts": 0, "relation_attempts": 0, "encoded_bytes": 0,
+                "unparsed_tail": False, "phase": "initial", "directories": {}, "fds": set(),
+                "paths": {}, "sources": {}, "selected_paths": set(), "source_keys": {}, "manager": [], "failures": [],
+                "null_reference": None, "null_identity": None, "manager_pending": None,
+                "active_roots": (), "last_reduction": None,
+            }
+            domain = self.domain(DEFINITION_DOMAIN)
+            domain.update(
+                definition_profile=dict(SYSTEMD_DEFINITION_PROFILE),
+                definition_profile_sha256=self.definition_profile_hash(),
+                manager_observations=[], path_observations=[], source_reads=[], relations=[],
+                definition_accounting={
+                    "filesystem_work": 0, "body_bytes": 0, "manager_attempts": 0,
+                    "relation_attempts": 0, "encoded_bytes": 0, "unparsed_tail": False,
+                    "selected_paths": 0, "distinct_bodies": 0, "reserved_second_pass_work": 0,
+                    "reserved_second_pass_bytes": 0, "reserved_second_pass_reads": 0,
+                },
+            )
+        return self._definition
+
+    def definition_refuse(self, code):
+        state = self.definition_state()
+        if code not in state["failures"]:
+            state["failures"].append(code)
+        if code.endswith("_bound") or code == "definition_interrupted":
+            state["unparsed_tail"] = True
+        self.gap(DEFINITION_DOMAIN, code, raced=code == "definition_snapshot_changed")
+        raise DefinitionRefusedError(code)
+
+    def definition_charge(self, amount=1):
+        state = self.definition_state()
+        if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+            self.definition_refuse("definition_interrupted")
+        if state["work"] + state["reserved_work"] + amount > SYSTEMD_DEFINITION_PROFILE["filesystem_work"]:
+            self.definition_refuse("definition_filesystem_work_bound")
+        if self.files + state["reserved_work"] + amount > MAX_FILES:
+            self.definition_refuse("definition_shared_file_bound")
+        state["work"] += amount
+        self.files += amount
+
+    def definition_syscall(self, operation, *args, **kwargs):
+        """Fixed filesystem seam for hosted synthetic qualification; no subprocess."""
+        if operation == "readlink":
+            return self.native_readlink_bytes(kwargs["dir_fd"], args[0], kwargs["maximum"], DEFINITION_DOMAIN)
+        operations = {
+            "open": os.open, "close": os.close, "stat": os.stat, "fstat": os.fstat,
+            "scandir": os.scandir, "read": os.read,
+        }
+        return operations[operation](*args, **kwargs)
+
+    def definition_io(self, operation, *args, **kwargs):
+        self.definition_charge()
+        if operation == "read":
+            try:
+                return self.read_payload(
+                    args[0], args[1], DEFINITION_DOMAIN,
+                    reader=lambda fd, count: self.definition_syscall("read", fd, count),
+                )
+            except ResourceLimitError:
+                self.definition_refuse("definition_interrupted")
+        if operation == "readlink":
+            try:
+                block = self.read_link_payload(
+                    kwargs["dir_fd"], args[0], DEFINITION_DOMAIN,
+                    SYSTEMD_DEFINITION_PROFILE["path_bytes"] + RESOURCE_PROFILE["overflow_probe_bytes"],
+                    reader=lambda fd, name, count: self.definition_syscall("readlink", name, dir_fd=fd, maximum=count),
+                    unavailable="definition_link_value_unsupported",
+                )
+            except ResourceLimitError:
+                self.definition_refuse(
+                    "definition_interrupted" if self.resource_stopped else "definition_link_value_unsupported"
+                )
+            return os.fsdecode(block)
+        return self.definition_syscall(operation, *args, **kwargs)
+
+    def definition_open(self, path, flags, **kwargs):
+        state = self.definition_state()
+        # Reserve the close before opening, including during a partial failure.
+        self.definition_charge(2)
+        state["work"] -= 1
+        self.files -= 1
+        state["reserved_work"] += 1
+        try:
+            fd = self.definition_syscall("open", path, flags, **kwargs)
+        except OSError:
+            state["reserved_work"] -= 1
+            raise
+        state["fds"].add(fd)
+        return fd
+
+    def definition_close(self, fd):
+        state = self.definition_state()
+        if fd not in state["fds"]:
+            return
+        state["fds"].remove(fd)
+        state["reserved_work"] -= 1
+        state["work"] += 1
+        self.files += 1
+        try:
+            self.definition_syscall("close", fd)
+        except OSError:
+            self.gap(DEFINITION_DOMAIN, "definition_close_failed")
+            if "definition_close_failed" not in state["failures"]:
+                state["failures"].append("definition_close_failed")
+
+    def definition_append(self, table, record, cap, byte_cap):
+        state = self.definition_state()
+        if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+            self.definition_refuse("definition_interrupted")
+        target = self.domain(DEFINITION_DOMAIN)[table]
+        if len(target) >= cap:
+            self.definition_refuse("definition_" + table + "_bound")
+        encoded = len(json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        # Leave one MiB for domain framing, bounded diagnostics, profile, and indices.
+        if encoded > byte_cap:
+            self.definition_refuse("definition_" + table + "_record_bound")
+        if state["encoded_bytes"] + encoded + 1 > SYSTEMD_DEFINITION_PROFILE["evidence_bytes"] - 1048576:
+            self.definition_refuse("definition_evidence_bound")
+        index = len(target)
+        target.append(record)
+        state["encoded_bytes"] += encoded + 1
+        return index
+
+    @staticmethod
+    def definition_unit_parts(name):
+        # unit-name.c v255 permits additional @ in the instance, never the prefix.
+        if not isinstance(name, str) or not name.isascii() or not UNIT.fullmatch(name):
+            return None
+        stem, dot, suffix = name.rpartition(".")
+        if not dot or not stem or suffix not in DEFINITION_UNIT_TYPES or stem.startswith("@"):
+            return None
+        prefix, at, instance = stem.partition("@")
+        return prefix, instance if at else None, suffix
+
+    @staticmethod
+    def definition_typed_strings(raw, signature):
+        """busctl typed as/s subset: exact count, double quotes, no escapes."""
+        if raw is None or len(raw) > SYSTEMD_DEFINITION_PROFILE["manager_output_bytes"] or not raw.endswith(b"\n"):
+            return None
+        if not raw.isascii() or b"\\" in raw or b"\r" in raw or b"\x00" in raw:
+            return None
+        data = raw[:-1]
+        if signature == "s":
+            if not data.startswith(b's "') or not data.endswith(b'"') or b'"' in data[3:-1]:
+                return None
+            return [data[3:-1].decode("ascii")]
+        if not data.startswith(b"as "):
+            return None
+        count_raw, space, rest = data[3:].partition(b" ")
+        if not count_raw.isdigit() or len(count_raw) > 2 or str(int(count_raw)).encode() != count_raw:
+            return None
+        count = int(count_raw)
+        if count > SYSTEMD_DEFINITION_PROFILE["manager_roots"]:
+            return None
+        if count == 0:
+            return [] if not space else None
+        values = []
+        cursor = 0
+        while cursor < len(rest) and len(values) < count:
+            if rest[cursor:cursor + 1] != b'"':
+                return None
+            end = rest.find(b'"', cursor + 1)
+            if end < 0 or end - cursor - 1 > SYSTEMD_DEFINITION_PROFILE["path_bytes"]:
+                return None
+            values.append(rest[cursor + 1:end].decode("ascii"))
+            cursor = end + 1
+            if cursor < len(rest):
+                if rest[cursor:cursor + 1] != b" ":
+                    return None
+                cursor += 1
+                if cursor == len(rest):
+                    return None
+        return values if cursor == len(rest) and len(values) == count else None
+
+    def manager_unitpath_snapshot(self, phase):
+        state = self.definition_state()
+        values = {}
+        references = []
+        for field, signature in (("UnitPath", "as"), ("Version", "s")):
+            if state["manager_attempts"] >= SYSTEMD_DEFINITION_PROFILE["manager_commands"]:
+                self.definition_refuse("definition_manager_command_bound")
+            state["manager_attempts"] += 1
+            state["manager_pending"] = field
+            try:
+                raw = self.run([
+                    "get-property", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                    "org.freedesktop.systemd1.Manager", field,
+                ], DEFINITION_DOMAIN, getter=True)
+            finally:
+                state["manager_pending"] = None
+            parsed = self.definition_typed_strings(raw, signature)
+            record = {"phase": phase, "property": field, "output": projection(raw) if raw is not None else None,
+                      "typed_value_valid": parsed is not None,
+                      "value_count": len(parsed) if parsed is not None else None}
+            references.append(self.definition_append("manager_observations", record, 4, 1024))
+            values[field] = parsed
+        roots, version = values["UnitPath"], values["Version"]
+        if roots is None or version is None:
+            self.definition_refuse("definition_manager_value_unsupported")
+        if not roots or len(roots) != len(set(roots)):
+            self.definition_refuse("definition_unitpath_unsupported")
+        if any(root not in SYSTEMD_DEFINITION_ROOTS for root in roots):
+            self.definition_refuse("unitpath_root_outside_profile")
+        # Distribution suffixes remain opaque, but cannot silently select another parser family.
+        if not re.fullmatch(r"255(?:[. -][A-Za-z0-9_.+~:() -]{1,250})?", version[0]):
+            self.definition_refuse("definition_parser_version_unsupported")
+        return {"roots": roots, "version": version[0], "references": references}
+
+    @staticmethod
+    def definition_allowed_path(path, *, dev_null=False):
+        if not isinstance(path, str) or not path.isascii() or "\x00" in path or not path.startswith("/"):
+            return False
+        if len(path.encode("ascii")) > SYSTEMD_DEFINITION_PROFILE["path_bytes"] or os.path.normpath(path) != path:
+            return False
+        return (dev_null and path == "/dev") or any(
+            path == root or path.startswith(root + "/") for root in SYSTEMD_DEFINITION_ROOTS
+        )
+
+    def definition_link(self, parent, name, expected):
+        """The only definition readlink site; bounded, bracketed opaque link bytes."""
+        if expected.st_size > SYSTEMD_DEFINITION_PROFILE["path_bytes"]:
+            self.definition_refuse("definition_path_bytes_bound")
+        target = self.definition_io("readlink", name, dir_fd=parent)
+        if not isinstance(target, str) or not target.isascii() or len(target.encode()) > 4096 or "\x00" in target:
+            self.definition_refuse("definition_link_value_unsupported")
+        after = self.definition_io("stat", name, dir_fd=parent, follow_symlinks=False)
+        if self.file_identity(expected) != self.file_identity(after):
+            self.definition_refuse("definition_snapshot_changed")
+        return target
+
+    def definition_lookup_target_allowed(self, path):
+        return self.definition_allowed_path(path) and (
+            any(path.startswith(root + "/") for root in self.definition_state()["active_roots"])
+            or path in SYSTEMD_DEFINITION_PROFILE["allowed_linked_files"]
+        )
+
+    def definition_path_record(self, path, kind, identity=None, target=None, **extra):
+        state = self.definition_state()
+        record = {
+            "phase": state["phase"], "path_sha256": digest(os.fsencode(path)), "kind": kind,
+            "metadata_sha256": digest(json.dumps(identity).encode()) if identity is not None else None,
+            "target_sha256": digest(os.fsencode(target)) if target is not None else None, **extra,
+        }
+        return self.definition_append("path_observations", record, 4096, 768)
+
+    def definition_check_chain(self, chain):
+        for node in chain:
+            before = self.definition_io("fstat", node["fd"])
+            if self.file_identity(before) != node["identity"]:
+                self.definition_refuse("definition_snapshot_changed")
+            if node["parent"] is not None:
+                named = self.definition_io("stat", node["name"], dir_fd=node["parent"], follow_symlinks=False)
+                if self.file_identity(named) != node["named_identity"]:
+                    self.definition_refuse("definition_snapshot_changed")
+
+    def definition_directory(self, path, *, dev_null=False):
+        """Anchored component walker with checked links and prepaid descriptor closes."""
+        state = self.definition_state()
+        if not self.definition_allowed_path(path, dev_null=dev_null):
+            self.definition_refuse("definition_link_outside_profile")
+        cache = state["directories"]
+        if "/" not in cache:
+            fd = self.definition_open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            meta = self.definition_io("fstat", fd)
+            if meta.st_uid != 0 or meta.st_mode & 0o022:
+                self.definition_refuse("definition_unsafe_metadata")
+            cache["/"] = {"fd": fd, "parent": None, "name": "", "identity": self.file_identity(meta),
+                          "named_identity": self.file_identity(meta), "chain": [], "resolved": "/"}
+        current = cache["/"]
+        components = path.strip("/").split("/")
+        chain = [current]
+        hops = 0
+        while components:
+            component, components = components[0], components[1:]
+            candidate = os.path.join(current["resolved"], component)
+            try:
+                meta = self.definition_io("stat", component, dir_fd=current["fd"], follow_symlinks=False)
+            except FileNotFoundError:
+                parent_identity = self.definition_io("fstat", current["fd"])
+                try:
+                    self.definition_io("stat", component, dir_fd=current["fd"], follow_symlinks=False)
+                except FileNotFoundError:
+                    self.definition_check_chain(chain)
+                    if self.file_identity(parent_identity) != self.file_identity(
+                        self.definition_io("fstat", current["fd"])
+                    ):
+                        self.definition_refuse("definition_snapshot_changed")
+                    self.definition_path_record(path, "absent")
+                    return None
+                self.definition_refuse("definition_snapshot_changed")
+            if meta.st_uid != 0 or (not stat.S_ISLNK(meta.st_mode) and meta.st_mode & 0o022):
+                self.definition_refuse("definition_unsafe_metadata")
+            if stat.S_ISLNK(meta.st_mode):
+                hops += 1
+                if hops > SYSTEMD_DEFINITION_PROFILE["path_symlink_hops"]:
+                    self.definition_refuse("definition_path_hops_bound")
+                target = self.definition_link(current["fd"], component, meta)
+                final = os.path.normpath(os.path.join(current["resolved"], target, *components))
+                if not self.definition_allowed_path(final, dev_null=dev_null):
+                    self.definition_refuse("definition_link_outside_profile")
+                self.definition_path_record(candidate, "component_symlink", self.file_identity(meta), target)
+                # Retain the link's named identity while following its approved destination.
+                chain.append({"fd": current["fd"], "parent": current["fd"], "name": component,
+                              "identity": current["identity"], "named_identity": self.file_identity(meta)})
+                components = final.strip("/").split("/")
+                current = cache["/"]
+                continue
+            if not stat.S_ISDIR(meta.st_mode):
+                self.definition_refuse("definition_non_directory")
+            if candidate not in cache:
+                fd = self.definition_open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current["fd"])
+                opened = self.definition_io("fstat", fd)
+                if self.file_identity(meta) != self.file_identity(opened):
+                    self.definition_refuse("definition_snapshot_changed")
+                cache[candidate] = {
+                    "fd": fd, "parent": current["fd"], "name": component,
+                    "identity": self.file_identity(opened), "named_identity": self.file_identity(meta),
+                    "resolved": candidate,
+                }
+            current = cache[candidate]
+            chain.append(current)
+        self.definition_check_chain(chain)
+        return {"fd": current["fd"], "chain": chain, "resolved": current["resolved"]}
+
+    def definition_scan(self, path, scope="root"):
+        directory = self.definition_directory(path)
+        if directory is None:
+            return {"path": path, "resolved": path, "entries": {}, "absent": True, "identity": None, "custody": []}
+        fd = directory["fd"]
+        before = self.definition_io("fstat", fd)
+        entries = {}
+        # scandir and close are prepaid. Charge before EVERY iterator advance,
+        # including EOF/failed advances; no zero-allowance directory fetch occurs.
+        self.definition_charge(2)
+        with self.definition_syscall("scandir", fd) as iterator:
+            while True:
+                self.definition_charge()
+                try:
+                    entry = next(iterator)
+                except StopIteration:
+                    break
+                name = entry.name
+                if len(entries) >= SYSTEMD_DEFINITION_PROFILE["map_names"]:
+                    self.definition_refuse("definition_directory_entries_bound")
+                relevant = self.definition_unit_parts(name) is not None
+                if scope == "root":
+                    relevant |= any(
+                        name.endswith(suffix) and (
+                            self.definition_unit_parts(name[:-len(suffix)]) is not None
+                            or name[:-len(suffix)] in DEFINITION_UNIT_TYPES
+                        ) for suffix in (".d", ".wants", ".requires", ".upholds")
+                    )
+                elif scope == "dropin":
+                    relevant = name.endswith(".conf")
+                if not relevant:
+                    entries[name] = {"ignored": True}
+                    continue
+                meta = self.definition_io("stat", name, dir_fd=fd, follow_symlinks=False)
+                target = self.definition_link(fd, name, meta) if stat.S_ISLNK(meta.st_mode) else None
+                entries[name] = {"identity": self.file_identity(meta), "target": target,
+                                 "mode": meta.st_mode, "size": meta.st_size, "uid": meta.st_uid}
+        self.definition_check_chain(directory["chain"])
+        if self.file_identity(before) != self.file_identity(self.definition_io("fstat", fd)):
+            self.definition_refuse("definition_snapshot_changed")
+        packed = [(name, entries[name]) for name in sorted(entries)]
+        reference = self.definition_path_record(
+            path, "directory", self.file_identity(before),
+            entries_sha256=digest(json.dumps(packed, sort_keys=True, ensure_ascii=True).encode()), entries=len(entries),
+        )
+        custody = [(node["name"], node["identity"], node["named_identity"]) for node in directory["chain"]]
+        return {**directory, "path": path, "entries": entries, "absent": False, "reference": reference,
+                "identity": self.file_identity(before), "custody": custody}
+
+    def snapshot_unit_roots(self, roots):
+        return [self.definition_scan(root) for root in roots]
+
+    def definition_verify_null(self):
+        state = self.definition_state()
+        if state["null_reference"] is not None:
+            return state["null_reference"]
+        directory = self.definition_directory("/dev", dev_null=True)
+        if directory is None:
+            self.definition_refuse("definition_mask_unverified")
+        before = self.definition_io("stat", "null", dir_fd=directory["fd"], follow_symlinks=False)
+        after = self.definition_io("stat", "null", dir_fd=directory["fd"], follow_symlinks=False)
+        self.definition_check_chain(directory["chain"])
+        if (not stat.S_ISCHR(before.st_mode) or before.st_uid != 0 or before.st_rdev != os.makedev(1, 3)
+                or self.file_identity(before) != self.file_identity(after) or before.st_rdev != after.st_rdev):
+            self.definition_refuse("definition_mask_unverified")
+        identity = self.file_identity(before)
+        if state["null_identity"] is not None and state["null_identity"] != identity:
+            self.definition_refuse("definition_snapshot_changed")
+        state["null_identity"] = identity
+        state["null_reference"] = self.definition_path_record(
+            "/dev/null", "verified_null_mask", self.file_identity(before)
+        )
+        return state["null_reference"]
+
+    @staticmethod
+    def definition_alias_compatible(source, target):
+        left = Discovery.definition_unit_parts(source)
+        right = Discovery.definition_unit_parts(target)
+        if left is None or right is None or source == target or left[2] != right[2]:
+            return False
+        if left[2] not in ("service", "socket", "target", "device", "timer", "path"):
+            return False
+        if left[1] is not None and left[2] == "device":
+            return False
+        if (left[1] is None) != (right[1] is None):
+            return False
+        if left[1] == "" and right[1] != "":
+            return False
+        return right[1] in (left[1], "")
+
+    def build_unit_name_map(self, snapshots):
+        """v255 ordered first mapping, then reverse aliases; never read bodies."""
+        mapping = {}
+        expanded = {item["path"] for item in snapshots} | {item["resolved"] for item in snapshots}
+        for root in snapshots:
+            for name, metadata in sorted(root["entries"].items()):
+                if self.definition_unit_parts(name) is None or "identity" not in metadata or name in mapping:
+                    continue
+                if len(mapping) >= SYSTEMD_DEFINITION_PROFILE["map_names"]:
+                    self.definition_refuse("definition_map_names_bound")
+                path = os.path.join(root["path"], name)
+                mode = metadata["mode"]
+                if stat.S_ISDIR(mode):
+                    continue
+                if metadata["uid"] != 0 or (not stat.S_ISLNK(mode) and mode & 0o022):
+                    self.definition_refuse("definition_unsafe_metadata")
+                item = {"path": path, "metadata": metadata, "destination": None, "kind": "regular"}
+                if stat.S_ISREG(mode):
+                    item["kind"] = "empty_mask" if metadata["size"] == 0 else "regular"
+                elif stat.S_ISLNK(mode):
+                    destination = os.path.normpath(os.path.join(root["resolved"], metadata["target"]))
+                    if destination == "/dev/null":
+                        item["kind"] = "null_mask"
+                        self.definition_verify_null()
+                    elif any(destination.startswith(lookup + "/") for lookup in expanded):
+                        # chase(... CHASE_NOFOLLOW|CHASE_NONEXISTENT) resolves
+                        # intermediate components, never the alias's final name.
+                        parent = self.definition_directory(os.path.dirname(destination))
+                        if parent is not None:
+                            destination = os.path.join(parent["resolved"], os.path.basename(destination))
+                        if not any(destination.startswith(lookup + "/") for lookup in expanded):
+                            item["kind"], item["destination_path"] = "linked_unit", destination
+                            mapping[name] = item
+                            continue
+                        target = os.path.basename(destination)
+                        if not self.definition_alias_compatible(name, target):
+                            self.definition_path_record(path, "ignored_incompatible_alias", metadata["identity"],
+                                                        metadata["target"])
+                            continue
+                        item["kind"], item["destination"] = "alias", target
+                    else:
+                        item["kind"], item["destination_path"] = "linked_unit", destination
+                else:
+                    continue
+                mapping[name] = item
+        return mapping
+
+    def resolve_template_fragment(self, name, mapping):
+        parts = self.definition_unit_parts(name)
+        if parts is None:
+            self.definition_refuse("definition_unit_name_unsupported")
+
+        def resolve(start):
+            current = start
+            seen = set()
+            for _ in range(SYSTEMD_DEFINITION_PROFILE["alias_hops"]):
+                if current in seen:
+                    return None, current, "definition_alias_cycle"
+                seen.add(current)
+                item = mapping.get(current)
+                if item is None:
+                    info = self.definition_unit_parts(current)
+                    if current != start and info is not None and info[1] not in (None, ""):
+                        current = info[0] + "@." + info[2]
+                        item = mapping.get(current)
+                    if item is None:
+                        failure = "definition_fragment_absent" if current == start else "definition_alias_dangling"
+                        return None, current, failure
+                if item["kind"] == "alias":
+                    current = item["destination"]
+                    continue
+                if item["kind"] == "linked_unit" and (
+                    item["destination_path"] not in SYSTEMD_DEFINITION_PROFILE["allowed_linked_files"]
+                ):
+                    return item, current, "definition_linked_unit_unprofiled"
+                return item, current, None
+            return None, current, "definition_alias_hops_bound"
+
+        item, canonical, failure = resolve(name)
+        if failure in ("definition_fragment_absent", "definition_alias_dangling") and parts[1] not in (None, ""):
+            item, canonical, failure = resolve(parts[0] + "@." + parts[2])
+        aliases = set()
+        if item is not None and failure is None and item["kind"] not in ("empty_mask", "null_mask"):
+            canonical_parts = self.definition_unit_parts(canonical)
+            if parts[1] not in (None, "") and canonical_parts[1] == "":
+                canonical = canonical_parts[0] + "@" + parts[1] + "." + parts[2]
+            # add_names(unit-file.c): template aliases inherit an established instance;
+            # an existing instance fragment pointing elsewhere excludes that alias.
+            for alias in mapping:
+                resolved, _destination, error = resolve(alias)
+                if resolved is None or error is not None or resolved["path"] != item["path"]:
+                    continue
+                alias_parts = self.definition_unit_parts(alias)
+                if parts[1] not in (None, "") and alias_parts[1] == "":
+                    inherited = alias_parts[0] + "@" + parts[1] + "." + alias_parts[2]
+                    explicit, _destination, _error = resolve(inherited)
+                    if explicit is not None and explicit["path"] != item["path"]:
+                        continue
+                    aliases.add(inherited)
+                elif (parts[1] is None) == (alias_parts[1] is None) and (
+                    parts[1] in (None, "") or alias_parts[1] == parts[1]
+                ):
+                    aliases.add(alias)
+            aliases.add(name)
+        return {"requested": name, "canonical": canonical, "fragment": item, "failure": failure,
+                "aliases": aliases - {canonical}}
+
+    @staticmethod
+    def definition_candidate_dirs(name):
+        """Port v255 unit_file_find_dirs recursion, not a specificity score."""
+        if name in DEFINITION_UNIT_TYPES:
+            return [name]
+        parts = Discovery.definition_unit_parts(name)
+        if parts is None:
+            return []
+        prefix, instance, suffix = parts
+        result = [name]
+        if instance not in (None, ""):
+            result.extend(Discovery.definition_candidate_dirs(prefix + "@." + suffix))
+        chopped = False
+        while "-" in prefix:
+            dash = prefix.rfind("-")
+            if dash == 0:
+                break
+            if dash + 1 < len(prefix) or chopped:
+                prefix = prefix[:dash + 1]
+                built = prefix + ("@" + instance if instance not in (None, "") else "") + "." + suffix
+                result.extend(Discovery.definition_candidate_dirs(built))
+                break
+            prefix = prefix[:dash]
+            chopped = True
+        return list(dict.fromkeys(result))
+
+    def select_definition_sources(self, resolution, roots):
+        fragment = resolution["fragment"]
+        selected = []
+        consulted = []
+        dependencies = []
+        if fragment is not None and resolution["failure"] is None:
+            selected.append({"path": fragment["path"], "kind": "fragment", "metadata": fragment["metadata"],
+                             "mask": fragment["kind"] in ("empty_mask", "null_mask")})
+        if resolution["failure"] is not None or fragment is None or fragment["kind"] in ("empty_mask", "null_mask"):
+            return {"selected": selected, "consulted": consulted, "dependencies": dependencies, "ambiguities": []}
+        groups = [(resolution["canonical"], "canonical")]
+        groups.extend((alias, "alias") for alias in sorted(resolution["aliases"]))
+        groups.append((resolution["canonical"].rpartition(".")[2], "type"))
+        ambiguities = set()
+        for directory_suffix, file_suffix, directive in (
+            (".d", ".conf", None), (".wants", None, "Wants"),
+            (".requires", None, "Requires"), (".upholds", None, "Upholds"),
+        ):
+            winners = {}
+            visited = set()
+            ambiguous_winners = set()
+            for unit, group in groups:
+                for root in roots:
+                    for candidate in self.definition_candidate_dirs(unit):
+                        path = root + "/" + candidate + directory_suffix
+                        if path in visited:
+                            continue
+                        visited.add(path)
+                        snapshot = self.definition_scan(path, "dropin" if directive is None else "dependency")
+                        consulted.append(snapshot)
+                        for filename, metadata in sorted(snapshot["entries"].items()):
+                            if "identity" not in metadata or (file_suffix and not filename.endswith(file_suffix)):
+                                continue
+                            if not file_suffix and self.definition_unit_parts(filename) is None:
+                                continue
+                            entry = {
+                                "path": path + "/" + filename, "kind": "dropin" if directive is None else "dependency",
+                                "metadata": metadata, "group": group, "unit": unit, "directive": directive,
+                            }
+                            previous = winners.get(filename)
+                            if previous is None:
+                                winners[filename] = entry
+                            elif previous["group"] == group == "alias" and previous["unit"] != unit:
+                                ambiguous_winners.add(filename)
+            for filename in sorted(winners):
+                winner = winners[filename]
+                if filename in ambiguous_winners:
+                    ambiguities.add(directory_suffix + "/" + filename)
+                    continue
+                if winner["kind"] == "dependency":
+                    dependencies.append(winner)
+                else:
+                    selected.append(winner)
+        if len(selected) > SYSTEMD_DEFINITION_PROFILE["selected_files_per_definition"]:
+            self.definition_refuse("definition_selected_per_target_bound")
+        return {"selected": selected, "consulted": consulted, "dependencies": dependencies,
+                "ambiguities": [digest(os.fsencode(value)) for value in sorted(ambiguities)]}
+
+    def definition_source_object(self, selected):
+        path = selected["path"]
+        expected = selected["metadata"]["identity"]
+        chain = []
+        for hop in range(SYSTEMD_DEFINITION_PROFILE["path_symlink_hops"] + 1):
+            if path == "/dev/null":
+                reference = self.definition_verify_null()
+                self.definition_check_chain(chain)
+                return {"path": path, "mask": True, "reference": reference, "chain": chain}
+            if not self.definition_lookup_target_allowed(path):
+                self.definition_refuse("definition_linked_target_unprofiled")
+            parent_path, name = os.path.split(path)
+            parent = self.definition_directory(parent_path)
+            if parent is None:
+                self.definition_refuse("definition_selected_source_missing")
+            meta = self.definition_io("stat", name, dir_fd=parent["fd"], follow_symlinks=False)
+            if hop == 0 and self.file_identity(meta) != expected:
+                self.definition_refuse("definition_snapshot_changed")
+            chain.extend(parent["chain"])
+            if meta.st_uid != 0 or (not stat.S_ISLNK(meta.st_mode) and meta.st_mode & 0o022):
+                self.definition_refuse("definition_unsafe_metadata")
+            if stat.S_ISLNK(meta.st_mode):
+                if hop >= SYSTEMD_DEFINITION_PROFILE["path_symlink_hops"]:
+                    self.definition_refuse("definition_path_hops_bound")
+                target = self.definition_link(parent["fd"], name, meta)
+                self.definition_path_record(path, "selected_symlink", self.file_identity(meta), target)
+                chain.append({"fd": parent["fd"], "parent": parent["fd"], "name": name,
+                              "identity": self.file_identity(self.definition_io("fstat", parent["fd"])),
+                              "named_identity": self.file_identity(meta)})
+                path = os.path.normpath(os.path.join(parent["resolved"], target))
+                continue
+            if not stat.S_ISREG(meta.st_mode):
+                self.definition_refuse("definition_selected_nonregular")
+            reference = self.definition_path_record(path, "selected_regular", self.file_identity(meta))
+            return {"path": os.path.join(parent["resolved"], name), "parent": parent["fd"], "name": name,
+                    "metadata": meta, "chain": chain, "reference": reference, "mask": meta.st_size == 0}
+        self.definition_refuse("definition_path_hops_bound")
+
+    def read_definition_source(self, selected):
+        """Only definition-body read site; selected, bounded, anchored and bracketed."""
+        state = self.definition_state()
+        phase = state["phase"]
+        if selected["path"] not in state["selected_paths"]:
+            if phase != "initial":
+                self.definition_refuse("definition_selected_sources_changed")
+            if len(state["selected_paths"]) >= SYSTEMD_DEFINITION_PROFILE["selected_files_total"]:
+                self.definition_refuse("definition_selected_total_bound")
+            state["selected_paths"].add(selected["path"])
+        if phase == "repeated":
+            reserved_key = state["source_keys"].get(selected["path"])
+            if reserved_key is not None:
+                reserved = state["sources"][reserved_key]
+                state["reserved_work"] -= reserved["reserved_work"]
+                state["reserved_bytes"] -= reserved["reserved_bytes"]
+                reserved["reserved_work"] = reserved["reserved_bytes"] = 0
+        source = self.definition_source_object(selected)
+        if source["path"] == "/dev/null":
+            return {"path_reference": source["reference"], "source_key": None, "mask": True}
+        key = source["path"]
+        state["source_keys"][selected["path"]] = key
+        cache = state["sources"].get(key)
+        expected = self.file_identity(source["metadata"])
+        if cache is not None and cache["identity"] != expected:
+            self.definition_refuse("definition_snapshot_changed")
+        if cache is None:
+            if phase != "initial":
+                self.definition_refuse("definition_selected_sources_changed")
+            if len(state["sources"]) >= SYSTEMD_DEFINITION_PROFILE["selected_files_total"]:
+                self.definition_refuse("definition_selected_total_bound")
+            size = source["metadata"].st_size
+            if size < 0 or size > SYSTEMD_DEFINITION_PROFILE["body_bytes_per_read"]:
+                self.definition_refuse("definition_body_read_bound")
+            # Include the second selected-path traversal, chain brackets, read
+            # syscalls and descriptor closes; all roots are separately rechecked.
+            cost = 16 + (size + 65535) // 65536 + 10 * len(source["chain"])
+            body_cap = SYSTEMD_DEFINITION_PROFILE["body_bytes_total"]
+            if state["body_bytes"] + state["reserved_bytes"] + 2 * size > body_cap:
+                self.definition_refuse("definition_body_total_bound")
+            if state["work"] + state["reserved_work"] + 2 * cost > SYSTEMD_DEFINITION_PROFILE["filesystem_work"]:
+                self.definition_refuse("definition_second_pass_reservation_bound")
+            if self.files + state["reserved_work"] + 2 * cost > MAX_FILES:
+                self.definition_refuse("definition_shared_file_bound")
+            state["reserved_bytes"] += size
+            state["reserved_work"] += cost
+            cache = {"identity": expected, "size": size, "reserved_work": cost, "reserved_bytes": size,
+                     "reads": {"initial": None, "repeated": None}, "body": None}
+            state["sources"][key] = cache
+        if cache["reads"][phase] is not None:
+            return {"path_reference": source["reference"], "source_key": key, "mask": source["mask"]}
+        self.definition_check_chain(source["chain"])
+        fd = None
+        try:
+            fd = self.definition_open(source["name"], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                      dir_fd=source["parent"])
+            before = self.definition_io("fstat", fd)
+            named_before = self.definition_io("stat", source["name"], dir_fd=source["parent"], follow_symlinks=False)
+            if self.file_identity(before) != expected or self.file_identity(named_before) != expected:
+                self.definition_refuse("definition_snapshot_changed")
+            if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
+                self.definition_refuse("definition_unsafe_metadata")
+            body = bytearray()
+            # Read exactly the bracketed size, never cap+1 bytes. The paired size,
+            # timestamps, named identities and second body hash detect changes.
+            while len(body) < cache["size"]:
+                amount = min(65536, cache["size"] - len(body))
+                body_cap = SYSTEMD_DEFINITION_PROFILE["body_bytes_total"]
+                if state["body_bytes"] + state["reserved_bytes"] + amount > body_cap:
+                    self.definition_refuse("definition_body_total_bound")
+                block = self.definition_io("read", fd, amount)
+                state["body_bytes"] += len(block)
+                if not block:
+                    self.definition_refuse("definition_snapshot_changed")
+                body.extend(block)
+            after = self.definition_io("fstat", fd)
+            named_after = self.definition_io("stat", source["name"], dir_fd=source["parent"], follow_symlinks=False)
+            self.definition_check_chain(source["chain"])
+            if self.file_identity(after) != expected or self.file_identity(named_after) != expected:
+                self.definition_refuse("definition_snapshot_changed")
+            record = {
+                "phase": phase, "path_reference": source["reference"], "body_sha256": digest(body), "bytes": len(body),
+                "before_sha256": digest(json.dumps(expected).encode()),
+                "after_sha256": digest(json.dumps(self.file_identity(after)).encode()), "mask": source["mask"],
+            }
+            cache["reads"][phase] = self.definition_append("source_reads", record, 1024, 1024)
+            if phase == "initial":
+                cache["body"] = bytes(body)
+            elif digest(body) != digest(cache["body"]):
+                self.definition_refuse("definition_snapshot_changed")
+        finally:
+            if fd is not None:
+                self.definition_close(fd)
+        return {"path_reference": source["reference"], "source_key": key, "mask": source["mask"]}
+
+    @staticmethod
+    def definition_snapshot_projection(snapshot):
+        return {"path": snapshot["path"], "resolved": snapshot["resolved"], "entries": snapshot["entries"],
+                "absent": snapshot["absent"], "identity": snapshot["identity"], "custody": snapshot["custody"]}
+
+    def definition_dependency_entry(self, entry, name):
+        metadata = entry["metadata"]
+        filename = os.path.basename(entry["path"])
+        mask = False
+        compatibility = "not_symlink"
+        if metadata["uid"] != 0 or (not stat.S_ISLNK(metadata["mode"]) and metadata["mode"] & 0o022):
+            self.definition_refuse("definition_unsafe_metadata")
+        if stat.S_ISREG(metadata["mode"]) and metadata["size"] == 0:
+            mask = True
+        elif stat.S_ISLNK(metadata["mode"]):
+            target = os.path.normpath(os.path.join(os.path.dirname(entry["path"]), metadata["target"]))
+            if target == "/dev/null":
+                self.definition_verify_null()
+                mask = True
+            else:
+                mask = self.definition_dependency_mask(target)
+            # A mismatched target basename is a v255 warning, not rejection.
+            compatibility = "matching" if filename == os.path.basename(metadata["target"]) else "mismatched_warning"
+        reference = self.definition_path_record(
+            entry["path"], "dependency_mask" if mask else "dependency_entry", metadata["identity"], metadata["target"],
+            compatibility=compatibility,
+        )
+        if mask or not stat.S_ISLNK(metadata["mode"]):
+            return None
+        parts = self.definition_unit_parts(filename)
+        owner = self.definition_unit_parts(name)
+        if parts[1] == "":
+            if owner[1] not in (None, ""):
+                filename = parts[0] + "@" + owner[1] + "." + parts[2]
+            else:
+                return {"directive": entry["directive"], "source": reference, "value": filename,
+                        "symbolic_template": True, "origin": "dependency_directory"}
+        return {"directive": entry["directive"], "source": reference, "value": filename,
+                "origin": "dependency_directory"}
+
+    def definition_dependency_mask(self, path):
+        """Metadata-only null_or_empty_path equivalent within the approved roots."""
+        seen = set()
+        for _ in range(SYSTEMD_DEFINITION_PROFILE["path_symlink_hops"]):
+            if path == "/dev/null":
+                self.definition_verify_null()
+                return True
+            if not self.definition_lookup_target_allowed(path):
+                self.definition_refuse("definition_linked_target_unprofiled")
+            if path in seen:
+                return False  # v255 null_or_empty_path error is not a dependency mask.
+            seen.add(path)
+            directory = self.definition_directory(os.path.dirname(path))
+            if directory is None:
+                return False
+            name = os.path.basename(path)
+            try:
+                before = self.definition_io("stat", name, dir_fd=directory["fd"], follow_symlinks=False)
+            except FileNotFoundError:
+                try:
+                    self.definition_io("stat", name, dir_fd=directory["fd"], follow_symlinks=False)
+                except FileNotFoundError:
+                    self.definition_check_chain(directory["chain"])
+                    self.definition_path_record(path, "dangling_dependency_target")
+                    return False
+                self.definition_refuse("definition_snapshot_changed")
+            target = None
+            if stat.S_ISLNK(before.st_mode):
+                target = self.definition_link(directory["fd"], name, before)
+            after = self.definition_io("stat", name, dir_fd=directory["fd"], follow_symlinks=False)
+            self.definition_check_chain(directory["chain"])
+            if self.file_identity(before) != self.file_identity(after):
+                self.definition_refuse("definition_snapshot_changed")
+            self.definition_path_record(path, "dependency_target", self.file_identity(before), target)
+            if target is None:
+                return stat.S_ISREG(before.st_mode) and before.st_size == 0
+            path = os.path.normpath(os.path.join(directory["resolved"], target))
+        self.definition_refuse("definition_path_hops_bound")
+
+    @staticmethod
+    def parse_definition_assignments(body, source, unit_type=None):
+        """Bounded v255 conf-parser logical lines; no shell/INI reset semantics.
+
+        Comments are skipped before continuation concatenation. An odd trailing
+        backslash becomes one space; native backslashes in values are retained.
+        Dependencies use EXTRACT_RETAIN_ESCAPE alone, so quotes are ordinary
+        bytes, not shell grouping (load-fragment.c:265, extract-word.c:134).
+        """
+        if len(body) > SYSTEMD_DEFINITION_PROFILE["body_bytes_per_read"]:
+            yield {"kind": "syntax", "source": source, "value": "", "directive": "Unsupported"}
+            return
+        try:
+            text = body.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            yield {"kind": "syntax", "source": source, "value": "", "directive": "Unsupported"}
+            return
+        if "\x00" in text:
+            yield {"kind": "syntax", "source": source, "value": "", "directive": "Unsupported"}
+            return
+        section = None
+        allowed_sections = {"Unit", "Install"}
+        if unit_type is not None:
+            allowed_sections.add(unit_type.capitalize())
+        else:
+            allowed_sections.update(("Service", "Socket", "Timer", "Path", "Mount", "Swap"))
+        continuation = ""
+        lines = iter(text.split("\n"))
+        for raw in lines:
+            raw = raw.rstrip("\r")
+            if raw.lstrip(" \t\r\v\f").startswith(("#", ";")):
+                continue
+            logical = continuation + raw
+            escapes = len(logical) - len(logical.rstrip("\\"))
+            if escapes % 2:
+                continuation = logical[:-1] + " "
+                continue
+            continuation = ""
+            logical = logical.strip(" \t\r\v\f")
+            if not logical:
+                continue
+            if logical.startswith("["):
+                if not logical.endswith("]"):
+                    yield {"kind": "syntax", "source": source, "value": "", "directive": "Unsupported"}
+                    section = None
+                else:
+                    section = logical[1:-1]
+                continue
+            key, equals, value = logical.partition("=")
+            key, value = key.strip(" \t\r\v\f"), value.strip(" \t\r\v\f")
+            if section not in allowed_sections:
+                continue  # v255 ignores assignments outside the unit's sections.
+            if not equals or not key:
+                yield {"kind": "syntax", "source": source, "value": "", "directive": "Unsupported"}
+                continue
+            if section == "Unit" and key in DEFINITION_DEPENDENCIES:
+                kind, directive = "dependency", key
+            elif (section, key) in (("Timer", "Unit"), ("Path", "Unit"), ("Socket", "Service"), ("Socket", "Accept")):
+                kind, directive = "projection", section + "." + key
+            elif section in ("Service", "Socket", "Mount", "Swap") and key in DEFINITION_EXEC:
+                kind, directive = "projection", key
+            elif section == "Install":
+                kind, directive = "install_intent", "InstallIntent"
+            else:
+                kind, directive = "unsupported", "Unsupported"
+                value = section + "." + logical
+            yield {"kind": kind, "directive": directive, "value": value, "source": source,
+                   "origin": "assignment"}
+        if continuation:
+            # v255 parses a final continuation at EOF as a logical line too.
+            yield from Discovery.parse_definition_assignments(
+                ("[" + (section or "") + "]\n" + continuation).encode("utf-8"), source, unit_type
+            )
+
+    @staticmethod
+    def definition_expand_specifiers(name, value):
+        parts = Discovery.definition_unit_parts(name)
+        prefix, instance, suffix = parts
+        fixed = {"p": prefix, "j": prefix.rsplit("-", 1)[-1], "%": "%"}
+        if instance != "":
+            fixed.update(i=instance or "", n=name, N=name[:-(len(suffix) + 1)])
+        result = []
+        symbolic = set()
+        cursor = minimum_length = 0
+        while cursor < len(value):
+            char = value[cursor]
+            cursor += 1
+            if char != "%":
+                piece, minimum = char, 1
+            else:
+                if cursor == len(value):
+                    return None, "", "specifier_unsupported"
+                specifier = value[cursor]
+                cursor += 1
+                if specifier in fixed:
+                    piece = fixed[specifier]
+                    minimum = len(piece)
+                    if specifier == "%":
+                        # %% expands deterministically to a literal percent,
+                        # which cannot occur in a native unit name. Do not let
+                        # it masquerade as a symbolic placeholder afterward.
+                        return None, "", "dependency_name_unsupported"
+                elif specifier in "inN" and instance == "":
+                    symbolic.add(specifier)
+                    piece = "%" + specifier
+                    minimum = {"i": 1, "n": len(prefix) + len(suffix) + 3,
+                               "N": len(prefix) + 2}[specifier]
+                else:
+                    return None, "", "specifier_unsupported"
+            minimum_length += minimum
+            # v255 unit_name_printf uses UNIT_NAME_MAX; stop expansion before
+            # allocating an oversized result, including repeated %p/%n attacks.
+            if minimum_length > 255:
+                return None, "", "dependency_name_unsupported"
+            result.append(piece)
+        return "".join(result), "".join(sorted(symbolic)), None
+
+    def reduce_definition_relations(self, name, assignments):
+        state = self.definition_state()
+        start = len(self.domain(DEFINITION_DOMAIN)["relations"])
+        attempts = 0
+        requirements = {"activation_semantics_incomplete"}
+        progress = {"range": [start, start], "attempts": 0, "requirements": requirements}
+        state["last_reduction"] = progress
+        for assignment in assignments:
+            if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+                self.definition_refuse("definition_interrupted")
+            kind = assignment["kind"]
+            value = assignment["value"]
+            if kind == "dependency":
+                # No C unescaping or quote removal under EXTRACT_RETAIN_ESCAPE.
+                words = re.finditer(r"[^ \t\r\n\v\f]+", value)
+            else:
+                words = iter((value,))
+            for word in words:
+                if attempts >= SYSTEMD_DEFINITION_PROFILE["relation_attempts_per_definition"]:
+                    self.definition_refuse("definition_relation_target_bound")
+                if state["relation_attempts"] >= SYSTEMD_DEFINITION_PROFILE["relation_attempts_total"]:
+                    self.definition_refuse("definition_relation_total_bound")
+                attempts += 1
+                progress["attempts"] = attempts
+                state["relation_attempts"] += 1
+                word = word.group() if kind == "dependency" else word
+                record = {"directive": assignment["directive"], "source": assignment["source"],
+                          "origin": assignment.get("origin", "assignment"), "kind": kind,
+                          "value_sha256": digest(word.encode("utf-8"))}
+                if kind == "dependency":
+                    expanded, symbolic, failure = self.definition_expand_specifiers(name, word)
+                    if assignment.get("symbolic_template"):
+                        symbolic = "i"
+                    target_parts = self.definition_unit_parts(expanded) if expanded is not None else None
+                    if symbolic:
+                        # Only literal characters can be checked before an actual
+                        # binding exists: %i or %n may supply even the suffix.
+                        shape = expanded
+                        for specifier in symbolic:
+                            shape = shape.replace("%" + specifier, "")
+                        if shape and (not shape.isascii() or not UNIT.fullmatch(shape)):
+                            failure = "dependency_name_unsupported"
+                        record.update(kind="symbolic", value_sha256=digest(expanded.encode()), specifiers=symbolic,
+                                      symbolic_type="specifier")
+                        if assignment.get("symbolic_template"):
+                            record["symbolic_type"] = "implicit_instance"
+                        requirements.add("symbolic_binding_unresolved")
+                    elif target_parts is not None:
+                        # unit.c resolve_template propagates an existing instance;
+                        # a literal template in an abstract definition stays symbolic.
+                        if target_parts[1] == "":
+                            owner = self.definition_unit_parts(name)
+                            if owner[1] == "":
+                                # unit_add_name rejects abstract Unit objects;
+                                # do not apply resolve_template's plain-owner
+                                # prefix fallback to an abstract definition.
+                                # v255 unit.c:235-257 and 3085-3133.
+                                record.update(kind="symbolic", symbolic_type="implicit_instance")
+                                requirements.add("symbolic_binding_unresolved")
+                            else:
+                                inherited = owner[1] if owner[1] is not None else owner[0]
+                                expanded = target_parts[0] + "@" + inherited + "." + target_parts[2]
+                        record["value_sha256"] = digest(expanded.encode())
+                    else:
+                        failure = failure or "dependency_name_unsupported"
+                    if failure:
+                        requirements.add(failure)
+                        record["kind"] = "unresolved"
+                elif kind == "syntax":
+                    requirements.add("definition_syntax_unsupported")
+                elif kind == "install_intent":
+                    requirements.add("install_intent_not_enabled_state")
+                elif kind == "unsupported":
+                    requirements.add("directive_semantics_unresolved")
+                if kind != "dependency":
+                    record["value_bytes"] = len(word.encode("utf-8"))
+                self.definition_append("relations", record, 32768, 256)
+                progress["range"][1] = len(self.domain(DEFINITION_DOMAIN)["relations"])
+        return {"range": [start, len(self.domain(DEFINITION_DOMAIN)["relations"])],
+                "attempts": attempts, "requirements": sorted(requirements)}
+
+    def definition_close_pass(self):
+        state = self.definition_state()
+        for fd in list(state["fds"]):
+            self.definition_close(fd)
+        state["directories"] = {}
+        state["null_reference"] = None
+
+    @staticmethod
+    def definition_resolution_projection(resolution):
+        fragment = resolution["fragment"]
+        return {"canonical": resolution["canonical"], "aliases": sorted(resolution["aliases"]),
+                "failure": resolution["failure"],
+                "fragment": (fragment["path"], fragment["kind"]) if fragment is not None else None}
+
+    def definition_commit(self, name, facts):
+        """Admit a fully constructed header; no post-append fact mutations."""
+        state = self.definition_state()
+        if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+            self.definition_refuse("definition_interrupted")
+        domain = self.domain(DEFINITION_DOMAIN)
+        candidate = {
+            "authority_id": digest((self.host + "\0" + DEFINITION_DOMAIN + "\0" + name).encode()),
+            "identity": name if name in KNOWN else None, "identity_sha256": digest(name.encode()),
+            "unknown_identity": name not in KNOWN, "relevance": "unresolved", "facts": facts,
+        }
+        encoded = len(json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        if len(domain["records"]) >= SYSTEMD_DEFINITION_PROFILE["definition_targets"]:
+            self.definition_refuse("definition_target_bound")
+        if encoded > SYSTEMD_DEFINITION_PROFILE["definition_header_bytes"]:
+            self.definition_refuse("definition_header_bound")
+        if state["encoded_bytes"] + encoded + 1 > SYSTEMD_DEFINITION_PROFILE["evidence_bytes"] - 1048576:
+            self.definition_refuse("definition_evidence_bound")
+        if self.record(DEFINITION_DOMAIN, name, facts):
+            state["encoded_bytes"] += encoded + 1
+            if not facts["source_acquisition_complete"]:
+                domain["complete"] -= 1
+
+    def template_definitions(self):
+        """Effective selected definition evidence, never fabricated runtime facts."""
+        state = self.definition_state()
+        domain = self.domain(DEFINITION_DOMAIN)
+        staged = {}
+        before = after = None
+        roots_before = []
+        mapping_before = {}
+        stable = False
+        enumeration_ok = False
+        try:
+            before = self.manager_unitpath_snapshot("initial")
+            state["active_roots"] = tuple(before["roots"])
+            roots_before = self.snapshot_unit_roots(before["roots"])
+            state["active_roots"] = tuple({root["path"] for root in roots_before} | {
+                root["resolved"] for root in roots_before
+            })
+            mapping_before = self.build_unit_name_map(roots_before)
+            actually_enumerated = self.installed_units | self.loaded_units
+            targets = {
+                name for name in set(mapping_before) | actually_enumerated
+                if (parts := self.definition_unit_parts(name)) is not None and parts[1] is not None
+                and (parts[1] == "" or name in actually_enumerated)
+            }
+            domain["enumerated"] = len(targets)
+            if len(targets) > SYSTEMD_DEFINITION_PROFILE["definition_targets"]:
+                self.definition_refuse("definition_target_bound")
+            live_roots = [root["path"] for root in roots_before if not root["absent"]]
+            for name in sorted(targets):
+                resolution = self.resolve_template_fragment(name, mapping_before)
+                selected = self.select_definition_sources(resolution, live_roots)
+                staged[name] = {"resolution": resolution, "selection": selected, "sources": [], "dependencies": []}
+                for source in selected["selected"]:
+                    observed = self.read_definition_source(source)
+                    staged[name]["sources"].append({**observed, "kind": source["kind"]})
+                for entry in selected["dependencies"]:
+                    observed = self.definition_dependency_entry(entry, resolution["canonical"])
+                    if observed is not None:
+                        staged[name]["dependencies"].append({**observed, "kind": "dependency"})
+            self.definition_close_pass()
+            state["phase"] = "repeated"
+            roots_after = self.snapshot_unit_roots(before["roots"])
+            mapping_after = self.build_unit_name_map(roots_after)
+            if ([self.definition_snapshot_projection(root) for root in roots_before]
+                    != [self.definition_snapshot_projection(root) for root in roots_after]
+                    or mapping_before != mapping_after):
+                self.definition_refuse("definition_snapshot_changed")
+            live_roots = [root["path"] for root in roots_after if not root["absent"]]
+            for name, pending in staged.items():
+                resolution = self.resolve_template_fragment(name, mapping_after)
+                selected = self.select_definition_sources(resolution, live_roots)
+                previous = pending["selection"]
+                if (self.definition_resolution_projection(resolution)
+                        != self.definition_resolution_projection(pending["resolution"])
+                        or selected["selected"] != previous["selected"]
+                        or [self.definition_snapshot_projection(item) for item in selected["consulted"]]
+                        != [self.definition_snapshot_projection(item) for item in previous["consulted"]]
+                        or selected["dependencies"] != previous["dependencies"]):
+                    self.definition_refuse("definition_selected_sources_changed")
+                for source in selected["selected"]:
+                    self.read_definition_source(source)
+                repeated_dependencies = []
+                for entry in selected["dependencies"]:
+                    observed = self.definition_dependency_entry(entry, resolution["canonical"])
+                    if observed is not None:
+                        repeated_dependencies.append({**observed, "kind": "dependency"})
+                def normalize(items):
+                    return [{key: value for key, value in item.items() if key != "source"} for item in items]
+                if normalize(repeated_dependencies) != normalize(pending["dependencies"]):
+                    self.definition_refuse("definition_snapshot_changed")
+            stable = True
+        except DefinitionRefusedError:
+            pass
+        except PermissionError:
+            self.gap(DEFINITION_DOMAIN, "definition_access_denied")
+            state["failures"].append("definition_access_denied")
+        except OSError:
+            self.gap(DEFINITION_DOMAIN, "definition_filesystem_unavailable")
+            state["failures"].append("definition_filesystem_unavailable")
+        finally:
+            self.definition_close_pass()
+            state["phase"] = "repeated"
+            try:
+                after = self.manager_unitpath_snapshot("repeated")
+                if before is None or before["roots"] != after["roots"] or before["version"] != after["version"]:
+                    self.definition_refuse("definition_manager_changed")
+            except DefinitionRefusedError:
+                stable = False
+        enumeration_ok = (
+            stable and not state["failures"]
+            and self.domain("systemd_installed")["enumeration_complete"]
+            and self.domain("systemd_loaded")["enumeration_complete"]
+        )
+        # Parse only selected bodies. Two body hashes establish limited observed
+        # stability; no atomic snapshot, sender exclusion, or activation closure.
+        for _name, pending in staged.items():
+            def assignments(pending=pending):
+                for source_kind in ("fragment", "dropin"):
+                    if source_kind == "dropin":
+                        yield from pending["dependencies"]
+                    for source in pending["sources"]:
+                        key = source["source_key"]
+                        if (source["kind"] == source_kind and key is not None
+                                and state["sources"][key]["body"] is not None):
+                            cache = state["sources"][key]
+                            yield from self.parse_definition_assignments(
+                                cache["body"], cache["reads"]["initial"],
+                                self.definition_unit_parts(pending["resolution"]["canonical"])[2],
+                            )
+            try:
+                pending["reduction"] = self.reduce_definition_relations(
+                    pending["resolution"]["canonical"], assignments()
+                )
+            except DefinitionRefusedError:
+                progress = state["last_reduction"]
+                pending["reduction"] = {"range": list(progress["range"]), "attempts": progress["attempts"],
+                                        "requirements": sorted(progress["requirements"])}
+                enumeration_ok = False
+                break
+        manager_before = [i for i, item in enumerate(domain["manager_observations"]) if item["phase"] == "initial"]
+        manager_after = [i for i, item in enumerate(domain["manager_observations"]) if item["phase"] == "repeated"]
+        for name, pending in staged.items():
+            resolution = pending["resolution"]
+            reduction = pending.get("reduction", {"range": [0, 0], "attempts": 0,
+                                                  "requirements": ["definition_relations_unavailable"]})
+            requirements = set(reduction["requirements"]) | set(state["failures"])
+            if resolution["failure"]:
+                requirements.add(resolution["failure"])
+                self.gap(DEFINITION_DOMAIN, resolution["failure"])
+            if pending["selection"]["ambiguities"]:
+                requirements.add("definition_alias_order_ambiguous")
+                self.gap(DEFINITION_DOMAIN, "definition_alias_order_ambiguous")
+            sources = []
+            for source in pending["sources"]:
+                key = source["source_key"]
+                reads = state["sources"][key]["reads"] if key is not None else {"initial": None, "repeated": None}
+                sources.append({"path_reference": source["path_reference"], "kind": source["kind"],
+                                "mask": source["mask"], "initial_read": reads["initial"],
+                                "repeated_read": reads["repeated"]})
+            aliases = sorted(resolution["aliases"])
+            facts = {
+                "schema": "AcademySystemdTemplateDefinitionFacts.v1", "source_kind": "template_definition",
+                "definition_profile": dict(SYSTEMD_DEFINITION_PROFILE),
+                "definition_profile_sha256": self.definition_profile_hash(),
+                "manager_before": manager_before, "manager_after": manager_after,
+                "requested_identity_sha256": digest(name.encode()),
+                "canonical_identity_sha256": digest(resolution["canonical"].encode()),
+                "fragment_kind": resolution["fragment"]["kind"] if resolution["fragment"] is not None else None,
+                "linked_target_sha256": (
+                    digest(resolution["fragment"]["destination_path"].encode())
+                    if resolution["fragment"] is not None and resolution["fragment"]["kind"] == "linked_unit" else None
+                ),
+                "aliases": {"count": len(aliases), "ordered_sha256": digest(json.dumps(aliases).encode()),
+                            "identity_sha256": [digest(alias.encode()) for alias in aliases]},
+                "mask": (resolution["fragment"] is not None
+                         and resolution["fragment"]["kind"] in ("empty_mask", "null_mask")),
+                "sources": sources, "relation_range": reduction["range"], "relation_attempts": reduction["attempts"],
+                "unresolved_requirements": sorted(requirements | {"activation_semantics_incomplete"}),
+                "source_acquisition_complete": bool(enumeration_ok and not resolution["failure"]
+                                                    and not pending["selection"]["ambiguities"]),
+                "activation_semantics_complete": False, "classification": "unknown", "authority_refs": [],
+            }
+            try:
+                self.definition_commit(name, facts)
+            except DefinitionRefusedError:
+                enumeration_ok = False
+                break
+        domain["enumeration_complete"] = enumeration_ok
+        domain["skipped"] = domain["enumerated"] - domain["inspected"]
+        domain["definition_accounting"] = {
+            "filesystem_work": state["work"], "body_bytes": state["body_bytes"],
+            "manager_attempts": state["manager_attempts"], "relation_attempts": state["relation_attempts"],
+            "encoded_bytes": state["encoded_bytes"], "unparsed_tail": state["unparsed_tail"],
+            "selected_paths": len(state["selected_paths"]), "distinct_bodies": len(state["sources"]),
+            "reserved_second_pass_work": state["reserved_work"],
+            "reserved_second_pass_bytes": state["reserved_bytes"],
+            "reserved_second_pass_reads": sum(
+                source["reads"]["repeated"] is None for source in state["sources"].values()
+            ),
+        }
+        # Bodies and raw lookup maps are transient parser inputs, never report data.
+        for source in state["sources"].values():
+            source["body"] = None
 
     @staticmethod
     def file_identity(meta):
@@ -2420,6 +3732,7 @@ class Discovery:
         self.schedulers_accounts()
         self.nss_layout()
         self.user_manager_topology()
+        self.template_definitions()
         for domain, reason in (
             ("database_sessions", "not_collected_no_database_access"),
             ("containers", "not_collected_no_container_access"),
