@@ -47,6 +47,18 @@ CREDENTIAL_NAME = re.compile(
     re.IGNORECASE,
 )
 MAX_ROWS = 8192
+# An explicit endpoint-only resource profile; all other discovery caps remain separate.
+SYSTEMD_ENDPOINT_PROFILE = {
+    "schema": "AcademySystemdEndpointProfile.v1",
+    "scope": "endpoint_acquisition_only",
+    "counting": "decoded_attempts_including_malformed_and_duplicates",
+    "overflow": "refuse_before_decode_mark_lower_bound",
+    "field_attempts": 4096,
+    "unit_read_attempts": 8192,
+    "initial_pass_attempts": 65536,
+    "repeated_pass_attempts": 65536,
+    "total_attempts": 131072,
+}
 MAX_FILES = 16384
 MAX_BYTES = 1048576
 MAX_COMMAND_BYTES = 8388608
@@ -167,7 +179,7 @@ class Discovery:
         return False
 
     def domain(self, name):
-        return self.domains.setdefault(
+        target = self.domains.setdefault(
             name,
             {
                 "enumerated": 0,
@@ -181,6 +193,19 @@ class Discovery:
                 "records": [],
             },
         )
+        if name == "systemd_unit_graph" and "endpoint_profile" not in target:
+            target["endpoint_profile"] = dict(SYSTEMD_ENDPOINT_PROFILE)
+            target["endpoint_profile_sha256"] = self.endpoint_profile_hash()
+            target["endpoint_accounting"] = {
+                phase: {"endpoint_count": 0, "retained_endpoint_count": 0,
+                        "unparsed_tail": False}
+                for phase in ("initial", "repeated", "total")
+            }
+        return target
+
+    @staticmethod
+    def endpoint_profile_hash():
+        return digest(json.dumps(SYSTEMD_ENDPOINT_PROFILE, sort_keys=True, separators=(",", ":")).encode("ascii"))
 
     def gap(self, name, reason, raced=False):
         domain = self.domain(name)
@@ -690,7 +715,7 @@ class Discovery:
         return GRAPH_PROPERTIES + (("Unit",) if name.endswith((".timer", ".path")) else ())
 
     @staticmethod
-    def systemctl_unit_array_tokens(value):
+    def systemctl_unit_array_tokens(value, *, positions=False):
         """Decode only the v255 shell_maybe_quote(unit, 0) image for UNIT.
 
         bus-print-properties.c prints scalar strings raw and space-joins quoted
@@ -699,6 +724,8 @@ class Discovery:
         This is one CLI layer, never decoding native unit escapes such as \\x2d.
         Reject other shell syntax, unnecessary quotes, and noncanonical spacing.
         Yield an empty (invalid) token on refusal; never allocate a large token.
+        positions=True also reports whether an unparsed tail remains, so callers
+        can refuse at a resource boundary without decoding a lookahead endpoint.
         https://github.com/systemd/systemd/blob/v255/src/basic/escape.c#L474
         https://github.com/systemd/systemd/blob/v255/src/basic/escape.h#L11
         """
@@ -717,32 +744,49 @@ class Discovery:
                 if not quoted and char == 32:
                     break
                 if len(token) >= 255 or char == 34:
-                    yield b""
+                    yield (b"", cursor < len(value)) if positions else b""
                     return
                 if char == 92:
                     if not quoted or value[cursor:cursor + 2] != b"\\\\":
-                        yield b""
+                        yield (b"", cursor < len(value)) if positions else b""
                         return
                     cursor += 1
                 token.append(char)
                 cursor += 1
             if (not closed or not token or (quoted and 92 not in token)
                     or (cursor < len(value) and value[cursor] != 32)):
-                yield b""
+                yield (b"", cursor < len(value)) if positions else b""
                 return
-            yield bytes(token)
+            yield (bytes(token), cursor < len(value)) if positions else bytes(token)
             if cursor < len(value):
                 cursor += 1
                 if cursor == len(value):
-                    yield b""
+                    yield (b"", False) if positions else b""
 
     @staticmethod
-    def parse_unit_graph(raw, fields, *, graph_only=False, endpoint_budget=MAX_ROWS, stopped=None):
-        """Pure, bounded graph extraction; retain hashes even for invalid fields."""
+    def parse_unit_graph(raw, fields, *, graph_only=False, phase="initial",
+                         pass_remaining=None, total_remaining=None, stopped=None):
+        """Version 2 endpoint accounting, separate from overall acquisition.
+
+        endpoint_count is exact performed decodes, including invalid/duplicates.
+        unparsed_tail means this only lower-bounds potentially required work;
+        it never claims the remaining raw bytes contain valid endpoints.
+        No endpoint is decoded beyond a cap; byte-position lookahead detects a
+        nonempty tail. Invalid fields retain no hashes, even after a valid prefix.
+        """
+        if phase not in ("initial", "repeated"):
+            raise ValueError("unsupported endpoint phase")
+        profile = SYSTEMD_ENDPOINT_PROFILE
+        pass_cap = profile[phase + "_pass_attempts"]
+        pass_remaining = pass_cap if pass_remaining is None else max(0, min(pass_cap, pass_remaining))
+        total_cap = profile["total_attempts"]
+        total_remaining = total_cap if total_remaining is None else max(0, min(total_cap, total_remaining))
         result = {field: None for field in fields}
         gaps = []
         output = {
             "fields": result, "gaps": gaps, "endpoint_count": 0,
+            "retained_endpoint_count": 0, "unparsed_tail": False,
+            "endpoint_profile_sha256": Discovery.endpoint_profile_hash(), "phase": phase,
             "original_output": projection(raw) if raw is not None else None,
         }
         if raw is None:
@@ -750,21 +794,24 @@ class Discovery:
             return output
         if len(raw) > MAX_COMMAND_BYTES:
             gaps.append("graph_byte_bound")
+            output["unparsed_tail"] = True
             return output
         seen = set()
-        # Bound allocations before splitting adversarial output into lines.
         if raw.count(b"\n") > MAX_ROWS:
             gaps.append("graph_line_bound")
+            output["unparsed_tail"] = True
             return output
         lines = raw.split(b"\n", MAX_ROWS)
         if lines[-1:] == [b""]:
             lines.pop()
         if len(lines) > MAX_ROWS:
             gaps.append("graph_line_bound")
+            output["unparsed_tail"] = True
             return output
         for line in lines:
             if stopped is not None and stopped():
                 gaps.append("graph_work_interrupted_or_deadline")
+                output["unparsed_tail"] = True
                 break
             key, equals, value = line.partition(b"=")
             if not equals:
@@ -775,75 +822,103 @@ class Discovery:
                 if graph_only:
                     gaps.append("unexpected_graph_key")
                 continue
-            if field in seen:
+            duplicate = field in seen
+            if duplicate:
                 gaps.append("duplicate_graph_key")
-                continue
-            seen.add(field)
-            item = {"projection": projection(value), "endpoint_sha256": [], "valid": False}
-            result[field] = item
-            if field in ("Id", "Unit"):
-                # Scalars are printed raw; no CLI quoting or unit unescaping.
-                tokens = [value] if value else []
-                if b" " in value:
-                    gaps.append("unsupported_graph_value")
-                    continue
+                item = result[field]
+                item["valid"] = False
+                item["endpoint_sha256"] = []
+                item["retained_endpoint_count"] = 0
             else:
-                tokens = []
-                interrupted = False
-                for token in Discovery.systemctl_unit_array_tokens(value):
-                    if stopped is not None and stopped():
-                        gaps.append("graph_work_interrupted_or_deadline")
-                        interrupted = True
-                        break
-                    tokens.append(token)
-                    # At most remaining+1 short tokens, including malformed ones.
-                    if not token or len(tokens) > endpoint_budget - output["endpoint_count"]:
-                        break
-                if interrupted:
-                    continue
-            if len(tokens) > endpoint_budget - output["endpoint_count"]:
-                gaps.append("graph_endpoint_budget")
-                continue
-            if (field == "Id" and len(tokens) != 1) or (field == "Unit" and len(tokens) > 1):
-                gaps.append("unsupported_graph_value")
-                continue
-            valid = True
-            for token in tokens:
+                seen.add(field)
+                item = {"projection": projection(value), "endpoint_sha256": [], "valid": False,
+                        "endpoint_count": 0, "retained_endpoint_count": 0,
+                        "unparsed_tail": False}
+                result[field] = item
+            valid = not duplicate
+            pending = bool(value)
+            if field in ("Id", "Unit"):
+                # systemctl scalar strings are raw; one attempted native identity.
+                tokens = iter(((value, False),)) if value else iter(())
+                if field == "Id" and not value:
+                    gaps.append("unsupported_graph_value")
+                    valid = False
+            else:
+                tokens = Discovery.systemctl_unit_array_tokens(value, positions=True)
+            while pending:
                 if stopped is not None and stopped():
                     gaps.append("graph_work_interrupted_or_deadline")
                     valid = False
+                    item["unparsed_tail"] = True
                     break
-                # Charge attempted endpoints too: malformed input cannot bypass the work bound.
+                used = output["endpoint_count"]
+                limits = (
+                    (item["endpoint_count"] >= profile["field_attempts"], "field"),
+                    (used >= profile["unit_read_attempts"], "unit"),
+                    (used >= pass_remaining, phase + "_pass"),
+                    (used >= total_remaining, "total"),
+                )
+                exhausted = ["graph_endpoint_" + dimension + "_budget" for hit, dimension in limits if hit]
+                if exhausted:
+                    gaps.extend(exhausted)
+                    valid = False
+                    item["unparsed_tail"] = True
+                    break
+                token, pending = next(tokens)
+                # Charge before validation, including duplicate property occurrences.
                 output["endpoint_count"] += 1
-                if len(token) > 255 or not token.isascii() or not UNIT.fullmatch(token.decode("ascii")):
+                item["endpoint_count"] += 1
+                if (not token or len(token) > 255 or not token.isascii()
+                        or not UNIT.fullmatch(token.decode("ascii"))):
                     gaps.append("unsupported_graph_value")
                     valid = False
+                    item["unparsed_tail"] |= pending
                     break
-                item["endpoint_sha256"].append(digest(token))
+                if valid:
+                    item["endpoint_sha256"].append(digest(token))
             item["valid"] = valid
+            if not valid:
+                item["endpoint_sha256"] = []
+            item["retained_endpoint_count"] = len(item["endpoint_sha256"])
+            output["unparsed_tail"] |= item["unparsed_tail"]
         if set(fields) - seen:
             gaps.append("missing_graph_fields")
+        output["retained_endpoint_count"] = sum(
+            item["retained_endpoint_count"] for item in result.values() if item is not None
+        )
         output["gaps"] = sorted(set(gaps))
         return output
 
     def collect_unit_graph(self, raw, fields, *, graph_only=False):
+        domain = self.domain("systemd_unit_graph")
+        accounting = domain["endpoint_accounting"]
+        phase = "repeated" if graph_only else "initial"
         result = self.parse_unit_graph(
-            raw, fields, graph_only=graph_only, endpoint_budget=self.graph_endpoint_remaining,
+            raw, fields, graph_only=graph_only, phase=phase,
+            pass_remaining=SYSTEMD_ENDPOINT_PROFILE[phase + "_pass_attempts"] - accounting[phase]["endpoint_count"],
+            total_remaining=SYSTEMD_ENDPOINT_PROFILE["total_attempts"] - accounting["total"]["endpoint_count"],
             stopped=lambda: self.interrupted("systemd_unit_graph") or time.monotonic() >= self.deadline,
         )
-        self.graph_endpoint_remaining -= result["endpoint_count"]
+        for dimension in (phase, "total"):
+            counter = accounting[dimension]
+            counter["endpoint_count"] += result["endpoint_count"]
+            counter["retained_endpoint_count"] += result["retained_endpoint_count"]
+            counter["unparsed_tail"] |= result["unparsed_tail"]
+        for reason in result["gaps"]:
+            self.gap("systemd_unit_graph", reason)
         return result
 
     def retain_unit_graph(self, name, installed, loaded, initial):
         """Retain each captured read before any later host operation can fail."""
         facts = {
-            "schema": "AcademySystemdUnitGraphFacts.v1",
+            "schema": "AcademySystemdUnitGraphFacts.v2",
+            "endpoint_profile_sha256": self.endpoint_profile_hash(),
             "requested_identity_sha256": digest(name.encode()),
             "name_shape": self.unit_name_shape(name),
             "membership_before": {"installed": name in installed, "loaded": name in loaded},
             "membership_after": {"installed": None, "loaded": None},
             "initial": initial,
-            "repeated": self.parse_unit_graph(None, self.graph_properties(name)),
+            "repeated": self.parse_unit_graph(None, self.graph_properties(name), phase="repeated"),
             "graph_fields_unchanged": False,
             "unresolved_endpoint_sha256": None,
             "gaps": ["graph_finalization_unavailable", "enumeration_boundary_unavailable"],
@@ -958,8 +1033,8 @@ class Discovery:
         domain = "systemd_unit_properties"
         enumerated = installed | loaded
         graph_observations = {}
-        # One aggregate storage/work allowance across every initial and repeated read.
-        self.graph_endpoint_remaining = MAX_ROWS
+        # Independent fixed pass reserves; endpoint acquisition is not full census.
+        self.domain("systemd_unit_graph")
         names = sorted(enumerated)
         self.domain(domain)["enumerated"] = len(names)
         self.domain("systemd_unit_graph")["enumerated"] = len(names)

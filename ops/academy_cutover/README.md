@@ -33,8 +33,20 @@ converted to `-`. The accepted list representation is an unquoted name without
 backslashes, or a complete double-quoted name with each native backslash doubled.
 Scalar `Id` and `Unit` properties remain unquoted native bytes. Malformed or
 noncanonical representations remain unresolved. Endpoint order, duplicates and
-original output projections are retained within the existing shared endpoint
-budget. Decoder lookahead is separately bounded per array field to the remaining
-endpoint allowance plus one token, each at most 255 native bytes; an oversized
-field remains invalid and retains no endpoint hashes. This parser correction does
-not resolve exhausted budgets or templates.
+original output projections are retained.
+
+Graph facts v2 bind the explicit `AcademySystemdEndpointProfile.v1` and its hash.
+The limits are 4,096 decoded attempts per field, 8,192 per unit/read, 65,536 in
+each of the initial and repeated passes, and 131,072 overall. The passes have
+separate allowances. Each unit listing and the retained graph records remain
+capped at 8,192 rows; the union of observed listings can be larger. Malformed
+and duplicate attempts consume the same endpoint limits; retained hashes are counted
+separately. Exhaustion stops decoding and marks any unparsed tail without
+asserting that the tail contains valid endpoints. An offending field remains
+invalid and retains no endpoint hashes.
+
+Historical graph facts v1 keep their original interpretation. These endpoint
+limits do not establish complete acquisition, activation or authority coverage;
+template definitions, remaining relations and the other domain adapters still
+require implementation and qualification. Other command, file and deadline
+limits remain separate.
