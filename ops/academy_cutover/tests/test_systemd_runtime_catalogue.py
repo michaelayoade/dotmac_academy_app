@@ -67,6 +67,42 @@ def test_every_field_requested_in_both_fixed_show_reads():
             assert ("Unit" in requested) == name.endswith((".timer", ".path"))
 
 
+@pytest.mark.parametrize("raw_available", [True, False])
+def test_graph_acquisition_preserves_closed_historical_property_records(raw_available):
+    discovery = SyntheticDiscovery(("a.service", "b.timer", "c.path"))
+    if not raw_available:
+        discovery.initial_raw = lambda _name: None
+    discovery.systemd()
+    report = json.loads(discovery.seal().read())
+    validator().validate(report)
+    schema = json.loads((Path(__file__).parents[1] / "discovery.schema.json").read_text())
+    closed_facts = schema["$defs"]["record"]["properties"]["facts"]["properties"]
+    historical_properties = set(closed_facts["properties"]["properties"])
+    assert len(historical_properties) == 25
+    assert not set((*ADDED, "Following")) & historical_properties
+    assert set(D.PROPERTIES) == historical_properties
+    for record in report["domains"]["systemd_unit_properties"]["records"]:
+        facts = record["facts"]
+        assert set(facts["properties"]) <= historical_properties
+        assert set(facts["missing_properties"]) <= historical_properties
+        assert set(facts["not_applicable_properties"]) <= historical_properties
+    for record in report["domains"]["systemd_unit_graph"]["records"]:
+        assert set((*ADDED, "Following")) <= set(record["facts"]["initial"]["fields"])
+
+
+def test_graph_only_fields_do_not_hide_unknown_property_keys():
+    discovery = SyntheticDiscovery()
+    discovery.initial_raw = lambda name: graph(name, Requisite="b.service") + b"Unreviewed=sensitive\n"
+    discovery.systemd()
+    report = json.loads(discovery.seal().read())
+    facts = report["domains"]["systemd_unit_properties"]["records"][0]["facts"]
+    assert facts["property_parse_failure_class"] == "unknown_key"
+    assert facts["property_parse_failure_key_sha256"] == D.digest(b"Unreviewed")
+    graph_facts = report["domains"]["systemd_unit_graph"]["records"][0]["facts"]
+    assert graph_facts["initial"]["fields"]["Requisite"]["endpoint_sha256"] == [D.digest(b"b.service")]
+    validator().validate(report)
+
+
 @pytest.mark.parametrize("field", [*ADDED, "Names", "Triggers", "TriggeredBy", "Requires", "Wants", "Before", "After"])
 def test_each_array_preserves_one_cli_layer_order_and_duplicates(field):
     native = rb"native\x2dname.service"

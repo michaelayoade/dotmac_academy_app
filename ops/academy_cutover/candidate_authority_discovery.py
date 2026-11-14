@@ -457,7 +457,6 @@ GRAPH_PROPERTIES = ('Id',
  'JoinsNamespaceOf',
  'SliceOf',
  'Following')
-COMMON_PROPERTIES += tuple(field for field in GRAPH_PROPERTIES if field not in COMMON_PROPERTIES)
 EXEC_CONTEXT_PROPERTIES = ("User", "WorkingDirectory", "EnvironmentFiles")
 SERVICE_PROPERTIES = ("ExecStart",)
 RETRY_PROPERTIES = frozenset(("EnvironmentFiles", "ExecStart", "TimersMonotonic", "TimersCalendar"))
@@ -1603,11 +1602,14 @@ class Discovery:
             elif name.endswith(".path"):
                 applicable += ("Unit",)
             not_applicable = sorted(set(PROPERTIES) - set(applicable))
+            graph_fields = self.graph_properties(name)
+            # Acquire the v3 graph in the same read while preserving the closed
+            # historical property-record vocabulary and missing-field accounting.
+            requested = applicable + tuple(field for field in graph_fields if field not in applicable)
             raw = self.run(
-                ["show", "--all", "--property=" + ",".join(applicable), "--", name],
+                ["show", "--all", "--property=" + ",".join(requested), "--", name],
                 domain,
             )
-            graph_fields = self.graph_properties(name)
             initial_graph = self.collect_unit_graph(raw, graph_fields)
             graph_facts = self.retain_unit_graph(name, installed, loaded, initial_graph)
             if graph_facts is not None:
@@ -1650,6 +1652,10 @@ class Discovery:
                         facts["property_parse_failure_key_sha256"] = digest(key)
                     field = key.decode("ascii")
                     if field not in applicable:
+                        if field in graph_fields:
+                            # collect_unit_graph retains and validates these fields,
+                            # including duplicates and malformed endpoint values.
+                            continue
                         facts["property_parse_failure_class"] = "unknown_key"
                         facts["property_parse_failure_key_sha256"] = digest(key)
                         raise ValueError
