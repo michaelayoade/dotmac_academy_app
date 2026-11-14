@@ -160,6 +160,41 @@ def close_custody(backend, run, root):
             "unsealed_healthy": True, "tcp_generate_root_code": 405}
 
 
+def validate_handoff(raw, *, run, sources, policy, policy_sha256, fields, now):
+    """Validate a fresh packet from the pinned authenticated private server pipe.
+
+    This is a transport/structure check, not authentication of an authored JSON
+    receipt. The caller owns SSH/server custody and never logs the raw packet.
+    """
+    require(type(raw) is bytes and 0 < len(raw) <= 65536, "handoff_packet_bound")
+    value = strict_json(raw)
+    require(set(value) == {"schema", "run", "reader_sha256", "base_sha256", "server_sha256",
+                           "observed_unix", "evidence", "credentials"}, "handoff_shape_refused")
+    require(set(sources) == {"reader_sha256", "base_sha256", "server_sha256"}
+            and all(type(sha) is str and re.fullmatch(r"[0-9a-f]{64}", sha) for sha in sources.values())
+            and all(value.get(key) == expected for key, expected in sources.items()), "handoff_source_refused")
+    require(value["schema"] == "AcademyHeldAdminCredentialHandoff.v1" and value["run"] == run
+            and type(value["observed_unix"]) is int and type(now) is int
+            and 0 <= now - value["observed_unix"] <= 120, "handoff_identity_or_age_refused")
+    evidence = value["evidence"]
+    require(type(evidence) is dict and evidence.get("schema") == "OneUseCredentialReadEvidence.v1"
+            and evidence.get("run") == run and evidence.get("policy") == policy
+            and evidence.get("policy_sha256") == policy_sha256
+            and evidence.get("reader_retired") is True and evidence.get("policy_retired") is True
+            and type(evidence.get("data_gets")) is int and evidence["data_gets"] == 1
+            and evidence.get("handoff_attempted") is True and evidence.get("handoff_performed") is False,
+            "handoff_evidence_refused")
+    closure = evidence.get("closure")
+    require(type(closure) is dict and all(closure.get(key) is True for key in CLOSE_FIELDS)
+            and type(closure.get("tcp_generate_root_code")) is int
+            and closure["tcp_generate_root_code"] == 405, "handoff_closure_refused")
+    credentials = value["credentials"]
+    require(type(credentials) is dict and set(credentials) == set(fields)
+            and all(type(credentials[field]) is str and 0 < len(credentials[field].encode()) <= 16000
+                    and "\0" not in credentials[field] for field in fields), "handoff_fields_refused")
+    return dict(credentials)
+
+
 def _ok(api, root, method, path, body=None):
     status, value = api(method, path, root, body)
     require(200 <= status < 300, "issuer_request_refused")
@@ -268,6 +303,7 @@ def acquire_once(api, root, *, run, policy, path, fields, close_authority, hando
                 "policy_retired": False, "data_gets": 0, "handoff_attempted": False,
                 "handoff_performed": False}
     try:
+        require(type(root) is str and re.fullmatch(r"[A-Za-z0-9_.-]{8,4096}", root), "issuer_token_refused")
         require(type(run) is str and re.fullmatch(r"[A-Za-z0-9_-]{8,64}", run), "run_refused")
         require(type(policy) is str and re.fullmatch(r"[a-z0-9][a-z0-9-]{7,100}", policy), "policy_name_refused")
         require(type(fields) is tuple and 1 <= len(fields) <= 4 and len(set(fields)) == len(fields)

@@ -258,3 +258,46 @@ def test_cleanup_audit_failure_does_not_skip_retirement_or_authority_close():
                        close_authority=lambda: closed.append(True) or dict(CLOSE),
                        handoff=received.append, audit=audit)
     assert closed == [True] and not received and not api.tokens and not api.policies
+
+
+def packet():
+    sources = dict.fromkeys(("reader_sha256", "base_sha256", "server_sha256"), "a" * 64)
+    value = {"schema": "AcademyHeldAdminCredentialHandoff.v1", "run": RUN, **sources, "observed_unix": 100,
+             "evidence": {"schema": "OneUseCredentialReadEvidence.v1", "run": RUN, "policy": POLICY,
+                          "policy_sha256": "b" * 64, "reader_retired": True, "policy_retired": True,
+                          "data_gets": 1, "handoff_attempted": True, "handoff_performed": False,
+                          "closure": dict(CLOSE)},
+             "credentials": {"password": "synthetic-held-value"}}
+    return value, sources
+
+
+@pytest.mark.parametrize("mutation", [None, "reader", "base", "server", "future", "expired", "run",
+                                     "policy", "closure", "unretired", "unattempted", "extra_field"])
+def test_only_fresh_exact_source_closed_selected_packet_is_accepted(mutation):
+    value, sources = packet()
+    if mutation in ("reader", "base", "server"):
+        value[mutation + "_sha256"] = "c" * 64
+    elif mutation == "future":
+        value["observed_unix"] = 102
+    elif mutation == "expired":
+        value["observed_unix"] = -30
+    elif mutation == "run":
+        value["run"] = "different-run"
+    elif mutation == "policy":
+        value["evidence"]["policy_sha256"] = "c" * 64
+    elif mutation == "closure":
+        value["evidence"]["closure"]["socket_gone"] = False
+    elif mutation == "unretired":
+        value["evidence"]["reader_retired"] = False
+    elif mutation == "unattempted":
+        value["evidence"]["handoff_attempted"] = False
+    elif mutation == "extra_field":
+        value["credentials"]["unselected"] = "synthetic-value"
+    args = {"run": RUN, "sources": sources, "policy": POLICY, "policy_sha256": "b" * 64,
+            "fields": ("password",), "now": 101}
+    raw = json.dumps(value).encode()
+    if mutation is None:
+        assert R.validate_handoff(raw, **args) == {"password": "synthetic-held-value"}
+    else:
+        with pytest.raises(R.ReaderRefused):
+            R.validate_handoff(raw, **args)
