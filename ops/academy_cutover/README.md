@@ -47,8 +47,8 @@ invalid and retains no endpoint hashes.
 
 Historical graph facts v1 keep their original interpretation. These endpoint
 limits do not establish complete acquisition, activation or authority coverage;
-template definitions, remaining relations and the other domain adapters still
-require implementation and qualification. Other command, file and deadline
+activation semantics and the other domain adapters still require implementation
+and qualification. Other command, file and deadline
 limits remain separate.
 
 Report v2 adds an exact 256 MiB captured-payload budget across command stdout,
@@ -65,6 +65,14 @@ delivery failures never append a second document. Historical v1 reports retain
 their closed schema. Consumers must distinguish normal v2 reports from failure
 envelopes; false authority flags alone do not establish successful collection.
 
+Report v3 and resource profile v2 separate ordinary filesystem work (16,384),
+definition work (262,144), and their cumulative ceiling (278,528). Reserved
+definition cleanup work is reported separately. The ordinary counter retains the
+earlier file-attempt accounting; definition work charges its filesystem operations,
+iterator advances and descriptor cleanup. Payload and output byte limits
+stay unchanged. Historical normal and failure envelopes retain their closed
+schemas; campaign consumers must explicitly adopt the new contract.
+
 Runtime graph facts v3 bind a v255 relation catalogue covering the manager's
 exported unit-name relationships and raw scalar `Following`. The catalogue
 distinguishes start, event, ordering, precondition, propagation and membership
@@ -72,12 +80,29 @@ relations, including symmetric namespace joins. Path-valued properties and
 conditional activation defaults remain explicit unresolved requirements rather
 than fabricated unit endpoints. Endpoint and report budgets stay unchanged.
 
-Template definitions use the manager's ordered search paths and an explicit root
-profile. The collector resolves effective fragments, aliases, masks, drop-ins and
+Effective definitions use the manager's ordered search paths and an explicit root
+profile. Targets include units actually seen in either installed/loaded inventory
+pass and abstract templates in the lookup map, bounded to 1,024 targets before
+any selected body reads. Other unobserved ordinary units and concrete instances
+are not invented. Failed or changed membership boundaries remain incomplete.
+These inventories precede source acquisition; they do not bracket every body read.
+The legacy `systemd_template_definitions` domain key now carries versioned
+effective-definition evidence. Historical template facts remain supported.
+
+The collector resolves effective fragments, aliases, masks, drop-ins and
 dependency directories, then reads only selected unit sources. Two passes compare
 source identities, hashes and manager state. Referenced credentials, environment
 files and executable bodies are not read; unprofiled linked targets remain
 unresolved. Abstract instance-dependent relations remain symbolic.
+
+Fully captured root inventories supply immediate candidate-directory absence
+evidence. Present candidate directories are scanned once per pass; the cache is
+discarded before the next pass. Alias work has a separate aggregate attempt limit
+and checks cancellation and the deadline. Candidate selection charges its own
+attempt limit before directory construction, duplicate checks and cached or absent
+lookup returns. Definition limits include 1,536 selected
+paths, 3,072 body-read records, 8,192 relations and the existing 16 MiB domain
+reserve. A larger inventory or exhausted budget remains incomplete.
 
 The definition domain separates complete selected-source acquisition from
 activation semantics. It never supplies a sender classification or authority

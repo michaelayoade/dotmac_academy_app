@@ -18,7 +18,7 @@ def test_definition_body_capture_is_charged_and_guarded_envelope_is_valid():
     assert captured > 0
     assert discovery.captured_payload_bytes == captured
     result = json.loads(discovery.seal().read())
-    assert result["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert result["schema"] == "AcademyAuthorityDiscovery.v3"
     assert result["resource_accounting"]["captured_payload_bytes"] == captured
     schema = json.loads((Path(__file__).parents[1] / "discovery.schema.json").read_text())
     Draft202012Validator(schema).validate(result)

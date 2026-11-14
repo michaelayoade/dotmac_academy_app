@@ -289,12 +289,12 @@ def report(discovery):
     return json.loads(discovery.seal().read())
 
 
-def test_normal_v2_closed_schema_and_exact_framing():
+def test_normal_v3_closed_schema_and_exact_framing():
     discovery = SyntheticDiscovery()
     discovery.systemd()
     staged = discovery.seal().read()
     result = json.loads(staged)
-    assert result["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert result["schema"] == "AcademyAuthorityDiscovery.v3"
     assert staged == json.dumps(result, **D.JSON_OPTIONS).encode("ascii") + b"\n"
     validator().validate(result)
     forged = dict(result, normal_evidence_not_emitted=True)
@@ -309,14 +309,14 @@ def test_failure_variant_is_distinct_closed_and_preserves_counters(monkeypatch):
     discovery.captured_payload_bytes = 91
     discovery.domain("collector")["gaps"] = ["x" * (D.MIB + 1)]
     result = report(discovery)
-    assert result["schema"] == "AcademyAuthorityDiscoveryFailure.v2"
+    assert result["schema"] == "AcademyAuthorityDiscoveryFailure.v3"
     assert result["domains"] == {} and result["normal_evidence_not_emitted"]
     assert result["commands_attempted"] == 7 and result["files_attempted"] == 3
     assert result["resource_accounting"]["captured_payload_bytes"] == 91
     assert len(json.dumps(result, **D.JSON_OPTIONS)) + 1 <= D.MIB
     validator().validate(result)
     with pytest.raises(ValidationError):
-        validator().validate(dict(result, schema="AcademyAuthorityDiscovery.v2"))
+        validator().validate(dict(result, schema="AcademyAuthorityDiscovery.v3"))
     with pytest.raises(ValidationError):
         validator().validate(dict(result, raw_error="forged"))
 
@@ -354,7 +354,7 @@ def test_definition_reserve_is_exclusive_and_counts_whole_domain(monkeypatch):
     assert discovery.ordinary_record_json_bytes == 0
     definition = discovery.domain(D.DEFINITION_DOMAIN)
     result = report(discovery)
-    assert result["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert result["schema"] == "AcademyAuthorityDiscovery.v3"
     assert len(result["domains"][D.DEFINITION_DOMAIN]["records"]) == 1
     definition["source_reads"] = ["x" * 1500]
     assert report(discovery)["normal_evidence_not_emitted"]
@@ -450,7 +450,7 @@ def test_metadata_limit_exactly_accounts_record_commas_and_newline(monkeypatch):
         if exact == D.RESOURCE_PROFILE["metadata_json_bytes"]:
             break
         profile(monkeypatch, metadata_json_bytes=exact)
-    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v3"
     profile(monkeypatch, metadata_json_bytes=exact - 1)
     assert report(discovery)["normal_evidence_not_emitted"]
 
@@ -461,7 +461,7 @@ def test_definition_domain_limit_is_inclusive_without_ordinary_charging(monkeypa
     assert discovery.record(D.DEFINITION_DOMAIN, "a.service", {})
     exact = D.canonical_size(discovery.domain(D.DEFINITION_DOMAIN), 16 * D.MIB)
     profile(monkeypatch, definition_domain_json_bytes=exact)
-    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v3"
     assert discovery.ordinary_record_json_bytes == 0
     profile(monkeypatch, definition_domain_json_bytes=exact - 1)
     assert report(discovery)["normal_evidence_not_emitted"]
@@ -475,7 +475,7 @@ def test_normal_limit_exactly_accounts_final_newline(monkeypatch):
         if exact == D.RESOURCE_PROFILE["normal_json_bytes"]:
             break
         profile(monkeypatch, normal_json_bytes=exact)
-    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v2"
+    assert report(discovery)["schema"] == "AcademyAuthorityDiscovery.v3"
     profile(monkeypatch, normal_json_bytes=exact - 1)
     assert report(discovery)["normal_evidence_not_emitted"]
 
@@ -552,7 +552,7 @@ def test_metadata_refusal_has_nonrecursive_single_failure_delivery(exhaustion):
     data = output.getvalue()
     result = json.loads(data)
     assert len(data) <= D.MIB and data.count(b"\n") == 1
-    assert result["schema"] == "AcademyAuthorityDiscoveryFailure.v2"
+    assert result["schema"] == "AcademyAuthorityDiscoveryFailure.v3"
     assert result["domains"] == {} and result["normal_evidence_not_emitted"]
     assert result["resource_accounting"]["resource_stop_reason"] == "observation_retention_limit"
     validator().validate(result)
@@ -594,3 +594,29 @@ def test_proc_local_overflow_probe_is_exactly_one_charged_byte(monkeypatch, fiel
     assert max(requests) <= 65536
     assert "procfs_file_byte_bound" in discovery.domain("processes")["gaps"]
     assert closed == [12]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_historical_v2_resource_contract_still_accepts_frozen_positive_fixture(failure):
+    discovery = SyntheticDiscovery()
+    discovery.systemd()
+    result = json.loads(json.dumps(discovery.envelope(failure=failure)))
+    result["schema"] = "AcademyAuthorityDiscoveryFailure.v2" if failure else "AcademyAuthorityDiscovery.v2"
+    historical_profile = {
+        "schema": "AcademyDiscoveryResourceProfile.v1", "captured_payload_bytes": 268435456,
+        "record_json_bytes": 2097152, "ordinary_record_json_bytes": 48234496,
+        "definition_domain_json_bytes": 16777216, "metadata_json_bytes": 1048576,
+        "normal_json_bytes": 66060288, "failure_json_bytes": 1048576, "overflow_probe_bytes": 1,
+        "readlink_bytes": 65536, "json_depth": 32, "json_container_entries": 262144,
+        "json_nodes": 4000000, "json_string_characters": 2097152, "json_key_characters": 256,
+        "json_integer_bits": 128,
+    }
+    result["resource_profile"] = historical_profile
+    result["resource_profile_sha256"] = "275267bf47015b070b7f2e6df00fa88ec8bb2ccbdf7f07ba1a651d14a82c8136"
+    for key in ("ordinary_filesystem_work", "definition_filesystem_work", "cumulative_filesystem_work",
+                "reserved_definition_filesystem_work"):
+        del result["resource_accounting"][key]
+    validator().validate(result)
+    result["resource_accounting"]["definition_filesystem_work"] = 0
+    with pytest.raises(ValidationError):
+        validator().validate(result)
