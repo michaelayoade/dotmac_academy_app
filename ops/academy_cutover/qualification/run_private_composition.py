@@ -21,14 +21,37 @@ class Discard:
 
 
 class SafeResult(unittest.TestResult):
+    def __init__(self):
+        super().__init__()
+        self.safe_diagnostics = []
+
+    def record(self, err):
+        categories = {"test_reader_composition.py": 1, "reader_server.py": 2,
+                      "consume-handoff.py": 3, "idp-create-operator.py": 4}
+        frames = []
+        trace = err[2]
+        while trace is not None and len(frames) < 32:
+            category = categories.get(Path(trace.tb_frame.f_code.co_filename).name)
+            if category is not None:
+                frames.append([category, trace.tb_lineno])
+            trace = trace.tb_next
+        allowed = {"AssertionError", "ValueError", "RuntimeError", "NameError", "AttributeError",
+                   "TypeError", "FileNotFoundError", "KeyError"}
+        kind = err[0].__name__
+        self.safe_diagnostics.append({"case": self.testsRun, "kind": kind if kind in allowed else "Other",
+                                      "frames": frames})
+
     def addError(self, test, err):
+        self.record(err)
         self.errors.append((None, None))
 
     def addFailure(self, test, err):
+        self.record(err)
         self.failures.append((None, None))
 
     def addSubTest(self, test, subtest, err):
         if err is not None:
+            self.record(err)
             self.failures.append((None, None))
 
 
@@ -48,7 +71,8 @@ def main() -> int:
         suite = unittest.defaultTestLoader.loadTestsFromModule(module)
         suite.run(result)
     evidence = {"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
-                "skipped": len(result.skipped), "private_contents_rendered": False}
+                "skipped": len(result.skipped), "private_contents_rendered": False,
+                "diagnostics": result.safe_diagnostics}
     print(json.dumps(evidence, sort_keys=True))
     passed = (result.testsRun == 18 and result.wasSuccessful() and not result.skipped
               and not result.expectedFailures and not result.unexpectedSuccesses)
