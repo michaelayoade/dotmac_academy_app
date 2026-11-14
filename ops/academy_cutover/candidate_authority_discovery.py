@@ -2007,6 +2007,23 @@ class Discovery:
             or path in SYSTEMD_DEFINITION_PROFILE["allowed_linked_files"]
         )
 
+    def definition_lookup_parent(self, path):
+        """Approve a lexical path, then its canonical parent before any leaf access."""
+        if not self.definition_allowed_path(path):
+            self.definition_refuse("definition_linked_target_unprofiled")
+        parent_path, name = os.path.split(path)
+        if not name or name in (".", "..") or not self.definition_allowed_path(parent_path):
+            self.definition_refuse("definition_linked_target_unprofiled")
+        directory = self.definition_directory(parent_path)
+        if directory is None:
+            if not self.definition_lookup_target_allowed(path):
+                self.definition_refuse("definition_linked_target_unprofiled")
+            return None
+        canonical = os.path.join(directory["resolved"], name)
+        if not self.definition_lookup_target_allowed(canonical):
+            self.definition_refuse("definition_linked_target_unprofiled")
+        return directory
+
     def definition_path_record(self, path, kind, identity=None, target=None, **extra):
         state = self.definition_state()
         record = {
@@ -2440,10 +2457,8 @@ class Discovery:
                 reference = self.definition_verify_null()
                 self.definition_check_chain(chain)
                 return {"path": path, "mask": True, "reference": reference, "chain": chain}
-            if not self.definition_lookup_target_allowed(path):
-                self.definition_refuse("definition_linked_target_unprofiled")
-            parent_path, name = os.path.split(path)
-            parent = self.definition_directory(parent_path)
+            name = os.path.basename(path)
+            parent = self.definition_lookup_parent(path)
             if parent is None:
                 self.definition_refuse("definition_selected_source_missing")
             meta = self.definition_io("stat", name, dir_fd=parent["fd"], follow_symlinks=False)
@@ -2614,12 +2629,10 @@ class Discovery:
             if path == "/dev/null":
                 self.definition_verify_null()
                 return True
-            if not self.definition_lookup_target_allowed(path):
-                self.definition_refuse("definition_linked_target_unprofiled")
             if path in seen:
                 return False  # v255 null_or_empty_path error is not a dependency mask.
+            directory = self.definition_lookup_parent(path)
             seen.add(path)
-            directory = self.definition_directory(os.path.dirname(path))
             if directory is None:
                 return False
             name = os.path.basename(path)
