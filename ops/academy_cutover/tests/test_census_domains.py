@@ -194,7 +194,7 @@ def test_overlapping_frozen_membership_refused(intrinsic):
 
 def test_other_domains_refuse_without_provider_execution():
     for domain in D.DOMAINS:
-        if domain != D.PROCESS_DOMAIN:
+        if domain not in (D.PROCESS_DOMAIN, D.SYSTEMD_DOMAIN):
             with pytest.raises(ValueError, match="adapter_unimplemented"):
                 D.collect_domain(Common, {}, "web", domain)
 

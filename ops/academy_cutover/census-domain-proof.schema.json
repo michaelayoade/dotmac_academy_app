@@ -1,403 +1,6 @@
 {
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "schema": {
-      "const": "AcademyCensusDomainObservation.v2"
-    },
-    "candidate": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
-    },
-    "tree": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
-    },
-    "role": {
-      "enum": [
-        "web",
-        "lab"
-      ]
-    },
-    "hostname": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 253
-    },
-    "domain": {
-      "const": "running processes"
-    },
-    "sources": {
-      "type": "array",
-      "minItems": 3,
-      "maxItems": 3,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 4096
-          },
-          "sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          }
-        },
-        "required": [
-          "path",
-          "sha256"
-        ]
-      }
-    },
-    "observed_unix_started": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "observed_unix_finished": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "enumerated_object_ids": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^[0-9a-f]{64}$"
-      },
-      "maxItems": 8192,
-      "uniqueItems": true
-    },
-    "objects": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "object_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "pid": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9999999999
-          },
-          "starttime_ticks": {
-            "type": "string",
-            "pattern": "^[0-9]{1,20}$"
-          },
-          "namespaces": {
-            "$ref": "#/$defs/namespaces"
-          },
-          "facts": {
-            "$ref": "#/$defs/facts"
-          },
-          "classification": {
-            "enum": [
-              "unknown",
-              "non_sender",
-              "legacy_sender"
-            ]
-          },
-          "non_sender_reason": {
-            "enum": [
-              null,
-              "stable_pf_kthread",
-              "stable_zombie"
-            ]
-          },
-          "authority_refs": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "uniqueItems": true,
-            "maxItems": 1
-          }
-        },
-        "required": [
-          "object_id",
-          "authority_refs",
-          "pid",
-          "starttime_ticks",
-          "namespaces",
-          "facts",
-          "classification",
-          "non_sender_reason"
-        ],
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "classification": {
-                  "const": "non_sender"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "non_sender_reason": {
-                  "enum": [
-                    "stable_pf_kthread",
-                    "stable_zombie"
-                  ]
-                },
-                "authority_refs": {
-                  "maxItems": 0
-                },
-                "namespaces": {
-                  "required": [
-                    "pid",
-                    "mnt",
-                    "user",
-                    "net"
-                  ]
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "classification": {
-                  "const": "unknown"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "non_sender_reason": {
-                  "type": "null"
-                },
-                "authority_refs": {
-                  "maxItems": 0
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "classification": {
-                  "const": "legacy_sender"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "non_sender_reason": {
-                  "type": "null"
-                },
-                "authority_refs": {
-                  "minItems": 1
-                },
-                "namespaces": {
-                  "required": [
-                    "pid",
-                    "mnt",
-                    "user",
-                    "net"
-                  ]
-                }
-              }
-            }
-          }
-        ]
-      },
-      "maxItems": 8192
-    },
-    "snapshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enumerated": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "inspected": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "raced": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "complete": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "skipped": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "enumeration_complete": {
-          "type": "boolean"
-        },
-        "classification_complete": {
-          "const": false
-        },
-        "gaps": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "maxItems": 1000
-        },
-        "records": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "authority_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "identity": {
-                "type": "null"
-              },
-              "identity_sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "unknown_identity": {
-                "const": true
-              },
-              "relevance": {
-                "const": "unresolved"
-              },
-              "facts": {
-                "$ref": "#/$defs/facts"
-              }
-            },
-            "required": [
-              "authority_id",
-              "identity",
-              "identity_sha256",
-              "unknown_identity",
-              "relevance",
-              "facts"
-            ]
-          },
-          "maxItems": 8192
-        }
-      },
-      "required": [
-        "enumerated",
-        "inspected",
-        "raced",
-        "complete",
-        "skipped",
-        "enumeration_complete",
-        "classification_complete",
-        "gaps",
-        "records"
-      ]
-    },
-    "unresolved_gaps": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "maxItems": 1000
-    },
-    "coverage_complete": {
-      "type": "boolean"
-    },
-    "owners_before": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "academy-v2-web": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-admin-report": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-email-digest": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-email-outbox": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-erp-training-sync": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-hr-report": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-learner-digest": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-reminders": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-lab-worker": {
-          "$ref": "#/$defs/owner"
-        }
-      }
-    },
-    "owners_after": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "academy-v2-web": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-admin-report": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-email-digest": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-email-outbox": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-erp-training-sync": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-hr-report": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-learner-digest": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-reminders": {
-          "$ref": "#/$defs/owner"
-        },
-        "academy-v2-lab-worker": {
-          "$ref": "#/$defs/owner"
-        }
-      }
-    }
-  },
-  "required": [
-    "schema",
-    "candidate",
-    "tree",
-    "role",
-    "hostname",
-    "domain",
-    "sources",
-    "observed_unix_started",
-    "observed_unix_finished",
-    "enumerated_object_ids",
-    "objects",
-    "snapshot",
-    "unresolved_gaps",
-    "coverage_complete",
-    "owners_before",
-    "owners_after"
-  ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dotmac.io/schemas/academy-census-domain-proof-v2.json",
-  "description": "Process snapshot evidence only; seven other domains refuse. Stable authority_ref = SHA256(canonical JSON {schema: AcademyLegacyUnitAuthority.v1, hostname, role, unit}); no PID, start time or candidate in authority identity. object_id remains ephemeral. Only fixed legacy MainPID owners are attributed; children do not inherit. Intrinsic non-senders and unknown objects carry zero authority_refs. Production observation always pins domains, Discovery and executor sources. Pure validation does not establish live collection.",
+  "$id": "https://dotmac.io/schemas/academy-census-domain-proof-v3.json",
   "$defs": {
     "namespaces": {
       "type": "object",
@@ -876,72 +479,479 @@
         "cwd_sha256",
         "exe_sha256"
       ]
+    },
+    "process_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "AcademyCensusDomainObservation.v2"
+        },
+        "candidate": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "role": {
+          "enum": [
+            "web",
+            "lab"
+          ]
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "domain": {
+          "const": "running processes"
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ]
+          }
+        },
+        "observed_unix_started": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_unix_finished": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enumerated_object_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "maxItems": 8192,
+          "uniqueItems": true
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "object_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "pid": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9999999999
+              },
+              "starttime_ticks": {
+                "type": "string",
+                "pattern": "^[0-9]{1,20}$"
+              },
+              "namespaces": {
+                "$ref": "#/$defs/namespaces"
+              },
+              "facts": {
+                "$ref": "#/$defs/facts"
+              },
+              "classification": {
+                "enum": [
+                  "unknown",
+                  "non_sender",
+                  "legacy_sender"
+                ]
+              },
+              "non_sender_reason": {
+                "enum": [
+                  null,
+                  "stable_pf_kthread",
+                  "stable_zombie"
+                ]
+              },
+              "authority_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "uniqueItems": true,
+                "maxItems": 1
+              }
+            },
+            "required": [
+              "object_id",
+              "authority_refs",
+              "pid",
+              "starttime_ticks",
+              "namespaces",
+              "facts",
+              "classification",
+              "non_sender_reason"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "const": "non_sender"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "non_sender_reason": {
+                      "enum": [
+                        "stable_pf_kthread",
+                        "stable_zombie"
+                      ]
+                    },
+                    "authority_refs": {
+                      "maxItems": 0
+                    },
+                    "namespaces": {
+                      "required": [
+                        "pid",
+                        "mnt",
+                        "user",
+                        "net"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "const": "unknown"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "non_sender_reason": {
+                      "type": "null"
+                    },
+                    "authority_refs": {
+                      "maxItems": 0
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "const": "legacy_sender"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "non_sender_reason": {
+                      "type": "null"
+                    },
+                    "authority_refs": {
+                      "minItems": 1
+                    },
+                    "namespaces": {
+                      "required": [
+                        "pid",
+                        "mnt",
+                        "user",
+                        "net"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "maxItems": 8192
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enumerated": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inspected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "raced": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "complete": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "enumeration_complete": {
+              "type": "boolean"
+            },
+            "classification_complete": {
+              "const": false
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 1000
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "authority_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "identity": {
+                    "type": "null"
+                  },
+                  "identity_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "unknown_identity": {
+                    "const": true
+                  },
+                  "relevance": {
+                    "const": "unresolved"
+                  },
+                  "facts": {
+                    "$ref": "#/$defs/facts"
+                  }
+                },
+                "required": [
+                  "authority_id",
+                  "identity",
+                  "identity_sha256",
+                  "unknown_identity",
+                  "relevance",
+                  "facts"
+                ]
+              },
+              "maxItems": 8192
+            }
+          },
+          "required": [
+            "enumerated",
+            "inspected",
+            "raced",
+            "complete",
+            "skipped",
+            "enumeration_complete",
+            "classification_complete",
+            "gaps",
+            "records"
+          ]
+        },
+        "unresolved_gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 1000
+        },
+        "coverage_complete": {
+          "type": "boolean"
+        },
+        "owners_before": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "academy-v2-web": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-admin-report": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-email-digest": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-email-outbox": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-erp-training-sync": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-hr-report": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-learner-digest": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-reminders": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-lab-worker": {
+              "$ref": "#/$defs/owner"
+            }
+          }
+        },
+        "owners_after": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "academy-v2-web": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-admin-report": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-email-digest": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-email-outbox": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-erp-training-sync": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-hr-report": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-learner-digest": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-reminders": {
+              "$ref": "#/$defs/owner"
+            },
+            "academy-v2-lab-worker": {
+              "$ref": "#/$defs/owner"
+            }
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "candidate",
+        "tree",
+        "role",
+        "hostname",
+        "domain",
+        "sources",
+        "observed_unix_started",
+        "observed_unix_finished",
+        "enumerated_object_ids",
+        "objects",
+        "snapshot",
+        "unresolved_gaps",
+        "coverage_complete",
+        "owners_before",
+        "owners_after"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owners_before": {
+                "required": [
+                  "academy-v2-web",
+                  "academy-v2-admin-report",
+                  "academy-v2-email-digest",
+                  "academy-v2-email-outbox",
+                  "academy-v2-erp-training-sync",
+                  "academy-v2-hr-report",
+                  "academy-v2-learner-digest",
+                  "academy-v2-reminders"
+                ],
+                "maxProperties": 8
+              },
+              "owners_after": {
+                "required": [
+                  "academy-v2-web",
+                  "academy-v2-admin-report",
+                  "academy-v2-email-digest",
+                  "academy-v2-email-outbox",
+                  "academy-v2-erp-training-sync",
+                  "academy-v2-hr-report",
+                  "academy-v2-learner-digest",
+                  "academy-v2-reminders"
+                ],
+                "maxProperties": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "lab"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owners_before": {
+                "required": [
+                  "academy-v2-lab-worker"
+                ],
+                "maxProperties": 1
+              },
+              "owners_after": {
+                "required": [
+                  "academy-v2-lab-worker"
+                ],
+                "maxProperties": 1
+              }
+            }
+          }
+        }
+      ]
     }
   },
-  "allOf": [
+  "description": "Process and system-unit observations only; six other domains refuse. Stable authority references never establish campaign classification or full census completion. Production source pins and live collection remain mandatory.",
+  "oneOf": [
     {
-      "if": {
-        "properties": {
-          "role": {
-            "const": "web"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "owners_before": {
-            "required": [
-              "academy-v2-web",
-              "academy-v2-admin-report",
-              "academy-v2-email-digest",
-              "academy-v2-email-outbox",
-              "academy-v2-erp-training-sync",
-              "academy-v2-hr-report",
-              "academy-v2-learner-digest",
-              "academy-v2-reminders"
-            ],
-            "maxProperties": 8
-          },
-          "owners_after": {
-            "required": [
-              "academy-v2-web",
-              "academy-v2-admin-report",
-              "academy-v2-email-digest",
-              "academy-v2-email-outbox",
-              "academy-v2-erp-training-sync",
-              "academy-v2-hr-report",
-              "academy-v2-learner-digest",
-              "academy-v2-reminders"
-            ],
-            "maxProperties": 8
-          }
-        }
-      }
+      "$ref": "#/$defs/process_observation"
     },
     {
-      "if": {
-        "properties": {
-          "role": {
-            "const": "lab"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "owners_before": {
-            "required": [
-              "academy-v2-lab-worker"
-            ],
-            "maxProperties": 1
-          },
-          "owners_after": {
-            "required": [
-              "academy-v2-lab-worker"
-            ],
-            "maxProperties": 1
-          }
-        }
-      }
+      "$ref": "systemd-census-domain-proof.schema.json"
     }
   ]
 }
