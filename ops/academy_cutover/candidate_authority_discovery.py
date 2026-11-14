@@ -248,7 +248,10 @@ SYSTEMD_RUNTIME_RELATION_CATALOGUE_SHA256 = '0e2b40165f68b647b1f181ddc39329f264f
 # Captured payload counts only explicit read results, including rejected bytes.
 MIB = 1024 * 1024
 RESOURCE_PROFILE = {
-    "schema": "AcademyDiscoveryResourceProfile.v1",
+    "schema": "AcademyDiscoveryResourceProfile.v2",
+    "ordinary_filesystem_work": 16384,
+    "definition_filesystem_work": 262144,
+    "cumulative_filesystem_work": 278528,
     "captured_payload_bytes": 256 * MIB,
     "record_json_bytes": 2 * MIB,
     "ordinary_record_json_bytes": 46 * MIB,
@@ -377,19 +380,21 @@ SYSTEMD_DEFINITION_ROOTS = (
     "/run/systemd/generator.late",
 )
 SYSTEMD_DEFINITION_PROFILE = {
-    "schema": "AcademySystemdDefinitionProfile.v1", "parser_family": 255,
+    "schema": "AcademySystemdDefinitionProfile.v2", "parser_family": 255,
+    "target_selection": "observed_initial_final_units_and_lookup_templates",
     "allowed_roots": list(SYSTEMD_DEFINITION_ROOTS),
     "allowed_linked_files": [],
-    "definition_targets": 128, "manager_roots": 32, "path_bytes": 4096,
+    "definition_targets": 1024, "manager_roots": 32, "path_bytes": 4096,
     # unit-file.c v255 FOLLOW_MAX is 8, independently of filesystem traversal.
     # https://github.com/systemd/systemd/blob/v255/src/basic/unit-file.c#L140
-    "alias_hops": 8, "path_symlink_hops": 32, "map_names": 8192,
-    "selected_files_per_definition": 64, "selected_files_total": 512,
+    "alias_hops": 8, "alias_resolution_attempts": 16777216,
+    "candidate_selection_attempts": 1048576, "path_symlink_hops": 32, "map_names": 8192,
+    "selected_files_per_definition": 64, "selected_files_total": 1536,
     "body_bytes_per_read": 262144, "body_bytes_total": 33554432,
-    "filesystem_work": 12000, "manager_commands": 4, "manager_output_bytes": 131072,
-    "relation_attempts_per_definition": 1024, "relation_attempts_total": 32768,
+    "filesystem_work": 262144, "manager_commands": 4, "manager_record_bytes": 1024, "manager_output_bytes": 131072,
+    "relation_attempts_per_definition": 1024, "relation_attempts_total": 8192,
     "evidence_bytes": 16777216, "path_records": 4096, "path_record_bytes": 768,
-    "source_read_records": 1024, "source_read_record_bytes": 1024,
+    "source_read_records": 3072, "source_read_record_bytes": 512,
     "relation_record_bytes": 256, "definition_header_bytes": 8192,
 }
 DEFINITION_UNIT_TYPES = frozenset((
@@ -541,9 +546,12 @@ class Discovery:
         self.deadline = time.monotonic() + MAX_SECONDS
         self.commands = 0
         self.files = 0
+        self.definition_files = 0
         self.domains = {}
         self.loaded_units = set()
         self.installed_units = set()
+        self.final_installed_units = set()
+        self.final_loaded_units = set()
         self.pending_signal = None
         self.child_phase = "idle"
         self.child_cleanup_failed = False
@@ -1495,6 +1503,8 @@ class Discovery:
                 final_installed = names
             else:
                 final_loaded = names
+        self.final_installed_units = final_installed
+        self.final_loaded_units = final_loaded
         installed_ok = self.domain("systemd_installed_final")["enumeration_complete"]
         loaded_ok = self.domain("systemd_loaded_final")["enumeration_complete"]
         initial_ok = all(self.domain(name)["enumeration_complete"] for name in (
@@ -1755,7 +1765,8 @@ class Discovery:
                 "unparsed_tail": False, "phase": "initial", "directories": {}, "fds": set(),
                 "paths": {}, "sources": {}, "selected_paths": set(), "source_keys": {}, "manager": [], "failures": [],
                 "null_reference": None, "null_identity": None, "manager_pending": None,
-                "active_roots": (), "last_reduction": None,
+                "active_roots": (), "last_reduction": None, "alias_attempts": 0, "selection_attempts": 0,
+                "candidate_scans": {}, "root_snapshots": {},
             }
             domain = self.domain(DEFINITION_DOMAIN)
             domain.update(
@@ -1763,7 +1774,8 @@ class Discovery:
                 definition_profile_sha256=self.definition_profile_hash(),
                 manager_observations=[], path_observations=[], source_reads=[], relations=[],
                 definition_accounting={
-                    "filesystem_work": 0, "body_bytes": 0, "manager_attempts": 0,
+                    "filesystem_work": 0, "alias_resolution_attempts": 0, "candidate_selection_attempts": 0,
+                    "body_bytes": 0, "manager_attempts": 0,
                     "relation_attempts": 0, "encoded_bytes": 0, "unparsed_tail": False,
                     "selected_paths": 0, "distinct_bodies": 0, "reserved_second_pass_work": 0,
                     "reserved_second_pass_bytes": 0, "reserved_second_pass_reads": 0,
@@ -1784,12 +1796,16 @@ class Discovery:
         state = self.definition_state()
         if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
             self.definition_refuse("definition_interrupted")
-        if state["work"] + state["reserved_work"] + amount > SYSTEMD_DEFINITION_PROFILE["filesystem_work"]:
+        if state["work"] + state["reserved_work"] + amount > min(
+            SYSTEMD_DEFINITION_PROFILE["filesystem_work"], RESOURCE_PROFILE["definition_filesystem_work"]
+        ):
             self.definition_refuse("definition_filesystem_work_bound")
-        if self.files + state["reserved_work"] + amount > MAX_FILES:
+        if (self.files + state["reserved_work"] + amount
+                > RESOURCE_PROFILE["cumulative_filesystem_work"]):
             self.definition_refuse("definition_shared_file_bound")
         state["work"] += amount
         self.files += amount
+        self.definition_files += amount
 
     def definition_syscall(self, operation, *args, **kwargs):
         """Fixed filesystem seam for hosted synthetic qualification; no subprocess."""
@@ -1832,6 +1848,7 @@ class Discovery:
         self.definition_charge(2)
         state["work"] -= 1
         self.files -= 1
+        self.definition_files -= 1
         state["reserved_work"] += 1
         try:
             fd = self.definition_syscall("open", path, flags, **kwargs)
@@ -1849,6 +1866,7 @@ class Discovery:
         state["reserved_work"] -= 1
         state["work"] += 1
         self.files += 1
+        self.definition_files += 1
         try:
             self.definition_syscall("close", fd)
         except OSError:
@@ -1945,7 +1963,9 @@ class Discovery:
             record = {"phase": phase, "property": field, "output": projection(raw) if raw is not None else None,
                       "typed_value_valid": parsed is not None,
                       "value_count": len(parsed) if parsed is not None else None}
-            references.append(self.definition_append("manager_observations", record, 4, 1024))
+            references.append(self.definition_append("manager_observations", record,
+                                                      SYSTEMD_DEFINITION_PROFILE["manager_commands"],
+                                                      SYSTEMD_DEFINITION_PROFILE["manager_record_bytes"]))
             values[field] = parsed
         roots, version = values["UnitPath"], values["Version"]
         if roots is None or version is None:
@@ -1994,7 +2014,9 @@ class Discovery:
             "metadata_sha256": digest(json.dumps(identity).encode()) if identity is not None else None,
             "target_sha256": digest(os.fsencode(target)) if target is not None else None, **extra,
         }
-        return self.definition_append("path_observations", record, 4096, 768)
+        return self.definition_append("path_observations", record,
+                                      SYSTEMD_DEFINITION_PROFILE["path_records"],
+                                      SYSTEMD_DEFINITION_PROFILE["path_record_bytes"])
 
     def definition_check_chain(self, chain):
         for node in chain:
@@ -2125,7 +2147,51 @@ class Discovery:
                 "identity": self.file_identity(before), "custody": custody}
 
     def snapshot_unit_roots(self, roots):
-        return [self.definition_scan(root) for root in roots]
+        snapshots = [self.definition_scan(root) for root in roots]
+        self.definition_state()["root_snapshots"] = {item["path"]: item for item in snapshots}
+        return snapshots
+
+    def definition_candidate_scan(self, root, candidate, scope):
+        """Only a fully captured current-pass root proves an immediate absence."""
+        self.definition_selection_step()
+        state = self.definition_state()
+        path = root + "/" + candidate
+        key = (path, scope)
+        if key in state["candidate_scans"]:
+            return state["candidate_scans"][key]
+        snapshot = state["root_snapshots"].get(root)
+        if snapshot is not None and not snapshot["absent"] and candidate not in snapshot["entries"]:
+            # The root observation is the negative observation's evidence. Do not
+            # create a path record or walk an absent child for each target.
+            result = {"path": path, "resolved": snapshot["resolved"] + "/" + candidate,
+                      "entries": {}, "absent": True, "identity": snapshot["identity"],
+                      "custody": snapshot["custody"], "reference": snapshot["reference"]}
+            return result
+        result = self.definition_scan(path, scope)
+        state["candidate_scans"][key] = result
+        return result
+
+    def definition_selection_step(self):
+        """Charge root setup, candidate visits (even duplicates), and scan entry.
+
+        Each charge checks stop/deadline before construction or a cache fast path.
+        This CPU budget is independent of definition filesystem work.
+        """
+        state = self.definition_state()
+        if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+            self.definition_refuse("definition_interrupted")
+        if state["selection_attempts"] >= SYSTEMD_DEFINITION_PROFILE["candidate_selection_attempts"]:
+            self.definition_refuse("definition_candidate_selection_bound")
+        state["selection_attempts"] += 1
+
+    def definition_alias_step(self):
+        """Bound CPU work independently of filesystem work, including misses."""
+        state = self.definition_state()
+        if self.interrupted(DEFINITION_DOMAIN) or time.monotonic() >= self.deadline:
+            self.definition_refuse("definition_interrupted")
+        if state["alias_attempts"] >= SYSTEMD_DEFINITION_PROFILE["alias_resolution_attempts"]:
+            self.definition_refuse("definition_alias_resolution_bound")
+        state["alias_attempts"] += 1
 
     def definition_verify_null(self):
         state = self.definition_state()
@@ -2170,7 +2236,9 @@ class Discovery:
         mapping = {}
         expanded = {item["path"] for item in snapshots} | {item["resolved"] for item in snapshots}
         for root in snapshots:
+            self.definition_alias_step()
             for name, metadata in sorted(root["entries"].items()):
+                self.definition_alias_step()
                 if self.definition_unit_parts(name) is None or "identity" not in metadata or name in mapping:
                     continue
                 if len(mapping) >= SYSTEMD_DEFINITION_PROFILE["map_names"]:
@@ -2218,9 +2286,11 @@ class Discovery:
             self.definition_refuse("definition_unit_name_unsupported")
 
         def resolve(start):
+            self.definition_alias_step()
             current = start
             seen = set()
             for _ in range(SYSTEMD_DEFINITION_PROFILE["alias_hops"]):
+                self.definition_alias_step()
                 if current in seen:
                     return None, current, "definition_alias_cycle"
                 seen.add(current)
@@ -2254,6 +2324,7 @@ class Discovery:
             # add_names(unit-file.c): template aliases inherit an established instance;
             # an existing instance fragment pointing elsewhere excludes that alias.
             for alias in mapping:
+                self.definition_alias_step()
                 resolved, _destination, error = resolve(alias)
                 if resolved is None or error is not None or resolved["path"] != item["path"]:
                     continue
@@ -2321,12 +2392,16 @@ class Discovery:
             ambiguous_winners = set()
             for unit, group in groups:
                 for root in roots:
+                    self.definition_selection_step()
                     for candidate in self.definition_candidate_dirs(unit):
+                        self.definition_selection_step()
                         path = root + "/" + candidate + directory_suffix
                         if path in visited:
                             continue
                         visited.add(path)
-                        snapshot = self.definition_scan(path, "dropin" if directive is None else "dependency")
+                        snapshot = self.definition_candidate_scan(
+                            root, candidate + directory_suffix, "dropin" if directive is None else "dependency"
+                        )
                         consulted.append(snapshot)
                         for filename, metadata in sorted(snapshot["entries"].items()):
                             if "identity" not in metadata or (file_suffix and not filename.endswith(file_suffix)):
@@ -2436,7 +2511,8 @@ class Discovery:
                 self.definition_refuse("definition_body_total_bound")
             if state["work"] + state["reserved_work"] + 2 * cost > SYSTEMD_DEFINITION_PROFILE["filesystem_work"]:
                 self.definition_refuse("definition_second_pass_reservation_bound")
-            if self.files + state["reserved_work"] + 2 * cost > MAX_FILES:
+            if (self.files + state["reserved_work"] + 2 * cost
+                    > RESOURCE_PROFILE["cumulative_filesystem_work"]):
                 self.definition_refuse("definition_shared_file_bound")
             state["reserved_bytes"] += size
             state["reserved_work"] += cost
@@ -2479,7 +2555,9 @@ class Discovery:
                 "before_sha256": digest(json.dumps(expected).encode()),
                 "after_sha256": digest(json.dumps(self.file_identity(after)).encode()), "mask": source["mask"],
             }
-            cache["reads"][phase] = self.definition_append("source_reads", record, 1024, 1024)
+            cache["reads"][phase] = self.definition_append("source_reads", record,
+                                                             SYSTEMD_DEFINITION_PROFILE["source_read_records"],
+                                                             SYSTEMD_DEFINITION_PROFILE["source_read_record_bytes"])
             if phase == "initial":
                 cache["body"] = bytes(body)
             elif digest(body) != digest(cache["body"]):
@@ -2761,7 +2839,9 @@ class Discovery:
                     requirements.add("directive_semantics_unresolved")
                 if kind != "dependency":
                     record["value_bytes"] = len(word.encode("utf-8"))
-                self.definition_append("relations", record, 32768, 256)
+                self.definition_append("relations", record,
+                                       SYSTEMD_DEFINITION_PROFILE["relation_attempts_total"],
+                                       SYSTEMD_DEFINITION_PROFILE["relation_record_bytes"])
                 progress["range"][1] = len(self.domain(DEFINITION_DOMAIN)["relations"])
         return {"range": [start, len(self.domain(DEFINITION_DOMAIN)["relations"])],
                 "attempts": attempts, "requirements": sorted(requirements)}
@@ -2771,6 +2851,8 @@ class Discovery:
         for fd in list(state["fds"]):
             self.definition_close(fd)
         state["directories"] = {}
+        state["candidate_scans"] = {}
+        state["root_snapshots"] = {}
         state["null_reference"] = None
 
     @staticmethod
@@ -2813,6 +2895,18 @@ class Discovery:
         mapping_before = {}
         stable = False
         enumeration_ok = False
+        # All four listings precede definition acquisition. They are membership
+        # boundaries, not an atomic snapshot or a bracket around these body reads.
+        boundary_failures = set()
+        if not all(self.domain(label)["enumeration_complete"] for label in (
+            "systemd_installed", "systemd_loaded", "systemd_installed_final", "systemd_loaded_final"
+        )):
+            boundary_failures.add("definition_enumeration_boundary_unavailable")
+        if (self.installed_units != self.final_installed_units
+                or self.loaded_units != self.final_loaded_units):
+            boundary_failures.add("definition_enumeration_membership_changed")
+        for reason in sorted(boundary_failures):
+            self.gap(DEFINITION_DOMAIN, reason, raced=reason == "definition_enumeration_membership_changed")
         try:
             before = self.manager_unitpath_snapshot("initial")
             state["active_roots"] = tuple(before["roots"])
@@ -2821,15 +2915,20 @@ class Discovery:
                 root["resolved"] for root in roots_before
             })
             mapping_before = self.build_unit_name_map(roots_before)
-            actually_enumerated = self.installed_units | self.loaded_units
-            targets = {
-                name for name in set(mapping_before) | actually_enumerated
-                if (parts := self.definition_unit_parts(name)) is not None and parts[1] is not None
-                and (parts[1] == "" or name in actually_enumerated)
+            actually_enumerated = (self.installed_units | self.loaded_units
+                                   | self.final_installed_units | self.final_loaded_units)
+            targets = actually_enumerated | {
+                name for name in mapping_before
+                if (parts := self.definition_unit_parts(name)) is not None and parts[1] == ""
             }
+            # Listing rows are bounded to 8192 each, and the lookup map to 8192.
+            # Count every observed name before rejecting unsupported names, and
+            # refuse the whole target set before opening any selected body.
             domain["enumerated"] = len(targets)
             if len(targets) > SYSTEMD_DEFINITION_PROFILE["definition_targets"]:
                 self.definition_refuse("definition_target_bound")
+            if any(self.definition_unit_parts(name) is None for name in targets):
+                self.definition_refuse("definition_unit_name_unsupported")
             live_roots = [root["path"] for root in roots_before if not root["absent"]]
             for name in sorted(targets):
                 resolution = self.resolve_template_fragment(name, mapping_before)
@@ -2892,9 +2991,7 @@ class Discovery:
             except DefinitionRefusedError:
                 stable = False
         enumeration_ok = (
-            stable and not state["failures"]
-            and self.domain("systemd_installed")["enumeration_complete"]
-            and self.domain("systemd_loaded")["enumeration_complete"]
+            stable and not state["failures"] and not boundary_failures
         )
         # Parse only selected bodies. Two body hashes establish limited observed
         # stability; no atomic snapshot, sender exclusion, or activation closure.
@@ -2928,7 +3025,7 @@ class Discovery:
             resolution = pending["resolution"]
             reduction = pending.get("reduction", {"range": [0, 0], "attempts": 0,
                                                   "requirements": ["definition_relations_unavailable"]})
-            requirements = set(reduction["requirements"]) | set(state["failures"])
+            requirements = set(reduction["requirements"]) | set(state["failures"]) | boundary_failures
             if resolution["failure"]:
                 requirements.add(resolution["failure"])
                 self.gap(DEFINITION_DOMAIN, resolution["failure"])
@@ -2944,7 +3041,8 @@ class Discovery:
                                 "repeated_read": reads["repeated"]})
             aliases = sorted(resolution["aliases"])
             facts = {
-                "schema": "AcademySystemdTemplateDefinitionFacts.v1", "source_kind": "template_definition",
+                "schema": "AcademySystemdEffectiveDefinitionFacts.v1", "source_kind": "effective_unit_definition",
+                "name_shape": self.unit_name_shape(name),
                 "definition_profile": dict(SYSTEMD_DEFINITION_PROFILE),
                 "definition_profile_sha256": self.definition_profile_hash(),
                 "manager_before": manager_before, "manager_after": manager_after,
@@ -2973,7 +3071,9 @@ class Discovery:
         domain["enumeration_complete"] = enumeration_ok
         domain["skipped"] = domain["enumerated"] - domain["inspected"]
         domain["definition_accounting"] = {
-            "filesystem_work": state["work"], "body_bytes": state["body_bytes"],
+            "filesystem_work": state["work"], "alias_resolution_attempts": state["alias_attempts"],
+            "candidate_selection_attempts": state["selection_attempts"],
+            "body_bytes": state["body_bytes"],
             "manager_attempts": state["manager_attempts"], "relation_attempts": state["relation_attempts"],
             "encoded_bytes": state["encoded_bytes"], "unparsed_tail": state["unparsed_tail"],
             "selected_paths": len(state["selected_paths"]), "distinct_bodies": len(state["sources"]),
@@ -3003,7 +3103,10 @@ class Discovery:
     def read_file(self, directory, name, owner, domain, limit=MAX_BYTES, expected=None):
         if self.interrupted(domain):
             return None
-        if self.files >= MAX_FILES or time.monotonic() >= self.deadline:
+        if (self.files - self.definition_files >= MAX_FILES
+                or (self.files + (self._definition["reserved_work"] if hasattr(self, "_definition") else 0)
+                    >= RESOURCE_PROFILE["cumulative_filesystem_work"])
+                or time.monotonic() >= self.deadline):
             self.gap(domain, "file_or_time_limit")
             return None
         self.files += 1
@@ -3235,7 +3338,10 @@ class Discovery:
             return None
         if self.interrupted(domain):
             return None
-        if self.files >= MAX_FILES or time.monotonic() >= self.deadline:
+        if (self.files - self.definition_files >= MAX_FILES
+                or (self.files + (self._definition["reserved_work"] if hasattr(self, "_definition") else 0)
+                    >= RESOURCE_PROFILE["cumulative_filesystem_work"])
+                or time.monotonic() >= self.deadline):
             self.gap(domain, "file_or_time_limit")
             return None
         self.files += 1
@@ -3875,11 +3981,17 @@ class Discovery:
             "resource_stop_reason": self.resource_stop_reason,
             "observation_retention_incomplete": self.observation_retention_incomplete,
             "retained_ordinary_record_json_bytes": self.ordinary_record_json_bytes,
+            "ordinary_filesystem_work": self.files - self.definition_files,
+            "definition_filesystem_work": self.definition_files,
+            "cumulative_filesystem_work": self.files,
+            "reserved_definition_filesystem_work": (
+                self._definition["reserved_work"] if hasattr(self, "_definition") else 0
+            ),
         }
 
     def envelope(self, *, failure=False):
         result = {
-            "schema": "AcademyAuthorityDiscoveryFailure.v2" if failure else "AcademyAuthorityDiscovery.v2",
+            "schema": "AcademyAuthorityDiscoveryFailure.v3" if failure else "AcademyAuthorityDiscovery.v3",
             "role": self.role,
             "host": self.host,
             "coverage_complete": False,

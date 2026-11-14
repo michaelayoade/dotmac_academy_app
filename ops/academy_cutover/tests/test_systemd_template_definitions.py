@@ -18,7 +18,7 @@ LOW = "/usr/lib/systemd/system"
 
 
 def envelope(discovery):
-    # Template evidence belongs to the guarded v2 envelope, not historical v1.
+    # Template evidence belongs to the guarded v3 envelope, not historical v1.
     return json.loads(json.dumps(discovery.envelope()))
 
 
@@ -122,7 +122,9 @@ class SyntheticDefinitions(D.Discovery):
         self.getters = []
         self.installed_units = set(names)
         self.loaded_units = set(names)
-        for domain in ("systemd_installed", "systemd_loaded"):
+        self.final_installed_units = set(names)
+        self.final_loaded_units = set(names)
+        for domain in ("systemd_installed", "systemd_loaded", "systemd_installed_final", "systemd_loaded_final"):
             self.domain(domain)["enumeration_complete"] = True
 
     def definition_syscall(self, operation, *args, **kwargs):
@@ -180,10 +182,10 @@ def test_effective_bodies_two_manager_pairs_and_hash_only_schema():
     discovery = observe(filesystem)
     result = facts(discovery)
     assert result["source_acquisition_complete"] and not result["activation_semantics_complete"]
-    assert result["source_kind"] == "template_definition"
+    assert result["source_kind"] == "effective_unit_definition"
     assert result["classification"] == "unknown" and result["authority_refs"] == []
     assert len(discovery.getters) == 4
-    assert result["definition_profile_sha256"] == "713859b6fdc5043a963a7463c0182a47ab0668416dc916019e0a88de7c6f60ab"
+    assert result["definition_profile_sha256"] == "60ec4e857e19823f8daed4083156181fa07e22e0b273249174a70733cefafe19"
     assert [item["phase"] for item in domain(discovery)["source_reads"]] == ["initial", "repeated"]
     assert len(filesystem.reads) == 2 and all(path.endswith("worker@.service") for path, _size in filesystem.reads)
     assert not filesystem.fds
@@ -492,8 +494,8 @@ def test_body_read_cap_is_enforced_before_opening_an_oversized_body(size):
 
 
 @pytest.mark.parametrize("counter,value,code", [
-    ("work", 12000, "definition_filesystem_work_bound"),
-    ("files", 16384, "definition_shared_file_bound"),
+    ("work", 262144, "definition_filesystem_work_bound"),
+    ("files", 278528, "definition_shared_file_bound"),
     ("deadline", 0, "definition_interrupted"),
 ])
 def test_work_shared_allowance_and_deadline_fail_before_io(counter, value, code):
@@ -519,9 +521,9 @@ def test_directory_iterator_is_never_advanced_at_zero_allowance(monkeypatch, bou
         def __enter__(self):
             state = discovery.definition_state()
             if bound == "work":
-                state["work"] = 12000 - state["reserved_work"]
+                state["work"] = 262144 - state["reserved_work"]
             elif bound == "shared":
-                discovery.files = 16384 - state["reserved_work"]
+                discovery.files = 278528 - state["reserved_work"]
             else:
                 discovery.deadline = 0
             return self
@@ -547,7 +549,7 @@ def test_second_pass_reserves_bytes_and_work_before_first_body_admission():
     discovery = SyntheticDefinitions(base_fs())
     state = discovery.definition_state()
     state["active_roots"] = (ROOT,)
-    state["work"] = 11900
+    state["work"] = 262044
     path = ROOT + "/worker@.service"
     identity = D.Discovery.file_identity(discovery.fs.metadata(discovery.fs.nodes[path]))
     with pytest.raises(D.DefinitionRefusedError, match="definition_second_pass_reservation_bound"):
@@ -570,12 +572,12 @@ def test_second_read_can_use_its_reserved_work_after_unreserved_work_is_exhauste
     discovery.read_definition_source(selected)
     discovery.definition_close_pass()
     assert state["reserved_work"] > 0 and state["reserved_bytes"] > 0
-    state["work"] = 12000 - state["reserved_work"]
+    state["work"] = 262144 - state["reserved_work"]
     state["phase"] = "repeated"
     discovery.read_definition_source(selected)
     discovery.definition_close_pass()
     assert state["reserved_work"] == state["reserved_bytes"] == 0
-    assert state["work"] <= 12000 and len(domain(discovery)["source_reads"]) == 2
+    assert state["work"] <= 262144 and len(domain(discovery)["source_reads"]) == 2
 
 
 def test_total_body_bytes_accepts_exact_reserved_boundary_and_refuses_next_body():
@@ -603,10 +605,10 @@ def test_total_body_bytes_accepts_exact_reserved_boundary_and_refuses_next_body(
 
 def test_target_overflow_never_produces_a_successful_prefix():
     filesystem = SyntheticFS()
-    for number in range(129):
+    for number in range(1025):
         filesystem.add(ROOT + "/worker" + str(number) + "@.service", data=b"[Unit]\n")
     discovery = observe(filesystem)
-    assert domain(discovery)["enumerated"] == domain(discovery)["skipped"] == 129
+    assert domain(discovery)["enumerated"] == domain(discovery)["skipped"] == 1025
     assert domain(discovery)["records"] == [] and filesystem.reads == []
     assert "definition_target_bound" in domain(discovery)["gaps"]
 
@@ -619,7 +621,7 @@ def test_distinct_map_name_and_selected_path_caps_are_independent():
     with pytest.raises(D.DefinitionRefusedError, match="definition_map_names_bound"):
         discovery.build_unit_name_map([{"path": ROOT, "resolved": ROOT, "entries": entries}])
     discovery = SyntheticDefinitions(SyntheticFS())
-    discovery.definition_state()["selected_paths"] = {"synthetic-" + str(number) for number in range(512)}
+    discovery.definition_state()["selected_paths"] = {"synthetic-" + str(number) for number in range(1536)}
     with pytest.raises(D.DefinitionRefusedError, match="definition_selected_total_bound"):
         discovery.read_definition_source({"path": ROOT + "/extra@.service"})
     assert discovery.fs.calls == []
@@ -683,7 +685,7 @@ def test_relation_attempts_include_duplicates_and_malformed_and_refuse_overflow(
         {"kind": "dependency", "directive": "Requires", "source": 0, "value": "same.service bad/name same.service"},
     ])
     assert result["attempts"] == 3 and domain(discovery)["relations"][1]["kind"] == "unresolved"
-    discovery.definition_state()["relation_attempts"] = 32768
+    discovery.definition_state()["relation_attempts"] = 8192
     with pytest.raises(D.DefinitionRefusedError, match="definition_relation_total_bound"):
         discovery.reduce_definition_relations("worker@.service", [
             {"kind": "dependency", "directive": "Requires", "source": 0, "value": "one.service"},
@@ -691,7 +693,7 @@ def test_relation_attempts_include_duplicates_and_malformed_and_refuse_overflow(
 
 
 @pytest.mark.parametrize("table,cap,size", [("path_observations", 4096, 768),
-                                           ("source_reads", 1024, 1024), ("relations", 32768, 256)])
+                                           ("source_reads", 3072, 512), ("relations", 8192, 256)])
 def test_table_and_record_bounds_never_append_a_truncated_record(table, cap, size):
     discovery = SyntheticDefinitions(SyntheticFS())
     discovery.definition_state()
@@ -708,7 +710,7 @@ def test_evidence_and_definition_header_caps_are_pre_admission():
     discovery = SyntheticDefinitions(SyntheticFS())
     discovery.definition_state()["encoded_bytes"] = 15728640
     with pytest.raises(D.DefinitionRefusedError, match="definition_evidence_bound"):
-        discovery.definition_append("relations", {}, 32768, 256)
+        discovery.definition_append("relations", {}, 8192, 256)
     assert domain(discovery)["relations"] == []
     discovery = SyntheticDefinitions(SyntheticFS())
     with pytest.raises(D.DefinitionRefusedError, match="definition_header_bound"):
@@ -716,7 +718,7 @@ def test_evidence_and_definition_header_caps_are_pre_admission():
     assert domain(discovery)["records"] == []
     discovery.deadline = 0
     with pytest.raises(D.DefinitionRefusedError, match="definition_interrupted"):
-        discovery.definition_append("relations", {}, 32768, 256)
+        discovery.definition_append("relations", {}, 8192, 256)
     assert domain(discovery)["relations"] == []
 
 
