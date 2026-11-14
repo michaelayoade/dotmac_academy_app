@@ -132,6 +132,31 @@ def policy_text(path):
     return 'path "' + path + '" {\n  capabilities = ["read"]\n}\n'
 
 
+def close_custody(backend, run, root):
+    """Invoke the pinned custody backend, not caller-authored closure flags.
+
+    Even failed root retirement must attempt listener/configuration restoration.
+    The private caller protects and pins `backend` and the genuine run ledger.
+    """
+    revoked = restored = {}
+    try:
+        revoked = backend.revoke_root(run, root)
+    except BaseException:
+        revoked = {"root_revoked": False}
+    finally:
+        try:
+            restored = backend.cmd_breakglass_off(run).get("breakglass_off", {})
+        except BaseException:
+            restored = {}
+    require(type(revoked) is dict and revoked.get("root_revoked") is True
+            and type(restored) is dict and restored.get("config_restored_exact") is True
+            and restored.get("socket_gone") is True and restored.get("unsealed_after_restart") is True
+            and type(restored.get("tcp_after")) is int and restored["tcp_after"] == 405,
+            "custody_backend_closure_unproved")
+    return {"root_revoked": True, "config_restored_exact": True, "socket_gone": True,
+            "unsealed_healthy": True, "tcp_generate_root_code": 405}
+
+
 def _ok(api, root, method, path, body=None):
     status, value = api(method, path, root, body)
     require(200 <= status < 300, "issuer_request_refused")

@@ -215,3 +215,31 @@ def test_expired_handoff_deadline_withholds_values_after_cleanup(monkeypatch):
         R.acquire_once(api, ROOT, run=RUN, policy=POLICY, path=PATH, fields=("password",),
                        close_authority=close, handoff=received.append, audit=lambda *_args: None)
     assert received == [] and not api.tokens and not api.policies
+
+
+@pytest.mark.parametrize("failure", [None, "root", "restore"])
+def test_genuine_backend_wiring_always_attempts_root_then_config_close(failure):
+    events = []
+
+    class Backend:
+        def revoke_root(self, run, root):
+            assert (run, root) == ("synthetic-run", ROOT)
+            events.append("root")
+            if failure == "root":
+                raise OSError("synthetic revocation failure")
+            return {"root_revoked": True}
+
+        def cmd_breakglass_off(self, run):
+            assert run == "synthetic-run"
+            events.append("restore")
+            if failure == "restore":
+                raise OSError("synthetic restoration failure")
+            return {"breakglass_off": {"config_restored_exact": True, "socket_gone": True,
+                                      "unsealed_after_restart": True, "tcp_after": 405}}
+
+    if failure is None:
+        assert R.close_custody(Backend(), "synthetic-run", ROOT) == CLOSE
+    else:
+        with pytest.raises(R.ReaderRefused):
+            R.close_custody(Backend(), "synthetic-run", ROOT)
+    assert events == ["root", "restore"]

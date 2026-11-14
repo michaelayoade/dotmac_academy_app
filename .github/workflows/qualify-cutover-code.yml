@@ -114,7 +114,7 @@ jobs:
       - name: Qualify native credential reader
         env:
           ACADEMY_OPENBAO_NATIVE: ${{ runner.temp }}/native-reader-bin/bao
-        run: .native-reader-venv/bin/python -m pytest -c ops/academy_cutover/pytest.ini --confcutdir=ops/academy_cutover/tests ops/academy_cutover/tests/native_credential_reader.py -q --tb=short --junitxml=artifacts/native-credential-reader.xml
+        run: .native-reader-venv/bin/python -m pytest -c ops/academy_cutover/pytest.ini --confcutdir=ops/academy_cutover/qualification ops/academy_cutover/qualification/native_credential_reader.py ops/academy_cutover/qualification/test_credential_reader_transport.py -q --tb=short --junitxml=artifacts/native-credential-reader.xml
       - name: Upload native credential reader results
         if: always()
         uses: actions/upload-artifact@v4
