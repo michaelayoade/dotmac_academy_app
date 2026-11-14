@@ -367,6 +367,7 @@ def read_timeout(deadline):
 
 
 def read_command(argv, deadline=None):
+    require(not PENDING, "interrupted")
     result = run(argv, timeout=read_timeout(deadline))
     read_timeout(deadline)
     return result
@@ -687,10 +688,12 @@ def verify_retained(common, execution_manifest, evidence, approval, role, status
     return {"status": status, "observation_sha256": evidence.used["maintenance-" + role + "-" + status]["sha256"], "retained_receipt_sha256": value["retained_receipt"]["sha256"], "observed_unix_started": value["observed_unix_started"], "observed_unix_finished": value["observed_unix_finished"], "remote_current_state_proven": False}
 
 
-def verify_observation(common, execution_manifest, evidence, approval, role, status):
+def verify_observation(common, execution_manifest, evidence, approval, role, status, *, deadline=None):
+    read_timeout(deadline)
     require(socket.gethostname() == HOSTS[role], "host_local_observation_only")
     proof = verify_retained(common, execution_manifest, evidence, approval, role, status)
-    proof["current"] = current(common, execution_manifest, validate_component(common, execution_manifest), role, status)
+    proof["current"] = current(common, execution_manifest, validate_component(common, execution_manifest), role, status, deadline=deadline)
+    read_timeout(deadline)
     proof["host_local_current_state_proven"] = True
     return proof
 
@@ -753,6 +756,60 @@ def conf_inventory(m, unit, expected):
             os.close(fd)
 
 
+def original_identity_expected(component, role, unit):
+    """Pure hash-only identity recipe; declaration alone is never an observation."""
+    require(role in HOSTS and unit in component["hosts"][role]["units"], "original_identity_unit")
+    spec = component["hosts"][role]["units"][unit]
+    files = sorted(({"path_sha256": sha(ref["path"].encode()), "body_sha256": ref["sha256"]}
+                    for ref in spec["original_files"]), key=lambda row: row["path_sha256"])
+    return {"schema": "AcademyMaintenanceUnitIdentity.v1", "requested_sha256": sha(unit.encode()),
+            "canonical_sha256": sha(unit.encode()), "names_sha256": [sha(unit.encode())],
+            "original_files_sha256": sha(canonical([{"path": ref["path"], "sha256": ref["sha256"]}
+                                                     for ref in spec["original_files"]])),
+            "effective_config_sha256": spec["expected_config_sha256"]["original"],
+            "configured_command_sha256": spec["observed_command_sha256"],
+            "unit_text_sha256": spec["original_unit_text_sha256"],
+            "dependencies": {key: sorted(sha(value.encode()) for value in spec["dependencies"][key]) for key in DEPS},
+            "source_files": files}
+
+
+def _original_identity(C, m, component, role, unit, *, deadline=None):
+    """Observe exact protected originals and effective config, without action readiness."""
+    read_timeout(deadline)
+    require(role in HOSTS and unit in component["hosts"][role]["units"], "original_identity_unit")
+    spec = component["hosts"][role]["units"][unit]
+    original_sha = originals(spec)
+    values = show(unit, deadline=deadline)
+    require(values["Id"] == values["Names"] == unit and values["LoadState"] == "loaded" and not values["SourcePath"], "original_alias_generator")
+    expected = {ref["path"] for ref in spec["original_files"]}
+    require(values["FragmentPath"] in expected and set(values["DropInPaths"].split()) == {p for p in expected if p.endswith(".conf")}, "original_file_coverage")
+    conf_inventory(m, unit, expected)
+    require({key: sorted(values[key].split()) for key in DEPS} == spec["dependencies"], "original_dependencies_drift")
+    require(normalized_config(C, values) == spec["expected_config_sha256"]["original"], "original_effective_configuration")
+    unit_text = read_command(["/usr/bin/systemctl", "cat", unit], deadline)
+    require(sha(unit_text.encode()) == spec["original_unit_text_sha256"], "original_unit_text_drift")
+    if unit.endswith(".service"):
+        require(not any(values[key] for key in ("PAMName", "SupplementaryGroups", "BindPaths", "BindReadOnlyPaths", "MountImages", "ExtensionImages", "ExtensionDirectories")) and values["RestartMode"] == "normal", "original_namespace_or_credential_context")
+        require(not any(values[key] for key in HOOKS) and not values["RootDirectory"] and not values["RootImage"] and values["DynamicUser"] == values["PrivateUsers"] == "no" and values["User"] == "dotmac" and values["Group"] in {"", "dotmac"}, "original_execution_context_unsupported")
+        command = C.configured_start(unit_text)
+        require(sha(command.encode()) == spec["observed_command_sha256"], "original_configured_argv_drift")
+        if unit in ADOPT:
+            require(command == "/home/dotmac/projects/dotmac_academy_v2/.venv/bin/python -m app.cli " + ADOPT[unit] and values["WorkingDirectory"] == "/home/dotmac/projects/dotmac_academy_v2", "original_lab_cli_shape")
+            require(values["EnvironmentFiles"] == C.retained_environment_target(m, role) + " (ignore_errors=no)" and sha(values["Environment"].encode()) == spec["environment_sha256"] and values["PassEnvironment"] == values["UnsetEnvironment"] == "", "original_lab_environment")
+            inline = shlex.split(values["Environment"])
+            require(len(inline) == 1 and inline[0].startswith("LAB_HOST_ROLE="), "original_lab_inline_environment")
+    projection = original_identity_expected(component, role, unit)
+    require(original_sha == projection["original_files_sha256"], "original_identity_files_join")
+    read_timeout(deadline)
+    return projection, values
+
+
+def original_identity_projection(C, m, component, role, unit, *, deadline=None):
+    """Read-only identity projection; no inactive/disabled/name-based sender inference."""
+    projection, _values = _original_identity(C, m, component, role, unit, deadline=deadline)
+    return projection
+
+
 def preflight_original(C, m, component, role):
     host = component["hosts"][role]
     owner = pwd.getpwnam("dotmac")
@@ -765,12 +822,8 @@ def preflight_original(C, m, component, role):
     pending_jobs(role)
     result, permitted = {}, []
     for unit, spec in host["units"].items():
-        original_sha = originals(spec)
-        values = show(unit)
-        require(values["Id"] == values["Names"] == unit and values["LoadState"] == "loaded" and not values["SourcePath"], "original_alias_generator")
-        expected = {ref["path"] for ref in spec["original_files"]}
-        require(values["FragmentPath"] in expected and set(values["DropInPaths"].split()) == {p for p in expected if p.endswith(".conf")}, "original_file_coverage")
-        conf_inventory(m, unit, expected)
+        projection, values = _original_identity(C, m, component, role, unit)
+        original_sha = projection["original_files_sha256"]
         for flag in (True, False):
             try:
                 read_file(own_path(m, unit, flag), mode=0o644)
@@ -778,21 +831,8 @@ def preflight_original(C, m, component, role):
                 pass
             else:
                 raise Refusal("existing_owned_dropin_no_reuse")
-        require({key: sorted(values[key].split()) for key in DEPS} == spec["dependencies"], "original_dependencies_drift")
-        require(normalized_config(C, values) == spec["expected_config_sha256"]["original"], "original_effective_configuration")
-        unit_text = run(["/usr/bin/systemctl", "cat", unit])
-        require(sha(unit_text.encode()) == spec["original_unit_text_sha256"], "original_unit_text_drift")
         live = show(unit, config=False)
         if unit.endswith(".service"):
-            require(not any(values[key] for key in ("PAMName", "SupplementaryGroups", "BindPaths", "BindReadOnlyPaths", "MountImages", "ExtensionImages", "ExtensionDirectories")) and values["RestartMode"] == "normal", "original_namespace_or_credential_context")
-            require(not any(values[key] for key in HOOKS) and not values["RootDirectory"] and not values["RootImage"] and values["DynamicUser"] == values["PrivateUsers"] == "no" and values["User"] == "dotmac" and values["Group"] in {"", "dotmac"}, "original_execution_context_unsupported")
-            command = C.configured_start(unit_text)
-            require(sha(command.encode()) == spec["observed_command_sha256"], "original_configured_argv_drift")
-            if unit in ADOPT:
-                require(command == "/home/dotmac/projects/dotmac_academy_v2/.venv/bin/python -m app.cli " + ADOPT[unit] and values["WorkingDirectory"] == "/home/dotmac/projects/dotmac_academy_v2", "original_lab_cli_shape")
-                require(values["EnvironmentFiles"] == C.retained_environment_target(m, role) + " (ignore_errors=no)" and sha(values["Environment"].encode()) == spec["environment_sha256"] and values["PassEnvironment"] == values["UnsetEnvironment"] == "", "original_lab_environment")
-                inline = shlex.split(values["Environment"])
-                require(len(inline) == 1 and inline[0].startswith("LAB_HOST_ROLE="), "original_lab_inline_environment")
             require(values["Type"] == "oneshot" or live["ActiveState"] == "inactive", "active_legacy_daemon_hold")
         else:
             require((live["ActiveState"] == "active") is spec["originally_active"] and live["SubState"] in {"waiting", "dead"}, "original_timer_state_changed")
