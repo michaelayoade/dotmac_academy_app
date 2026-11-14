@@ -67,7 +67,8 @@ class LoopbackAPI:
         require(type(path) is str and 0 < len(path) <= 1024
                 and all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) and part not in (".", "..")
                         for part in path.split("/")), "api_path_refused")
-        require(type(token) is str and re.fullmatch(r"[A-Za-z0-9_.-]{8,4096}", token), "token_shape_refused")
+        require(token is None or (type(token) is str and re.fullmatch(r"[A-Za-z0-9_.-]{8,4096}", token)),
+                "token_shape_refused")
         data = None if body is None else json.dumps(body, allow_nan=False).encode()
         require(data is None or len(data) <= RESPONSE_LIMIT, "request_bound")
         connection = http.client.HTTPConnection(self.host, self.port, timeout=max(0.01, deadline - time.monotonic()))
@@ -86,8 +87,10 @@ class LoopbackAPI:
 
             watchdog = threading.Thread(target=expire, daemon=True)
             watchdog.start()
-            connection.request(method, "/v1/" + path, data,
-                               {"X-Vault-Token": token, "Content-Type": "application/json"})
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["X-Vault-Token"] = token
+            connection.request(method, "/v1/" + path, data, headers)
             response = connection.getresponse()
             length = response.getheader("Content-Length")
             require(length is None or (re.fullmatch(r"[0-9]{1,12}", length)
@@ -308,6 +311,13 @@ def acquire_once(api, root, *, run, policy, path, fields, close_authority, hando
         error = exc if isinstance(exc, ReaderRefused) else ReaderRefused("acquisition_uncertain")
         held.clear()
     finally:
+        try:
+            # The protected caller uses this boundary to defer further signals
+            # while mandatory retirement/root/listener cleanup is in progress.
+            audit("cleanup_begin", dict(evidence))
+        except BaseException:
+            error = ReaderRefused("cleanup_audit_unproved")
+            held.clear()
         if policy_attempted:
             try:
                 _retire(raw_api, root, policy, text, run, create_attempted, known_accessor)

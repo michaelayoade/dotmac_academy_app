@@ -133,3 +133,10 @@ def test_native_single_use_token_cannot_perform_a_second_data_read(server):
     token = value["auth"]["client_token"]
     assert api("GET", path, token)[0] == 200
     assert api("GET", path, token)[0] == 403
+
+
+def test_native_unauthenticated_readiness_and_disabled_tcp_root_endpoint(server):
+    api, _root = server
+    assert api("GET", "sys/seal-status", None)[0] == 200
+    assert api("GET", "sys/leader", None)[0] == 200
+    assert api("PUT", "sys/generate-root/attempt", None, {})[0] == 405

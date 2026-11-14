@@ -243,3 +243,18 @@ def test_genuine_backend_wiring_always_attempts_root_then_config_close(failure):
         with pytest.raises(R.ReaderRefused):
             R.close_custody(Backend(), "synthetic-run", ROOT)
     assert events == ["root", "restore"]
+
+
+def test_cleanup_audit_failure_does_not_skip_retirement_or_authority_close():
+    api = API(exhaust=False)
+    closed, received = [], []
+
+    def audit(phase, _evidence):
+        if phase == "cleanup_begin":
+            raise OSError("synthetic journal failure")
+
+    with pytest.raises(R.ReaderRefused, match="cleanup_audit"):
+        R.acquire_once(api, ROOT, run=RUN, policy=POLICY, path=PATH, fields=("password",),
+                       close_authority=lambda: closed.append(True) or dict(CLOSE),
+                       handoff=received.append, audit=audit)
+    assert closed == [True] and not received and not api.tokens and not api.policies
