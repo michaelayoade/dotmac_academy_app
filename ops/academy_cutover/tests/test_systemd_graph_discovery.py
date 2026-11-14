@@ -71,6 +71,139 @@ def test_endpoint_order_duplicates_and_original_projections():
     assert "unexpected_graph_key" in observe(raw, graph_only=True)["gaps"]
 
 
+@pytest.mark.parametrize("field", ["Names", "Triggers", "TriggeredBy", "Requires", "Wants", "Before", "After"])
+def test_native_backslash_identity_decodes_one_cli_layer_in_every_array(field):
+    native = rb"example\x2dnode.service"
+    rendered = b'"example\\\\x2dnode.service"'
+    value = b"a.service " + rendered + b" " + rendered
+    result = observe(graph("a.service", **{field: value.decode("ascii")}))
+    assert result["gaps"] == []
+    assert result["fields"][field] == {
+        "projection": D.projection(value),
+        "endpoint_sha256": [D.digest(b"a.service"), D.digest(native), D.digest(native)],
+        "valid": True, "endpoint_count": 3, "retained_endpoint_count": 3, "unparsed_tail": False,
+    }
+    assert D.digest(native) != D.digest(b"example-node.service")
+
+
+def test_native_quoted_names_join_enumeration_without_unknown_identity_disclosure():
+    native = r"example\x2dnode.service"
+    rendered = '"example\\\\x2dnode.service"'
+    discovery = SyntheticDiscovery((native,))
+    discovery.repeated_raw = lambda name: graph(name, Names=rendered, After=rendered)
+    discovery.initial_raw = lambda name: discovery.repeated_raw(name) + b"EnvironmentFiles=\nExecStart=\n"
+    discovery.systemd()
+    row = rows(discovery)[0]
+    facts = row["facts"]
+    assert row["identity_sha256"] == D.digest(native.encode())
+    assert row["identity"] is None and row["unknown_identity"]
+    assert facts["gaps"] == [] and facts["graph_fields_unchanged"]
+    assert facts["unresolved_endpoint_sha256"] == []
+    assert facts["classification"] == "unknown" and facts["authority_refs"] == []
+    assert native not in json.dumps(row)
+
+
+def test_scalar_id_and_conditional_unit_remain_raw_native_bytes():
+    native = r"example\x2dnode.service"
+    timer = r"example\x2dnode.timer"
+    result = observe(graph(timer, Names='"example\\\\x2dnode.timer"', Unit=native), timer)
+    assert result["gaps"] == []
+    for field, value in (("Id", timer), ("Unit", native)):
+        assert result["fields"][field] == {
+            "projection": D.projection(value.encode()),
+            "endpoint_sha256": [D.digest(value.encode())], "valid": True,
+            "endpoint_count": 1, "retained_endpoint_count": 1, "unparsed_tail": False,
+        }
+    for field in ("Id", "Unit"):
+        result = observe(graph("a.timer", **{field: '"example\\\\x2dnode.service"'}), "a.timer")
+        assert not result["fields"][field]["valid"]
+        assert "unsupported_graph_value" in result["gaps"]
+
+
+@pytest.mark.parametrize("value", [
+    b'"a.service"', b"'a.service'", rb"example\x2dnode.service",
+    rb'"example\x2dnode.service"', rb'"example\nnode.service"',
+    rb'"example\qnode.service"', rb'"example\$node.service"',
+    rb'"example\`node.service"', rb'"example\"node.service"',
+    b'"example\\\\node.service', b'"example\\', b'""',
+    b'"example\\\\node".service', b'example"\\\\node.service"',
+    b'"example\\\\node.service""other.service"', b"$(other.service)",
+    b'"example\\\\node service"', b" a.service", b"a.service ", b"a.service  b.service",
+    b'"example\\\\node/invalid.service"', b'"example\\\\\xff.service"',
+])
+def test_array_rejects_noncanonical_quotes_escapes_concatenation_and_nonunits(value):
+    result = observe(graph("a.service").replace(b"After=\n", b"After=" + value + b"\n"))
+    item = result["fields"]["After"]
+    assert not item["valid"]
+    assert "unsupported_graph_value" in result["gaps"]
+    assert item["projection"] == D.projection(value)
+
+
+@pytest.mark.parametrize("size,valid", [(255, True), (256, False)])
+def test_native_array_token_length_bound_applies_after_cli_decoding(size, valid):
+    native = b"a" * (size - 1) + b"\\"
+    rendered = b'"' + native.replace(b"\\", b"\\\\") + b'"'
+    result = observe(graph("a.service", After=rendered.decode()))
+    assert result["fields"]["After"]["valid"] is valid
+    if valid:
+        assert result["fields"]["After"]["endpoint_sha256"] == [D.digest(native)]
+    else:
+        assert "unsupported_graph_value" in result["gaps"]
+
+
+def test_array_budget_refuses_before_decoding_overflow_and_preserves_whole_field(monkeypatch):
+    original = D.Discovery.systemctl_unit_array_tokens
+    attempts = []
+
+    def counted(value, **kwargs):
+        for item in original(value, **kwargs):
+            token = item[0] if kwargs.get("positions") else item
+            attempts.append(len(token))
+            yield item
+
+    monkeypatch.setattr(D.Discovery, "systemctl_unit_array_tokens", staticmethod(counted))
+    value = b" ".join([b'"example\\\\x2dnode.service"'] * 20000)
+    result = observe(graph("a.service", After=value.decode()), pass_remaining=3)
+    assert attempts == [9, 23]  # No overflow token is decoded.
+    assert result["endpoint_count"] == 3
+    assert "graph_endpoint_initial_pass_budget" in result["gaps"]
+    assert result["fields"]["After"] == {
+        "projection": D.projection(value), "endpoint_sha256": [], "valid": False,
+        "endpoint_count": 1, "retained_endpoint_count": 0, "unparsed_tail": True,
+    }
+
+
+def test_large_space_and_line_inputs_refuse_without_unbounded_token_splitting():
+    value = " " * D.MAX_BYTES
+    result = observe(graph("a.service", After=value), pass_remaining=3)
+    assert result["endpoint_count"] == 3
+    assert "unsupported_graph_value" in result["gaps"]
+    assert not result["fields"]["After"]["valid"]
+    assert result["fields"]["After"]["projection"] == D.projection(value.encode())
+    raw = b"\n" * (D.MAX_ROWS + 1)
+    result = observe(raw)
+    assert result["gaps"] == ["graph_line_bound"] and result["endpoint_count"] == 0
+    assert result["original_output"] == D.projection(raw)
+
+
+def test_interruption_while_decoding_array_cannot_mark_prefix_valid():
+    checks = 0
+
+    def stopped():
+        nonlocal checks
+        checks += 1
+        return checks >= 3
+
+    result = D.Discovery.parse_unit_graph(
+        b"After=a.service b.service\n", ("After",), stopped=stopped
+    )
+    assert "graph_work_interrupted_or_deadline" in result["gaps"]
+    assert result["endpoint_count"] == 1
+    assert result["fields"]["After"]["endpoint_sha256"] == []
+    assert result["unparsed_tail"] and result["fields"]["After"]["unparsed_tail"]
+    assert not result["fields"]["After"]["valid"]
+
+
 @pytest.mark.parametrize("suffix", [
     b"Id=other.service\n", b"After=a.service\tb.service\n", b"After=a.service  b.service\n",
     b"After=\xff.service\n", b"Id=\n", b"Id=a.service b.service\n", b"Names=bad/name\n",
@@ -230,18 +363,151 @@ def test_whole_output_hashes_survive_duplicate_and_malformed_input():
     assert facts["repeated"]["original_output"] == D.projection(raw)
 
 
-def test_shared_endpoint_budget_is_charged_across_both_reads_and_units():
+def test_endpoint_profile_has_separate_pass_reserves_and_fixed_hash():
     discovery = SyntheticDiscovery()
-    discovery.graph_endpoint_remaining = 3
     fields = discovery.graph_properties("a.service")
     first = discovery.collect_unit_graph(graph("a.service"), fields)
     second = discovery.collect_unit_graph(graph("a.service"), fields, graph_only=True)
-    third = discovery.collect_unit_graph(graph("b.service"), fields)
-    assert first["endpoint_count"] == 2 and second["endpoint_count"] == 1
-    assert third["endpoint_count"] == 0 and discovery.graph_endpoint_remaining == 0
-    assert "graph_endpoint_budget" in second["gaps"] and "graph_endpoint_budget" in third["gaps"]
-    assert third["original_output"] == D.projection(graph("b.service"))
-    assert sum(item["endpoint_count"] for item in (first, second, third)) == 3
+    counters = discovery.domain("systemd_unit_graph")["endpoint_accounting"]
+    assert first["endpoint_count"] == second["endpoint_count"] == 2
+    assert counters["initial"]["endpoint_count"] == counters["repeated"]["endpoint_count"] == 2
+    assert counters["total"]["endpoint_count"] == 4
+    assert discovery.domain("systemd_unit_graph")["endpoint_profile"] == D.SYSTEMD_ENDPOINT_PROFILE
+    assert first["endpoint_profile_sha256"] == second["endpoint_profile_sha256"] == (
+        "c2a45f0a7fc94fe070b58ede0fe0e4bb2a1c634d1b79fef742b06349e8576753"
+    )
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_field_attempt_boundary_refuses_entire_overflowing_field(extra):
+    value = " ".join(["b.service"] * (4096 + extra))
+    result = observe(graph("a.service", After=value))
+    item = result["fields"]["After"]
+    assert result["endpoint_count"] == 4098
+    assert item["endpoint_count"] == 4096
+    assert item["projection"] == D.projection(value.encode())
+    assert item["valid"] is (extra == 0)
+    assert item["unparsed_tail"] is bool(extra)
+    assert item["endpoint_sha256"] == ([] if extra else [D.digest(b"b.service")] * 4096)
+    assert ("graph_endpoint_field_budget" in result["gaps"]) is bool(extra)
+    assert result["retained_endpoint_count"] == (2 if extra else 4098)
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_unit_read_attempt_boundary_is_independent_of_field_cap(extra):
+    result = observe(graph("a.service", Wants=" ".join(["b.service"] * 4096),
+                           After=" ".join(["c.service"] * (4094 + extra))))
+    assert result["endpoint_count"] == 8192
+    assert result["fields"]["Wants"]["valid"]
+    assert result["fields"]["After"]["endpoint_count"] == 4094
+    assert result["fields"]["After"]["valid"] is (extra == 0)
+    assert result["fields"]["After"]["endpoint_sha256"] == ([] if extra else [D.digest(b"c.service")] * 4094)
+    assert ("graph_endpoint_unit_budget" in result["gaps"]) is bool(extra)
+    assert "graph_endpoint_field_budget" not in result["gaps"]
+    assert result["retained_endpoint_count"] == (4098 if extra else 8192)
+
+
+@pytest.mark.parametrize("phase", ["initial", "repeated"])
+def test_pass_and_total_attempt_boundaries_do_not_decode_overflow(phase):
+    fields = ("Names",)
+    exact = D.Discovery.parse_unit_graph(b"Names=a.service b.service\n", fields, phase=phase,
+                                         pass_remaining=2, total_remaining=2)
+    overflow = D.Discovery.parse_unit_graph(b"Names=a.service b.service c.service\n", fields, phase=phase,
+                                            pass_remaining=2, total_remaining=2)
+    assert exact["gaps"] == [] and exact["retained_endpoint_count"] == 2
+    assert not exact["unparsed_tail"]
+    assert overflow["endpoint_count"] == 2 and overflow["retained_endpoint_count"] == 0
+    assert overflow["gaps"] == ["graph_endpoint_" + phase + "_pass_budget", "graph_endpoint_total_budget"]
+    assert not overflow["fields"]["Names"]["valid"] and overflow["unparsed_tail"]
+
+
+def test_initial_exhaustion_cannot_starve_repeated_reserve_and_total_is_bounded():
+    discovery = SyntheticDiscovery()
+    value = b" ".join([b"a.service"] * 4096)
+    raw = b"Names=" + value + b"\nAfter=" + value + b"\n"
+    fields = ("Names", "After")
+    for _ in range(8):
+        assert discovery.collect_unit_graph(raw, fields)["endpoint_count"] == 8192
+    refused = discovery.collect_unit_graph(raw, fields)
+    assert refused["endpoint_count"] == 0 and refused["retained_endpoint_count"] == 0
+    assert refused["gaps"] == ["graph_endpoint_initial_pass_budget"]
+    for _ in range(8):
+        assert discovery.collect_unit_graph(raw, fields, graph_only=True)["endpoint_count"] == 8192
+    refused = discovery.collect_unit_graph(raw, fields, graph_only=True)
+    assert refused["endpoint_count"] == 0 and refused["unparsed_tail"]
+    assert refused["gaps"] == ["graph_endpoint_repeated_pass_budget", "graph_endpoint_total_budget"]
+    accounting = discovery.domain("systemd_unit_graph")["endpoint_accounting"]
+    assert accounting["initial"]["endpoint_count"] == accounting["repeated"]["endpoint_count"] == 65536
+    assert accounting["total"]["endpoint_count"] == accounting["total"]["retained_endpoint_count"] == 131072
+    assert accounting["total"]["unparsed_tail"]
+
+
+@pytest.mark.parametrize("remaining", [0, 1])
+def test_zero_remaining_refuses_nonempty_bytes_without_decoding_even_whitespace(monkeypatch, remaining):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("array decoder must not be advanced")
+        yield  # It remains a lazy generator, just like the actual decoder.
+
+    monkeypatch.setattr(D.Discovery, "systemctl_unit_array_tokens", staticmethod(forbidden))
+    raw = b"Id=a.service\nNames=" + b" " * D.MAX_BYTES + b"\nAfter=\n"
+    result = D.Discovery.parse_unit_graph(raw, ("Id", "Names", "After"), pass_remaining=remaining)
+    assert result["endpoint_count"] == remaining
+    assert not result["fields"]["Names"]["valid"] and result["fields"]["Names"]["unparsed_tail"]
+    assert result["fields"]["Names"]["endpoint_sha256"] == []
+    assert result["fields"]["After"]["valid"]
+
+
+def test_invalid_and_duplicate_attempts_charge_without_retaining_invalid_prefixes():
+    raw = graph("a.service", After="b.service b.service bad/name c.service")
+    result = observe(raw)
+    item = result["fields"]["After"]
+    assert result["endpoint_count"] == 5 and result["retained_endpoint_count"] == 2
+    assert item["endpoint_count"] == 3 and item["retained_endpoint_count"] == 0
+    assert item["unparsed_tail"] and not item["valid"] and item["endpoint_sha256"] == []
+    assert item["projection"] == D.projection(b"b.service b.service bad/name c.service")
+    duplicate = observe(graph("a.service", After="b.service b.service") + b"After=c.service d.service\n")
+    item = duplicate["fields"]["After"]
+    assert duplicate["endpoint_count"] == 6 and duplicate["retained_endpoint_count"] == 2
+    assert item["endpoint_count"] == 4 and not item["valid"]
+    assert item["projection"] == D.projection(b"b.service b.service")
+    assert item["endpoint_sha256"] == [] and not item["unparsed_tail"]
+    assert "duplicate_graph_key" in duplicate["gaps"]
+
+
+def test_duplicate_key_replay_cannot_reset_field_budget_or_canonical_projection():
+    value = b" ".join([b"b.service"] * 4096)
+    raw = graph("a.service", After=value.decode()) + b"After=c.service\n"
+    result = observe(raw)
+    item = result["fields"]["After"]
+    assert result["endpoint_count"] == 4098 and item["endpoint_count"] == 4096
+    assert item["projection"] == D.projection(value)
+    assert not item["valid"] and item["endpoint_sha256"] == [] and item["unparsed_tail"]
+    assert "graph_endpoint_field_budget" in result["gaps"]
+
+
+def test_caller_allowance_cannot_increase_profile_caps():
+    result = observe(graph("a.service", After=" ".join(["b.service"] * 4097)),
+                     pass_remaining=10**12, total_remaining=10**12)
+    assert result["endpoint_count"] == 4098
+    assert result["gaps"] == ["graph_endpoint_field_budget"]
+
+
+def test_endpoint_cap_and_deadline_keep_unit_and_domain_partial():
+    discovery = SyntheticDiscovery()
+    discovery.initial_raw = lambda name: graph(name, After=" ".join(["a.service"] * 4097)) + (
+        b"EnvironmentFiles=\nExecStart=\n"
+    )
+    discovery.repeated_raw = lambda name: graph(name, After=" ".join(["a.service"] * 4097))
+    discovery.systemd()
+    target = discovery.domain("systemd_unit_graph")
+    assert target["complete"] == 0 and "graph_endpoint_field_budget" in target["gaps"]
+    assert not rows(discovery)[0]["facts"]["graph_fields_unchanged"]
+    assert rows(discovery)[0]["facts"]["classification"] == "unknown"
+    assert rows(discovery)[0]["facts"]["authority_refs"] == []
+    discovery.deadline = 0
+    result = discovery.collect_unit_graph(graph("a.service"), D.GRAPH_PROPERTIES, graph_only=True)
+    assert result["endpoint_count"] == 0 and result["unparsed_tail"]
+    assert "graph_work_interrupted_or_deadline" in result["gaps"]
 
 
 def test_parser_stops_on_shared_interruption():
