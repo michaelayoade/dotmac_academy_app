@@ -123,3 +123,24 @@ jobs:
           path: artifacts/native-credential-reader.xml
           retention-days: 7
           if-no-files-found: error
+
+  private-reader-composition:
+    runs-on: ubuntu-24.04
+    needs: [qualify, native-credential-reader]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Acquire immutable private synthetic composition sources
+        env:
+          ACADEMY_WEBFIG_FIXTURE_SSH_KEY: ${{ secrets.ACADEMY_WEBFIG_FIXTURE_SSH_KEY }}
+        run: python -I -S -B ops/academy_cutover/qualification/acquire_private_composition.py
+      - name: Qualify private synthetic composition without rendering source
+        run: >-
+          env -i PATH="$PATH" CI=true GITHUB_ACTIONS=true
+          python -I -S -B ops/academy_cutover/qualification/run_private_composition.py
+          --directory "$RUNNER_TEMP/private-reader-composition"
