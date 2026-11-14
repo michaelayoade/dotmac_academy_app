@@ -800,8 +800,10 @@ def _systemd_named_snapshot(C, m, maintenance, component, role, mode, deadline, 
                 rows[identifier] = None
         except SystemdObservationHold:
             raise
-        except Exception:  # Fixed refusal representation; no raw commands, environments, or exception text.
+        except (OSError, ValueError, maintenance.Refusal):
+            # Only expected metadata refusals become unknown; programming/API errors remain terminal.
             rows[identifier] = None
+        _systemd_check(C, budget)
     return rows
 
 
@@ -1164,7 +1166,7 @@ def verify_systemd_named_controls(C, m, evidence, approval, role, status, proof)
 
 
 def _validate_systemd_report(C, module, proof, budget):
-    """Closed semantic checks for trusted joins; external schema validation remains separate."""
+    """Additional semantic joins after the complete pinned normal_v3 structural validation."""
     report = proof["discovery"]
     generic = ("enumerated", "inspected", "raced", "complete", "skipped", "enumeration_complete",
                "classification_complete", "gaps", "records")
@@ -1211,10 +1213,7 @@ def _validate_systemd_report(C, module, proof, budget):
     definitions = report["domains"].get("systemd_template_definitions")
     for name, domain in report["domains"].items():
         _systemd_check(C, budget)
-        extras = ()
         if name == "systemd_unit_graph":
-            extras = ("runtime_relation_catalogue", "runtime_relation_catalogue_sha256", "endpoint_profile",
-                      "endpoint_profile_sha256", "endpoint_accounting")
             C.require(domain["runtime_relation_catalogue"] == module.SYSTEMD_RUNTIME_RELATION_CATALOGUE
                       and domain["runtime_relation_catalogue_sha256"]
                       == module.SYSTEMD_RUNTIME_RELATION_CATALOGUE_SHA256
@@ -1222,12 +1221,17 @@ def _validate_systemd_report(C, module, proof, budget):
                       and domain["endpoint_profile_sha256"] == module.Discovery.endpoint_profile_hash(),
                       "systemd_graph_profiles")
         elif name == "systemd_template_definitions":
-            extras = ("definition_profile", "definition_profile_sha256", "manager_observations", "path_observations",
-                      "source_reads", "relations", "definition_accounting")
             C.require(domain["definition_profile"] == module.SYSTEMD_DEFINITION_PROFILE
                       and domain["definition_profile_sha256"] == module.Discovery.definition_profile_hash(),
                       "systemd_definition_profile")
-        C.exact(domain, (*generic, *extras))
+        # The pinned full schema already closes each domain variant, including optional jobs metadata.
+        C.require(set(generic) <= set(domain), "systemd_domain_fields")
+        if "empty_pending_jobs_snapshot" in domain:
+            C.require(name == "systemd_jobs" and domain["empty_pending_jobs_snapshot"] is True
+                      and domain["enumeration_complete"] is True and domain["gaps"] == []
+                      and domain["records"] == []
+                      and all(domain[key] == 0 for key in ("enumerated", "inspected", "raced", "complete", "skipped")),
+                      "systemd_empty_jobs_snapshot")
         C.require(all(type(domain[key]) is int and domain[key] >= 0 for key in
                       ("enumerated", "inspected", "raced", "complete", "skipped"))
                   and type(domain["enumeration_complete"]) is bool and domain["classification_complete"] is False

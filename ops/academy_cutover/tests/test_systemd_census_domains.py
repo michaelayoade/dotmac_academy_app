@@ -21,6 +21,9 @@ from test_systemd_template_definitions import ROOT, SyntheticDefinitions, Synthe
 class ConnectedDiscovery(SyntheticDefinitions):
     def __init__(self, filesystem, names, *, final=None, initial_raw=None, repeated_raw=None):
         super().__init__(filesystem, names=names)
+        # Standalone definition fixtures prime these flags; connected acquisition must prove each boundary itself.
+        for label in D.SYSTEMD_LISTINGS:
+            self.domain(label)["enumeration_complete"] = False
         self.host = "vmi2490731"
         self.names = names
         self.final = names if final is None else final
@@ -373,7 +376,8 @@ def test_failed_listing_prefix_is_retained_unknown_with_unavailable_membership_g
 def test_maintenance_terminal_failures_are_not_downgraded_or_followed_by_more_units(fault):
     calls = []
     discovery = SimpleNamespace(pending_signal=None, resource_stopped=False)
-    maintenance = SimpleNamespace(COMMANDS=[], SPAWNING=False, PENDING=False)
+    maintenance = SimpleNamespace(COMMANDS=[], SPAWNING=False, PENDING=False,
+                                  read_timeout=M.read_timeout, Refusal=M.Refusal)
     budget = {"work": 0, "deadline": M.time.monotonic() + 20, "discovery": discovery,
               "maintenance": maintenance, "command_start": 0, "phase": "discovery"}
 
@@ -698,3 +702,37 @@ def test_standalone_verification_validation_and_current_share_one_deadline(monke
         D.verify_systemd_named_controls(fixture.C, fixture.m, fixture.evidence, fixture.approval,
                                         "web", "fenced", fixture.proof)
         assert observed == [300]
+
+
+@pytest.mark.parametrize("mutation,reason", [
+    (lambda jobs: jobs.update(unexpected_extra=True), "discovery_schema_mismatch"),
+    (lambda jobs: jobs.update(enumerated=1), "empty_jobs_snapshot"),
+    (lambda jobs: jobs.update(enumeration_complete=False), "empty_jobs_snapshot"),
+])
+def test_empty_jobs_variant_remains_closed_and_cannot_conflict_with_observed_counters(monkeypatch, mutation, reason):
+    fixture = observation(monkeypatch)
+    jobs = fixture.proof["discovery"]["domains"]["systemd_jobs"]
+    assert jobs["empty_pending_jobs_snapshot"] is True
+    mutation(jobs)
+    with pytest.raises(ValueError, match=reason):
+        D.validate_systemd_observation(fixture.C, fixture.scope, "web", fixture.proof, manifest=fixture.m)
+
+
+def test_unexpected_identity_helper_failure_is_terminal_and_does_not_visit_next_unit():
+    calls = []
+    maintenance = SimpleNamespace(COMMANDS=[], SPAWNING=False, PENDING=False,
+                                  read_timeout=M.read_timeout, Refusal=M.Refusal)
+    budget = {"work": 0, "deadline": M.time.monotonic() + 20,
+              "discovery": SimpleNamespace(pending_signal=None, resource_stopped=False),
+              "maintenance": maintenance, "command_start": 0, "phase": "discovery"}
+
+    def project(*_args, **_kwargs):
+        calls.append(True)
+        raise AttributeError("synthetic_unexpected_helper_failure")
+
+    maintenance.original_identity_projection = project
+    component = {"hosts": {"web": {"units": {"first.service": {}, "second.service": {}}}}}
+    with pytest.raises(AttributeError, match="unexpected_helper_failure"):
+        D._systemd_named_snapshot(Common, {}, maintenance, component, "web", "original",
+                                  budget["deadline"], None, budget)
+    assert calls == [True] and budget["phase"] == "discovery"
