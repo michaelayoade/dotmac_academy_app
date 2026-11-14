@@ -83,9 +83,10 @@ jobs:
 
           with tarfile.open(archive_path, mode="r:gz") as archive:
               members = archive.getmembers()
-              if len(members) != 1 or members[0].name != "bao":
-                  raise SystemExit("release archive must contain exactly one member named bao")
-              member = members[0]
+              matches = [member for member in members if member.name == "bao"]
+              if len(members) > 64 or len(matches) != 1:
+                  raise SystemExit("release archive must contain exactly one bounded member named bao")
+              member = matches[0]
               if not member.isfile() or member.issym() or member.islnk():
                   raise SystemExit("release archive member bao must be a regular file")
               if member.size <= 0 or member.size > 536870912:

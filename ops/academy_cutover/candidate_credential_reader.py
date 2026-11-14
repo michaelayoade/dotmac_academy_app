@@ -9,6 +9,8 @@ import hashlib
 import http.client
 import json
 import re
+import socket
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -58,7 +60,9 @@ class LoopbackAPI:
         require(type(parsed.port) is int and 0 < parsed.port < 65536, "explicit_port_required")
         self.host, self.port = parsed.hostname, parsed.port
 
-    def __call__(self, method, path, token, body=None):
+    def __call__(self, method, path, token, body=None, *, deadline=None):
+        deadline = min(time.monotonic() + 15, deadline) if deadline is not None else time.monotonic() + 15
+        require(time.monotonic() < deadline, "request_deadline")
         require(method in ("GET", "POST", "PUT", "DELETE", "LIST"), "method_refused")
         require(type(path) is str and 0 < len(path) <= 1024
                 and all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) and part not in (".", "..")
@@ -66,13 +70,32 @@ class LoopbackAPI:
         require(type(token) is str and re.fullmatch(r"[A-Za-z0-9_.-]{8,4096}", token), "token_shape_refused")
         data = None if body is None else json.dumps(body, allow_nan=False).encode()
         require(data is None or len(data) <= RESPONSE_LIMIT, "request_bound")
-        connection = http.client.HTTPConnection(self.host, self.port, timeout=15)
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=max(0.01, deadline - time.monotonic()))
+        stop = threading.Event()
+        guard = watchdog = None
         try:
+            connection.connect()
+            guard = connection.sock.dup()
+
+            def expire():
+                if not stop.wait(max(0, deadline - time.monotonic())):
+                    try:
+                        guard.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+            watchdog = threading.Thread(target=expire, daemon=True)
+            watchdog.start()
             connection.request(method, "/v1/" + path, data,
                                {"X-Vault-Token": token, "Content-Type": "application/json"})
             response = connection.getresponse()
+            length = response.getheader("Content-Length")
+            require(length is None or (re.fullmatch(r"[0-9]{1,12}", length)
+                    and int(length) <= RESPONSE_LIMIT), "response_bound")
             raw = response.read(RESPONSE_LIMIT + 1)
+            require(time.monotonic() < deadline, "request_deadline")
             require(len(raw) <= RESPONSE_LIMIT, "response_bound")
+            require(length is None or len(raw) == int(length), "incomplete_response")
             require(not 300 <= response.status < 400, "redirect_refused")
             return response.status, strict_json(raw) if raw else {}
         except ReaderRefused:
@@ -80,7 +103,24 @@ class LoopbackAPI:
         except Exception:
             raise ReaderRefused("transport_uncertain") from None
         finally:
+            stop.set()
             connection.close()
+            if watchdog is not None:
+                watchdog.join(timeout=1)
+            if guard is not None:
+                guard.close()
+
+
+class _BudgetAPI:
+    def __init__(self, api, seconds):
+        self.api = api
+        self.deadline = time.monotonic() + seconds
+
+    def __call__(self, method, path, token, body=None):
+        require(time.monotonic() < self.deadline, "phase_deadline")
+        result = self.api(method, path, token, body, deadline=self.deadline)
+        require(time.monotonic() < self.deadline, "phase_deadline")
+        return result
 
 
 def policy_text(path):
@@ -118,21 +158,45 @@ def _owned_tokens(api, root, policy, run):
     return owned
 
 
-def _retire(api, root, policy, text, run, create_attempted):
-    """Also finds a token whose create response was lost; never retries creation."""
+def _retire(api, root, policy, text, run, create_attempted, known_accessor):
+    """Independent reserved cleanup budgets; an inventory error cannot starve policy removal."""
+    errors = []
+
+    def retire_accessor(bounded, accessor):
+        status, value = bounded("POST", "auth/token/lookup-accessor", root, {"accessor": accessor})
+        if status == 400:
+            return
+        data = value.get("data", {})
+        require(status == 200 and policy in data.get("policies", [])
+                and data.get("meta") == {"ceremony": run}, "accessor_ownership_unproved")
+        _ok(bounded, root, "POST", "auth/token/revoke-accessor", {"accessor": accessor})
+        status, _ = bounded("POST", "auth/token/lookup-accessor", root, {"accessor": accessor})
+        require(status == 400, "reader_retirement_unproved")
+
+    if known_accessor is not None:
+        try:
+            retire_accessor(_BudgetAPI(api, 10), known_accessor)
+        except BaseException:
+            errors.append("known_reader_retirement_unproved")
     if create_attempted:
-        for accessor in _owned_tokens(api, root, policy, run):
-            _ok(api, root, "POST", "auth/token/revoke-accessor", {"accessor": accessor})
-            status, _ = api("POST", "auth/token/lookup-accessor", root, {"accessor": accessor})
-            require(status == 400, "reader_retirement_unproved")
-        require(not _owned_tokens(api, root, policy, run), "reader_retirement_unproved")
-    status, value = api("GET", "sys/policies/acl/" + policy, root)
-    if status == 404:
-        return
-    require(status == 200 and value.get("data", {}).get("policy") == text, "owned_policy_changed")
-    _ok(api, root, "DELETE", "sys/policies/acl/" + policy)
-    status, _ = api("GET", "sys/policies/acl/" + policy, root)
-    require(status == 404, "policy_retirement_unproved")
+        try:
+            bounded = _BudgetAPI(api, 10)
+            # Recovers an orphan even if its create response was lost. No create retry.
+            for accessor in _owned_tokens(bounded, root, policy, run):
+                retire_accessor(bounded, accessor)
+        except BaseException:
+            errors.append("reader_inventory_unproved")
+    try:
+        bounded = _BudgetAPI(api, 10)
+        status, value = bounded("GET", "sys/policies/acl/" + policy, root)
+        if status != 404:
+            require(status == 200 and value.get("data", {}).get("policy") == text, "owned_policy_changed")
+            _ok(bounded, root, "DELETE", "sys/policies/acl/" + policy)
+            status, _ = bounded("GET", "sys/policies/acl/" + policy, root)
+            require(status == 404, "policy_retirement_unproved")
+    except BaseException:
+        errors.append("policy_retirement_unproved")
+    require(not errors, "reader_or_policy_retirement_unproved")
 
 
 def _verify_reader(api, root, token, accessor, policy, path, run):
@@ -165,6 +229,9 @@ def acquire_once(api, root, *, run, policy, path, fields, close_authority, hando
     token creation or handoff is automatically retried on uncertainty.
     """
     held, token, text = {}, "", ""
+    known_accessor = None
+    raw_api = api
+    api = _BudgetAPI(raw_api, 45)
     error = None
     policy_attempted = create_attempted = retired = False
     closure = {}
@@ -198,6 +265,7 @@ def acquire_once(api, root, *, run, policy, path, fields, close_authority, hando
         }).get("auth", {})
         token, accessor = auth.get("client_token"), auth.get("accessor")
         require(type(accessor) is str and re.fullmatch(r"[A-Za-z0-9_.-]{8,128}", accessor), "accessor_missing")
+        known_accessor = accessor
         evidence["reader_accessor"] = accessor
         _verify_reader(api, root, token, accessor, policy, path, run)
         audit("one_data_get_attempt", dict(evidence))
@@ -217,7 +285,7 @@ def acquire_once(api, root, *, run, policy, path, fields, close_authority, hando
     finally:
         if policy_attempted:
             try:
-                _retire(api, root, policy, text, run, create_attempted)
+                _retire(raw_api, root, policy, text, run, create_attempted, known_accessor)
                 retired = True
                 evidence.update(reader_retired=True, policy_retired=True)
             except BaseException:

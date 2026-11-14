@@ -67,10 +67,11 @@ def test_native_one_read_shape_accessor_budget_cleanup_and_handoff_contract(serv
     assert api("POST", path, root, {"data": values})[0] == 200
     calls, delivered, closed, remaining = [], [], [], []
 
-    def observed(method, target, token, body=None):
+    def observed(method, target, token, body=None, *, deadline=None):
         calls.append((method, target))
-        result = api(method, target, token, body)
-        if target == "auth/token/lookup-accessor" and result[0] == 200:
+        result = api(method, target, token, body, deadline=deadline)
+        if (target == "auth/token/lookup-accessor" and result[0] == 200
+                and policy in result[1]["data"]["policies"]):
             remaining.append(result[1]["data"]["num_uses"])
         if fault == "create_response_lost" and target == "auth/token/create-orphan":
             raise OSError("synthetic lost response after successful create")

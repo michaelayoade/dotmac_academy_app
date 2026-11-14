@@ -23,7 +23,7 @@ class API:
         self.calls = []
         self.data_gets = self.creates = 0
 
-    def __call__(self, method, path, token, body=None):
+    def __call__(self, method, path, token, body=None, *, deadline=None):
         self.calls.append((method, path))
         if path == "auth/token/lookup-self":
             return 200, {"data": {"policies": ["root"], "accessor": "synthetic-root-accessor"}}
@@ -49,6 +49,10 @@ class API:
                 raise OSError("synthetic transport failure")
             return 200, {"auth": {"client_token": TOKEN, "accessor": ACCESSOR}}
         if path == "auth/token/accessors":
+            if self.failure == "inventory_error":
+                return 500, {}
+            if self.failure == "inventory_bound":
+                return 200, {"data": {"keys": ["synthetic-accessor-" + str(i) for i in range(513)]}}
             return 200, {"data": {"keys": list(self.tokens)}}
         if path == "auth/token/lookup-accessor":
             key = body["accessor"]
@@ -133,6 +137,18 @@ def test_unproved_orphan_retirement_withholds_credential_even_if_root_close_clai
         R.acquire_once(api, ROOT, run=RUN, policy=POLICY, path=PATH, fields=("password",),
                        close_authority=lambda: dict(CLOSE), handoff=delivered.append, audit=lambda *_args: None)
     assert api.data_gets == 1 and api.tokens and delivered == []
+    assert not api.policies  # policy retirement is attempted even when token retirement fails
+
+
+@pytest.mark.parametrize("failure", ["inventory_error", "inventory_bound"])
+def test_known_accessor_and_policy_retire_even_when_inventory_cannot_be_proved(failure):
+    api = API(failure=failure, exhaust=False)
+    delivered = []
+    with pytest.raises(R.ReaderRefused):
+        R.acquire_once(api, ROOT, run=RUN, policy=POLICY, path=PATH, fields=("password",),
+                       close_authority=lambda: dict(CLOSE), handoff=delivered.append, audit=lambda *_args: None)
+    assert api.data_gets == 1 and delivered == []
+    assert not api.tokens and not api.policies
 
 
 @pytest.mark.parametrize("field", [*R.CLOSE_FIELDS, "tcp_generate_root_code"])
