@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 REPOSITORY = "michaelayoade/dotmac_academy_console_fixtures"
-COMMIT = "67aa08d5bc2c514a8f1c2c89e1f93af3413205cb"
-BUNDLE_SHA256 = "1fd1dff703e9ccccfc7fb37c6b0c1c15c438dad974c0c00aca1999739f47b182"
+COMMIT = "e2778426150768385f53e8c8138326fa3fa0490e"
+BUNDLE_SHA256 = "c2453f7ea86c98efb8ec9c583e9655dff02dae96b25fdf3b4cdcad9448b63364"
 LIMIT = 2 * 1024 * 1024
 
 

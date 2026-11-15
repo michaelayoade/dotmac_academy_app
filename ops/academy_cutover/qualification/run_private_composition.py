@@ -74,7 +74,7 @@ def main() -> int:
                 "skipped": len(result.skipped), "private_contents_rendered": False,
                 "diagnostics": result.safe_diagnostics}
     print(json.dumps(evidence, sort_keys=True))
-    passed = (result.testsRun == 18 and result.wasSuccessful() and not result.skipped
+    passed = (result.testsRun == 21 and result.wasSuccessful() and not result.skipped
               and not result.expectedFailures and not result.unexpectedSuccesses)
     return 0 if passed else 1
 
