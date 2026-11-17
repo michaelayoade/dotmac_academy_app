@@ -286,13 +286,13 @@ def test_active_jobs_cgroups_or_current_config_drift_cannot_become_fenced(monkey
                            "web", "fenced", M.time.monotonic() + 20)
 
 
-def test_systemd_dispatch_connected_six_others_and_complete_producer_still_refuse(monkeypatch):
+def test_systemd_dispatch_connected_five_others_and_complete_producer_still_refuse(monkeypatch):
     calls = []
     monkeypatch.setattr(D, "observe_systemd", lambda *args, **kwargs: calls.append(kwargs) or {"partial": True})
     assert D.collect_domain(Common, {}, "web", D.SYSTEMD_DOMAIN) == {"partial": True}
     assert calls == [{"evidence": None, "approval": None, "maintenance_status": None}]
     for domain in D.DOMAINS:
-        if domain not in (D.PROCESS_DOMAIN, D.SYSTEMD_DOMAIN):
+        if domain not in (D.PROCESS_DOMAIN, D.SYSTEMD_DOMAIN, D.CRON_DOMAIN):
             with pytest.raises(ValueError, match="adapter_unimplemented"):
                 D.collect_domain(Common, {}, "web", domain)
     # The existing hard refusal is retained even if every dictionary validator is mocked to return references.
