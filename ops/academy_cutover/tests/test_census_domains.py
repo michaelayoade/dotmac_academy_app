@@ -194,7 +194,7 @@ def test_overlapping_frozen_membership_refused(intrinsic):
 
 def test_other_domains_refuse_without_provider_execution():
     for domain in D.DOMAINS:
-        if domain != D.PROCESS_DOMAIN:
+        if domain not in (D.PROCESS_DOMAIN, D.SYSTEMD_DOMAIN):
             with pytest.raises(ValueError, match="adapter_unimplemented"):
                 D.collect_domain(Common, {}, "web", domain)
 
@@ -440,16 +440,33 @@ def test_actual_observer_checks_partial_counters_without_gap_strings(simulated_c
     assert sorted(proc.closed) == sorted(descriptor for descriptor, _ in proc.opened)
 
 
-def test_role_collector_collects_actual_processes_before_refusal(simulated_collector):
+def test_role_collector_collects_actual_processes_before_refusal(simulated_collector, monkeypatch):
     scope, manifest, _, proc, discovery = simulated_collector
+    calls = []
+
+    def systemd(*_args, **_kwargs):
+        assert discovery.processes_called
+        calls.append(D.SYSTEMD_DOMAIN)
+        return {}
+
+    monkeypatch.setattr(D, "observe_systemd", systemd)
     with pytest.raises(ValueError, match="adapter_unimplemented"):
         D.collect_role(Common, manifest, "web", scope)
     assert discovery.processes_called
+    assert calls == [D.SYSTEMD_DOMAIN]
     assert sorted(proc.closed) == sorted(descriptor for descriptor, _ in proc.opened)
 
 
-def test_role_reducer_requires_exact_eight_domains(intrinsic):
+def test_role_reducer_requires_exact_eight_domains(intrinsic, monkeypatch):
     scope, proof = intrinsic
+    original = D.validate_domain_proof
+
+    def process_validation(C, scope, role, domain, proof, **kwargs):
+        if domain == D.SYSTEMD_DOMAIN:
+            return set()
+        return original(C, scope, role, domain, proof, **kwargs)
+
+    monkeypatch.setattr(D, "validate_domain_proof", process_validation)
     with pytest.raises(ValueError, match="exact_fields"):
         D.require_complete_role_scope(Common, scope, "web", {D.PROCESS_DOMAIN: proof})
     proofs = dict.fromkeys(D.DOMAINS)
@@ -638,8 +655,16 @@ def test_userspace_manifest_source_and_scope_identity_required(legacy_collector,
         D.validate_domain_proof(Common, scope, "web", D.PROCESS_DOMAIN, observation, manifest=manifest)
 
 
-def test_reducers_refuse_missing_frozen_legacy_membership_before_missing_adapters(legacy_collector):
+def test_reducers_refuse_missing_frozen_legacy_membership_before_missing_adapters(legacy_collector, monkeypatch):
     scope, manifest, _, _, _, _, _ = legacy_collector
+    original = D.validate_domain_proof
+
+    def process_validation(C, scope, role, domain, proof, **kwargs):
+        if domain == D.SYSTEMD_DOMAIN:
+            return set()
+        return original(C, scope, role, domain, proof, **kwargs)
+
+    monkeypatch.setattr(D, "validate_domain_proof", process_validation)
     observation = D.observe_processes(Common, manifest, "web")
     proofs = dict.fromkeys(D.DOMAINS)
     proofs[D.PROCESS_DOMAIN] = observation
