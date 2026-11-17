@@ -27,6 +27,14 @@ operational fence, or a complete activation graph. Unknown objects remain
 unresolved. The process proof stays at v2, and the census reducers continue to
 refuse completion while the remaining domain adapters are unfinished.
 
+The fixed system-cron adapter collects two bounded snapshots of `/etc/crontab`
+and immediate entries in `/etc/cron.d`. It retains metadata and content digests;
+it never executes schedules or exports command text. Account crontabs, run-parts
+scripts, anacron state, at queues, effective daemon configuration and other
+namespace layouts remain outside this partial observation. Sender classification,
+authority membership and controls stay unresolved, and all completion claims
+remain false. Matching snapshots do not establish a complete cron census.
+
 Relationship list parsing decodes one quoting layer emitted by systemctl for
 string arrays. Native unit-name escapes remain literal bytes: `\x2d` is not
 converted to `-`. The accepted list representation is an unquoted name without

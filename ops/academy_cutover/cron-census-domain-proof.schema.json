@@ -1,0 +1,556 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://academy.dotmac.io/cron-census-domain-proof.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "candidate",
+    "tree",
+    "role",
+    "hostname",
+    "domain",
+    "sources",
+    "observed_unix_started",
+    "observed_unix_finished",
+    "profile",
+    "profile_sha256",
+    "passes",
+    "objects",
+    "enumerated_object_ids",
+    "accounting",
+    "unresolved_gaps",
+    "coverage_complete",
+    "classification_complete",
+    "control_state"
+  ],
+  "properties": {
+    "schema": {
+      "const": "AcademyCronSourceObservation.v1"
+    },
+    "candidate": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "tree": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "role": {
+      "enum": [
+        "web",
+        "lab"
+      ]
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "domain": {
+      "const": "cron/anacron/at scheduling"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "observed_unix_started": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "observed_unix_finished": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "seconds",
+        "file_bytes",
+        "overflow_probe_bytes",
+        "captured_payload_bytes",
+        "objects",
+        "filesystem_work",
+        "proof_bytes",
+        "included",
+        "excluded"
+      ],
+      "properties": {
+        "schema": {
+          "const": "AcademyCronFixedSourceProfile.v1"
+        },
+        "seconds": {
+          "const": 60
+        },
+        "file_bytes": {
+          "const": 65536
+        },
+        "overflow_probe_bytes": {
+          "const": 1
+        },
+        "captured_payload_bytes": {
+          "const": 16777216
+        },
+        "objects": {
+          "const": 1024
+        },
+        "filesystem_work": {
+          "const": 32768
+        },
+        "proof_bytes": {
+          "const": 8388608
+        },
+        "included": {
+          "const": [
+            "/etc/crontab",
+            "/etc/cron.d immediate entries"
+          ]
+        },
+        "excluded": {
+          "const": [
+            "accountcrontabs",
+            "runparts",
+            "anacronstate",
+            "atqueues",
+            "daemonconfig-runtime",
+            "alternatenamespaces-layouts"
+          ]
+        }
+      }
+    },
+    "profile_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "passes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "etc_before",
+          "etc_after",
+          "cron_d_before",
+          "cron_d_after",
+          "cron_d_status",
+          "entries"
+        ],
+        "properties": {
+          "etc_before": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "etc_after": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "cron_d_before": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              }
+            ]
+          },
+          "cron_d_after": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              }
+            ]
+          },
+          "cron_d_status": {
+            "enum": [
+              "absent",
+              "unavailable",
+              "enumerated",
+                "changed"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1024,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "source",
+                "name_sha256",
+                "metadata",
+                "status",
+                "body_sha256",
+                "captured_bytes"
+              ],
+              "properties": {
+                "source": {
+                  "enum": [
+                    "etc_crontab",
+                    "etc_cron_d"
+                  ]
+                },
+                "name_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "metadata": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "minItems": 8,
+                      "maxItems": 8,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 18446744073709551615
+                      }
+                    }
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "captured",
+                    "absent",
+                    "rejected_name",
+                    "rejected_credential",
+                    "rejected_type",
+                    "rejected_owner",
+                    "rejected_mode",
+                    "unavailable"
+                  ]
+                },
+                "body_sha256": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  ]
+                },
+                "captured_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65537
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "object_id",
+          "schema",
+          "role",
+          "hostname",
+          "source",
+          "name_sha256",
+          "reads",
+          "source_stable",
+          "classification",
+          "authority_refs",
+          "control_state"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "schema": {
+            "const": "AcademyCronSourceIdentity.v1"
+          },
+          "role": {
+            "enum": [
+              "web",
+              "lab"
+            ]
+          },
+          "hostname": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "source": {
+            "enum": [
+              "etc_crontab",
+              "etc_cron_d"
+            ]
+          },
+          "name_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "reads": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "source",
+                    "name_sha256",
+                    "metadata",
+                    "status",
+                    "body_sha256",
+                    "captured_bytes"
+                  ],
+                  "properties": {
+                    "source": {
+                      "enum": [
+                        "etc_crontab",
+                        "etc_cron_d"
+                      ]
+                    },
+                    "name_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "metadata": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "minItems": 8,
+                          "maxItems": 8,
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 18446744073709551615
+                          }
+                        }
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "captured",
+                        "absent",
+                        "rejected_name",
+                        "rejected_credential",
+                        "rejected_type",
+                        "rejected_owner",
+                        "rejected_mode",
+                        "unavailable"
+                      ]
+                    },
+                    "body_sha256": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      ]
+                    },
+                    "captured_bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65537
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "source_stable": {
+            "type": "boolean"
+          },
+          "classification": {
+            "const": "unknown"
+          },
+          "authority_refs": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "control_state": {
+            "const": "unresolved"
+          }
+        }
+      }
+    },
+    "enumerated_object_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captured_payload_bytes",
+        "filesystem_work",
+        "work_events",
+        "retained_records",
+        "retained_json_bytes"
+      ],
+      "properties": {
+        "captured_payload_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "filesystem_work": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "work_events": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "1": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32768
+            },
+            "2": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32768
+            },
+            "10": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32768
+            },
+            "20": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32768
+            },
+            "21": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32768
+            }
+          }
+        },
+        "retained_records": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2048
+        },
+        "retained_json_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        }
+      }
+    },
+    "unresolved_gaps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "accountcrontabs",
+          "runparts",
+          "anacronstate",
+          "atqueues",
+          "daemonconfig-runtime",
+          "alternatenamespaces-layouts",
+          "authority_classification_unresolved",
+          "control_state_unresolved",
+          "non_atomic_source_observation",
+          "source_anchor_changed",
+          "cron_d_unavailable",
+          "source_passes_changed",
+          "source_acquisition_unresolved"
+        ]
+      }
+    },
+    "coverage_complete": {
+      "const": false
+    },
+    "classification_complete": {
+      "const": false
+    },
+    "control_state": {
+      "const": "unresolved"
+    }
+  }
+}

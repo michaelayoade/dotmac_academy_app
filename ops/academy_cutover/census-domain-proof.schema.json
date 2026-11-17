@@ -945,13 +945,16 @@
       ]
     }
   },
-  "description": "Process and system-unit observations only; six other domains refuse. Stable authority references never establish campaign classification or full census completion. Production source pins and live collection remain mandatory.",
+  "description": "Process and system-unit observations plus a partial fixed system-cron source snapshot. Complete cron authority and five other domain adapters remain unresolved. Stable authority references never establish campaign classification or full census completion. Production source pins and live collection remain mandatory.",
   "oneOf": [
     {
       "$ref": "#/$defs/process_observation"
     },
     {
       "$ref": "systemd-census-domain-proof.schema.json"
+    },
+    {
+      "$ref": "cron-census-domain-proof.schema.json"
     }
   ]
 }

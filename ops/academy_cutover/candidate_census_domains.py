@@ -29,6 +29,9 @@ DOMAINS = (
 )
 SYSTEMD_DOMAIN = DOMAINS[0]
 PROCESS_DOMAIN = DOMAINS[2]
+CRON_DOMAIN = DOMAINS[3]
+CRON_ADAPTER_SHA256 = "62e2d4df46b140dc43bd839d54a2adb32aca9e4032028d5d7751a8e0c59a6abc"
+CRON_SCHEMA_SHA256 = "19698907739c6f33bc4f1c375d68bc48a57e6c23a1694af8e3fbc5a5b28ac7b9"
 DISCOVERY_SHA256 = "d704750c57e11b533d46affbc5ad8a175c3539494f0490df21cd06241a721373"
 NAMESPACES = ("pid", "mnt", "user", "net")
 BUCKETS = ("supported", "legacy", "manual", "external")
@@ -393,11 +396,66 @@ def observe_processes(C, m, role):
 
 def collect_domain(C, m, role, domain, *, evidence=None, approval=None, maintenance_status=None):
     C.require(domain in DOMAINS, "census_domain_unknown")
+    if domain == CRON_DOMAIN:
+        return observe_cron(C, m, role)
     if domain == SYSTEMD_DOMAIN:
         return observe_systemd(C, m, role, evidence=evidence, approval=approval,
                                maintenance_status=maintenance_status)
     C.require(domain == PROCESS_DOMAIN, "census_domain_adapter_unimplemented")
     return observe_processes(C, m, role)
+
+
+def _cron_sources(C, m):
+    """Load fixed sibling source from the protected, manifest-pinned package."""
+    raw, sources = _sources(C, m)
+    own = Path(__file__)
+    adapter = own.with_name("candidate_census_cron.py")
+    schema = own.with_name("cron-census-domain-proof.schema.json")
+    adapter_raw = _pin(C, adapter, CRON_ADAPTER_SHA256)
+    _pin(C, schema, CRON_SCHEMA_SHA256)
+    sources = [*sources, {"path": str(adapter), "sha256": CRON_ADAPTER_SHA256},
+               {"path": str(schema), "sha256": CRON_SCHEMA_SHA256}]
+    discovery = types.ModuleType("_academy_approved_cron_discovery")
+    discovery.__file__ = sources[1]["path"]
+    exec(compile(raw, discovery.__file__, "exec"), discovery.__dict__)  # noqa: S102
+    module = types.ModuleType("_academy_approved_cron_source")
+    module.__file__ = str(adapter)
+    exec(compile(adapter_raw, module.__file__, "exec"), module.__dict__)  # noqa: S102
+    return module, discovery, sources
+
+
+def observe_cron(C, m, role):
+    """Collect fixed system-cron sources; complete cron authority stays unresolved."""
+    C.require(
+        role in ("web", "lab") and os.geteuid() == 0 and sys.platform == "linux" and sys.version_info[:2] == (3, 12)
+        and sys.flags.isolated and sys.flags.no_site and sys.flags.dont_write_bytecode,
+        "census_domain_root_isolated_linux",
+    )
+    C.require(socket.gethostname() == m["roles"][role]["hostname"], "census_domain_host_identity")
+    module, discovery, sources = _cron_sources(C, m)
+    C.require(discovery.HOSTS[role] == m["roles"][role]["hostname"], "census_domain_discovery_host_identity")
+    proof = module.observe(C, m, role, discovery, sources)
+    scope = {"candidate": m["candidate"], "tree": m["tree"], "hosts": {role: m["roles"][role]["hostname"]}}
+    module.validate(C, scope, role, proof, sources=sources)
+    _, repeated_sources = _sources(C, m)
+    C.require(repeated_sources == sources[:3], "cron_source_pins_changed")
+    _pin(C, Path(sources[3]["path"]), CRON_ADAPTER_SHA256)
+    _pin(C, Path(sources[4]["path"]), CRON_SCHEMA_SHA256)
+    module.encode(C, proof)
+    return proof
+
+
+def validate_cron_observation(C, scope, role, proof, *, manifest):
+    C.require(manifest is not None, "cron_manifest_required")
+    C.require(
+        role in ("web", "lab") and scope["hosts"][role] == manifest["roles"][role]["hostname"]
+        and all(scope[key] == manifest[key] for key in ("candidate", "tree")),
+        "cron_manifest_scope_identity",
+    )
+    module, _, sources = _cron_sources(C, manifest)
+    result = module.validate(C, scope, role, proof, sources=sources)
+    module.encode(C, proof)
+    return result
 
 
 
@@ -476,6 +534,9 @@ def validate_domain_proof(C, scope, role, domain, proof, *, manifest=None, evide
     collector calls old_unit_inventory for runtime/HR semantics; this validator
     reconstructs the closed owner/snapshot join without rerunning observations.
     """
+    if domain == CRON_DOMAIN:
+        validate_cron_observation(C, scope, role, proof, manifest=manifest)
+        C.require(False, "cron_campaign_scope_or_controls_unresolved")
     if domain == SYSTEMD_DOMAIN:
         validate_systemd_observation(C, scope, role, proof, manifest=manifest, evidence=evidence, approval=approval)
         if proof["mode"] != "original" and evidence is not None and approval is not None:
