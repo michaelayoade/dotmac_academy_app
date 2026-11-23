@@ -1,0 +1,41 @@
+{% extends "public/training_base.html" %}
+
+{% block title %}{{ page.copy.heading }} | Dotmac Academy{% endblock %}
+{% block description %}
+  <meta name="description" content="{{ page.copy.description }}">
+  <link rel="canonical" href="{{ page.canonical_url }}">
+{% endblock %}
+
+{% block introduction %}
+    <h1>{{ page.copy.heading }}</h1>
+    <p>{{ page.copy.description }}</p>
+    <p>{{ page.copy.course_title }} has {{ page.chapter_count }} chapters, chapter tests and a final assessment. Certificates are issued after the required assessment and can be verified on this website.</p>
+    {% if page.management %}
+    <p><a href="/management-enrollment" class="btn btn-orange">Enquire about this course</a></p>
+    {% else %}
+    <p><a href="/apply" class="btn btn-orange">Apply for technical training</a></p>
+    {% endif %}
+{% endblock %}
+
+{% block details %}
+    {% if page.management %}
+    <section>
+      <h2>Who is this course for?</h2>
+      <p>Supervisors, managers and professionals can enrol as individuals or through their teams. The management programme is industry-neutral and does not require a technical background.</p>
+    </section>
+    <section>
+      <h2>How do I enrol?</h2>
+      <p>Study at your own pace. <a href="/management-enrollment">Send a management-course enquiry</a> and mention {{ page.copy.course_title }} so our team can confirm enrolment details.</p>
+    </section>
+    {% else %}
+    <section>
+      <h2>How does technical training work?</h2>
+      <p>The technical academy combines online study with hands-on practice. An entrance assessment determines your starting point. Confirm course availability, practical dates and location for your intake when applying.</p>
+    </section>
+    <section>
+      <h2>Who can apply?</h2>
+      <p>SIWES students, NYSC corps members, OND/HND interns and working technicians can apply. Free technical training is available to eligible applicants; <a href="/free-technical-training">check eligibility and study arrangements</a>.</p>
+    </section>
+    {% endif %}
+    <p><a href="/courses">Browse all technical and management courses</a></p>
+{% endblock %}

@@ -518,3 +518,66 @@ def test_lab_launch_poll_check_reset_queue_and_foreign_owner_refusal(current_acc
     a.admin.add(foreign)
     a.admin.commit()
     _run(a, _LABS, JOURNEY_ACTIVITY=activity.id, JOURNEY_FOREIGN_INSTANCE=foreign.id, JOURNEY_PERSON=a.pid)
+
+
+_PUBLIC_TRAINING = r"""
+from xml.etree.ElementTree import fromstring
+from app.models.course import Course
+
+catalogue = client.get("/courses")
+assert catalogue.status_code == 200
+assert 'href="/training/network-support"' in catalogue.text
+assert '/training/sales-essentials' not in catalogue.text
+assert '/training/noc-operations' not in catalogue.text
+page = client.get("/training/network-support")
+assert page.status_code == 200
+assert 'https://academy.dotmac.io/training/network-support' in page.text
+assert 'Apply for technical training' in page.text
+for slug in ('sales-essentials', 'noc-operations', 'unknown-course'):
+    assert client.get('/training/' + slug).status_code == 404
+# The public overview must not expose the private student course route.
+private = client.get('/courses/' + os.environ['JOURNEY_PUBLIC_SLUG'])
+assert private.status_code in (302, 303, 401, 403)
+
+def sitemap_urls():
+    response = client.get('/sitemap.xml')
+    assert response.status_code == 200
+    return [node.text for node in fromstring(response.content).iter('{http://www.sitemaps.org/schemas/sitemap/0.9}loc')]
+
+urls = sitemap_urls()
+assert len(urls) == len(set(urls))
+assert 'https://academy.dotmac.io/training/network-support' in urls
+assert 'https://academy.dotmac.io/training/sales-essentials' not in urls
+assert 'https://academy.dotmac.io/training/noc-operations' not in urls
+# This write is test fixture control through the isolated administrator DB.
+with inspect_db() as db:
+    course = db.get(Course, UUID(os.environ['JOURNEY_PUBLIC_COURSE']))
+    course.listed = False
+assert client.get('/training/network-support').status_code == 404
+assert 'https://academy.dotmac.io/training/network-support' not in sitemap_urls()
+"""
+
+
+def test_public_training_pages_follow_listed_published_courses_and_preserve_private_access(current_account):
+    from app.models.course import Course
+
+    a = current_account
+    courses = [
+        Course(
+            tenant_id=a.tid,
+            slug=uuid4().hex,
+            title=title,
+            discipline="management" if title == "Sales Essentials" else "networking",
+            source_ref="hosted-public-training-fixture",
+            status=status,
+            listed=listed,
+        )
+        for title, status, listed in (
+            ("Network Support", "published", True),
+            ("Sales Essentials", "draft", True),
+            ("NOC Operations", "published", False),
+        )
+    ]
+    a.admin.add_all(courses)
+    a.admin.commit()
+    _run(a, _PUBLIC_TRAINING, JOURNEY_PUBLIC_SLUG=courses[0].slug, JOURNEY_PUBLIC_COURSE=courses[0].id)

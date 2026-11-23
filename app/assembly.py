@@ -219,6 +219,7 @@ assembly = ProductAssemblySpec(
                 WebRouteRef("academy", "legacy", "siwes_ict_training"),
                 WebRouteRef("academy", "legacy", "nysc_ict_training"),
                 WebRouteRef("academy", "legacy", "fibre_optic_training"),
+                WebRouteRef("academy", "legacy", "public_course_training"),
                 WebRouteRef("academy", "legacy", "sitemap"),
                 WebRouteRef("academy", "legacy", "management_enrollment_form"),
                 WebRouteRef("academy", "legacy", "submit_management_enrollment"),

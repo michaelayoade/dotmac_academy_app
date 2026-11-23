@@ -31,6 +31,7 @@ from app.services.identity import AcademyCurrentAccount
 from app.services.localtime import to_local
 from app.services.roles import role_slugs
 from app.services.settings_store import effective
+from app.services.training_pages import public_training_pages
 from app.services.web_auth import optional_web_user, require_web_user
 from app.web.templating import templates
 
@@ -49,9 +50,11 @@ _SITEMAP_PATHS = (
 
 
 @router.get("/sitemap.xml", include_in_schema=False)
-def sitemap() -> Response:
+def sitemap(request: Request, db: Session = Depends(get_db)) -> Response:
+    tenant = require_tenant(request)
+    paths = dict.fromkeys((*_SITEMAP_PATHS, *(page.path for page in public_training_pages(db, tenant_id=tenant.id))))
     urlset = Element("urlset", xmlns="http://www.sitemaps.org/schemas/sitemap/0.9")
-    for path in _SITEMAP_PATHS:
+    for path in paths:
         url = SubElement(urlset, "url")
         SubElement(url, "loc").text = f"{_SITEMAP_ORIGIN}{path}"
     return Response(
@@ -84,6 +87,18 @@ def fibre_optic_training(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "public/fibre-optic-training.html", {})
 
 
+@router.get("/training/{slug}", response_class=HTMLResponse)
+def public_course_training(request: Request, slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    tenant = require_tenant(request)
+    page = next(
+        (page for page in public_training_pages(db, tenant_id=tenant.id) if page.path == f"/training/{slug}"),
+        None,
+    )
+    if page is None:
+        raise HTTPException(status_code=404)
+    return templates.TemplateResponse(request, "public/course_training.html", {"page": page})
+
+
 @router.get("/courses", response_class=HTMLResponse)
 def courses_list(
     request: Request,
@@ -104,6 +119,9 @@ def courses_list(
                 "courses": listed,
                 "tech": tech,
                 "mgmt": mgmt,
+                "training_pages": {
+                    page.copy.course_title: page for page in public_training_pages(db, tenant_id=tenant.id)
+                },
                 "management_contact_email": effective(db).management_inquiry_recipient,
             },
         )

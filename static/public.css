@@ -133,6 +133,8 @@
 }
 @media (max-width:620px){
   .pub .cards,.pub .steps{grid-template-columns:1fr}
+  .pub .nav .wrap{height:auto;min-height:64px;flex-wrap:wrap;gap:8px 16px;padding-top:8px;padding-bottom:8px}
+  .pub .nav-links{gap:12px}
   .pub .nav-links a:not(.btn){display:none}
   .pub .cta{padding:40px 28px}
 }
@@ -180,7 +182,7 @@
 
 /* Course row carousels (catalog) */
 .pub .row-wrap{position:relative}
-.pub .row-scroll{display:grid;grid-auto-flow:column;grid-auto-columns:calc(33.33% - 15px);gap:22px;margin-top:30px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding-bottom:6px}
+.pub .row-scroll{display:grid;grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:calc(33.33% - 15px);gap:22px;margin-top:30px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding-bottom:6px}
 .pub .row-scroll::-webkit-scrollbar{display:none}
 .pub .row-scroll .card{scroll-snap-align:start}
 .pub .row-nav{position:absolute;right:0;top:-46px;display:flex;gap:8px}
