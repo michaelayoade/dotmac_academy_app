@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Courses — {{ branding_name | default("Dotmac Academy") }}</title>
-  <meta name="description" content="The full Dotmac Academy catalog: technical training for network careers and management short courses for professionals — chaptered, assessed, certified.">
+  <title>ICT, Networking &amp; Management Courses in Nigeria | Dotmac Academy</title>
+  <meta name="description" content="Explore fibre optic, routing and switching, wireless networking, technical support and management training at Dotmac Academy in Nigeria.">
+  <link rel="canonical" href="https://academy.dotmac.io/courses">
   <link rel="icon" type="image/png" href="/static/img/dotmac-favicon.png">
   {% include "_dotmac_ui_head.html" %}
-  <link rel="stylesheet" href="/static/public.css?v=4">
+  <link rel="stylesheet" href="/static/public.css?v=5">
 </head>
 <body class="pub">
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -29,7 +30,7 @@
   <header class="page-head">
     <div class="wrap">
       <span class="eyebrow">Curriculum</span>
-      <h1>Course catalog</h1>
+      <h1>ICT, networking and management courses</h1>
       <p>
         Live from the learning platform — every course is chaptered, practice-
         tested, and closed by a final assessment that gates its certificate.
@@ -58,8 +59,10 @@
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" data-hide-on-error>
           <div class="card-body">
             <h3>{{ item.course.title }}</h3>
-            {% if item.course.title == "Fiber Engineering" %}
-            <p><a href="/fibre-optic-training">View fibre optic training</a></p>
+            {% set page = training_pages.get(item.course.title) %}
+            {% if page %}
+            <p>{{ page.copy.description }}</p>
+            <p><a href="{{ page.path }}">Explore {{ item.course.title }}</a></p>
             {% endif %}
             <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
           </div>
@@ -87,6 +90,11 @@
           <img src="/static/img/cover-{{ item.course.slug }}.webp" alt="" loading="lazy" data-hide-on-error>
           <div class="card-body">
             <h3>{{ item.course.title }}</h3>
+            {% set page = training_pages.get(item.course.title) %}
+            {% if page %}
+            <p>{{ page.copy.description }}</p>
+            <p><a href="{{ page.path }}">Explore {{ item.course.title }}</a></p>
+            {% endif %}
             <p class="card-meta"><b>{{ item.chapter_count }}</b> chapters · chapter tests + final assessment</p>
           </div>
         </article>
