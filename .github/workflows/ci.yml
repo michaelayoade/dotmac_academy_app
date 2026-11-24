@@ -61,6 +61,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Require README updates for runtime changes
+        if: github.event_name == 'pull_request'
+        env:
+          README_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          README_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_readme_update.py --base "$README_BASE_SHA" --head "$README_HEAD_SHA"
+      - name: Test README policy
+        run: python3 -m unittest discover -s tests -p test_readme_policy.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

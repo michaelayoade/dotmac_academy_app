@@ -50,6 +50,38 @@ Migration tooling is retained for reviewed historical evidence and separately
 authorized isolated work on the dedicated test server, not a new production
 import. Do not use a local Docker daemon.
 
+## Public course discovery
+
+The public catalogue links to subject-specific training overviews for listed,
+published courses. These pages describe technical and management training,
+include enrolment links, and appear in the sitemap. Private student course
+content still requires authentication and entitlement. See
+[public course search pages](docs/course-search-pages.md) for ownership,
+visibility, validation and rollout. This describes merged source capability;
+deployment and search-engine indexing require separate verification.
+
+## README requirement for feature changes
+
+Every PR that introduces a feature or changes runtime behaviour must update
+this README in the same PR: describe the capability, relevant usage/setup
+changes and link to detailed documentation. State deployment status accurately.
+Updating a document under `docs/` alone does not satisfy this requirement.
+
+The CI `qualify` job runs `scripts/check_readme_update.py` for pull requests.
+To avoid relying on labels or guessing whether a diff introduces a feature,
+the gate conservatively requires a meaningful README text change for any
+change under `app/`, `templates/`, `static/`, `content/`, `alembic/`, `deploy/`
+or `scripts/`, or to `pyproject.toml`, `poetry.lock` or `alembic.ini`.
+This includes fixes and removals on those surfaces. Documentation-, test- and
+workflow-only changes are exempt. Whitespace-only README edits and deleting
+the README fail the gate. Renames are evaluated as removal/addition.
+
+The workflow checks that the README changed; reviewers must verify that the
+description actually explains the feature. It does not generate or rewrite
+documentation automatically. Keep `qualify` required in branch protection
+to prevent merging a PR with a failing gate. Changes to this policy or its
+workflow also need reviewer scrutiny.
+
 ## Public source and private qualification data
 
 This repository has a fresh source history. The completed repository naming
